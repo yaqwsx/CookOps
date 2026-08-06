@@ -66,5 +66,8 @@ an explicit update action.
 - An authorized member MUST be able to create a new event by duplicating an
   archived event.
 
-The precise persistence strategy for materialized archives remains an architecture
-decision. The observable behavior above is required regardless of implementation.
+Every archive operation creates an immutable, schema-versioned
+`EventArchiveSnapshot` containing the complete resolved historical projection while
+the normalized event graph remains retained and locked. Reactivation preserves the
+snapshot as history and unlocks the graph. The detailed model and invariants are
+defined in `16-domain-model.md`.

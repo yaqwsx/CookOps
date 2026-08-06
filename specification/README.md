@@ -23,6 +23,7 @@ language is Czech, with English provided as the second built-in locale.
 13. [Engineering quality](13-engineering-quality.md)
 14. [Open questions](14-open-questions.md)
 15. [Agent interface and MCP](15-agent-interface-mcp.md)
+16. [Domain model](16-domain-model.md)
 
 ## Specification conventions
 
