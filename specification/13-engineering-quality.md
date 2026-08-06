@@ -55,6 +55,9 @@ Playwright tests run against a production PWA build and cover at least:
 - Google authentication through a test-only identity provider seam;
 - organization authorization and switching;
 - recipe creation, publication, version update, and local overrides;
+- all-or-nothing recipe ingredient-version update, exact compatible-unit
+  conversion, stable line keys, stale-preview rejection, and non-blocking retired
+  ingredient warnings;
 - scaling modes, attendance-following transitions, fixed lines, portion-weight
   inclusion, and weight/cost calculations;
 - catalog price publication without recipe-update signaling, atomic event price

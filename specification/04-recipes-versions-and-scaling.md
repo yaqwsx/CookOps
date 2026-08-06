@@ -127,6 +127,42 @@ overrides remains a separate decision.
   referenced ingredients.
 - Search SHOULD use fuzzy matching where practical.
 
+## Updating ingredient versions in a catalog recipe
+
+A catalog recipe whose current version references one or more non-current
+ingredient versions MUST offer one recipe-wide "Update ingredients" action. The
+dedicated update workflow does not offer per-line selection or partial application.
+
+The action first presents a transient preview containing every affected ingredient
+line and the exact target ingredient version. Confirming it atomically:
+
+1. replaces every non-current ingredient-version reference with that logical
+   ingredient's previewed current version;
+2. converts the stored base quantity exactly when the canonical unit changed within
+   the compatible unit dimension;
+3. preserves each line's stable `line_key`, preferred compatible display unit when
+   still valid, note, position, scaling behavior, and portion-weight flag; and
+4. publishes one new immutable recipe version and advances the recipe's current
+   version pointer.
+
+Either all eligible lines are updated and the recipe version is published, or no
+change is made. If any previewed target is no longer the ingredient's current
+version at commit time, the whole operation fails as stale and requires a refreshed
+preview. An offline client MAY queue the command with its explicit previewed
+version IDs; synchronization applies it only if those preconditions still hold.
+
+When no ingredient reference is outdated, the action is unavailable and MUST NOT
+publish an empty recipe version.
+
+An incompatible semantic change cannot be a newer version of the same logical
+ingredient. Replacing such an ingredient therefore remains an ordinary manual
+recipe edit selecting a different logical ingredient.
+
+A recipe version MAY be published while it still references a retired ingredient,
+including after running the all-or-nothing update. The editor MUST show a clear
+warning, but retirement does not block publication. Retired ingredients remain
+unavailable for adding as new lines through ordinary search.
+
 ## Scaling model
 
 Every recipe version has exactly one base scaling variable in the MVP.

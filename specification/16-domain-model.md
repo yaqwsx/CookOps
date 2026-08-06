@@ -376,6 +376,24 @@ that key from the newer recipe version. A line key MUST NOT be reused for a
 different logical ingredient. Stable keys make event-override preservation and
 catalog-update previews deterministic.
 
+### Recipe-wide ingredient update command
+
+`update_recipe_ingredient_versions` carries the based-on recipe version and the
+complete previewed mapping from every outdated referenced ingredient version to
+that logical ingredient's expected current version. The mapping is a precondition,
+not merely a client suggestion.
+
+In one transaction the command verifies that every target remains current, converts
+quantities across compatible canonical units, preserves line keys and other line
+properties, inserts one new `RecipeVersion` with its complete child graph, and
+advances `Recipe.current_version_id`. A failed precondition inserts nothing. The
+MVP has no dedicated single-line version-update command.
+
+Retirement does not invalidate immutable references. Publishing a recipe version
+that retains a retired ingredient is valid but produces a catalog warning. A
+semantically incompatible replacement uses a different logical `Ingredient` and is
+therefore an explicit manual recipe edit, not part of this update command.
+
 ## Event planning
 
 ### `Event`
@@ -867,6 +885,9 @@ responsibilities even when supporting constraints also exist in PostgreSQL.
 
 - Publishing and refresh never overwrite history; they insert immutable records and
   move a mutable current pointer.
+- Updating ingredient references in a recipe is atomic across every outdated line;
+  compatible unit changes preserve physical quantity and retired references remain
+  legal with warnings.
 - Offline branch creation is safe because identity does not depend on server-issued
   sequence numbers.
 - Event planners and MCP use the same resolved projections and commands.

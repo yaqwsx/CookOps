@@ -91,6 +91,12 @@ versions are both retained; last-write-wins applies only to a mutable pointer su
 as the currently recommended version. A later version can use either retained
 version as its parent or basis.
 
+A queued recipe-wide ingredient update carries the exact previewed target version
+for every affected ingredient. The server publishes the new recipe version only if
+all targets are still current. If any precondition is stale, it rejects the whole
+command into recoverable work so the member can review a new all-or-nothing preview;
+it MUST NOT partially update lines or silently substitute unseen versions.
+
 The same rules apply when synchronizing shopping-list edits made concurrently with
 a manual list refresh. Refresh changes generated contribution fields and source
 membership; checkbox actions change fulfilment-credit fields. These independent

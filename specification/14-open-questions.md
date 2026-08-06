@@ -2,10 +2,6 @@
 
 Status: Living document
 
-## Catalog and versioning
-
-- What merge UI reconciles a recipe with a newer or retired ingredient version?
-
 ## Dietary requirements
 
 - What initial ingredient labels and dietary requirement presets are seeded for a

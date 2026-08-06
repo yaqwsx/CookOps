@@ -19,7 +19,11 @@ Status: Draft
 - An ingredient version is immutable after publication.
 - Historical recipe versions and archived events MUST retain their original
   ingredient-version references.
-- Active recipe versions SHOULD indicate that a newer ingredient version exists.
+- Current recipe versions MUST indicate when at least one referenced ingredient has
+  a newer current version.
+- Updating those references is an all-or-nothing recipe-wide operation which
+  publishes a new immutable recipe version. The dedicated update workflow has no
+  individual-line action.
 
 Removing an ingredient from the catalog is a reversible retirement rather than a
 physical deletion:
@@ -29,7 +33,14 @@ physical deletion:
 - recipes that reference a retired ingredient MUST display a warning;
 - members can publish updated recipe versions that replace or remove the retired
   ingredient;
+- members MAY also publish a recipe version that retains the retired reference; the
+  warning is informational and does not block publication;
 - retirement MUST NOT alter historical recipe versions or archived events.
+
+When the recipe-wide update adopts a compatible canonical-unit change, its stored
+quantity is converted without changing physical amount. For example, `500 g`
+becomes `0.5 kg`. Incompatible quantity semantics require a new logical ingredient
+and a manual recipe edit rather than an automatic update.
 
 ## Canonical units
 
