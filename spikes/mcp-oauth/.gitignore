@@ -1,0 +1,5 @@
+.env
+.venv/
+__pycache__/
+.pytest_cache/
+oauth-server/node_modules/

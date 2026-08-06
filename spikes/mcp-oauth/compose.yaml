@@ -1,0 +1,4 @@
+services:
+  oauth-test:
+    build: oauth-server
+    command: npm test
