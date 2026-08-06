@@ -36,35 +36,40 @@ physical deletion:
 Each ingredient version has exactly one canonical quantity unit. Recipe quantities
 are normalized to that unit for calculation and aggregation.
 
-The application MUST support compatible SI unit conversion, including at least:
+The application MUST support compatible built-in unit conversion, including at
+least:
 
 - grams and kilograms for mass;
-- milliliters and liters for volume.
+- milliliters, centiliters, deciliters, and liters for volume;
+- standardized teaspoons of 5 ml and tablespoons of 15 ml.
 
 A user MAY enter a compatible display unit while editing, but the stored normalized
 quantity MUST remain unambiguous. Units of different dimensions are not converted
 without explicit ingredient-specific conversion metadata.
 
-Count-like and culinary units such as piece, package, bunch, loaf, tray, or custom
-units are not inherently interchangeable. Each organization MAY define additional
-non-SI units for its own catalog.
+Count-like units piece, package, and bunch are built in but are not inherently
+interchangeable. Each organization MAY define additional non-SI units for its own
+catalog. Custom unit names are organization-authored content and are not
+automatically translated.
 
 ## Weight estimation
 
-Ingredient versions MUST support calculation of their contribution to total recipe
-weight:
+Every published ingredient version MUST provide enough information to calculate its
+contribution to prepared-recipe weight:
 
 - mass-based canonical units derive weight directly;
-- volume-based units require a mass-per-canonical-unit value or equivalent density;
-- count-like and custom units require an average mass per canonical unit;
-- an ingredient for which no useful mass can be established MUST be represented as
-  having unknown mass, not zero mass.
+- volume-based units require a positive density or equivalent mass per canonical
+  quantity;
+- count-like and custom units require a positive average mass per canonical
+  quantity.
 
-Recipe and scheduled-instance weight estimates MUST derive from resolved ingredient
-quantities. When one or more ingredients have unknown mass, the numeric estimate
-remains visible and is accompanied by a warning icon. The icon's tooltip MUST list
-or summarize the missing mass information. No additional persistent warning text is
-required in the compact view.
+Publishing an ingredient version without a valid mass conversion is rejected. Mass
+conversion metadata is immutable within that ingredient version and is versioned
+with all other ingredient data.
+
+Recipe and scheduled-instance weight estimates derive from resolved ingredient
+quantities whose recipe lines are marked as included in portion weight. They are
+estimates of prepared serving mass, not procurement or transported shopping weight.
 
 ## Recipe ingredient lines
 
@@ -72,7 +77,19 @@ A recipe ingredient line contains:
 
 - a reference to a specific ingredient version;
 - a quantity expressed in a unit compatible with the ingredient's canonical unit;
+- scaling behavior: `proportional` or `fixed`;
+- whether the line is included in prepared serving and per-diner weight;
 - an optional preparation, product-selection, or shopping note.
+
+Scaling behavior defaults to `proportional`. Inclusion in portion weight defaults
+to true. A line excluded from portion weight still participates normally in cost,
+shopping generation, dietary warnings, and all non-weight calculations. For
+example, a recipe can exclude fryer oil from prepared portion weight without
+removing it from the shopping list.
+
+An event-local added ingredient has the same portion-weight flag, defaulting to
+true. A local quantity override of a catalog line retains that line's catalog
+flag.
 
 The note is copied into an event instance and shopping-list contribution snapshot
 so that information such as "large tomatoes" or "finely chopped" remains available

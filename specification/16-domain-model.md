@@ -202,14 +202,20 @@ Core fields:
 - stable code and localized built-in labels or a user-entered custom name;
 - dimension: mass, volume, count-like, or custom;
 - conversion factor to the dimension's system base unit when conversion exists;
-- `is_discrete_default` for scaling suggestions;
+- whether recipe suggestions conventionally round upward to whole units;
 - permitted contexts: ingredient quantity, recipe scaling, or both;
 - lifecycle metadata for organization units.
 
 Conversion semantics, dimension, and base factor are immutable after first use.
 Renaming a custom display label does not alter quantity semantics. Built-in mass
-and volume definitions cover `g`, `kg`, `ml`, and `l`. Non-SI custom units have no
-implicit conversion to another custom unit.
+and volume definitions cover `g`, `kg`, `ml`, `cl`, `dl`, `l`, `tsp` (5 ml), and
+`tbsp` (15 ml). Piece, package, and bunch are built-in count-like units. Person,
+tray, batch, pot, and loaf are built-in recipe-scaling units; piece and liter are
+also available for scaling. Non-SI custom units have no implicit conversion to
+another custom unit, and custom display names are not translated.
+
+Whole-unit rounding is suggestion behavior only. Persisted manual scaling amounts
+remain non-negative decimals for all units.
 
 ### `StoreSection`
 
@@ -267,7 +273,8 @@ An immutable publication containing:
 - `ingredient_id` and optional `based_on_version_id`;
 - name;
 - canonical unit;
-- optional mass per canonical quantity for volume, count-like, or custom units;
+- required positive mass per canonical quantity for volume, count-like, or custom
+  units; mass units derive it from their built-in conversion;
 - optional estimated price per canonical quantity;
 - default store section snapshot/reference;
 - publication author and time;
@@ -283,7 +290,10 @@ semantically incompatible replacement requires a new logical `Ingredient`. This
 guarantees that recipe and shopping quantities for one ingredient can be
 aggregated.
 
-Unknown mass is represented by absent conversion metadata, never numeric zero.
+An ingredient version cannot be published unless its mass conversion is defined
+and positive. This makes prepared total and per-diner weight available for every
+valid recipe while keeping the conversion historically stable in the immutable
+ingredient version.
 The unresolved decision about price history is isolated here: shopping and archive
 snapshots always copy the effective numeric price and its capture time, whether the
 source ultimately remains `IngredientVersion` or becomes a separate price record.
@@ -304,15 +314,15 @@ An immutable publication containing:
 - scaling unit;
 - base scaling amount;
 - optional estimated diners per scaling unit;
-- discrete-scaling flag;
+- whole-unit-suggestion flag;
 - publication author, time, and optional display ordinal.
 
 `RecipeVersionTag` immutably records tag membership for that version.
 
-The MVP scaling model is identified as `single_linear`. Keeping an explicit model
+The MVP scaling model is identified as `single_variable`. Keeping an explicit model
 kind allows future versions to use named inputs and formulas without changing
-`Recipe` or `RecipeVersion` identity. Only the single linear model is valid in the
-MVP.
+`Recipe` or `RecipeVersion` identity. Only the single-variable model with
+proportional and fixed lines is valid in the MVP.
 
 ### `RecipeIngredientLine`
 
@@ -325,7 +335,14 @@ An immutable child of a recipe version containing:
 - normalized base quantity and optional preferred compatible display unit;
 - optional preparation or shopping note;
 - position within the recipe;
-- scaling-rule kind, `linear` in the MVP.
+- scaling behavior: `proportional` or `fixed`;
+- `include_in_portion_weight`, defaulting to true.
+
+For a proportional line, resolved quantity is base quantity multiplied by selected
+scale divided by recipe base scale. For a fixed line, resolved quantity remains its
+base quantity. The portion-weight flag affects only prepared total and per-diner
+weight. A nonzero excluded line still contributes to price, shopping generation,
+and dietary warnings.
 
 New conceptual lines receive new `line_key` values. Removing a line means omitting
 that key from the newer recipe version. A line key MUST NOT be reused for a
@@ -372,12 +389,26 @@ Core fields:
 - event meal role;
 - pinned `recipe_id` and `recipe_version_id`;
 - explicit final diner count;
+- attendance mode: `follows_event` or `manual`;
 - consumption percentage;
 - selected scale amount;
-- whether the selected amount has been manually changed from its suggestion;
+- scale mode: `suggested` or `manual`;
 - event-specific note;
 - position within its day and role;
 - creation attribution and optional retirement tombstone.
+
+New schedules start with attendance mode `follows_event` and scale mode `suggested`.
+Editing either value directly changes the corresponding mode to `manual`. A
+following diner count tracks event base attendance. A suggested scale tracks its
+derived suggestion. A manual scale survives later suggestion changes and exposes
+the changed suggestion plus an explicit action to adopt it again. Whole-unit
+rounding applies to suggestions only; a manual scale may be decimal.
+
+Updating to a catalog version with a compatible scaling unit preserves selected
+scale and scale mode. An incompatible scaling-unit change requires confirmation and
+resets both to the new version's suggestion, falling back to its base scale when no
+attendance-derived suggestion exists. Ingredient-override preservation is decided
+separately.
 
 The day and meal role must belong to the same event. The pinned recipe and version
 must belong to the event's organization, and the version must belong to that
@@ -395,6 +426,8 @@ Core fields:
 - target recipe `line_key` for `replace`, absent for `add`;
 - pinned ingredient and ingredient-version identity;
 - normalized quantity, including zero;
+- `include_in_portion_weight` for an `add`, defaulting to true; a `replace` inherits
+  the target catalog line's value;
 - optional local note and position;
 - creation or last-write attribution.
 
@@ -417,7 +450,8 @@ editable records:
 
 - suggested scaling amount;
 - resolved scheduled ingredient lines after scaling and overrides;
-- total and per-diner weight, including unknown-mass coverage;
+- prepared serving total and per-diner weight, using only lines included in portion
+  weight;
 - total and per-diner estimated price;
 - dietary warnings for every named exception and scheduled recipe;
 - catalog-update availability and transient update preview;
@@ -748,6 +782,8 @@ The relational schema SHOULD enforce at least:
   ingredient;
 - one contribution snapshot per generation revision and contribution;
 - non-negative quantities, amounts, prices, credits, attendance, and budget;
+- positive ingredient mass conversions for every published non-mass ingredient
+  version;
 - compatible unit dimensions at every normalized quantity boundary;
 - receipt totals and event budget sharing the event currency;
 - immutable version, generation-revision, and archive-snapshot rows rejecting
@@ -777,9 +813,6 @@ The following questions remain intentionally delegated to
 
 - whether estimated prices remain part of ingredient versions or become a separate
   versioned price stream;
-- the exact built-in/custom unit set and whether a recipe line can opt out of
-  linear scaling;
-- how a manually changed selected scale reacts to later attendance changes;
 - receipt-photo retention and garbage collection;
 - the maintained OAuth authorization-server component and its physical support
   tables.

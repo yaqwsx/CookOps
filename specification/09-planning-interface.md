@@ -38,8 +38,9 @@ A compact recipe card SHOULD expose:
 - recipe name and selected recipe version;
 - meal-role tag;
 - final diner count;
-- selected scaling amount and unit;
-- estimated total weight and weight per diner;
+- selected scaling amount and unit, plus a changed suggestion when the selected
+  value is manual;
+- estimated prepared serving weight and prepared weight per diner;
 - estimated total cost and cost per diner;
 - local-override indicator;
 - dietary warning indicator;
@@ -47,6 +48,10 @@ A compact recipe card SHOULD expose:
 
 The card MAY reveal secondary details progressively instead of displaying every
 field at once, especially on mobile.
+
+Editing the diner count or selected scaling amount directly changes that value to
+manual mode. The expanded card or edit dialog MUST provide an explicit action to
+resume following event attendance or the calculated scaling suggestion.
 
 Quick edits made from the planner, including ingredient quantity changes or added
 ingredients, create visually marked event-local overrides. Editing the underlying

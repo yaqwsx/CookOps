@@ -32,7 +32,8 @@ runtime or the initial MVP implementation.
 - Ruff formatting and linting;
 - Alembic migration checks from an empty database and from the previous supported
   schema;
-- property-oriented tests for scaling, unit conversion, money, and LWW comparison;
+- property-oriented tests for proportional and fixed scaling, unit and mass
+  conversion, money, and LWW comparison;
 - contract tests proving that HTTP and MCP adapters invoke the same application
   services and authorization policies;
 
@@ -54,7 +55,8 @@ Playwright tests run against a production PWA build and cover at least:
 - Google authentication through a test-only identity provider seam;
 - organization authorization and switching;
 - recipe creation, publication, version update, and local overrides;
-- scaling and weight/cost calculations;
+- scaling modes, attendance-following transitions, fixed lines, portion-weight
+  inclusion, and weight/cost calculations;
 - desktop drag-and-drop and mobile non-drag movement;
 - shopping-list generation and contribution completion;
 - shopping fulfilment-credit calculations, partial contributions after refresh,

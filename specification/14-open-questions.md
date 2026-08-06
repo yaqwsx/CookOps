@@ -6,17 +6,6 @@ Status: Living document
 
 - What merge UI reconciles a recipe with a newer or retired ingredient version?
 
-## Scaling and quantities
-
-- Which count-like and culinary units are built in before organization-specific
-  units are added?
-- Which ingredient-specific conversions are needed beyond direct mass and volume
-  SI conversion?
-- Can individual ingredient lines opt out of scaling, or is a manual override the
-  only MVP mechanism?
-- How are suggested scaling amounts recalculated after a user has manually changed
-  them and attendance subsequently changes?
-
 ## Dietary requirements
 
 - What initial ingredient labels and dietary requirement presets are seeded for a

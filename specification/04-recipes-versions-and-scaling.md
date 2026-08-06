@@ -36,11 +36,21 @@ A scheduled recipe instance references a specific catalog recipe version and add
 event context:
 
 - day and meal-role tag;
-- explicit final diner count initialized from event base attendance;
+- final diner count, initially following event base attendance;
 - consumption percentage;
 - selected scaling amount;
 - local ingredient overrides;
 - event-specific notes.
+
+The final diner count has one of two modes:
+
+- `follows_event`: changes to event base attendance automatically update the
+  scheduled instance; or
+- `manual`: the scheduled instance keeps an explicitly entered value.
+
+A newly scheduled recipe starts in `follows_event` mode. Directly editing its diner
+count changes it to `manual`; an explicit reset action returns it to
+`follows_event`.
 
 When editing ingredients, the user MUST explicitly choose between:
 
@@ -61,7 +71,10 @@ A local ingredient override is one of:
 - adding an ingredient that does not exist in the referenced recipe version.
 
 An added override ingredient MUST still reference an ingredient from the
-organization catalog. Free-text ingredients are not allowed.
+organization catalog. Free-text ingredients are not allowed. It defaults to being
+included in prepared portion weight, and the user MAY change that flag for the
+added line. A quantity replacement inherits the catalog line's portion-weight
+flag; changing that catalog property requires publishing a recipe version.
 
 Overrides MUST be visually distinguishable from catalog-derived ingredient rows.
 A dedicated color treatment is required, subject to later visual design.
@@ -85,6 +98,14 @@ When applying the update while preserving overrides:
 
 The user chooses once between preserving all local overrides and discarding all
 local overrides. Per-override merge decisions are not required in the MVP.
+
+If the new catalog version retains a compatible scaling unit, the scheduled
+instance preserves its selected scaling amount and `suggested` or `manual` mode.
+If the scaling unit changes incompatibly, the update preview MUST call this out and
+require confirmation; applying the update resets the selected amount to the new
+version's current suggestion, or to its base scaling amount when no attendance-based
+suggestion is available. The existing preserve-or-discard choice for ingredient
+overrides remains a separate decision.
 
 ## Recipe editor and discovery
 
@@ -116,7 +137,7 @@ The recipe defines:
   organization-defined unit;
 - the base scaling amount represented by the stored ingredient quantities;
 - optionally, an estimated number of diners served by one scaling unit;
-- whether the scaling unit is discrete and therefore rounded up for suggestions.
+- whether suggestions for the scaling unit are rounded upward to whole units.
 
 When a recipe is scheduled, the application calculates a suggested scaling amount:
 
@@ -125,16 +146,35 @@ When a recipe is scheduled, the application calculates a suggested scaling amoun
 2. Apply its consumption percentage.
 3. Convert the effective attendance through the recipe's estimated diners per
    scaling unit when applicable.
-4. Round upward for a discrete scaling unit.
+4. Round upward to a whole number when the recipe requests whole-unit suggestions.
 
-The calculated value is only a default. The user MUST be able to manually select
-the final scaling amount for that specific scheduled instance.
+The selected scaling amount has one of two modes:
 
-Resolved ingredient quantity is calculated linearly:
+- `suggested`: the selected value follows the current calculated suggestion; or
+- `manual`: an explicitly entered selected value is preserved.
 
-`resolved quantity = base ingredient quantity * selected scaling amount / base scaling amount`
+A newly scheduled recipe starts in `suggested` mode. Directly editing its selected
+scaling amount changes it to `manual`. If attendance, consumption percentage, or
+recipe capacity subsequently changes, a manual value remains unchanged while the
+new suggestion is shown beside it with a "Use suggestion" action. Using that action
+returns the instance to `suggested` mode.
 
-The user MAY override any resolved ingredient quantity afterwards.
+Whole-unit rounding applies only to automatic suggestions. A manual scaling amount
+MAY be decimal for every unit, including tray, pot, batch, loaf, and piece. Scaling
+amounts MUST be non-negative.
+
+Each recipe ingredient line independently declares one of two MVP scaling
+behaviors:
+
+- `proportional` (the default), calculated as:
+
+  `resolved quantity = base ingredient quantity * selected scaling amount / base scaling amount`
+
+- `fixed`, for which the resolved quantity equals the base ingredient quantity
+  regardless of the selected scaling amount.
+
+The user MAY override either kind of resolved ingredient quantity afterwards,
+including setting it to zero.
 
 ### Examples
 
@@ -143,10 +183,35 @@ The user MAY override any resolved ingredient quantity afterwards.
   for 40 diners at an 80% consumption factor. The user may replace that suggestion.
 - A recipe defined as one pot may suggest three pots while still displaying the
   estimated diner capacity for context.
+- Frying oil may use `fixed` scaling while the remaining soup or pastry ingredients
+  use proportional scaling in the same recipe.
+
+## Scaling units
+
+The MVP provides these built-in units:
+
+- mass: gram (`g`) and kilogram (`kg`);
+- volume: milliliter (`ml`), centiliter (`cl`), deciliter (`dl`), and liter (`l`);
+- standardized culinary volume: teaspoon (`tsp`, 5 ml) and tablespoon (`tbsp`,
+  15 ml);
+- count-like units: piece, package, and bunch;
+- additional recipe-scaling units: person, tray, batch, pot, and loaf.
+
+Piece and liter can be used as recipe-scaling units as well as in their applicable
+quantity contexts. Organizations MAY add custom named units. A custom name is
+organization-authored content and is displayed as entered rather than translated.
+Changing a unit's conversion or semantic dimension after it has been used is not
+allowed.
+
+Person has an implicit capacity of one diner per unit. Other scaling units use the
+recipe version's optional estimated diners per scaling unit. When no usable capacity
+is defined, the base scaling amount is the initial suggestion and attendance cannot
+produce a new suggestion.
 
 ## Future formula compatibility
 
-The MVP exposes only one scaling variable and linear ingredient calculations.
+The MVP exposes only one scaling variable and proportional or fixed ingredient
+calculations.
 The domain and persistence model SHOULD allow a future recipe version to declare
 multiple named inputs and formulas without changing the identity or versioning
 semantics of recipes.

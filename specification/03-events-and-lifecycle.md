@@ -38,8 +38,10 @@ Status: Draft
 
 ## Scheduled attendance
 
-- A scheduled recipe instance stores an explicit final diner count.
-- The diner count is initially copied from the event base attendance.
+- A scheduled recipe instance stores a final diner count and whether it currently
+  follows event base attendance or is a manual value.
+- The diner count is initialized from event base attendance and continues to follow
+  it until a member edits the scheduled value directly.
 - Members edit the final number directly rather than entering only a relative
   adjustment.
 - The UI SHOULD preserve and display the relationship to the event base, for
