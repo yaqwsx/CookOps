@@ -22,8 +22,6 @@ Status: Living document
 
 ## Costs
 
-- Are estimated-price changes normal ingredient versions, or a separate price
-  stream that an active event can refresh independently?
 - How long are unreferenced or soft-deleted receipt-photo objects retained?
 
 ## Architecture and operations

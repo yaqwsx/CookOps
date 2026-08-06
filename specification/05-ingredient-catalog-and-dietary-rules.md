@@ -97,11 +97,27 @@ at the point of use.
 
 ## Price estimates
 
-- An ingredient version MAY define an estimated price per canonical unit.
-- Prices are advisory and are used for recipe, event, and shopping estimates.
-- Package rounding and exact store prices are outside the MVP.
-- Whether price changes use ordinary ingredient versions or a separately refreshable
-  price mechanism remains undecided.
+- An ingredient MAY have one current catalog price estimate in the organization's
+  default currency. Prices per store are outside the MVP.
+- A price estimate specifies an amount for a positive quantity in a unit compatible
+  with the logical ingredient's quantity semantics, for example `35 CZK / 1 kg`.
+- Publishing a changed estimate appends an immutable price-estimate record and
+  advances the ingredient's current-price pointer.
+- Price estimates are separate from immutable ingredient versions. Publishing one
+  MUST NOT create an ingredient or recipe version, change a recipe's current-version
+  pointer, or produce a recipe-update notification.
+- Recipe-catalog previews recalculate automatically from current ingredient prices;
+  there is no price-update workflow for a catalog recipe itself.
+- Prices are advisory and package rounding and exact store prices are outside the
+  MVP.
+
+An active event does not read mutable catalog prices directly for its cost
+projection. It captures an event-specific price snapshot from the selected current
+catalog estimate the first time an ingredient becomes relevant and retains that
+value until an explicit event-wide price refresh. An offline first use MAY select
+the immutable estimate identified by the cached current-price pointer. A missing
+catalog price is captured explicitly as unavailable so a price added later does not
+silently change the event estimate.
 
 ## Store sections
 

@@ -57,6 +57,8 @@ Playwright tests run against a production PWA build and cover at least:
 - recipe creation, publication, version update, and local overrides;
 - scaling modes, attendance-following transitions, fixed lines, portion-weight
   inclusion, and weight/cost calculations;
+- catalog price publication without recipe-update signaling, atomic event price
+  refresh, missing-price behavior, and immutable archived prices;
 - desktop drag-and-drop and mobile non-drag movement;
 - shopping-list generation and contribution completion;
 - shopping fulfilment-credit calculations, partial contributions after refresh,
@@ -66,6 +68,7 @@ Playwright tests run against a production PWA build and cover at least:
 - offline edits, reload while offline, reconnect, and convergence;
 - last-write-wins ordering and tombstone recovery;
 - offline receipt creation and deferred photo upload;
+- queued offline event price refresh resolving against server-current estimates;
 - Czech default UI and English switching;
 - event archival, reactivation, and duplication.
 

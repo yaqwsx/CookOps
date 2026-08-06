@@ -27,9 +27,9 @@ operation. It is not necessarily one database table.
 | Aggregate root | Owns | Important atomic operations |
 | --- | --- | --- |
 | `Organization` | membership and organization configuration | invite, change configuration, retire |
-| `Ingredient` | immutable ingredient versions | publish version, retire, restore |
+| `Ingredient` | immutable ingredient versions and price estimates | publish version, publish price, retire, restore |
 | `Recipe` | immutable recipe versions and version lines | publish version, retire, restore |
-| `Event` | days, event meal roles, scheduled recipes, overrides, dietary exceptions | schedule, move, update version, archive |
+| `Event` | days, meal roles, scheduled recipes, overrides, dietary exceptions, event price snapshots | schedule, move, update version, refresh prices, archive |
 | `ShoppingList` | generated revisions, ingredient rows, contributions, ad-hoc rows | generate, refresh, fulfil aggregate |
 | `Receipt` | receipt metadata and photo attachments | create, edit, attach, retire, restore |
 | `OAuthGrant` | consent and token family | authorize client, refresh, revoke |
@@ -102,11 +102,16 @@ erDiagram
     ORGANIZATION ||--o{ RECIPE : owns
     ORGANIZATION ||--o{ EVENT : owns
     INGREDIENT ||--|{ INGREDIENT_VERSION : publishes
+    INGREDIENT ||--o{ INGREDIENT_PRICE_ESTIMATE : prices
     RECIPE ||--|{ RECIPE_VERSION : publishes
     RECIPE_VERSION ||--o{ RECIPE_INGREDIENT_LINE : contains
     INGREDIENT_VERSION ||--o{ RECIPE_INGREDIENT_LINE : referenced_by
     EVENT ||--|{ EVENT_DAY : contains
     EVENT ||--o{ SCHEDULED_RECIPE : schedules
+    EVENT ||--o{ EVENT_INGREDIENT_PRICE : snapshots
+    INGREDIENT ||--o{ EVENT_INGREDIENT_PRICE : priced_in
+    EVENT_INGREDIENT_PRICE ||--|{ EVENT_INGREDIENT_PRICE_SNAPSHOT : revises
+    INGREDIENT_PRICE_ESTIMATE ||--o{ EVENT_INGREDIENT_PRICE_SNAPSHOT : captured_by
     RECIPE_VERSION ||--o{ SCHEDULED_RECIPE : pinned_by
     EVENT ||--o{ SHOPPING_LIST : owns
     EVENT ||--o{ RECEIPT : owns
@@ -259,12 +264,14 @@ Core fields:
 
 - `organization_id`;
 - `current_version_id`;
+- optional `current_price_estimate_id`;
 - lifecycle and creation attribution;
 - optional copy provenance for administrative cross-organization copies.
 
 `current_version_id` must reference a version belonging to the same ingredient.
-Concurrent published versions remain valid even when only one wins the mutable
-current-version pointer.
+The optional current-price pointer follows the same ownership rule. Concurrent
+published versions or estimates remain valid even when only one wins its mutable
+current pointer.
 
 ### `IngredientVersion`
 
@@ -275,7 +282,6 @@ An immutable publication containing:
 - canonical unit;
 - required positive mass per canonical quantity for volume, count-like, or custom
   units; mass units derive it from their built-in conversion;
-- optional estimated price per canonical quantity;
 - default store section snapshot/reference;
 - publication author and time;
 - optional server display ordinal.
@@ -294,9 +300,30 @@ An ingredient version cannot be published unless its mass conversion is defined
 and positive. This makes prepared total and per-diner weight available for every
 valid recipe while keeping the conversion historically stable in the immutable
 ingredient version.
-The unresolved decision about price history is isolated here: shopping and archive
-snapshots always copy the effective numeric price and its capture time, whether the
-source ultimately remains `IngredientVersion` or becomes a separate price record.
+
+### `IngredientPriceEstimate`
+
+An immutable publication in a logical ingredient's independent price stream.
+
+Core fields:
+
+- `ingredient_id` and optional `based_on_estimate_id`;
+- state: `available` or `unavailable`;
+- for an available estimate, non-negative price amount, positive priced quantity,
+  unit compatible with the ingredient's quantity semantics, and ISO 4217 currency;
+- publication author and server time;
+- optional server display ordinal.
+
+The currency is the organization's default currency at publication. The MVP has no
+store dimension and performs no foreign-exchange conversion. Publishing an
+unavailable estimate is the explicit way to clear the current catalog price while
+retaining history.
+
+Publishing a price estimate advances `Ingredient.current_price_estimate_id` but
+does not create an `IngredientVersion` or `RecipeVersion`, move any recipe pointer,
+or participate in recipe-update availability. Cost is calculated by converting a
+resolved ingredient quantity into the estimate's compatible priced unit and
+multiplying it by `price amount / priced quantity`.
 
 ## Recipe catalog
 
@@ -443,6 +470,43 @@ Represents one named exception rather than a participant roster. It contains eve
 required name, optional free-form note, lifecycle metadata, and zero or more
 `EventDietaryRequirement` references to organization requirement definitions.
 
+### `EventIngredientPrice`
+
+A stable event-owned identity unique by event and logical ingredient. It contains
+`current_snapshot_id` and creation attribution. It is created when the ingredient
+first has a nonzero resolved use in the event and remains retained if that use is
+later removed, so re-adding the ingredient does not silently adopt a newer price.
+
+### `EventIngredientPriceSnapshot`
+
+An immutable capture belonging to one `EventIngredientPrice`.
+
+Core fields:
+
+- optional previous snapshot;
+- optional source `IngredientPriceEstimate`;
+- state: `available` or `unavailable`;
+- copied price amount, priced quantity, compatible unit, and event currency when
+  available;
+- capture actor, effective client action time, server receive time, and originating
+  mutation.
+
+An unavailable snapshot represents no catalog estimate, an explicitly unavailable
+current estimate, or a catalog price whose currency does not match the event. It is
+persisted rather than inferred from the live catalog.
+
+First use may capture the immutable estimate referenced by an offline client's
+cached current-price pointer. This does not create a conflict with a later catalog
+price publication because existing event snapshots never follow that pointer
+implicitly.
+
+The event command `update_price_estimates` inserts one new snapshot for every
+existing `EventIngredientPrice` and every currently used ingredient not yet mapped,
+then atomically advances all affected current-snapshot pointers. The command reads
+the server-current catalog price estimates when it executes. An offline client may
+queue the intent but cannot choose cached values and claim that the refresh is
+current.
+
 ### Derived event projections
 
 The following are calculated from authoritative entities and are not independently
@@ -452,13 +516,14 @@ editable records:
 - resolved scheduled ingredient lines after scaling and overrides;
 - prepared serving total and per-diner weight, using only lines included in portion
   weight;
-- total and per-diner estimated price;
+- total and per-diner estimated price from current event ingredient-price
+  snapshots, plus the identities of any nonzero ingredients missing a usable price;
 - dietary warnings for every named exception and scheduled recipe;
 - catalog-update availability and transient update preview;
 - event cost summary.
 
 A quantity overridden to zero is excluded from weight, cost, shopping generation,
-and dietary-warning inputs.
+missing-price warnings, and dietary-warning inputs.
 
 ## Shopping model
 
@@ -512,7 +577,8 @@ Core fields:
   target was last set, for detecting and explaining later automatic changes;
 - optional store-section override and snapshotted default section;
 - aggregate-level fulfilment credit;
-- effective estimated unit-price snapshot and capture time where applicable;
+- effective estimated unit-price snapshot copied from the event and its capture
+  time where applicable;
 - creation and mutable-field attribution.
 
 Generated quantity, automatic target, effective target, total credit, remaining
@@ -551,7 +617,7 @@ Core fields:
 - pinned ingredient-version identity and captured ingredient name;
 - captured recipe name, day, meal role, scaling context, line notes, and relevant
   source notes;
-- captured estimated unit price and expected contribution cost.
+- captured event estimated unit price and expected contribution cost.
 
 Each generation revision contains a snapshot for every contribution identity known
 to the list, including retired contributions required to explain retained credit.
@@ -638,7 +704,7 @@ The payload copies values rather than relying only on live references. It includ
 
 - event, day, role, schedule, ordering, notes, attendance, budget, and currency;
 - pinned recipe and ingredient version content, scaling, resolved overrides, tags,
-  unit labels, prices, weights, and warning inputs/results;
+  unit labels, event price snapshots, weights, and warning inputs/results;
 - named dietary exceptions and resolved requirement/label names;
 - every shopping list's current generated revision, retained contribution details,
   operational row state, ad-hoc items, and fulfilment attribution;
@@ -771,6 +837,8 @@ The relational schema SHOULD enforce at least:
 
 - parent and child organization equality;
 - current-version pointers belonging to their logical root;
+- current-price-estimate and event-price-snapshot pointers belonging to their
+  logical root;
 - event day and meal role belonging to the scheduled recipe's event;
 - recipe line ingredient versions belonging to the recipe organization;
 - event recipe versions belonging to the event organization;
@@ -784,6 +852,9 @@ The relational schema SHOULD enforce at least:
 - non-negative quantities, amounts, prices, credits, attendance, and budget;
 - positive ingredient mass conversions for every published non-mass ingredient
   version;
+- non-negative amounts and positive priced quantities for available ingredient
+  price estimates;
+- at most one event ingredient-price identity per event and logical ingredient;
 - compatible unit dimensions at every normalized quantity boundary;
 - receipt totals and event budget sharing the event currency;
 - immutable version, generation-revision, and archive-snapshot rows rejecting
@@ -811,8 +882,6 @@ responsibilities even when supporting constraints also exist in PostgreSQL.
 The following questions remain intentionally delegated to
 `14-open-questions.md`:
 
-- whether estimated prices remain part of ingredient versions or become a separate
-  versioned price stream;
 - receipt-photo retention and garbage collection;
 - the maintained OAuth authorization-server component and its physical support
   tables.

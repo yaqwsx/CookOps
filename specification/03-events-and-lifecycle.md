@@ -56,12 +56,17 @@ Catalog changes MUST NOT silently modify an existing scheduled recipe instance.
 Active events SHOULD show when a newer catalog recipe version exists and provide
 an explicit update action.
 
+Estimated prices are independent of recipe versions. An active event keeps its own
+ingredient-price snapshots and changes them only when a new ingredient first enters
+the event or a member explicitly requests "Update price estimates" for the event.
+Catalog price changes MUST NOT produce recipe-update notifications.
+
 ## Archived events
 
 - Archiving MUST materialize a self-contained historical representation of the
   event.
 - The materialized record MUST include resolved recipe versions, local overrides,
-  ingredients, relevant estimated prices, schedule, shopping lists and their
+  ingredients, event ingredient-price snapshots, schedule, shopping lists and their
   completion state, budget, and receipts.
 - An archived event is read-only during normal use.
 - An authorized administrator MUST be able to reactivate an archived event.

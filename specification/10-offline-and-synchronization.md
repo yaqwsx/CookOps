@@ -43,6 +43,12 @@ Google authentication, invitations, membership changes, and other identity or
 access-control administration require connectivity. Ordinary work with previously
 cached application data remains available offline.
 
+An event price-refresh action issued offline is retained as a queued intent. On
+reconnection the server resolves it against the then-current catalog price
+estimates and applies the event snapshots atomically. The client MUST show the
+refresh as pending and MUST NOT claim that cached prices are current while the
+intent remains unsynchronized.
+
 A previously verified organization member MAY work offline for at most seven days
 after the last successful online authorization check. After that interval, the
 application requires connectivity before organization data can be accessed or

@@ -16,6 +16,8 @@ Status: Draft
 - The list is materialized when creation is confirmed, before the member enters
   supplies that are already available.
 - Subsequent recipe or event changes do not automatically change the list.
+- Estimated prices are copied from the event's current ingredient-price snapshots.
+  Later event or catalog price changes do not mutate the shopping list.
 
 ## Grouping and information hierarchy
 
@@ -86,6 +88,10 @@ not a replacement for `G`. Changing `A` while a manual target exists updates
 
 Expected shopping cost is based on `T`, not `R`, so completing a purchase does not
 make its expected cost disappear.
+
+Refreshing a shopping list captures the event price snapshots current at that
+refresh. Updating event price estimates alone does not implicitly refresh any
+existing shopping list.
 
 ## Fulfilment
 
