@@ -32,13 +32,3 @@ Status: Living document
 - Which maintained OAuth authorization-server library or local component provides
   the required OAuth 2.1, PKCE, metadata, CIMD, DCR, refresh, and revocation support
   with the least operational weight?
-
-## UX and operations
-
-- What summary information belongs above the vertical planner and on a separate
-  event dashboard, if one is needed?
-- How much detail is visible on a scheduled recipe card before expansion?
-- Is the recipe editor a modal dialog, side panel, or dedicated route on narrow
-  screens?
-- Which notifications, if any, are required for catalog updates and shopping-list
-  changes?

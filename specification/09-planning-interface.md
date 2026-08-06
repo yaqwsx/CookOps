@@ -35,19 +35,19 @@ The event planner is the primary workspace for composing and rearranging the men
 
 A compact recipe card SHOULD expose:
 
-- recipe name and selected recipe version;
+- recipe name;
 - meal-role tag;
 - final diner count;
 - selected scaling amount and unit, plus a changed suggestion when the selected
   value is manual;
-- estimated prepared serving weight and prepared weight per diner;
-- estimated total cost and cost per diner;
 - local-override indicator;
 - dietary warning indicator;
+- missing-price indicator;
 - catalog-update availability when applicable.
 
-The card MAY reveal secondary details progressively instead of displaying every
-field at once, especially on mobile.
+The selected recipe version, estimated prepared weight, estimated cost, per-diner
+values, description, ingredients, and warning details are secondary information
+revealed after expansion or in the scheduled-instance detail surface.
 
 Editing the diner count or selected scaling amount directly changes that value to
 manual mode. The expanded card or edit dialog MUST provide an explicit action to
@@ -62,3 +62,7 @@ scheduled instance inline.
 
 Catalog updates are handled on individual scheduled recipe instances. The MVP does
 not require a bulk catalog-update screen.
+
+The event planner is the default event route and uses the event summary strip and
+workspace navigation defined in `19-information-architecture.md`. The MVP does not
+add a separate event dashboard before the planner.

@@ -50,7 +50,9 @@ SQLite for database-specific behavior.
 - Vitest and React Testing Library for logic and component tests;
 - linting and formatting through one checked-in tool configuration;
 - IndexedDB migration tests containing pending outbox mutations;
-- accessibility checks for primary forms, dialogs, and drag-and-drop alternatives.
+- accessibility checks for primary forms, dialogs, and drag-and-drop alternatives;
+- responsive route and navigation tests for organization switching, event sections,
+  desktop overlay/mobile full-screen recipe editing, and persisted sync state.
 
 ## End-to-end testing
 
@@ -69,6 +71,8 @@ Playwright tests run against a production PWA build and cover at least:
 - dietary-tag intersection across catalog and local ingredient lines, explicit
   vegetarian/vegan separation, zero-quantity exclusion, and retired-tag retention;
 - desktop drag-and-drop and mobile non-drag movement;
+- direct event-to-planner routing, responsive event-section navigation, collapsed
+  recipe-card hierarchy, and recipe-editor route behavior;
 - shopping-list generation and contribution completion;
 - shopping fulfilment-credit calculations, partial contributions after refresh,
   aggregate check and uncheck, retained retired-source credit, and zero-target
