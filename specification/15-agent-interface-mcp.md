@@ -148,9 +148,12 @@ on a particular model's sampling capability.
 - Bulk tools have explicit bounded limits and report an itemized outcome; they do
   not partially succeed silently.
 - Soft deletion remains the default catalog and receipt removal behavior.
-- High-impact actions such as event archival, event reactivation, cross-organization
-  copying, membership changes, or organization retirement SHOULD require an
-  explicit `confirm` input even when the OAuth grant has authority.
+- Event archival or reactivation, cross-organization catalog copying, member
+  removal, organization-administrator assignment or revocation, and organization
+  retirement MUST require an explicit `confirm: true` input even when the OAuth
+  grant has authority.
+- Event duplication and reversible retirement of recipes, ingredients, tags,
+  receipts, and shopping items do not require MCP confirmation.
 - No generic arbitrary SQL, filesystem access, unrestricted HTTP fetch, or raw
   record patch tool is exposed.
 

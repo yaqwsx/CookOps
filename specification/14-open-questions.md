@@ -34,8 +34,6 @@ Status: Living document
 - Which maintained OAuth authorization-server library or local component provides
   the required OAuth 2.1, PKCE, metadata, CIMD, DCR, refresh, and revocation support
   with the least operational weight?
-- Which high-impact operations require an explicit confirmation argument, and
-  how should clients present that confirmation to users?
 
 ## UX and operations
 

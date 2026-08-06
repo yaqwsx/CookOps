@@ -28,6 +28,8 @@ not available offline.
 ## Synchronization
 
 - Local mutations are queued while connectivity is unavailable.
+- Ordinary web mutations use the same local outbox while online; connectivity
+  changes delivery timing, not the component write path.
 - Queued mutations are synchronized automatically and without confirmation after
   connectivity returns.
 - The UI MUST distinguish at least synchronized, pending, and failed changes.
@@ -38,6 +40,12 @@ not available offline.
   records can be merged without relying on a server round trip.
 - Deletions and retirements MUST synchronize through durable tombstone or lifecycle
   operations rather than by erasing local records immediately.
+
+A sync push may transport multiple ordered mutations, but it is not one database
+transaction. Each mutation is independently authorized and committed; one rejected
+mutation does not roll back successful siblings or prevent later mutations from
+being evaluated. A domain operation that requires atomicity is represented as one
+bounded command.
 
 Google authentication, invitations, membership changes, and other identity or
 access-control administration require connectivity. Ordinary work with previously

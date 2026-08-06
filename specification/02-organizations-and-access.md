@@ -78,11 +78,11 @@ records. A member cannot create an event or manage membership.
 An organization administrator has all member capabilities and can additionally:
 
 - create events;
+- archive, reactivate, and duplicate events;
 - invite members by their Google account email address;
-- remove organization members;
+- remove ordinary organization members;
 - copy recipes and ingredients into an organization when also authorized for the
-  source organization;
-- reactivate and duplicate archived events.
+  source organization.
 
 An organization administrator cannot grant or revoke the `organization_admin` role,
 remove their own administrative role, or leave the organization in a way that

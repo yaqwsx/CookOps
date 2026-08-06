@@ -24,6 +24,7 @@ language is Czech, with English provided as the second built-in locale.
 14. [Open questions](14-open-questions.md)
 15. [Agent interface and MCP](15-agent-interface-mcp.md)
 16. [Domain model](16-domain-model.md)
+17. [Application services and API contracts](17-application-services-and-api.md)
 
 ## Specification conventions
 

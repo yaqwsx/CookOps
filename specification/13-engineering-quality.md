@@ -36,6 +36,8 @@ runtime or the initial MVP implementation.
   conversion, money, and LWW comparison;
 - contract tests proving that HTTP and MCP adapters invoke the same application
   services and authorization policies;
+- command-batch tests proving per-command transactions, ordered evaluation, and
+  isolation of rejected siblings;
 
 Backend integration tests run against PostgreSQL rather than silently substituting
 SQLite for database-specific behavior.
@@ -95,6 +97,7 @@ directly, and cover at least:
 - organization isolation for every tool and resource family;
 - parity of member, organization-administrator, and system-administrator role
   checks with the web API;
+- exact high-impact confirmation requirements from the application contract;
 - pagination and stable identifiers;
 - idempotent retries of mutations;
 - validation and safe error responses;

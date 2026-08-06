@@ -124,15 +124,20 @@ product.
 
 ### Local write path
 
-1. The user action creates a stable UUID mutation identity in the browser.
+1. The user action creates a stable UUID mutation identity in the browser, whether
+   the browser is currently online or offline.
 2. One IndexedDB transaction applies the optimistic local change and appends a
    granular mutation to the outbox.
 3. React observes the new local state immediately through Dexie live queries.
 4. When online, the sync worker pushes an ordered mutation batch.
 5. The server authenticates and authorizes each mutation, deduplicates it by
-   mutation identity, applies LWW field rules, and records a server change sequence
-   in one PostgreSQL transaction.
+   mutation identity, applies LWW field rules, and records its server change
+   sequence in one PostgreSQL transaction per mutation.
 6. The client applies the canonical response and removes acknowledged mutations.
+
+A pushed batch is not atomic. Mutations are evaluated in order and an individual
+failure does not roll back successful siblings. Multi-record workflows that require
+atomicity are expressed as one application command.
 
 ### Pull path
 
