@@ -13,6 +13,22 @@ jobs:
     name: Backend
     runs-on: ubuntu-24.04
     timeout-minutes: 10
+    services:
+      postgres:
+        image: postgres@sha256:32ca0af8e77bfb8c6610c488e4691f83f972a3e9e64d3b02facf3ab111ad5500
+        env:
+          POSTGRES_DB: cookops
+          POSTGRES_PASSWORD: cookops
+          POSTGRES_USER: cookops
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U cookops -d cookops"
+          --health-interval 2s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      TEST_DATABASE_URL: postgresql+psycopg://cookops:cookops@127.0.0.1:5432/cookops
     defaults:
       run:
         working-directory: backend

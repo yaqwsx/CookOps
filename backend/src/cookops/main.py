@@ -1,10 +1,23 @@
-from collections.abc import Awaitable, Callable
-from typing import Literal
+from collections.abc import AsyncIterator, Awaitable, Callable
+from contextlib import asynccontextmanager
+from typing import Literal, Protocol
 
 from fastapi import APIRouter, FastAPI, HTTPException, Request, status
 from pydantic import BaseModel
 
 from cookops.config import Settings
+from cookops.database import create_database_runtime
+
+ReadinessProbe = Callable[[], Awaitable[bool]]
+
+
+class ManagedDatabaseRuntime(Protocol):
+    async def is_ready(self) -> bool: ...
+
+    async def close(self) -> None: ...
+
+
+DatabaseRuntimeFactory = Callable[[str], ManagedDatabaseRuntime]
 
 
 class HealthResponse(BaseModel):
@@ -35,12 +48,28 @@ async def not_ready() -> bool:
 
 def create_app(
     settings: Settings | None = None,
-    readiness_probe: Callable[[], Awaitable[bool]] = not_ready,
+    readiness_probe: ReadinessProbe | None = None,
+    database_runtime_factory: DatabaseRuntimeFactory = create_database_runtime,
 ) -> FastAPI:
     app_settings = settings or Settings()
-    application = FastAPI(title="CookOps API")
+
+    @asynccontextmanager
+    async def lifespan(application: FastAPI) -> AsyncIterator[None]:
+        if readiness_probe is not None:
+            yield
+            return
+
+        runtime = database_runtime_factory(str(app_settings.database_url))
+        application.state.database = runtime
+        application.state.readiness_probe = runtime.is_ready
+        try:
+            yield
+        finally:
+            await runtime.close()
+
+    application = FastAPI(title="CookOps API", lifespan=lifespan)
     application.state.settings = app_settings
-    application.state.readiness_probe = readiness_probe
+    application.state.readiness_probe = readiness_probe or not_ready
     application.include_router(health_router)
     return application
 

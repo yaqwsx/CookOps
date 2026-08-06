@@ -54,3 +54,35 @@ async def test_readiness_endpoint_is_safe_by_default() -> None:
 
     assert response.status_code == httpx.codes.SERVICE_UNAVAILABLE
     assert response.json() == {"detail": "application is not ready"}
+
+
+@pytest.mark.anyio
+async def test_database_runtime_is_created_and_closed_with_application_lifespan() -> None:
+    class FakeRuntime:
+        closed = False
+
+        async def is_ready(self) -> bool:
+            return True
+
+        async def close(self) -> None:
+            self.closed = True
+
+    runtime = FakeRuntime()
+    received_urls: list[str] = []
+
+    def create_runtime(database_url: str) -> FakeRuntime:
+        received_urls.append(database_url)
+        return runtime
+
+    app = create_app(
+        Settings(environment=Environment.TEST, human_auth_provider=HumanAuthProvider.DUMMY),
+        database_runtime_factory=create_runtime,
+    )
+    assert received_urls == []
+
+    async with app.router.lifespan_context(app):
+        assert received_urls == [str(app.state.settings.database_url)]
+        assert await app.state.readiness_probe() is True
+        assert runtime.closed is False
+
+    assert runtime.closed is True
