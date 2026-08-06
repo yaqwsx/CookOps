@@ -24,12 +24,6 @@ Status: Living document
 - What is the final iconography and compact/mobile presentation of dietary warning
   details?
 
-## Shopping
-
-- What is the precise state machine for aggregate and contribution fulfilment?
-- How are manual quantity changes represented separately from generated amounts?
-- How should refresh conflicts be presented and resolved?
-
 ## Offline synchronization
 
 - What device-clock skew threshold triggers a warning, and can a severely incorrect

@@ -57,6 +57,9 @@ Playwright tests run against a production PWA build and cover at least:
 - scaling and weight/cost calculations;
 - desktop drag-and-drop and mobile non-drag movement;
 - shopping-list generation and contribution completion;
+- shopping fulfilment-credit calculations, partial contributions after refresh,
+  aggregate check and uncheck, retained retired-source credit, and zero-target
+  filtering;
 - two browser contexts observing real-time shopping changes;
 - offline edits, reload while offline, reconnect, and convergence;
 - last-write-wins ordering and tombstone recovery;

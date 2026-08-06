@@ -64,8 +64,8 @@ the user action:
   identity, and stable mutation identity;
 - for concurrent writes to the same mutable field, the write with the later
   wall-clock timestamp wins;
-- the same rule applies to checkbox state, quantities, units, notes, manual shopping
-  targets, recipe-instance placement, and other scalar fields;
+- the same rule applies to fulfilment credit, quantities, units, notes, manual
+  shopping targets, recipe-instance placement, and other scalar fields;
 - equal timestamps are resolved through a stable deterministic tie-breaker, such as
   mutation identity;
 - clients SHOULD detect and visibly warn about substantial device-clock skew when
@@ -86,5 +86,9 @@ as the currently recommended version. A later version can use either retained
 version as its parent or basis.
 
 The same rules apply when synchronizing shopping-list edits made concurrently with
-a manual list refresh. Refresh MUST NOT erase ad-hoc records because they have
-independent stable identities.
+a manual list refresh. Refresh changes generated contribution fields and source
+membership; checkbox actions change fulfilment-credit fields. These independent
+fields merge without one erasing the other. Refresh MUST NOT erase ad-hoc records
+because they have independent stable identities. An aggregate checkbox action
+contains one timestamped credit mutation for each affected contribution so a later
+individual checkbox action wins for that contribution.
