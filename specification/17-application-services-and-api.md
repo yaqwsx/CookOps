@@ -316,7 +316,12 @@ preserving a stable CookOps error code. Initial codes include:
 - `stale_precondition` and `idempotency_mismatch`;
 - `archived_event`, `retired_reference`, and `currency_mismatch`;
 - `offline_not_supported`;
+- `bootstrap_required` and `client_time_too_far_ahead` where applicable to
+  synchronization;
 - `rate_limited` and `temporary_failure`.
+
+Synchronization responses may additionally carry a non-error
+`clock_skew_warning`; it does not change an otherwise accepted command outcome.
 
 Server messages are concise diagnostics, not localized UI copy. The Czech and
 English clients localize known error codes and may show a safe fallback diagnostic.

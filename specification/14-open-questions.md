@@ -9,8 +9,6 @@ Status: Living document
 
 ## Offline synchronization
 
-- What device-clock skew threshold triggers a warning, and can a severely incorrect
-  clock temporarily block synchronization?
 - Which non-administrative operations, if any, are unavailable offline despite the
   general offline requirement?
 

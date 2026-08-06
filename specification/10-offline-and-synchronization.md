@@ -83,7 +83,11 @@ the user action:
 - equal timestamps are resolved through a stable deterministic tie-breaker, such as
   mutation identity;
 - clients SHOULD detect and visibly warn about substantial device-clock skew when
-  it can be compared with server time.
+  it can be compared with server time;
+- a push request whose current client send time differs from server receive time by
+  more than five minutes MUST produce a visible clock-skew warning;
+- a mutation timestamp more than 24 hours ahead of server receive time MUST be
+  rejected into recoverable work, while old offline timestamps remain valid.
 
 Independently created entities are merged because they have distinct stable
 client-generated identities. Two independently created recipes, receipts, or
@@ -112,3 +116,12 @@ fields merge without one erasing the other. Refresh MUST NOT erase ad-hoc record
 because they have independent stable identities. An aggregate checkbox action
 contains one timestamped credit mutation for each affected contribution so a later
 individual checkbox action wins for that contribution.
+
+## Protocol details
+
+Pull and bootstrap exchange complete canonical entity records rather than JSON
+patches. The organization change feed is retained for at least 30 days; an older
+cursor triggers a safe bootstrap that preserves and reapplies the pending outbox.
+A push contains at most 100 commands or 1 MiB of decoded JSON data. Exact envelope,
+pagination, clock, reconciliation, and testing rules are defined in
+`18-synchronization-protocol.md`.

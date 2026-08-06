@@ -150,6 +150,9 @@ atomicity are expressed as one application command.
   recovers through `sync/pull`, so a missed or disconnected WebSocket loses no data.
 - If a cursor is older than retained change history, the server requests a safe
   bootstrap while the client preserves and later reapplies its pending outbox.
+- Change-feed history is retained for at least 30 days.
+- Bootstrap and pull return complete canonical sync records grouped by committed
+  command transaction, not JSON patches.
 
 ### Mutation shape and LWW metadata
 
@@ -163,6 +166,10 @@ document. Each mutable field has server-side winning metadata consisting of:
 Immutable recipe and ingredient versions are inserted as separate entities.
 Retirement is represented by a tombstone operation. These structures implement the
 product conflict rules without a CRDT framework.
+
+Push requests are bounded to 100 commands or 1 MiB of decoded JSON data and are
+split by the client while preserving order. Detailed wire semantics are specified
+in `18-synchronization-protocol.md`.
 
 ### Browser coordination
 

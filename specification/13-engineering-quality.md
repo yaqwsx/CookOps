@@ -38,6 +38,8 @@ runtime or the initial MVP implementation.
   services and authorization policies;
 - command-batch tests proving per-command transactions, ordered evaluation, and
   isolation of rejected siblings;
+- protocol tests for full canonical records, 30-day cursor expiry, safe bootstrap
+  with outbox replay, 100-command/1-MiB push bounds, and clock thresholds;
 
 Backend integration tests run against PostgreSQL rather than silently substituting
 SQLite for database-specific behavior.
