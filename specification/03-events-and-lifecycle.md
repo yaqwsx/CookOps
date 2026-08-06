@@ -13,7 +13,7 @@ Status: Draft
 - A scheduled recipe instance MAY add or remove diners relative to the event base.
 - The application does not maintain a complete named participant roster.
 - Members MAY record named dietary exceptions, each with a required name,
-  structured requirement tags, and an optional free-form note.
+  zero or more organization dietary tags, and an optional free-form note.
 - Dietary exceptions are treated as potentially present at every scheduled recipe;
   per-meal attendance for named exceptions is not tracked in the MVP.
 

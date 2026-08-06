@@ -101,13 +101,19 @@ erDiagram
     ORGANIZATION ||--o{ INGREDIENT : owns
     ORGANIZATION ||--o{ RECIPE : owns
     ORGANIZATION ||--o{ EVENT : owns
+    ORGANIZATION ||--o{ DIETARY_TAG : configures
     INGREDIENT ||--|{ INGREDIENT_VERSION : publishes
     INGREDIENT ||--o{ INGREDIENT_PRICE_ESTIMATE : prices
+    INGREDIENT_VERSION ||--o{ INGREDIENT_VERSION_DIETARY_TAG : tagged_with
+    DIETARY_TAG ||--o{ INGREDIENT_VERSION_DIETARY_TAG : assigned_to
     RECIPE ||--|{ RECIPE_VERSION : publishes
     RECIPE_VERSION ||--o{ RECIPE_INGREDIENT_LINE : contains
     INGREDIENT_VERSION ||--o{ RECIPE_INGREDIENT_LINE : referenced_by
     EVENT ||--|{ EVENT_DAY : contains
     EVENT ||--o{ SCHEDULED_RECIPE : schedules
+    EVENT ||--o{ EVENT_DIETARY_EXCEPTION : records
+    EVENT_DIETARY_EXCEPTION ||--o{ EVENT_DIETARY_EXCEPTION_TAG : selects
+    DIETARY_TAG ||--o{ EVENT_DIETARY_EXCEPTION_TAG : selected_by
     EVENT ||--o{ EVENT_INGREDIENT_PRICE : snapshots
     INGREDIENT ||--o{ EVENT_INGREDIENT_PRICE : priced_in
     EVENT_INGREDIENT_PRICE ||--|{ EVENT_INGREDIENT_PRICE_SNAPSHOT : revises
@@ -241,18 +247,22 @@ An organization-owned stable identity with name, color, and lifecycle metadata.
 Recipe-version membership is immutable, while renaming or retiring the tag does not
 rewrite recipe versions.
 
-### `DietaryLabel`
+### `DietaryTag`
 
-An organization-owned problematic-ingredient label with name, optional compact
-presentation metadata, and lifecycle state. Vegetarian and vegan are never inferred
-from one another.
+An organization-owned tag containing name, optional color, lifecycle metadata, and
+optional seed key. New organizations receive `vegetarian`, `vegan`, `gluten`, and
+`lactose` seeds with localized Czech and English display names. Custom names and
+renamed seeds are displayed as organization-authored content.
 
-### `DietaryRequirementDefinition`
+A retired tag is unavailable for new assignments but existing immutable ingredient
+versions and active event exceptions continue to reference and evaluate it. No tag
+implies, contains, or inherits another tag; in particular, vegetarian and vegan are
+independent identities.
 
-An organization-owned named requirement such as vegan. Its incompatibility rules
-are a set of references to `DietaryLabel` identities. Requirement definitions and
-their rules are mutable for active events; archive snapshots copy the resolved rule
-names and outcomes.
+A new ingredient version may carry forward a retired tag from its based-on version
+but cannot newly introduce it. An event exception may retain or remove an existing
+retired-tag association but cannot create or restore one while the tag remains
+retired.
 
 ## Ingredient catalog
 
@@ -286,8 +296,9 @@ An immutable publication containing:
 - publication author and time;
 - optional server display ordinal.
 
-`IngredientVersionDietaryLabel` immutably associates the version with zero or more
-organization dietary labels.
+`IngredientVersionDietaryTag` immutably associates the version with zero or more
+organization dietary tags. Assignments express direct conflicts rather than
+positive suitability claims.
 
 All versions of one logical ingredient MUST retain compatible quantity semantics.
 Changing from grams to kilograms is compatible; changing the same logical
@@ -485,8 +496,20 @@ without losing its identity or value.
 ### `EventDietaryException`
 
 Represents one named exception rather than a participant roster. It contains event,
-required name, optional free-form note, lifecycle metadata, and zero or more
-`EventDietaryRequirement` references to organization requirement definitions.
+required name, optional free-form note, lifecycle metadata, and zero or more mutable
+`EventDietaryExceptionTag` references to organization `DietaryTag` identities.
+
+An event-tag association is synchronizable lifecycle state: adding it creates or
+restores the association and removing it retires the association. At most one active
+association exists for an exception and tag pair. Retiring the tag itself does not
+retire these associations.
+
+For each scheduled recipe and named exception, the warning projection intersects
+the exception's tag IDs with the tag IDs carried by every nonzero resolved
+ingredient version, including event-local added ingredients. A nonempty intersection
+produces details grouped by person, matching tag, and ingredient. Zero-quantity
+lines are excluded. No further rule evaluation, inheritance, severity, or safety
+inference exists in the MVP.
 
 ### `EventIngredientPrice`
 
@@ -723,7 +746,8 @@ The payload copies values rather than relying only on live references. It includ
 - event, day, role, schedule, ordering, notes, attendance, budget, and currency;
 - pinned recipe and ingredient version content, scaling, resolved overrides, tags,
   unit labels, event price snapshots, weights, and warning inputs/results;
-- named dietary exceptions and resolved requirement/label names;
+- named dietary exceptions, dietary tag names and assignments, and resolved warning
+  results;
 - every shopping list's current generated revision, retained contribution details,
   operational row state, ad-hoc items, and fulfilment attribution;
 - receipts and retained attachment metadata;
@@ -843,6 +867,9 @@ bound to client, redirect URI, resource, user, and PKCE challenge.
   copy time for attribution only; authorization never traverses it.
 - A recipe copy must also copy or explicitly map every ingredient dependency into
   the destination organization before publication.
+- Copying an ingredient version maps seeded dietary tags by seed key. Every custom
+  dietary tag must be explicitly mapped to a destination tag or copied as a new
+  destination-owned tag; copied versions never retain source-organization tag IDs.
 - Event duplication creates a new active event graph with new day, scheduled
   recipe, override, dietary-exception, shopping, receipt, and other operational
   identities for whatever content the duplication workflow includes. Immutable
@@ -860,6 +887,10 @@ The relational schema SHOULD enforce at least:
 - event day and meal role belonging to the scheduled recipe's event;
 - recipe line ingredient versions belonging to the recipe organization;
 - event recipe versions belonging to the event organization;
+- dietary tags, ingredient-version tag assignments, and event-exception tag
+  assignments remaining within one organization;
+- one immutable ingredient-version tag assignment per version and tag;
+- one active event-exception tag assignment per exception and tag;
 - one active membership per organization and user or exact invited email;
 - one active event day per event calendar date;
 - one replacement override per scheduled recipe and recipe line key;
@@ -894,7 +925,7 @@ responsibilities even when supporting constraints also exist in PostgreSQL.
 - Shopping checkboxes remain independently synchronizable without putting generated
   snapshot data under LWW.
 - Archives remain readable even after catalog, organization configuration, user
-  display names, or dietary rules change.
+  display names, or dietary tags change.
 - Future multi-input recipe formulas can extend recipe-version scaling without
   changing recipe, schedule, shopping-source, or archive identity.
 

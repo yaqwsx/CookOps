@@ -62,6 +62,8 @@ Playwright tests run against a production PWA build and cover at least:
   inclusion, and weight/cost calculations;
 - catalog price publication without recipe-update signaling, atomic event price
   refresh, missing-price behavior, and immutable archived prices;
+- dietary-tag intersection across catalog and local ingredient lines, explicit
+  vegetarian/vegan separation, zero-quantity exclusion, and retired-tag retention;
 - desktop drag-and-drop and mobile non-drag movement;
 - shopping-list generation and contribution completion;
 - shopping fulfilment-credit calculations, partial contributions after refresh,

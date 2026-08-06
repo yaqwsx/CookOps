@@ -2,10 +2,8 @@
 
 Status: Living document
 
-## Dietary requirements
+## Dietary tags
 
-- What initial ingredient labels and dietary requirement presets are seeded for a
-  new organization?
 - What is the final iconography and compact/mobile presentation of dietary warning
   details?
 

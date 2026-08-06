@@ -45,8 +45,9 @@ CookOps is open-source software distributed under the MIT License.
 - Canonical ingredient units, compatible SI conversion, and portion-weight
   estimation.
 - Weight and estimated cost calculations.
-- Named dietary exceptions with structured requirement tags and free-form notes.
-- Organization-managed dietary labels and ingredient-based warnings.
+- Named dietary exceptions with organization-managed dietary tags and free-form
+  notes.
+- Ingredient-based warnings derived from matching dietary tags.
 - Snapshot-based, manually refreshable shopping lists.
 - Real-time collaborative shopping on multiple mobile devices.
 - Offline use of previously cached application data with automatic synchronization

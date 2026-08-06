@@ -12,7 +12,7 @@ language is Czech, with English provided as the second built-in locale.
 2. [Organizations and access](02-organizations-and-access.md)
 3. [Events and lifecycle](03-events-and-lifecycle.md)
 4. [Recipes, versions, and scaling](04-recipes-versions-and-scaling.md)
-5. [Ingredient catalog and dietary rules](05-ingredient-catalog-and-dietary-rules.md)
+5. [Ingredient catalog and dietary tags](05-ingredient-catalog-and-dietary-rules.md)
 6. [Shopping](06-shopping.md)
 7. [Costs and receipts](07-costs-and-receipts.md)
 8. [Localization](08-localization.md)

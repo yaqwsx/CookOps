@@ -1,4 +1,4 @@
-# Ingredient Catalog and Dietary Rules
+# Ingredient Catalog and Dietary Tags
 
 Status: Draft
 
@@ -138,30 +138,51 @@ silently change the event estimate.
 - A member MAY override the section for a specific shopping-list item without
   changing the catalog ingredient.
 
-## Dietary labels and requirements
+## Dietary tags and warnings
 
-- Each organization manages its own dietary and problematic-ingredient labels.
-- Ingredient versions MAY carry any number of these labels.
-- A new organization is seeded with common dietary labels and requirement rules.
-- Organization administrators MAY modify the seeded definitions and create new
-  ones, including changing the definitions of vegetarian and vegan requirements.
-- Dietary requirements assigned to named event exceptions are defined through
-  incompatibility rules against ingredient labels.
-- The warning engine inspects the resolved ingredients of a scheduled recipe
-  instance, including event-local added ingredients and quantity overrides.
-- An ingredient overridden to zero MUST NOT trigger a warning for that instance.
+The MVP uses one deliberately simple `DietaryTag` concept rather than separate
+ingredient labels, requirements, and incompatibility rules.
+
+- Each organization manages its own dietary tags.
+- A tag has a name, optional color, and reversible retirement lifecycle.
+- A new organization is seeded with `vegetarian`, `vegan`, `gluten`, and `lactose`.
+  Seed display names are localized in Czech and English. A renamed seed or a custom
+  tag is organization-authored content and is displayed as entered.
+- Organization members MAY create, rename, recolor, retire, and restore tags.
+- Retired tags are excluded from new assignment but remain visible and effective
+  anywhere they were already assigned.
+- Publishing a new ingredient version MAY carry forward a retired tag from its
+  based-on version, but MUST NOT newly add that retired tag. Existing event
+  exceptions may retain or remove a retired tag but cannot re-add it until restored.
+- Ingredient versions MAY carry any number of tags describing the dietary
+  requirements with which that ingredient conflicts.
+- Every named event exception MAY select any number of the same tags.
+
+A warning exists when the set of tags on any nonzero resolved ingredient intersects
+the tags selected for a named event exception. The warning engine includes catalog
+recipe lines, event-local added ingredients, and quantity overrides. An ingredient
+overridden to zero does not participate.
+
+Vegetarian and vegan are independent tags with no inheritance or inference. For
+example, meat that conflicts with both must explicitly carry both tags, while milk
+may carry only `vegan` and `lactose`. Organizations add any allergy or other
+special-purpose tags they need; the MVP does not seed a comprehensive allergen
+taxonomy, categories, severities, or a structured "may contain" state.
 
 Every named dietary exception is checked against every scheduled recipe instance;
 the MVP does not track whether that person attends a particular meal. A conflict is
 informational only:
 
 - it MUST be displayed as a visible warning on the scheduled recipe instance;
-- details MUST identify the affected named people, their requirements, and the
-  conflicting ingredients;
+- details MUST identify the affected named people, matching tags, and conflicting
+  ingredients;
 - it MUST NOT block editing, shopping-list generation, or event operation;
-- the MVP does not require acknowledgement or resolution states.
+- the MVP does not require acknowledgement or resolution states;
+- the absence of a matching tag means only that CookOps found no known conflict; it
+  is not a claim that a meal is medically safe.
 
-Vegetarian and vegan requirements MUST remain distinct. For example, an
-organization can define vegetarian as incompatible with meat and fish labels, while
-vegan is incompatible with all animal-product labels. The exact built-in presets
-remain to be designed, but all presets remain organization-configurable.
+Changing the tag assignments of an ingredient publishes a new ingredient version
+and reaches recipes through the ordinary all-or-nothing ingredient update workflow.
+Editing an active event exception's tag selection recalculates its warnings
+immediately. Archive snapshots retain the tag names, assignments, and warning
+results effective at archival time.
