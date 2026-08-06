@@ -1,0 +1,172 @@
+:root {
+  color: #302922;
+  background: #fffaf2;
+  font-family:
+    Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont,
+    "Segoe UI", sans-serif;
+  font-synthesis: none;
+  text-rendering: optimizeLegibility;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html {
+  scroll-behavior: smooth;
+}
+
+body {
+  margin: 0;
+  min-width: 20rem;
+  min-height: 100vh;
+}
+
+a {
+  color: inherit;
+}
+
+a:focus-visible,
+select:focus-visible {
+  outline: 0.2rem solid #315b43;
+  outline-offset: 0.2rem;
+}
+
+.app-shell {
+  min-height: 100vh;
+}
+
+.app-header {
+  display: grid;
+  grid-template-columns: auto 1fr auto;
+  align-items: center;
+  gap: 2rem;
+  padding: 1rem clamp(1rem, 4vw, 4rem);
+  border-bottom: 1px solid #ddd2c2;
+  background: #fffdf9;
+}
+
+.brand {
+  color: #254a36;
+  font-size: 1.35rem;
+  font-weight: 800;
+  text-decoration: none;
+}
+
+.primary-navigation {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem 1.5rem;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.primary-navigation a {
+  font-weight: 650;
+  text-underline-offset: 0.3rem;
+}
+
+.locale-picker {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  font-size: 0.875rem;
+  font-weight: 650;
+}
+
+.locale-picker select {
+  min-height: 2.5rem;
+  padding: 0.4rem 2rem 0.4rem 0.6rem;
+  border: 1px solid #9d9283;
+  border-radius: 0.5rem;
+  color: inherit;
+  background: white;
+  font: inherit;
+}
+
+.app-main {
+  width: min(72rem, 100%);
+  margin: 0 auto;
+  padding: clamp(2rem, 7vw, 5rem) clamp(1rem, 4vw, 3rem);
+}
+
+.introduction {
+  max-width: 48rem;
+}
+
+.eyebrow {
+  margin: 0 0 0.5rem;
+  color: #315b43;
+  font-size: 0.8rem;
+  font-weight: 800;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+}
+
+h1 {
+  margin: 0;
+  font-size: clamp(2rem, 7vw, 4.25rem);
+  line-height: 1.05;
+}
+
+.introduction > p:last-child {
+  margin: 1.25rem 0 0;
+  font-size: clamp(1.05rem, 2vw, 1.3rem);
+  line-height: 1.6;
+}
+
+.section-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 1rem;
+  margin-top: clamp(2.5rem, 6vw, 5rem);
+}
+
+.section-card {
+  padding: 1.25rem;
+  border: 1px solid #ddd2c2;
+  border-radius: 0.8rem;
+  background: #fffdf9;
+}
+
+.section-card h2 {
+  margin: 0;
+  font-size: 1.2rem;
+}
+
+.section-card p {
+  margin: 0.75rem 0 0;
+  color: #62584c;
+  line-height: 1.5;
+}
+
+@media (max-width: 46rem) {
+  .app-header {
+    grid-template-columns: 1fr;
+    gap: 0.75rem;
+  }
+
+  .app-header nav {
+    overflow-x: auto;
+  }
+
+  .locale-picker {
+    justify-self: start;
+  }
+
+  .primary-navigation {
+    flex-wrap: nowrap;
+    width: max-content;
+  }
+
+  .section-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  html {
+    scroll-behavior: auto;
+  }
+}
