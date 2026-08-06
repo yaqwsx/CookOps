@@ -9,6 +9,7 @@ The repository is a monorepo containing at least:
 ```text
 backend/          FastAPI application, migrations, and Python tests
 frontend/         React PWA, IndexedDB layer, and frontend tests
+oauth-server/     TypeScript OAuth authorization-server adapter and tests
 deploy/           Docker Compose and host Apache example configuration
 scripts/          backup, restore, deployment, and maintenance entry points
 specification/    product and technical specification
@@ -20,6 +21,8 @@ and production backups are excluded from Git.
 The MCP adapter lives inside the backend package beside the HTTP adapters. MCP
 client fixtures and compatibility tests live in the backend or end-to-end test
 trees; MCP is not maintained as a separate application with its own domain layer.
+The `oauth-server` package is a narrow protocol service and MUST NOT acquire a
+second CookOps domain model or duplicate role and membership policy.
 
 The future one-time Google Sheets ingredient importer SHOULD live as an isolated
 maintenance command with dry-run and validation output. It is not part of the core
@@ -115,6 +118,12 @@ directly, and cover at least:
 - base64 and upload-ticket receipt-photo attachment, validation, download, and
   authorization.
 
+Before the OAuth provider decision is accepted, the disposable spike and its
+negative cases in `20-mcp-oauth-research-and-decision.md` MUST pass. Subsequent CI
+pins the provider version and tests RFC 8707 resource binding, CIMD and DCR,
+interaction replay resistance, PostgreSQL restart persistence, refresh replay,
+introspection, and revocation.
+
 A generated tool manifest or snapshot SHOULD make accidental MCP surface changes
 visible in code review. At least one compatibility test runs against the protocol
 inspector or another independent conforming client before release.
@@ -142,11 +151,12 @@ Every pull request and main-branch push runs:
 
 1. backend formatting, linting, type checking, and tests;
 2. frontend formatting, linting, type checking, and tests;
-3. OpenAPI client regeneration drift check;
-4. production frontend and container builds;
-5. PostgreSQL migration tests;
-6. selected Playwright end-to-end and offline scenarios;
-7. dependency and container vulnerability scanning where practical.
+3. OAuth-server formatting, linting, type checking, and protocol tests;
+4. OpenAPI client regeneration drift check;
+5. production frontend and container builds;
+6. PostgreSQL migration tests;
+7. selected Playwright end-to-end and offline scenarios;
+8. dependency and container vulnerability scanning where practical.
 
 Release tags SHOULD run the full end-to-end suite and produce versioned container
 images. Production deployment remains an explicit operator action.

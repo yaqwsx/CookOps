@@ -27,6 +27,7 @@ language is Czech, with English provided as the second built-in locale.
 17. [Application services and API contracts](17-application-services-and-api.md)
 18. [Synchronization protocol](18-synchronization-protocol.md)
 19. [Information architecture and responsive navigation](19-information-architecture.md)
+20. [MCP OAuth research and decision](20-mcp-oauth-research-and-decision.md)
 
 ## Specification conventions
 

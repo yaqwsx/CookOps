@@ -16,12 +16,15 @@ The production Compose project contains:
 
 - `web`: a minimal unprivileged static web server containing the compiled PWA;
 - `api`: FastAPI application;
+- `oauth-server`: internal TypeScript OAuth authorization server built on
+  `oidc-provider`, pending successful completion of the specification 20 spike;
 - `postgres`: PostgreSQL 18, reachable only on the internal Compose network.
 
-The `web` and `api` services publish configurable ports bound explicitly to
-`127.0.0.1` on the VPS. PostgreSQL publishes no host port. Apache is the only
-process listening publicly and routes frontend requests to `web` and API,
-authentication, synchronization, WebSocket, media, and MCP paths to `api`.
+The `web`, `api`, and `oauth-server` services publish configurable ports bound
+explicitly to `127.0.0.1` on the VPS. PostgreSQL publishes no host port. Apache is
+the only process listening publicly and routes frontend requests to `web`, OAuth
+protocol paths to `oauth-server`, and API, authentication interactions,
+synchronization, WebSocket, media, and MCP paths to `api`.
 
 Persistent named or bind-mounted volumes contain:
 
@@ -34,9 +37,10 @@ static assets during the image build and served by the `web` container. The stat
 server has no access to application secrets, PostgreSQL, or receipt storage.
 
 The MCP Streamable HTTP endpoint is served by the API application and routed by
-Apache. It does not require another container or public port. Production
-configuration MUST define the accepted MCP origin and host policy and MUST NOT
-enable dummy authentication.
+Apache. OAuth endpoints are served by `oauth-server`; it has no domain API and no
+publicly bound port other than the loopback route used by Apache. Production
+configuration MUST define the accepted MCP origin, host, OAuth issuer, and
+canonical resource policy and MUST NOT enable dummy authentication.
 
 ## Apache reverse proxy contract
 
@@ -76,10 +80,12 @@ against the containers directly.
 - Production `.env` files, Google credentials, session secrets, and backup keys MUST
   NOT be committed.
 - OAuth issuer and canonical MCP resource URLs MUST match the public HTTPS URLs
-  routed by Apache. OAuth signing or encryption secrets remain deployment secrets;
-  grants, hashed tokens, and revocation records are application data in PostgreSQL.
+  routed by Apache. OAuth signing or encryption secrets and the private
+  API-to-OAuth service credential remain deployment secrets; grants, provider
+  adapter state, hashed tokens, and revocation records are application data in
+  PostgreSQL.
 - The PostgreSQL port and media filesystem are not exposed publicly.
-- Docker-published `web` and `api` ports bind to loopback only.
+- Docker-published `web`, `api`, and `oauth-server` ports bind to loopback only.
 - Host Apache is the only public network entry point for CookOps.
 - Apache TLS private keys and virtual-host configuration are host operational
   assets outside the CookOps application backup.
@@ -107,7 +113,7 @@ configuration and requires an explicit graceful reload.
 
 ## Health and observability
 
-- The static web, API, and PostgreSQL containers have health checks.
+- The static web, API, OAuth server, and PostgreSQL containers have health checks.
 - Apache availability and public HTTPS routing are checked from outside the
   Compose network.
 - The API exposes liveness and readiness endpoints.

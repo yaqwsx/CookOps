@@ -29,6 +29,6 @@ Status: Living document
 
 ## Agent interface and MCP
 
-- Which maintained OAuth authorization-server library or local component provides
-  the required OAuth 2.1, PKCE, metadata, CIMD, DCR, refresh, and revocation support
-  with the least operational weight?
+- Does the mandatory interoperability spike in specification 20 confirm that
+  `oidc-provider` can provide current MCP CIMD behavior, PostgreSQL persistence,
+  and the CookOps identity/consent bridge without patching provider internals?

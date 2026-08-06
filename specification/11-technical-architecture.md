@@ -15,6 +15,8 @@ PostgreSQL:
 - real-time transport: HTTP synchronization plus WebSocket invalidation hints;
 - agent integration: an MCP Streamable HTTP endpoint implemented with the official
   Python SDK;
+- MCP authorization server: a small TypeScript service built on `oidc-provider`,
+  provisionally selected pending the interoperability spike in specification 20;
 - receipt-photo storage: protected files in a local Docker volume;
 - deployment: Docker Compose behind an existing host-level Apache HTTP Server
   reverse proxy on one VPS.
@@ -31,10 +33,13 @@ flowchart LR
     OUTBOX -->|batch push| API[FastAPI]
     API -->|cursor pull| IDB
     API --> DB[(PostgreSQL)]
+    OAUTH[OAuth server] --> DB
     API --> MEDIA[(Local media volume)]
     APACHE[Apache / HTTPS] --> WEB[Static PWA container]
     APACHE --> API
+    APACHE --> OAUTH
     MCP[MCP clients] -->|HTTPS / Streamable HTTP| APACHE
+    API -->|token introspection| OAUTH
     API -. sync hint .-> UI
     WEB --> UI
 ```
@@ -279,11 +284,24 @@ The OAuth implementation MUST provide:
 - pre-registration for integration tests and explicitly configured clients;
 - consent and grant revocation from the user's CookOps settings.
 
-The protocol implementation MUST be built on a maintained OAuth authorization
-server library or component. CookOps MUST NOT implement cryptographic primitives,
-PKCE verification, token generation, or bearer-token parsing from scratch. The
-specific component will be selected after an interoperability prototype with the
-official MCP SDK and representative agent clients.
+The proposed authorization-server component is a small internal TypeScript service
+built on the MIT-licensed `oidc-provider` v9 release line. It is provisionally
+selected because its documented protocol surface includes RFC 8414, DCR, PKCE,
+revocation, introspection, RFC 8707, RFC 9207, opaque tokens, and experimental
+CIMD. Specification 20 records the research, boundaries, risks, and mandatory
+interoperability spike. Passing that spike is required before the decision becomes
+accepted.
+
+The authorization server owns OAuth protocol state in PostgreSQL and exposes
+standards-based endpoints through Apache. FastAPI owns the human Google/dummy
+session, CookOps consent UI, user and membership gate, and all domain
+authorization. A one-time private interaction approval connects these components;
+they do not share browser cookies. The MCP SDK `TokenVerifier` uses private RFC
+7662 introspection and then reloads current CookOps authority for each operation.
+
+CookOps MUST NOT implement cryptographic primitives, PKCE verification, token
+generation, or bearer-token parsing from scratch. Exact provider and experimental
+CIMD versions are pinned and upgraded only with compatibility tests.
 
 Implicit, resource-owner-password, and client-credentials grants are not used for
 interactive MCP access. Bearer tokens are stored hashed at rest, are never logged,
@@ -352,3 +370,5 @@ clean migration boundary.
 - [Model Context Protocol transports](https://modelcontextprotocol.io/specification/2026-07-28/basic/transports)
 - [Official MCP Python SDK](https://github.com/modelcontextprotocol/python-sdk)
 - [MCP OAuth authorization](https://modelcontextprotocol.io/specification/2026-07-28/basic/authorization)
+- [`oidc-provider` OAuth authorization server](https://github.com/panva/node-oidc-provider)
+- [MCP Python SDK authorization boundary](https://py.sdk.modelcontextprotocol.io/run/authorization/)

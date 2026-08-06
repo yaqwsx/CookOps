@@ -19,6 +19,8 @@ outputs, pagination, explicit organization context, and actionable errors.
 flowchart LR
     WEB[Web API and sync] --> APP[Application services]
     MCP[MCP adapter] --> APP
+    MCP -->|token introspection| OAUTH[OAuth server]
+    OAUTH -->|one-time interaction| WEB
     JOB[Maintenance commands] --> APP
     APP --> AUTH[Authorization policies]
     APP --> DOMAIN[Domain rules]
@@ -39,7 +41,9 @@ write.
   with PKCE. Personal access tokens are not an MVP authentication mechanism.
 - CookOps is the OAuth authorization server and protected resource. It uses Google
   Sign-In to establish the human identity during production authorization and the
-  dummy provider during development and tests.
+  dummy provider during development and tests. The authorization-server role is a
+  separate internal protocol service; the protected-resource role remains in the
+  FastAPI MCP adapter.
 - An OAuth grant represents one internal CookOps user and has exactly that user's
   current application authority.
 - Removing a membership or administrative role takes effect on the next MCP call;
@@ -61,6 +65,12 @@ write.
 The browser session participates only at the authorization and consent endpoint. It
 is never copied into an MCP client. The MCP client receives resource-bound OAuth
 tokens and sends a bearer access token on every MCP request.
+
+The proposed protocol service uses `oidc-provider`; FastAPI supplies the CookOps
+identity and consent decision through short-lived, single-use interaction
+approvals. FastAPI validates opaque tokens through private RFC 7662 introspection
+before re-evaluating current application authorization. The selection remains
+provisional until the mandatory spike in specification 20 passes.
 
 ## MCP primitives
 
@@ -176,7 +186,8 @@ tombstone, and per-field LWW rules decide the result.
 ## Transport and deployment
 
 The first-class and MVP transport is OAuth-authenticated Streamable HTTP routed
-through the host Apache reverse proxy to the existing API process. The server
+through the host Apache reverse proxy to the API process. OAuth protocol routes are
+forwarded to the internal authorization-server process. The protected server
 validates allowed origins when the header is present, validates its public host,
 and uses HTTPS in production. It follows the official MCP specification and pins a
 stable official Python SDK version.
@@ -202,3 +213,4 @@ direct database or media-volume access.
 - [Model Context Protocol Streamable HTTP transport](https://modelcontextprotocol.io/specification/2026-07-28/basic/transports)
 - [Official MCP Python SDK](https://github.com/modelcontextprotocol/python-sdk)
 - [MCP OAuth authorization](https://modelcontextprotocol.io/specification/2026-07-28/basic/authorization)
+- [MCP OAuth research and proposed decision](20-mcp-oauth-research-and-decision.md)

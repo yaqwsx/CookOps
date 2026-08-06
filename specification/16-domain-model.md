@@ -935,5 +935,5 @@ The following questions remain intentionally delegated to
 `14-open-questions.md`:
 
 - receipt-photo retention and garbage collection;
-- the maintained OAuth authorization-server component and its physical support
-  tables.
+- the final provider-owned OAuth table layout after the mandatory interoperability
+  spike. OAuth protocol persistence remains isolated from CookOps domain tables.
