@@ -4,20 +4,24 @@ import asyncio
 import json
 import os
 import time
-from collections.abc import Mapping
+from collections.abc import AsyncIterator, Mapping
+from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
 from types import TracebackType
-from typing import Self
+from typing import Any, Self
 from urllib.parse import urlsplit
 from uuid import UUID
 
 import httpx
-from fastapi import FastAPI
+from mcp.server.auth.middleware.auth_context import get_access_token
 from mcp.server.auth.provider import AccessToken, TokenVerifier
 from mcp.server.auth.routes import (
     build_resource_metadata_url,
-    create_protected_resource_routes,
 )
+from mcp.server.auth.settings import AuthSettings
+from mcp.server.mcpserver import MCPServer
+from mcp.server.transport_security import TransportSecuritySettings
+from starlette.applications import Starlette
 
 MCP_SCOPE = "cookops:mcp"
 RESOURCE_SERVER_CLIENT_ID = "cookops-resource-server"
@@ -153,6 +157,9 @@ class IntrospectionTokenVerifier(TokenVerifier):
         exception: BaseException | None,
         traceback: TracebackType | None,
     ) -> None:
+        await self.aclose()
+
+    async def aclose(self) -> None:
         await self._http_client.aclose()
 
     async def verify_token(self, token: str) -> AccessToken | None:
@@ -232,16 +239,52 @@ class IntrospectionTokenVerifier(TokenVerifier):
         )
 
 
-def create_app(settings: ResourceServerSettings) -> FastAPI:
-    """Create the public discovery surface using the official MCP SDK helper."""
+def create_app(settings: ResourceServerSettings) -> Starlette:
+    """Create an authenticated Streamable HTTP MCP protected resource."""
 
-    app = FastAPI(docs_url=None, redoc_url=None, openapi_url=None)
-    app.router.routes.extend(
-        create_protected_resource_routes(
-            resource_url=settings.resource_url,  # type: ignore[arg-type]
-            authorization_servers=[settings.authorization_server_url],  # type: ignore[list-item]
-            scopes_supported=[MCP_SCOPE],
-            resource_name="CookOps MCP",
-        )
+    verifier = IntrospectionTokenVerifier(settings)
+    resource_url = urlsplit(settings.resource_url)
+    public_origin = f"{resource_url.scheme}://{resource_url.netloc}"
+
+    @asynccontextmanager
+    async def lifespan(_server: MCPServer[Any]) -> AsyncIterator[dict[str, object]]:
+        try:
+            yield {}
+        finally:
+            await verifier.aclose()
+
+    server = MCPServer(
+        name="cookops",
+        title="CookOps MCP",
+        version="0.0.0-spike",
+        token_verifier=verifier,
+        auth=AuthSettings(
+            issuer_url=settings.authorization_server_url,
+            resource_server_url=settings.resource_url,
+            required_scopes=[MCP_SCOPE],
+        ),
+        lifespan=lifespan,
     )
-    return app
+
+    @server.tool(name="authenticated_identity", structured_output=True)
+    def authenticated_identity() -> dict[str, str]:
+        """Return the OAuth identity established for this MCP request."""
+
+        access_token = get_access_token()
+        if access_token is None or access_token.subject is None:
+            raise RuntimeError("authenticated MCP request has no subject")
+        return {
+            "client_id": access_token.client_id,
+            "resource": access_token.resource or "",
+            "subject": access_token.subject,
+        }
+
+    return server.streamable_http_app(
+        streamable_http_path=resource_url.path,
+        json_response=True,
+        stateless_http=True,
+        transport_security=TransportSecuritySettings(
+            allowed_hosts=[resource_url.netloc],
+            allowed_origins=[public_origin],
+        ),
+    )

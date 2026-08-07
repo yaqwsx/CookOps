@@ -67,7 +67,6 @@ def test_publishes_rfc_9728_metadata_at_resource_path() -> None:
             "authorization_servers": [ISSUER],
             "scopes_supported": ["cookops:mcp"],
             "bearer_methods_supported": ["header"],
-            "resource_name": "CookOps MCP",
         }
         assert wrong_path.status_code == 404
 
