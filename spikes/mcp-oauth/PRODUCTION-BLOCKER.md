@@ -19,8 +19,11 @@ OAuth server or a source for a production FastAPI MCP mount.
 - The production backend still has no `mcp` dependency, MCP ASGI adapter, OAuth
   resource settings, private interaction-approval credential, or safe consent
   UI/CSRF transport. The spike remains loopback-only and rejects production.
-- The only OAuth package is under `spikes/`; there is no production
-  `oauth-server/` package, Compose service, migration, or private API boundary.
+- `oauth-server/` is now a separately buildable Node 22 service with a pinned
+  `oidc-provider`, encrypted PostgreSQL adapter, explicit versioned migration,
+  loopback-published Compose topology, and strict public-URL/secret validation.
+  Its private approval record endpoint has a distinct credential from its stored
+  approval digest. It is still deliberately unmounted from Apache.
 - The reviewed Apache example intentionally mounts neither OAuth discovery or
   protocol paths nor `/mcp`; the deployment smoke check rejects reintroducing
   those routes before the missing resource-verifier and OAuth-service boundaries
@@ -37,11 +40,10 @@ OAuth server or a source for a production FastAPI MCP mount.
 
 ## Required production boundary
 
-Before mounting `/mcp`, implement a separately versioned `oauth-server` with
-the pinned provider and PostgreSQL migration, then connect its already-proven
-one-time approval protocol to FastAPI over an authenticated private network.
-FastAPI must use the normal browser authentication and membership gate to issue
-those approvals through a CSRF-safe consent UI;
+Before mounting `/mcp`, connect the provider's already-proven one-time approval
+protocol to FastAPI over an authenticated private network. FastAPI must use the
+normal browser authentication and membership gate to issue those approvals through
+a CSRF-safe consent UI;
 the resource-server adapter must use private RFC 7662 introspection and reload
 CookOps authority for every operation.  Client-metadata fetching must be
 validated at the OAuth service boundary, including DNS revalidation after every

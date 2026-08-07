@@ -1,0 +1,93 @@
+services:
+  postgres:
+    image: postgres@sha256:32ca0af8e77bfb8c6610c488e4691f83f972a3e9e64d3b02facf3ab111ad5500
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:?set POSTGRES_DB}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD}
+      POSTGRES_USER: ${POSTGRES_USER:?set POSTGRES_USER}
+      COOKOPS_API_DB_PASSWORD: ${COOKOPS_API_DB_PASSWORD:?set COOKOPS_API_DB_PASSWORD}
+      OAUTH_DB_PASSWORD: ${OAUTH_DB_PASSWORD:?set OAUTH_DB_PASSWORD}
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $$POSTGRES_USER -d $$POSTGRES_DB"]
+      interval: 5s
+      timeout: 3s
+      retries: 12
+    volumes:
+      - postgres-data:/var/lib/postgresql
+      - ./postgres/10-application-roles.sh:/docker-entrypoint-initdb.d/10-application-roles.sh:ro
+    logging: &logging
+      driver: local
+      options: { max-file: "3", max-size: "10m" }
+
+  web:
+    build: ../frontend
+    ports: ["127.0.0.1:${COOKOPS_WEB_PORT:-8080}:8080"]
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q -O - http://127.0.0.1:8080/health/live | grep -qx ok"]
+      interval: 10s
+      timeout: 3s
+      retries: 6
+    logging: *logging
+
+  api-migrate:
+    build: ../backend
+    depends_on:
+      postgres: { condition: service_healthy }
+    command: alembic upgrade head
+    environment: &api_environment
+      COOKOPS_DATABASE_URL: postgresql+psycopg://cookops_api:${COOKOPS_API_DB_PASSWORD:?set COOKOPS_API_DB_PASSWORD}@postgres:5432/${POSTGRES_DB:?set POSTGRES_DB}
+      COOKOPS_ENVIRONMENT: production
+      COOKOPS_HUMAN_AUTH_PROVIDER: google
+      COOKOPS_GOOGLE_CLIENT_ID: ${COOKOPS_GOOGLE_CLIENT_ID:?set COOKOPS_GOOGLE_CLIENT_ID}
+      COOKOPS_BROWSER_SESSION_HMAC_KEY: ${COOKOPS_BROWSER_SESSION_HMAC_KEY:?set COOKOPS_BROWSER_SESSION_HMAC_KEY}
+      COOKOPS_TRUSTED_PROXY_IPS: ${COOKOPS_TRUSTED_PROXY_IPS:?set COOKOPS_TRUSTED_PROXY_IPS}
+    logging: *logging
+
+  api:
+    build: ../backend
+    depends_on:
+      api-migrate: { condition: service_completed_successfully }
+    environment: *api_environment
+    ports: ["127.0.0.1:${COOKOPS_API_PORT:-8000}:8000"]
+    volumes: [receipt-media:/var/lib/cookops/receipts]
+    healthcheck:
+      test: ["CMD-SHELL", "python -c \"import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health/live')\""]
+      interval: 10s
+      timeout: 3s
+      retries: 6
+    logging: *logging
+
+  oauth-migrate:
+    build: ../oauth-server
+    command: npm run migrate
+    depends_on:
+      postgres: { condition: service_healthy }
+    environment: &oauth_environment
+      OAUTH_ISSUER: ${OAUTH_ISSUER:?set OAUTH_ISSUER}
+      MCP_RESOURCE: ${MCP_RESOURCE:?set MCP_RESOURCE}
+      OAUTH_INTERACTION_URL: ${OAUTH_INTERACTION_URL:?set OAUTH_INTERACTION_URL}
+      OAUTH_COOKIE_KEYS: ${OAUTH_COOKIE_KEYS:?set OAUTH_COOKIE_KEYS}
+      OAUTH_RESOURCE_SERVER_SECRET: ${OAUTH_RESOURCE_SERVER_SECRET:?set OAUTH_RESOURCE_SERVER_SECRET}
+      OAUTH_JWKS: ${OAUTH_JWKS:?set OAUTH_JWKS}
+      OAUTH_DATABASE_URL: postgresql://cookops_oauth:${OAUTH_DB_PASSWORD:?set OAUTH_DB_PASSWORD}@postgres:5432/${POSTGRES_DB:?set POSTGRES_DB}?options=-c%20search_path%3Doauth
+      OAUTH_ADAPTER_SECRET_BASE64URL: ${OAUTH_ADAPTER_SECRET_BASE64URL:?set OAUTH_ADAPTER_SECRET_BASE64URL}
+      OAUTH_INTERACTION_APPROVAL_SECRET_BASE64URL: ${OAUTH_INTERACTION_APPROVAL_SECRET_BASE64URL:?set OAUTH_INTERACTION_APPROVAL_SECRET_BASE64URL}
+      OAUTH_APPROVAL_API_CREDENTIAL_BASE64URL: ${OAUTH_APPROVAL_API_CREDENTIAL_BASE64URL:?set OAUTH_APPROVAL_API_CREDENTIAL_BASE64URL}
+    logging: *logging
+
+  oauth-server:
+    build: ../oauth-server
+    depends_on:
+      oauth-migrate: { condition: service_completed_successfully }
+    environment: *oauth_environment
+    ports: ["127.0.0.1:${COOKOPS_OAUTH_PORT:-3000}:3000"]
+    healthcheck:
+      test: ["CMD-SHELL", "node -e \"fetch('http://127.0.0.1:3000/health/ready').then(r => process.exit(r.ok ? 0 : 1)).catch(() => process.exit(1))\""]
+      interval: 10s
+      timeout: 3s
+      retries: 6
+    logging: *logging
+
+volumes:
+  postgres-data:
+  receipt-media:

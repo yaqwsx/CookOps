@@ -5,3 +5,5 @@
 *.key
 deploy/backups/
 deploy/media/
+oauth-server/node_modules/
+oauth-server/dist/

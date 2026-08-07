@@ -1,0 +1,28 @@
+{
+  "name": "@cookops/oauth-server",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": "22.x"
+  },
+  "scripts": {
+    "build": "tsc --outDir dist",
+    "check": "tsc --noEmit",
+    "dev": "tsx watch src/server.ts",
+    "migrate": "node dist/migrate.js",
+    "start": "node dist/server.js",
+    "test": "node --import tsx --test src/*.test.ts"
+  },
+  "dependencies": {
+    "oidc-provider": "9.11.2",
+    "pg": "8.22.0"
+  },
+  "devDependencies": {
+    "@modelcontextprotocol/sdk": "1.30.0",
+    "@types/node": "22.19.9",
+    "@types/oidc-provider": "9.11.0",
+    "@types/pg": "8.20.4",
+    "tsx": "4.23.9",
+    "typescript": "5.9.3"
+  }
+}

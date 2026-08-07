@@ -160,3 +160,10 @@ jobs:
         env:
           OAUTH_E2E_DATABASE_URL: postgresql://cookops_oauth_test:cookops_oauth_test@127.0.0.1:5432/cookops_oauth_test
         run: uv run --locked pytest tests/test_authenticated_mcp_e2e.py
+      - name: Check production OAuth foundation
+        working-directory: oauth-server
+        run: |
+          npm ci
+          npm run check
+          npm test
+          npm run build

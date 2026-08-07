@@ -4,7 +4,12 @@ set -eu
 root=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
 docker build --quiet --tag cookops-api-image-test "$root/backend" >/dev/null
 docker build --quiet --tag cookops-web-image-test "$root/frontend" >/dev/null
+docker build --quiet --tag cookops-oauth-image-test "$root/oauth-server" >/dev/null
 docker run --rm --entrypoint=nginx cookops-web-image-test -t
+docker run --rm --entrypoint=node cookops-oauth-image-test --version | grep -q '^v22\.'
+
+docker compose --env-file "$root/deploy/.env.example" -f "$root/deploy/compose.yaml" config >/dev/null
+"$root/deploy/test-postgres-roles.sh"
 
 prohibited_proxy_route() {
     awk '
