@@ -226,6 +226,27 @@ def _shopping_operation_command(
     return _command(mutation_id=mutation_id, event_id=uuid4(), kind=kind, **values)
 
 
+def _receipt_command(
+    *, mutation_id: UUID, event_id: UUID, kind: str = "receipt.create", **payload: object
+) -> dict[str, object]:
+    values: dict[str, object] = {
+        "receipt_id": str(uuid4()),
+        "title": "  Push receipt  ",
+        "total_amount": "12.50",
+        "receipt_date": "2026-08-10",
+        "note": "  groceries  ",
+    }
+    values.update(payload)
+    command = _command(
+        mutation_id=mutation_id,
+        event_id=event_id,
+        kind=kind,
+        **values,
+    )
+    cast(dict[str, object], command["payload"])["event_id"] = str(event_id)
+    return command
+
+
 @pytest.mark.parametrize(
     ("kind", "payload"),
     [
@@ -849,6 +870,66 @@ def test_push_creates_an_ingredient_through_the_typed_sync_adapter(
         rejected = client.post("/api/v1/sync/push", json=invalid).json()["outcomes"][0]
         assert rejected["status"] == "rejected"
         assert rejected["error"]["code"] == "validation_failed"
+
+
+def test_push_applies_idempotent_receipt_metadata_commands(
+    sync_database: SyncDatabase,
+) -> None:
+    installation_id = _installation(sync_database)
+    event_id, receipt_id = uuid4(), uuid4()
+    create = _receipt_command(mutation_id=uuid4(), event_id=event_id, receipt_id=str(receipt_id))
+    update = _receipt_command(
+        mutation_id=uuid4(),
+        event_id=event_id,
+        kind="receipt.update",
+        receipt_id=str(receipt_id),
+        title="Bakery",
+        total_amount="0",
+        receipt_date=None,
+        note=None,
+    )
+    retire = _command(
+        mutation_id=uuid4(),
+        event_id=event_id,
+        kind="receipt.lifecycle",
+        receipt_id=str(receipt_id),
+        operation="retire",
+    )
+    cast(dict[str, object], retire["payload"])["event_id"] = str(event_id)
+    restore = _command(
+        mutation_id=uuid4(),
+        event_id=event_id,
+        kind="receipt.lifecycle",
+        receipt_id=str(receipt_id),
+        operation="restore",
+    )
+    cast(dict[str, object], restore["payload"])["event_id"] = str(event_id)
+    commands = [_command(mutation_id=uuid4(), event_id=event_id), create, update, retire, restore]
+    body = _body(sync_database, installation_id, commands)
+    with TestClient(create_app(_settings()), base_url="https://testserver") as client:
+        _sign_in(client, "dummy-member")
+        response = client.post("/api/v1/sync/push", json=body)
+        assert response.status_code == 200
+        outcomes = response.json()["outcomes"]
+        assert [(item["command_kind"], item["status"]) for item in outcomes[1:]] == [
+            ("receipt.create", "accepted"),
+            ("receipt.update", "accepted"),
+            ("receipt.lifecycle", "accepted"),
+            ("receipt.lifecycle", "accepted"),
+        ]
+        assert all(
+            client.post("/api/v1/sync/push", json=body).json()["outcomes"][index]["replayed"]
+            for index in range(1, 5)
+        )
+        invalid = _body(
+            sync_database,
+            installation_id,
+            [_receipt_command(mutation_id=uuid4(), event_id=event_id, total_amount=12.5)],
+        )
+        assert (
+            client.post("/api/v1/sync/push", json=invalid).json()["outcomes"][0]["error"]["code"]
+            == "validation_failed"
+        )
 
 
 @pytest.mark.parametrize(

@@ -47,7 +47,19 @@ from cookops.application.ingredients import (
 )
 from cookops.application.organizations import ApplicationServiceError, ExecutionContext
 from cookops.application.receipt_media import _record as _attachment_record
-from cookops.application.receipts import _record as _receipt_record
+from cookops.application.receipts import (
+    CreateReceiptCommand,
+    ReceiptResult,
+    SetReceiptLifecycleCommand,
+    UpdateReceiptCommand,
+    create_receipt,
+    restore_receipt,
+    retire_receipt,
+    update_receipt,
+)
+from cookops.application.receipts import (
+    _record as _receipt_record,
+)
 from cookops.application.recipes import (
     CreateRecipeCommand,
     CreateRecipeResult,
@@ -222,6 +234,9 @@ SyncCommand = (
     | SetShoppingManualPurchaseTargetCommand
     | SetShoppingContributionFulfilmentCommand
     | SetShoppingRowFulfilmentCommand
+    | CreateReceiptCommand
+    | UpdateReceiptCommand
+    | SetReceiptLifecycleCommand
     | UnsupportedSyncCommand
 )
 
@@ -239,6 +254,9 @@ def _command_kind(
         | SetShoppingManualPurchaseTargetCommand
         | SetShoppingContributionFulfilmentCommand
         | SetShoppingRowFulfilmentCommand
+        | CreateReceiptCommand
+        | UpdateReceiptCommand
+        | SetReceiptLifecycleCommand
     ),
 ) -> str:
     if isinstance(command, CreateEventCommand):
@@ -261,6 +279,12 @@ def _command_kind(
         return "shopping_list.set_contribution_fulfilment"
     if isinstance(command, SetShoppingRowFulfilmentCommand):
         return "shopping_list.set_row_fulfilment"
+    if isinstance(command, CreateReceiptCommand):
+        return "receipt.create"
+    if isinstance(command, UpdateReceiptCommand):
+        return "receipt.update"
+    if isinstance(command, SetReceiptLifecycleCommand):
+        return "receipt.lifecycle"
     return "shopping_list.create"
 
 
@@ -560,6 +584,7 @@ class SynchronizationCommandService:
                 | ScheduleRecipeResult
                 | MoveScheduledRecipeResult
                 | ShoppingOperationResult
+                | ReceiptResult
             )
             if isinstance(command, CreateEventCommand):
                 result = await create_event(self._session_factory, context, command)
@@ -587,6 +612,16 @@ class SynchronizationCommandService:
                 )
             elif isinstance(command, SetShoppingRowFulfilmentCommand):
                 result = await set_shopping_row_fulfilment(self._session_factory, context, command)
+            elif isinstance(command, CreateReceiptCommand):
+                result = await create_receipt(self._session_factory, context, command)
+            elif isinstance(command, UpdateReceiptCommand):
+                result = await update_receipt(self._session_factory, context, command)
+            elif isinstance(command, SetReceiptLifecycleCommand):
+                result = (
+                    await retire_receipt(self._session_factory, context, command)
+                    if command.operation == "retire"
+                    else await restore_receipt(self._session_factory, context, command)
+                )
             else:
                 result = await create_shopping_list(self._session_factory, context, command)
         except ApplicationServiceError as error:
@@ -698,6 +733,7 @@ class SynchronizationCommandService:
             | ScheduleRecipeResult
             | MoveScheduledRecipeResult
             | ShoppingOperationResult
+            | ReceiptResult
         ),
         *,
         command_kind: str | None = None,
@@ -718,6 +754,8 @@ class SynchronizationCommandService:
                 if isinstance(result, ScheduleRecipeResult)
                 else "scheduled_recipe.move"
                 if isinstance(result, MoveScheduledRecipeResult)
+                else "receipt.create"
+                if isinstance(result, ReceiptResult)
                 else "shopping_list.create"
             ),
             status=result.outcome,

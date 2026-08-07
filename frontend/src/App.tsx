@@ -21,6 +21,7 @@ import { EventPlanner } from "./event-planner";
 import { EventShopping } from "./event-shopping";
 import { RecipeCatalog } from "./recipe-catalog-view";
 import { IngredientCatalog } from "./ingredient-catalog-view";
+import { EventReceipts } from "./event-receipts";
 import type { SupportedLocale } from "./i18n";
 import { runtimeAuthentication } from "./runtime-config";
 import { SynchronizationStatus } from "./synchronization-status";
@@ -32,7 +33,7 @@ const sections = ["events", "recipes", "ingredients", "settings"] as const;
 const organizationPath =
   /^\/organizations\/([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})(?:\/|$)/i;
 const eventSectionPath =
-  /^\/organizations\/([0-9a-f-]{36})\/events\/([0-9a-f-]{36})\/(planner|shopping)(?:\/([0-9a-f-]{36}))?$/i;
+  /^\/organizations\/([0-9a-f-]{36})\/events\/([0-9a-f-]{36})\/(planner|shopping|receipts)(?:\/([0-9a-f-]{36}))?$/i;
 const recipeCatalogPath = /^\/organizations\/[0-9a-f-]{36}\/recipes$/i;
 const ingredientCatalogPath = /^\/organizations\/[0-9a-f-]{36}\/ingredients$/i;
 
@@ -401,6 +402,12 @@ function AuthenticatedShell({
     setPathname(nextPath);
   }
 
+  function openReceipts(eventId: string) {
+    const nextPath = `/organizations/${organizationId}/events/${eventId}/receipts`;
+    window.history.pushState(null, "", nextPath);
+    setPathname(nextPath);
+  }
+
   async function signOut() {
     setLogoutError(false);
     try {
@@ -521,6 +528,7 @@ function AuthenticatedShell({
                 eventId && eventSectionName === "planner" ? (
                   <EventPlanner
                     eventId={eventId}
+                    onOpenReceipts={() => openReceipts(eventId)}
                     onOpenShopping={() => openShopping(eventId)}
                     onUnauthenticated={onUnauthenticated}
                     organizationId={organizationId}
@@ -535,6 +543,14 @@ function AuthenticatedShell({
                     onUnauthenticated={onUnauthenticated}
                     organizationId={organizationId}
                     shoppingListId={shoppingListId}
+                    userId={identity.id}
+                  />
+                ) : eventId && eventSectionName === "receipts" ? (
+                  <EventReceipts
+                    eventId={eventId}
+                    onBack={() => openEvent(eventId)}
+                    onUnauthenticated={onUnauthenticated}
+                    organizationId={organizationId}
                     userId={identity.id}
                   />
                 ) : (

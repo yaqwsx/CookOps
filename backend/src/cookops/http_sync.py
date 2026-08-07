@@ -14,6 +14,11 @@ from pydantic import BaseModel, ConfigDict, Field, StrictBool, ValidationError, 
 from cookops.application.browser_sessions import BrowserSessionService
 from cookops.application.events import CreateEventCommand, UpdateEventBaseAttendanceCommand
 from cookops.application.ingredients import CreateIngredientCommand, InitialPrice
+from cookops.application.receipts import (
+    CreateReceiptCommand,
+    SetReceiptLifecycleCommand,
+    UpdateReceiptCommand,
+)
 from cookops.application.recipes import CreateRecipeCommand, RecipeIngredientLineInput
 from cookops.application.scheduled_recipe_moves import MoveScheduledRecipeCommand
 from cookops.application.scheduled_recipes import ScheduleRecipeCommand
@@ -337,6 +342,34 @@ class MoveScheduledRecipePayload(BaseModel):
     logical_operation_id: UUID | None = None
 
 
+class ReceiptMetadataPayload(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    receipt_id: UUID
+    event_id: UUID
+    title: str
+    total_amount: Decimal
+    receipt_date: date | None = None
+    note: str | None = None
+    logical_operation_id: UUID | None = None
+
+    @field_validator("total_amount", mode="before")
+    @classmethod
+    def total_amount_must_be_decimal_string(cls, value: object) -> object:
+        if not isinstance(value, str):
+            raise ValueError("must be a decimal string")
+        return value
+
+
+class ReceiptLifecyclePayload(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    receipt_id: UUID
+    event_id: UUID
+    operation: Literal["retire", "restore"]
+    logical_operation_id: UUID | None = None
+
+
 class PushCommandErrorResponse(BaseModel):
     code: str
     field_violations: tuple[dict[str, str], ...]
@@ -599,6 +632,36 @@ def _push_command(command: PushCommandRequest, organization_id: UUID) -> SyncCom
                 position_key=move_payload.position_key,
                 client_wall_time=command.client_wall_time,
                 logical_operation_id=move_payload.logical_operation_id,
+            )
+        if command.command_kind in ("receipt.create", "receipt.update"):
+            receipt_payload = ReceiptMetadataPayload.model_validate(command.payload)
+            command_class = (
+                CreateReceiptCommand
+                if command.command_kind == "receipt.create"
+                else UpdateReceiptCommand
+            )
+            return command_class(
+                mutation_id=command.mutation_id,
+                receipt_id=receipt_payload.receipt_id,
+                organization_id=organization_id,
+                event_id=receipt_payload.event_id,
+                title=receipt_payload.title,
+                total_amount=receipt_payload.total_amount,
+                client_wall_time=command.client_wall_time,
+                receipt_date=receipt_payload.receipt_date,
+                note=receipt_payload.note,
+                logical_operation_id=receipt_payload.logical_operation_id,
+            )
+        if command.command_kind == "receipt.lifecycle":
+            lifecycle_payload = ReceiptLifecyclePayload.model_validate(command.payload)
+            return SetReceiptLifecycleCommand(
+                mutation_id=command.mutation_id,
+                receipt_id=lifecycle_payload.receipt_id,
+                organization_id=organization_id,
+                event_id=lifecycle_payload.event_id,
+                operation=lifecycle_payload.operation,
+                client_wall_time=command.client_wall_time,
+                logical_operation_id=lifecycle_payload.logical_operation_id,
             )
     except ValidationError:
         return UnsupportedSyncCommand(

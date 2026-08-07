@@ -246,12 +246,14 @@ export function EventPlanner({
   userId,
   onUnauthenticated,
   onOpenShopping,
+  onOpenReceipts,
 }: {
   eventId: string;
   organizationId: string;
   userId: string;
   onUnauthenticated: () => void;
   onOpenShopping?: () => void;
+  onOpenReceipts?: () => void;
 }) {
   const { t } = useTranslation();
   const [state, setState] = useState<PlannerState>("loading");
@@ -314,6 +316,11 @@ export function EventPlanner({
       {onOpenShopping ? (
         <button onClick={onOpenShopping} type="button">
           {t("planner.shopping")}
+        </button>
+      ) : null}
+      {onOpenReceipts ? (
+        <button onClick={onOpenReceipts} type="button">
+          {t("planner.receipts")}
         </button>
       ) : null}
       <AddRecipe
