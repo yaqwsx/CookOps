@@ -9,7 +9,7 @@ from decimal import Decimal
 from typing import Literal, cast
 from uuid import UUID, uuid4
 
-from sqlalchemy import select, text
+from sqlalchemy import and_, or_, select, text
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from cookops.application.organizations import (
@@ -91,6 +91,33 @@ class CreateEventResult:
     last_change_sequence: int
     replayed: bool
     outcome: Literal["accepted"] = "accepted"
+
+
+@dataclass(frozen=True, slots=True)
+class EventSummary:
+    """Small event-overview projection, deliberately independent of ORM rows."""
+
+    id: UUID
+    organization_id: UUID
+    name: str
+    start_date: date
+    end_date: date
+    base_expected_attendance: int
+    budget_amount: Decimal
+    currency: str
+    lifecycle: Literal["active", "archived"]
+    archived_at: datetime | None
+    created_at: datetime
+
+
+@dataclass(frozen=True, slots=True)
+class EventSummaryPage:
+    summaries: tuple[EventSummary, ...]
+    has_more: bool
+
+
+class EventQueryDenied(PermissionError):
+    """A deliberately non-enumerating event-query denial."""
 
 
 @dataclass(frozen=True, slots=True)
@@ -377,6 +404,111 @@ def _canonical_decimal_string(value: Decimal) -> str:
     if value == 0:
         return "0"
     return format(value.normalize(), "f")
+
+
+async def list_event_summaries(
+    session_factory: async_sessionmaker[AsyncSession],
+    *,
+    actor_user_id: UUID,
+    organization_id: UUID,
+    limit: int,
+    before_lifecycle: Literal["active", "archived"] | None = None,
+    before_created_at: datetime | None = None,
+    before_id: UUID | None = None,
+) -> EventSummaryPage:
+    """Return an authorized organization event overview without leaking scope.
+
+    This is a read projection, so it intentionally does not require a client
+    installation.  Installations attribute mutations; an authenticated browser
+    session supplies the actor identity for this current-membership check.
+    """
+
+    if not 1 <= limit <= 100:
+        raise ValueError("limit must be between 1 and 100")
+    cursor_values = (before_lifecycle, before_created_at, before_id)
+    if any(value is None for value in cursor_values) and any(
+        value is not None for value in cursor_values
+    ):
+        raise ValueError("event cursor values must be present together")
+    async with session_factory() as session:
+        actor_is_active = await session.scalar(
+            select(User.id).where(User.id == actor_user_id, User.disabled_at.is_(None))
+        )
+        organization_is_active = await session.scalar(
+            select(Organization.id).where(
+                Organization.id == organization_id,
+                Organization.retired_at.is_(None),
+            )
+        )
+        if actor_is_active is None or organization_is_active is None:
+            raise EventQueryDenied("organization access denied")
+        system_admin = await session.scalar(
+            select(SystemRoleAssignment.id).where(
+                SystemRoleAssignment.user_id == actor_user_id,
+                SystemRoleAssignment.role == "system_admin",
+                SystemRoleAssignment.revoked_at.is_(None),
+            )
+        )
+        if system_admin is None:
+            membership = await session.scalar(
+                select(OrganizationMembership.id).where(
+                    OrganizationMembership.organization_id == organization_id,
+                    OrganizationMembership.user_id == actor_user_id,
+                    OrganizationMembership.state == "active",
+                    OrganizationMembership.role.in_(("member", "organization_admin")),
+                )
+            )
+            if membership is None:
+                raise EventQueryDenied("organization access denied")
+        statement = select(Event).where(Event.organization_id == organization_id)
+        if before_lifecycle is not None:
+            assert before_created_at is not None and before_id is not None
+            statement = statement.where(
+                or_(
+                    Event.lifecycle > before_lifecycle,
+                    and_(
+                        Event.lifecycle == before_lifecycle,
+                        or_(
+                            Event.created_at < before_created_at,
+                            and_(
+                                Event.created_at == before_created_at,
+                                Event.id < before_id,
+                            ),
+                        ),
+                    ),
+                )
+            )
+        events = (
+            (
+                await session.execute(
+                    statement.order_by(
+                        Event.lifecycle.asc(),
+                        Event.created_at.desc(),
+                        Event.id.desc(),
+                    ).limit(limit + 1)
+                )
+            )
+            .scalars()
+            .all()
+        )
+        page_events = events[:limit]
+        summaries = tuple(
+            EventSummary(
+                id=event.id,
+                organization_id=event.organization_id,
+                name=event.name,
+                start_date=event.start_date,
+                end_date=event.end_date,
+                base_expected_attendance=event.base_expected_attendance,
+                budget_amount=event.budget_amount,
+                currency=event.currency,
+                lifecycle=cast(Literal["active", "archived"], event.lifecycle),
+                archived_at=event.archived_at,
+                created_at=event.created_at,
+            )
+            for event in page_events
+        )
+        return EventSummaryPage(summaries=summaries, has_more=len(events) > limit)
 
 
 async def _authorize_and_lock_organization(
