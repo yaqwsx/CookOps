@@ -66,6 +66,21 @@ async function addEvent(
   ).put(record);
 }
 
+async function addOrganization() {
+  await localDb.canonicalRecords.put({
+    userId,
+    organizationId,
+    entityType: "organization",
+    entityId: organizationId,
+    recordSchemaVersion: 1,
+    lifecycle: "active",
+    fields: { id: organizationId, default_currency: "CZK" },
+    fieldClocks: {},
+    immutable: false,
+    updatedAt: "2026-08-07T12:00:00.000Z",
+  });
+}
+
 describe("EventOverview", () => {
   beforeEach(async () => {
     await clearDatabase();
@@ -120,6 +135,36 @@ describe("EventOverview", () => {
     expect(pullOrganization).not.toHaveBeenCalled();
   });
 
+  it("creates a valid event locally while offline and exposes it as pending work", async () => {
+    await addOrganization();
+    setOnline(false);
+    const user = userEvent.setup();
+    render(
+      <EventOverview
+        onUnauthenticated={vi.fn()}
+        organizationId={organizationId}
+        userId={userId}
+      />,
+    );
+
+    await user.type(screen.getByLabelText("Název"), "Offline picnic");
+    await user.type(screen.getByLabelText("Začátek"), "2026-08-10");
+    await user.type(screen.getByLabelText("Konec"), "2026-08-10");
+    await user.clear(screen.getByLabelText("Očekávaná účast"));
+    await user.type(screen.getByLabelText("Očekávaná účast"), "8");
+    await user.clear(screen.getByLabelText("Rozpočet"));
+    await user.type(screen.getByLabelText("Rozpočet"), "50.25");
+    await user.click(screen.getByRole("button", { name: "Uložit akci" }));
+
+    expect(
+      await screen.findByRole("heading", { name: "Offline picnic" }),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByText("Akce je uložena místně a bude synchronizována."),
+    ).toBeInTheDocument();
+    await expect(localDb.outbox.count()).resolves.toBe(1);
+  });
+
   it("keeps cache errors recoverable and retries the existing synchronization path", async () => {
     pullOrganization.mockRejectedValueOnce(new Error("temporary"));
     render(
@@ -137,6 +182,35 @@ describe("EventOverview", () => {
       .setup()
       .click(screen.getByRole("button", { name: "Zkusit znovu" }));
     await waitFor(() => expect(pullOrganization).toHaveBeenCalledTimes(2));
+  });
+
+  it("keeps local event creation available after a transient pull failure", async () => {
+    await addOrganization();
+    pullOrganization.mockRejectedValueOnce(new Error("temporary"));
+    const user = userEvent.setup();
+    render(
+      <EventOverview
+        onUnauthenticated={vi.fn()}
+        organizationId={organizationId}
+        userId={userId}
+      />,
+    );
+
+    expect(await screen.findByRole("alert")).toBeInTheDocument();
+    await user.type(screen.getByLabelText("Název"), "Cached organization");
+    await user.type(screen.getByLabelText("Začátek"), "2026-08-10");
+    await user.type(screen.getByLabelText("Konec"), "2026-08-10");
+    await user.click(screen.getByRole("button", { name: "Uložit akci" }));
+
+    expect(
+      await screen.findByRole("heading", { name: "Cached organization" }),
+    ).toBeInTheDocument();
+    await expect(localDb.outbox.toArray()).resolves.toContainEqual(
+      expect.objectContaining({
+        commandType: "event.create",
+        payload: expect.objectContaining({ name: "Cached organization" }),
+      }),
+    );
   });
 
   it("returns to authentication when synchronization rejects the expired session", async () => {

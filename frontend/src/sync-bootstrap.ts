@@ -157,6 +157,8 @@ async function replayOptimisticCommands(
     const eventId = command.payload.event_id;
     if (command.commandType === "event.create" && typeof eventId === "string") {
       const existing = await current("event", eventId);
+      const organization = await current("organization", organizationId);
+      const defaultCurrency = organization?.fields.default_currency;
       await localDb.optimisticOverlays.put({
         userId,
         organizationId,
@@ -168,7 +170,12 @@ async function replayOptimisticCommands(
           ...existing?.fields,
           ...command.payload,
           id: eventId,
+          organization_id: organizationId,
+          ...(typeof defaultCurrency === "string"
+            ? { currency: defaultCurrency }
+            : {}),
           lifecycle: "active",
+          archived_at: null,
         },
         fieldClocks: {
           ...existing?.fieldClocks,

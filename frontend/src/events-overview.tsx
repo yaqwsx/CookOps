@@ -3,6 +3,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 
 import type { EventSummary } from "./api/events";
+import { EventCreate } from "./event-create-form";
 import { readVisibleEventSummaries } from "./event-projections";
 import { pullOrganization, SyncRequestError } from "./sync-bootstrap";
 
@@ -122,22 +123,31 @@ export function EventOverview({
   }
   if (state === "error" && events.length === 0) {
     return (
-      <div className="event-overview-error" role="alert">
-        <p>{t("eventsOverview.error")}</p>
-        <button onClick={() => void synchronize()} type="button">
-          {t("eventsOverview.retry")}
-        </button>
+      <div className="event-overview">
+        <EventCreate organizationId={organizationId} userId={userId} />
+        <div className="event-overview-error" role="alert">
+          <p>{t("eventsOverview.error")}</p>
+          <button onClick={() => void synchronize()} type="button">
+            {t("eventsOverview.retry")}
+          </button>
+        </div>
       </div>
     );
   }
   if (state === "ready" && events.length === 0) {
-    return <p>{t("eventsOverview.empty")}</p>;
+    return (
+      <div className="event-overview">
+        <EventCreate organizationId={organizationId} userId={userId} />
+        <p>{t("eventsOverview.empty")}</p>
+      </div>
+    );
   }
   return (
     <div className="event-overview">
       <p className="event-overview__scope" role="note">
         {t("eventsOverview.scope")}
       </p>
+      <EventCreate organizationId={organizationId} userId={userId} />
       {state === "offline" ? (
         <p aria-live="polite" role="status">
           {t("eventsOverview.offline")}

@@ -55,6 +55,19 @@ function record(entityId: string, organization = organizationId) {
   };
 }
 
+function organizationRecord() {
+  return {
+    organization_id: organizationId,
+    entity_id: organizationId,
+    entity_kind: "organization",
+    operation: "upsert",
+    payload: {
+      record_schema_version: 1,
+      record: { id: organizationId, default_currency: "CZK" },
+    },
+  };
+}
+
 describe("bootstrapOrganization", () => {
   beforeEach(clearDatabase);
 
@@ -184,7 +197,7 @@ describe("bootstrapOrganization", () => {
 
     await bootstrapOrganization(userId, organizationId, {
       fetch: vi.fn<typeof fetch>(async () =>
-        response([record("server-event")]),
+        response([organizationRecord(), record("server-event")]),
       ),
     });
 
@@ -197,7 +210,7 @@ describe("bootstrapOrganization", () => {
         "local-event",
       ),
     ).resolves.toMatchObject({
-      fields: { name: "Offline event" },
+      fields: { name: "Offline event", currency: "CZK" },
       fieldClocks: {
         optimistic: { mutationId: command.id, actionAt: command.actionAt },
       },
