@@ -108,15 +108,23 @@ export function createProvider(profile: ProviderProfile): Provider {
           };
         },
       },
-      revocation: { enabled: true },
+      revocation: {
+        enabled: true,
+        allowedPolicy: (_ctx, client, token) => client.clientId === token.clientId,
+      },
     },
     interactions: {
       url: (_ctx, interaction) => `${issuer}/interaction/${interaction.uid}`,
     },
+    findAccount: async (_ctx, accountId) => ({
+      accountId,
+      claims: async () => ({ sub: accountId }),
+    }),
     issueRefreshToken: (_ctx, client) => client.grantTypeAllowed("refresh_token"),
     jwks: profile.jwks,
     pkce: { required: () => true },
     responseTypes: ["code"],
+    rotateRefreshToken: true,
     routes: {
       authorization: `${basePath}/authorize`,
       introspection: `${basePath}/introspect`,
@@ -126,6 +134,13 @@ export function createProvider(profile: ProviderProfile): Provider {
       token: `${basePath}/token`,
     },
     scopes: [MCP_SCOPE],
+    ttl: {
+      AccessToken: 15 * 60,
+      Grant: 14 * 24 * 60 * 60,
+      Interaction: 5 * 60,
+      RefreshToken: 14 * 24 * 60 * 60,
+      Session: 60 * 60,
+    },
   };
 
   return new Provider(issuer, configuration);
