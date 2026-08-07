@@ -8,6 +8,7 @@ export type ReceiptProjection = {
   receiptDate: string | null;
   note: string | null;
   retired: boolean;
+  attachments?: { id: string; mediaType: string; retired: boolean }[];
 };
 
 const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -21,6 +22,12 @@ export async function readEventReceipts(
 ): Promise<ReceiptProjection[]> {
   if (![userId, organizationId, eventId].every((id) => uuid.test(id)))
     return [];
+  const attachments = await readVisibleRecords(
+    userId,
+    organizationId,
+    "receipt_attachment",
+    true,
+  );
   return (await readVisibleRecords(userId, organizationId, "receipt", true))
     .filter((record) => {
       const fields = record.fields;
@@ -38,15 +45,30 @@ export async function readEventReceipts(
         (fields.note === null || typeof fields.note === "string")
       );
     })
-    .map((record) => ({
-      id: record.entityId,
-      title: record.fields.title as string,
-      totalAmount: record.fields.total_amount as string,
-      currency: record.fields.currency as string,
-      receiptDate: record.fields.receipt_date as string | null,
-      note: record.fields.note as string | null,
-      retired: record.lifecycle === "retired",
-    }))
+    .map((record) => {
+      const readyAttachments = attachments
+        .filter(
+          (attachment) =>
+            attachment.fields.receipt_id === record.entityId &&
+            attachment.fields.storage_state === "ready" &&
+            typeof attachment.fields.media_type === "string",
+        )
+        .map((attachment) => ({
+          id: attachment.entityId,
+          mediaType: attachment.fields.media_type as string,
+          retired: attachment.lifecycle === "retired",
+        }));
+      return {
+        id: record.entityId,
+        title: record.fields.title as string,
+        totalAmount: record.fields.total_amount as string,
+        currency: record.fields.currency as string,
+        receiptDate: record.fields.receipt_date as string | null,
+        note: record.fields.note as string | null,
+        retired: record.lifecycle === "retired",
+        ...(readyAttachments.length ? { attachments: readyAttachments } : {}),
+      };
+    })
     .sort(
       (left, right) =>
         left.title.localeCompare(right.title) ||

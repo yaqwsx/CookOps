@@ -24,6 +24,7 @@ from cookops.application.organizations import (
     _advisory_lock_key,
 )
 from cookops.application.recipes import _authorize_and_lock_organization
+from cookops.media_storage import LocalReceiptMediaStorage, StagedReceiptImage
 from cookops.persistence.models import (
     Event,
     MediaUploadTicket,
@@ -88,6 +89,51 @@ class ReceiptAttachmentResult:
     ticket_id: UUID | None
     ticket_secret: str | None
     ticket_expires_at: datetime | None
+    first_change_sequence: int
+    last_change_sequence: int
+    replayed: bool
+
+
+@dataclass(frozen=True, slots=True)
+class FinalizeReceiptAttachmentCommand:
+    mutation_id: UUID
+    attachment_id: UUID
+    organization_id: UUID
+    receipt_id: UUID
+    ticket_secret: str
+    client_wall_time: datetime
+    replaces_attachment_id: UUID | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class FinalizedReceiptAttachmentResult:
+    attachment_id: UUID
+    organization_id: UUID
+    receipt_id: UUID
+    storage_state: Literal["ready"]
+    media_type: Literal["image/jpeg", "image/webp"]
+    byte_size: int
+    pixel_width: int
+    pixel_height: int
+    first_change_sequence: int
+    last_change_sequence: int
+    replayed: bool
+
+
+@dataclass(frozen=True, slots=True)
+class SetReceiptAttachmentLifecycleCommand:
+    mutation_id: UUID
+    attachment_id: UUID
+    organization_id: UUID
+    receipt_id: UUID
+    operation: Literal["retire", "restore"]
+    client_wall_time: datetime
+
+
+@dataclass(frozen=True, slots=True)
+class ReceiptAttachmentLifecycleResult:
+    attachment_id: UUID
+    retired_at: datetime | None
     first_change_sequence: int
     last_change_sequence: int
     replayed: bool
@@ -230,6 +276,10 @@ def _record(attachment: ReceiptAttachment) -> dict[str, object]:
         "storage_state": attachment.storage_state,
         "media_type": attachment.media_type,
         "position_key": attachment.position_key,
+        "byte_size": attachment.byte_size,
+        "pixel_width": attachment.pixel_width,
+        "pixel_height": attachment.pixel_height,
+        "finalized_at": attachment.finalized_at.isoformat() if attachment.finalized_at else None,
         "created_at": attachment.created_at.isoformat(),
         "created_by_user_id": str(attachment.created_by_user_id),
         "retired_at": attachment.retired_at.isoformat() if attachment.retired_at else None,
@@ -384,15 +434,15 @@ def _mutation(
 
 
 async def _load_receipt_and_event(
-    session: AsyncSession, prepared: _Prepared
+    session: AsyncSession, organization_id: UUID, receipt_id: UUID
 ) -> tuple[Receipt, Event] | None:
     row = (
         await session.execute(
             select(Receipt, Event)
             .join(Event, Event.id == Receipt.event_id)
             .where(
-                Receipt.id == prepared.receipt_id,
-                Receipt.organization_id == prepared.organization_id,
+                Receipt.id == receipt_id,
+                Receipt.organization_id == organization_id,
             )
             .with_for_update(of=(Receipt, Event))
         )
@@ -461,7 +511,9 @@ async def _apply(
                 text("SELECT pg_advisory_xact_lock(:key)"),
                 {"key": _advisory_lock_key("receipt_attachment", prepared.attachment_id)},
             )
-            receipt_and_event = await _load_receipt_and_event(session, prepared)
+            receipt_and_event = await _load_receipt_and_event(
+                session, prepared.organization_id, prepared.receipt_id
+            )
             if receipt_and_event is None or receipt_and_event[0].retired_at is not None:
                 deferred = ApplicationServiceError(
                     "validation_failed",
@@ -608,3 +660,366 @@ async def issue_receipt_attachment_upload_ticket(
 ) -> ReceiptAttachmentResult:
     """Issue a replacement upload capability without replaying an old secret."""
     return await _apply(session_factory, context, command)
+
+
+async def finalize_receipt_attachment(
+    session_factory: async_sessionmaker[AsyncSession],
+    context: ExecutionContext,
+    command: FinalizeReceiptAttachmentCommand,
+    staged: StagedReceiptImage,
+    storage: LocalReceiptMediaStorage,
+) -> FinalizedReceiptAttachmentResult:
+    """Consume one ticket and publish only metadata measured from staged bytes."""
+    if (
+        not all(
+            isinstance(value, UUID)
+            for value in (
+                command.mutation_id,
+                command.attachment_id,
+                command.organization_id,
+                command.receipt_id,
+            )
+        )
+        or not isinstance(command.ticket_secret, str)
+        or not command.ticket_secret
+        or not command.ticket_secret.isascii()
+        or len(command.ticket_secret) > 128
+    ):
+        raise ApplicationServiceError(
+            "validation_failed",
+            retry_same_identity=False,
+            field_violations=(FieldViolation("upload", "invalid"),),
+        )
+    if staged.media_type not in _MEDIA_TYPES or max(staged.width, staged.height) > 2000:
+        raise ApplicationServiceError(
+            "validation_failed",
+            retry_same_identity=False,
+            field_violations=(
+                FieldViolation("image", "must_be_supported_and_at_most_2000_pixels"),
+            ),
+        )
+    request_hash = hashlib.sha256(
+        json.dumps(
+            {
+                "attachment_id": str(command.attachment_id),
+                "kind": "receipt_attachment.finalize",
+                "organization_id": str(command.organization_id),
+                "receipt_id": str(command.receipt_id),
+                "replaces_attachment_id": str(command.replaces_attachment_id)
+                if command.replaces_attachment_id
+                else None,
+            },
+            separators=(",", ":"),
+            sort_keys=True,
+        ).encode()
+    ).digest()
+    now = _server_now()
+    async with session_factory() as session, session.begin():
+        role = await _authorize_and_lock_organization(session, context, command.organization_id)
+        await session.execute(
+            text("SELECT pg_advisory_xact_lock(:key)"),
+            {"key": _advisory_lock_key("mutation", command.mutation_id)},
+        )
+        retained = await session.get(Mutation, command.mutation_id)
+        if retained is not None:
+            if (
+                retained.actor_user_id != context.actor_user_id
+                or retained.command_kind != "receipt_attachment.finalize"
+                or retained.request_hash != request_hash
+                or retained.outcome != "accepted"
+                or retained.first_change_sequence is None
+                or retained.last_change_sequence is None
+            ):
+                raise ApplicationServiceError("idempotency_mismatch", retry_same_identity=False)
+            attachment = await session.get(ReceiptAttachment, command.attachment_id)
+            if (
+                attachment is None
+                or attachment.storage_state != "ready"
+                or attachment.content_hash != staged.content_hash
+                or attachment.source_byte_size != staged.source_byte_size
+                or attachment.source_content_hash != staged.source_content_hash
+            ):
+                raise ApplicationServiceError("idempotency_mismatch", retry_same_identity=False)
+            return FinalizedReceiptAttachmentResult(
+                attachment.id,
+                attachment.organization_id,
+                attachment.receipt_id,
+                "ready",
+                cast(Literal["image/jpeg", "image/webp"], attachment.media_type),
+                cast(int, attachment.byte_size),
+                cast(int, attachment.pixel_width),
+                cast(int, attachment.pixel_height),
+                retained.first_change_sequence,
+                retained.last_change_sequence,
+                True,
+            )
+        loaded = await _load_receipt_and_event(session, command.organization_id, command.receipt_id)
+        attachment = await session.scalar(
+            select(ReceiptAttachment)
+            .where(
+                ReceiptAttachment.id == command.attachment_id,
+                ReceiptAttachment.organization_id == command.organization_id,
+                ReceiptAttachment.receipt_id == command.receipt_id,
+            )
+            .with_for_update(of=ReceiptAttachment)
+        )
+        replaced = None
+        if command.replaces_attachment_id is not None:
+            replaced = await session.scalar(
+                select(ReceiptAttachment)
+                .where(
+                    ReceiptAttachment.id == command.replaces_attachment_id,
+                    ReceiptAttachment.organization_id == command.organization_id,
+                    ReceiptAttachment.receipt_id == command.receipt_id,
+                )
+                .with_for_update(of=ReceiptAttachment)
+            )
+        ticket = await session.scalar(
+            select(MediaUploadTicket)
+            .where(
+                MediaUploadTicket.receipt_attachment_id == command.attachment_id,
+                MediaUploadTicket.secret_hmac
+                == hashlib.sha256(command.ticket_secret.encode("ascii")).digest(),
+            )
+            .with_for_update(of=MediaUploadTicket)
+        )
+        if (
+            loaded is None
+            or loaded[0].retired_at is not None
+            or loaded[1].lifecycle != "active"
+            or attachment is None
+            or attachment.storage_state != "pending"
+            or attachment.retired_at is not None
+            or ticket is None
+            or ticket.user_id != context.actor_user_id
+            or ticket.used_at is not None
+            or ticket.expires_at <= now
+            or ticket.media_type != staged.media_type
+            or ticket.maximum_byte_size < staged.byte_size
+            or (
+                command.replaces_attachment_id is not None
+                and (
+                    replaced is None
+                    or replaced.id == attachment.id
+                    or replaced.storage_state != "ready"
+                    or replaced.retired_at is not None
+                )
+            )
+        ):
+            raise ApplicationServiceError(
+                "validation_failed",
+                retry_same_identity=False,
+                field_violations=(FieldViolation("upload", "not_permitted"),),
+            )
+        object_key, thumbnail_key = storage.promote(staged, attachment.id)
+        attachment.storage_state = "ready"
+        attachment.storage_object_key = object_key
+        attachment.thumbnail_object_key = thumbnail_key
+        attachment.byte_size = staged.byte_size
+        attachment.pixel_width = staged.width
+        attachment.pixel_height = staged.height
+        attachment.content_hash = staged.content_hash
+        attachment.source_byte_size = staged.source_byte_size
+        attachment.source_content_hash = staged.source_content_hash
+        attachment.finalized_at = now
+        attachment.finalized_by_user_id = context.actor_user_id
+        ticket.used_at = now
+        if replaced is not None:
+            replaced.retired_at = now
+            replaced.retired_by_user_id = context.actor_user_id
+        first, last = await _reserve_change_range(
+            session, command.organization_id, command.mutation_id, 2 if replaced else 1
+        )
+        session.add(
+            OrganizationChange(
+                organization_id=command.organization_id,
+                sequence=first,
+                mutation_id=command.mutation_id,
+                entity_id=attachment.id,
+                entity_kind="receipt_attachment",
+                operation="upsert",
+                payload={"record_schema_version": 1, "record": _record(attachment)},
+            )
+        )
+        if replaced is not None:
+            session.add(
+                OrganizationChange(
+                    organization_id=command.organization_id,
+                    sequence=last,
+                    mutation_id=command.mutation_id,
+                    entity_id=replaced.id,
+                    entity_kind="receipt_attachment",
+                    operation="upsert",
+                    payload={"record_schema_version": 1, "record": _record(replaced)},
+                )
+            )
+        session.add(
+            Mutation(
+                id=command.mutation_id,
+                logical_operation_id=None,
+                organization_id=command.organization_id,
+                is_system_administration_scope=False,
+                actor_user_id=context.actor_user_id,
+                actor_role=role,
+                client_installation_id=context.client_installation_id,
+                oauth_client_id=context.oauth_client_id,
+                oauth_grant_id=context.oauth_grant_id,
+                client_wall_time=command.client_wall_time,
+                command_schema_version=1,
+                command_kind="receipt_attachment.finalize",
+                target_identities=[
+                    {"entity_kind": "receipt_attachment", "entity_id": str(attachment.id)}
+                ],
+                request_hash=request_hash,
+                outcome="accepted",
+                outcome_payload={"attachment": _record(attachment)},
+                first_change_sequence=first,
+                last_change_sequence=last,
+            )
+        )
+        return FinalizedReceiptAttachmentResult(
+            attachment.id,
+            attachment.organization_id,
+            attachment.receipt_id,
+            "ready",
+            cast(Literal["image/jpeg", "image/webp"], attachment.media_type),
+            staged.byte_size,
+            staged.width,
+            staged.height,
+            first,
+            last,
+            False,
+        )
+
+
+async def set_receipt_attachment_lifecycle(
+    session_factory: async_sessionmaker[AsyncSession],
+    context: ExecutionContext,
+    command: SetReceiptAttachmentLifecycleCommand,
+) -> ReceiptAttachmentLifecycleResult:
+    """Retire or restore an attachment without ever rewriting finalized content."""
+    if not all(
+        isinstance(value, UUID)
+        for value in (
+            command.mutation_id,
+            command.attachment_id,
+            command.organization_id,
+            command.receipt_id,
+        )
+    ) or command.operation not in ("retire", "restore"):
+        raise ApplicationServiceError(
+            "validation_failed",
+            retry_same_identity=False,
+            field_violations=(FieldViolation("attachment", "invalid"),),
+        )
+    request_hash = hashlib.sha256(
+        json.dumps(
+            {
+                "attachment_id": str(command.attachment_id),
+                "kind": "receipt_attachment.lifecycle",
+                "operation": command.operation,
+                "organization_id": str(command.organization_id),
+                "receipt_id": str(command.receipt_id),
+            },
+            separators=(",", ":"),
+            sort_keys=True,
+        ).encode()
+    ).digest()
+    async with session_factory() as session, session.begin():
+        role = await _authorize_and_lock_organization(session, context, command.organization_id)
+        await session.execute(
+            text("SELECT pg_advisory_xact_lock(:key)"),
+            {"key": _advisory_lock_key("mutation", command.mutation_id)},
+        )
+        retained = await session.get(Mutation, command.mutation_id)
+        if retained is not None:
+            if (
+                retained.actor_user_id != context.actor_user_id
+                or retained.command_kind != "receipt_attachment.lifecycle"
+                or retained.request_hash != request_hash
+                or retained.outcome != "accepted"
+                or retained.first_change_sequence is None
+                or retained.last_change_sequence is None
+            ):
+                raise ApplicationServiceError("idempotency_mismatch", retry_same_identity=False)
+            attachment = await session.get(ReceiptAttachment, command.attachment_id)
+            if attachment is None:
+                raise RuntimeError("retained attachment lifecycle has no attachment")
+            return ReceiptAttachmentLifecycleResult(
+                attachment.id,
+                attachment.retired_at,
+                retained.first_change_sequence,
+                retained.last_change_sequence,
+                True,
+            )
+        loaded = await _load_receipt_and_event(session, command.organization_id, command.receipt_id)
+        attachment = await session.scalar(
+            select(ReceiptAttachment)
+            .where(
+                ReceiptAttachment.id == command.attachment_id,
+                ReceiptAttachment.organization_id == command.organization_id,
+                ReceiptAttachment.receipt_id == command.receipt_id,
+            )
+            .with_for_update(of=ReceiptAttachment)
+        )
+        if (
+            loaded is None
+            or loaded[0].retired_at is not None
+            or loaded[1].lifecycle != "active"
+            or attachment is None
+            or (command.operation == "retire" and attachment.retired_at is not None)
+            or (command.operation == "restore" and attachment.retired_at is None)
+        ):
+            raise ApplicationServiceError(
+                "validation_failed",
+                retry_same_identity=False,
+                field_violations=(FieldViolation("attachment_id", "invalid_lifecycle_transition"),),
+            )
+        now = _server_now()
+        if command.operation == "retire":
+            attachment.retired_at = now
+            attachment.retired_by_user_id = context.actor_user_id
+        else:
+            attachment.retired_at = None
+            attachment.retired_by_user_id = None
+        first, last = await _reserve_change_range(
+            session, command.organization_id, command.mutation_id, 1
+        )
+        session.add(
+            OrganizationChange(
+                organization_id=command.organization_id,
+                sequence=first,
+                mutation_id=command.mutation_id,
+                entity_id=attachment.id,
+                entity_kind="receipt_attachment",
+                operation="upsert",
+                payload={"record_schema_version": 1, "record": _record(attachment)},
+            )
+        )
+        session.add(
+            Mutation(
+                id=command.mutation_id,
+                logical_operation_id=None,
+                organization_id=command.organization_id,
+                is_system_administration_scope=False,
+                actor_user_id=context.actor_user_id,
+                actor_role=role,
+                client_installation_id=context.client_installation_id,
+                oauth_client_id=context.oauth_client_id,
+                oauth_grant_id=context.oauth_grant_id,
+                client_wall_time=command.client_wall_time,
+                command_schema_version=1,
+                command_kind="receipt_attachment.lifecycle",
+                target_identities=[
+                    {"entity_kind": "receipt_attachment", "entity_id": str(attachment.id)}
+                ],
+                request_hash=request_hash,
+                outcome="accepted",
+                outcome_payload={"attachment": _record(attachment)},
+                first_change_sequence=first,
+                last_change_sequence=last,
+            )
+        )
+        return ReceiptAttachmentLifecycleResult(
+            attachment.id, attachment.retired_at, first, last, False
+        )

@@ -35,7 +35,7 @@ describe("event receipt metadata screen", () => {
       .mockResolvedValue(crypto.randomUUID());
   });
 
-  it("uses accessible exact-decimal metadata controls without offering photo upload", async () => {
+  it("uses accessible exact-decimal metadata controls and a camera-capable photo picker", async () => {
     const user = userEvent.setup();
     render(
       <EventReceipts
@@ -47,9 +47,6 @@ describe("event receipt metadata screen", () => {
       />,
     );
     await screen.findByRole("heading", { name: "Účtenky" });
-    expect(
-      screen.queryByText(/Fotografie účtenek zatím nejsou/i),
-    ).not.toBeInTheDocument();
     await user.type(
       screen.getByLabelText("Obchod nebo stručný název"),
       "Bakery",

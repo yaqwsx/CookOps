@@ -1,13 +1,16 @@
 import asyncio
 import hashlib
+import io
 import os
 from collections.abc import Callable, Iterator
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
+from pathlib import Path
 from typing import cast
 from uuid import UUID, uuid4
 
 import pytest
+from PIL import Image
 from sqlalchemy import insert, select, update
 from test_create_event_service import ServiceDatabase, context, event_command
 from test_create_event_service import service_database as create_event_service_database
@@ -16,11 +19,16 @@ from cookops.application.events import create_event
 from cookops.application.organizations import ApplicationServiceError, ExecutionContext
 from cookops.application.receipt_media import (
     CreateReceiptAttachmentCommand,
+    FinalizeReceiptAttachmentCommand,
     IssueReceiptAttachmentUploadTicketCommand,
+    SetReceiptAttachmentLifecycleCommand,
     create_receipt_attachment,
+    finalize_receipt_attachment,
     issue_receipt_attachment_upload_ticket,
+    set_receipt_attachment_lifecycle,
 )
 from cookops.application.receipts import CreateReceiptCommand, create_receipt
+from cookops.media_storage import LocalReceiptMediaStorage
 from cookops.persistence.models import (
     ClientInstallation,
     Event,
@@ -98,6 +106,12 @@ def _issue(
     }
     values.update(changes)
     return IssueReceiptAttachmentUploadTicketCommand(**values)  # type: ignore[arg-type]
+
+
+def _jpeg(color: str = "black") -> bytes:
+    output = io.BytesIO()
+    Image.new("RGB", (3, 2), color=color).save(output, format="JPEG")
+    return output.getvalue()
 
 
 def test_member_creates_pending_attachment_and_reissues_without_secret_replay(
@@ -197,6 +211,174 @@ def test_expired_ticket_lost_response_recovers_with_new_secret(
             )
             == "pending"
         )
+
+
+def test_finalization_only_accepts_server_measured_staged_bytes_and_replays(
+    service_database: ServiceDatabase, tmp_path: Path
+) -> None:
+    receipt_id = _receipt(service_database, _event(service_database))
+    created_command = _create(service_database, receipt_id)
+    created = asyncio.run(
+        create_receipt_attachment(
+            service_database.sessions, context(service_database), created_command
+        )
+    )
+    assert created.ticket_secret is not None
+    storage = LocalReceiptMediaStorage(tmp_path)
+    reissued = asyncio.run(
+        issue_receipt_attachment_upload_ticket(
+            service_database.sessions,
+            context(service_database),
+            _issue(service_database, created_command),
+        )
+    )
+    assert reissued.ticket_secret is not None
+    finalize = FinalizeReceiptAttachmentCommand(
+        uuid4(),
+        created_command.attachment_id,
+        service_database.organization_id,
+        receipt_id,
+        reissued.ticket_secret,
+        datetime.now(UTC),
+    )
+    staged = storage.stage(storage.new_stage_path(), [_jpeg()], 2_000_000)
+    finalized = asyncio.run(
+        finalize_receipt_attachment(
+            service_database.sessions,
+            context(service_database),
+            finalize,
+            staged,
+            storage,
+        )
+    )
+    assert (finalized.storage_state, finalized.media_type, finalized.pixel_width) == (
+        "ready",
+        "image/jpeg",
+        3,
+    )
+    replay_stage = storage.stage(storage.new_stage_path(), [_jpeg()], 2_000_000)
+    replayed = asyncio.run(
+        finalize_receipt_attachment(
+            service_database.sessions,
+            context(service_database),
+            finalize,
+            replay_stage,
+            storage,
+        )
+    )
+    replay_stage.path.unlink()
+    assert replayed.replayed
+    changed_stage = storage.stage(storage.new_stage_path(), [_jpeg("white")], 2_000_000)
+    with pytest.raises(ApplicationServiceError, match="idempotency_mismatch"):
+        asyncio.run(
+            finalize_receipt_attachment(
+                service_database.sessions,
+                context(service_database),
+                finalize,
+                changed_stage,
+                storage,
+            )
+        )
+    changed_stage.path.unlink()
+    with service_database.sync_engine.connect() as connection:
+        record = connection.scalar(
+            select(OrganizationChange.payload).where(
+                OrganizationChange.mutation_id == finalize.mutation_id
+            )
+        )
+        assert record is not None
+        attachment_record = cast(dict[str, object], record["record"])
+        assert attachment_record["storage_state"] == "ready"
+        assert "storage_object_key" not in attachment_record
+        source_hash, source_size = connection.execute(
+            select(ReceiptAttachment.source_content_hash, ReceiptAttachment.source_byte_size).where(
+                ReceiptAttachment.id == created_command.attachment_id
+            )
+        ).one()
+        assert (source_hash, source_size) == (hashlib.sha256(_jpeg()).digest(), len(_jpeg()))
+
+
+def test_replacement_retires_previous_attachment_and_lifecycle_can_restore(
+    service_database: ServiceDatabase, tmp_path: Path
+) -> None:
+    receipt_id = _receipt(service_database, _event(service_database))
+    storage = LocalReceiptMediaStorage(tmp_path)
+    first_command = _create(service_database, receipt_id)
+    first = asyncio.run(
+        create_receipt_attachment(
+            service_database.sessions, context(service_database), first_command
+        )
+    )
+    assert first.ticket_secret is not None
+    asyncio.run(
+        finalize_receipt_attachment(
+            service_database.sessions,
+            context(service_database),
+            FinalizeReceiptAttachmentCommand(
+                uuid4(),
+                first_command.attachment_id,
+                service_database.organization_id,
+                receipt_id,
+                first.ticket_secret,
+                datetime.now(UTC),
+            ),
+            storage.stage(storage.new_stage_path(), [_jpeg()], 2_000_000),
+            storage,
+        )
+    )
+    second_command = _create(service_database, receipt_id, position_key="b")
+    second = asyncio.run(
+        create_receipt_attachment(
+            service_database.sessions, context(service_database), second_command
+        )
+    )
+    assert second.ticket_secret is not None
+    finalized = asyncio.run(
+        finalize_receipt_attachment(
+            service_database.sessions,
+            context(service_database),
+            FinalizeReceiptAttachmentCommand(
+                uuid4(),
+                second_command.attachment_id,
+                service_database.organization_id,
+                receipt_id,
+                second.ticket_secret,
+                datetime.now(UTC),
+                first_command.attachment_id,
+            ),
+            storage.stage(storage.new_stage_path(), [_jpeg()], 2_000_000),
+            storage,
+        )
+    )
+    assert finalized.last_change_sequence == finalized.first_change_sequence + 1
+    restored = asyncio.run(
+        set_receipt_attachment_lifecycle(
+            service_database.sessions,
+            context(service_database),
+            SetReceiptAttachmentLifecycleCommand(
+                uuid4(),
+                first_command.attachment_id,
+                service_database.organization_id,
+                receipt_id,
+                "restore",
+                datetime.now(UTC),
+            ),
+        )
+    )
+    assert restored.retired_at is None
+    with service_database.sync_engine.connect() as connection:
+        states: dict[UUID, datetime | None] = {
+            row[0]: row[1]
+            for row in connection.execute(
+                select(ReceiptAttachment.id, ReceiptAttachment.retired_at).where(
+                    ReceiptAttachment.id.in_(
+                        [first_command.attachment_id, second_command.attachment_id]
+                    )
+                )
+            ).all()
+        }
+        assert states[first_command.attachment_id] is None
+        assert states[second_command.attachment_id] is None
 
 
 def test_ticket_is_bound_to_issuing_user_and_oauth_context(

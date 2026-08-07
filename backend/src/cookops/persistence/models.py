@@ -1279,6 +1279,11 @@ class ReceiptAttachment(Base):
             "AND finalized_at >= created_at)",
             name="ck_receipt_attachments_storage_metadata",
         ),
+        CheckConstraint(
+            "(source_byte_size IS NULL AND source_content_hash IS NULL) OR "
+            "(source_byte_size > 0 AND octet_length(source_content_hash) = 32)",
+            name="ck_receipt_attachments_source_identity",
+        ),
         ForeignKeyConstraint(
             ["receipt_id", "organization_id"],
             ["receipts.id", "receipts.organization_id"],
@@ -1303,6 +1308,8 @@ class ReceiptAttachment(Base):
     pixel_width: Mapped[int | None] = mapped_column()
     pixel_height: Mapped[int | None] = mapped_column()
     content_hash: Mapped[bytes | None] = mapped_column(LargeBinary(32))
+    source_byte_size: Mapped[int | None] = mapped_column(BigInteger)
+    source_content_hash: Mapped[bytes | None] = mapped_column(LargeBinary(32))
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=text("CURRENT_TIMESTAMP")
     )

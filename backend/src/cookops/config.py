@@ -1,4 +1,5 @@
 from enum import StrEnum
+from pathlib import Path
 from typing import Literal, Self
 
 from pydantic import Field, PostgresDsn, model_validator
@@ -33,6 +34,7 @@ class Settings(BaseSettings):
     browser_session_cookie_secure: bool = True
     browser_session_cookie_samesite: Literal["lax", "strict"] = "lax"
     browser_session_lifetime_seconds: int = 7 * 24 * 60 * 60
+    receipt_media_root: Path = Path("/var/lib/cookops/receipts")
 
     @property
     def resolved_browser_session_hmac_key(self) -> str:
@@ -84,4 +86,6 @@ class Settings(BaseSettings):
             raise ValueError("browser session cookie name must be nonblank and trimmed")
         if self.browser_session_lifetime_seconds <= 0:
             raise ValueError("browser session lifetime must be positive")
+        if not self.receipt_media_root.is_absolute():
+            raise ValueError("receipt media root must be an absolute path")
         return self

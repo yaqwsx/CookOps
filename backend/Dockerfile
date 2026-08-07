@@ -13,7 +13,8 @@ COPY alembic.ini ./
 COPY src src
 RUN uv sync --locked --no-dev \
     && useradd --system --uid 10001 --create-home cookops \
-    && chown -R cookops:cookops /app
+    && mkdir -p /var/lib/cookops/receipts \
+    && chown -R cookops:cookops /app /var/lib/cookops
 
 USER cookops
 EXPOSE 8000

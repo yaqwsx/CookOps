@@ -1,7 +1,7 @@
 import Dexie, { type EntityTable, type Table } from "dexie";
 
 export type OutboxState = "pending" | "failed";
-export type UploadState = "pending" | "failed";
+export type UploadState = "pending" | "uploading" | "failed" | "synchronized";
 export type SynchronizationActivity =
   | "caughtUp"
   | "syncing"
@@ -51,6 +51,12 @@ export interface PendingUpload {
   userId: string;
   organizationId: string;
   attachmentId: string;
+  receiptId?: string;
+  positionKey?: string;
+  createMutationId?: string;
+  finalizeMutationId?: string;
+  replaceAttachmentId?: string;
+  serverCreated?: boolean;
   blob: Blob;
   createdAt: string;
   state: UploadState;

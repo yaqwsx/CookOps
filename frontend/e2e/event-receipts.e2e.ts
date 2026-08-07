@@ -3,9 +3,7 @@ import { expect, test } from "@playwright/test";
 const organizationId = "5ce17d2f-8365-4b1f-a80b-34d10425d51c";
 const eventId = "3d8b2b21-c378-4574-9e46-9338c81305ef";
 
-test("creates receipt metadata offline without offering media upload", async ({
-  page,
-}) => {
+test("keeps a normalized receipt photo queued offline", async ({ page }) => {
   await page.addInitScript(() => {
     window.COOKOPS_RUNTIME_CONFIG = { authentication: { provider: "dummy" } };
   });
@@ -97,9 +95,6 @@ test("creates receipt metadata offline without offering media upload", async ({
   await page.getByRole("button", { name: "Otevřít plán" }).click();
   await page.getByRole("button", { name: "Účtenky" }).click();
   await expect(page.getByRole("heading", { name: "Účtenky" })).toBeVisible();
-  await expect(
-    page.getByText(/Fotografie účtenek zatím nejsou/i),
-  ).not.toBeVisible();
   await page.context().setOffline(true);
   await page.evaluate(() => window.dispatchEvent(new Event("offline")));
   await page.getByLabel("Obchod nebo stručný název").fill("Pekárna");
@@ -107,6 +102,60 @@ test("creates receipt metadata offline without offering media upload", async ({
   await page.getByRole("button", { name: "Uložit účtenku" }).click();
   await expect(page.getByRole("heading", { name: "Pekárna" })).toBeVisible();
   await expect(page.getByText("12.50 CZK")).toBeVisible();
+  const picker = page.getByLabel("Přidat fotografii účtenky");
+  await expect(picker).toBeVisible();
+  await picker.setInputFiles({
+    name: "receipt.png",
+    mimeType: "image/png",
+    buffer: Buffer.from(
+      "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVQIHWP4z8DwHwAFgAI/ScL3hwAAAABJRU5ErkJggg==",
+      "base64",
+    ),
+  });
+  await expect
+    .poll(() =>
+      page.evaluate(async () => {
+        const database = await new Promise<IDBDatabase>((resolve, reject) => {
+          const request = indexedDB.open("cookops");
+          request.onsuccess = () => resolve(request.result);
+          request.onerror = () => reject(request.error);
+        });
+        const count = await new Promise<number>((resolve, reject) => {
+          const request = database
+            .transaction("pendingUploads")
+            .objectStore("pendingUploads")
+            .count();
+          request.onsuccess = () => resolve(request.result);
+          request.onerror = () => reject(request.error);
+        });
+        database.close();
+        return count;
+      }),
+    )
+    .toBe(1);
+  const scoped = await page.evaluate(async () => {
+    const database = await new Promise<IDBDatabase>((resolve, reject) => {
+      const request = indexedDB.open("cookops");
+      request.onsuccess = () => resolve(request.result);
+      request.onerror = () => reject(request.error);
+    });
+    const row = await new Promise<{ receiptId?: string }>((resolve, reject) => {
+      const request = database
+        .transaction("pendingUploads")
+        .objectStore("pendingUploads")
+        .getAll();
+      request.onsuccess = () => resolve(request.result[0]);
+      request.onerror = () => reject(request.error);
+    });
+    database.close();
+    return row.receiptId;
+  });
+  expect(scoped).toBe(
+    await page.locator(".receipt-item").getAttribute("data-receipt-id"),
+  );
+  await expect(
+    page.getByRole("button", { name: "Odstranit fotografii" }),
+  ).toBeVisible();
   await expect
     .poll(() =>
       page.evaluate(

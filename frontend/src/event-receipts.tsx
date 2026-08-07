@@ -10,6 +10,14 @@ import {
   type ReceiptInput,
 } from "./receipt-metadata";
 import {
+  prepareReceiptImage,
+  queueReceiptAttachment,
+  removeReceiptUpload,
+  retryReceiptUpload,
+  setReceiptAttachmentLifecycle,
+} from "./receipt-media";
+import { localDb, type PendingUpload } from "./local-db";
+import {
   readEventReceipts,
   type ReceiptProjection,
 } from "./receipt-projections";
@@ -122,11 +130,15 @@ function ReceiptForm({
 function ReceiptItem({
   eventId,
   organizationId,
+  onQueued,
+  uploads,
   receipt,
   userId,
 }: {
   eventId: string;
   organizationId: string;
+  onQueued: (upload: PendingUpload) => void;
+  uploads: PendingUpload[];
   receipt: ReceiptProjection;
   userId: string;
 }) {
@@ -150,8 +162,39 @@ function ReceiptItem({
       busy.current = false;
     }
   }
+  async function attach(file: File | undefined) {
+    if (!file) return;
+    try {
+      const pending = await queueReceiptAttachment(
+        userId,
+        organizationId,
+        receipt.id,
+        await prepareReceiptImage(file),
+      );
+      onQueued(pending);
+      setError(false);
+    } catch {
+      setError(true);
+    }
+  }
+  async function attachmentLifecycle(
+    attachmentId: string,
+    operation: "retire" | "restore",
+  ) {
+    try {
+      await setReceiptAttachmentLifecycle(
+        userId,
+        organizationId,
+        receipt.id,
+        attachmentId,
+        operation,
+      );
+    } catch {
+      setError(true);
+    }
+  }
   return (
-    <li className="receipt-item">
+    <li className="receipt-item" data-receipt-id={receipt.id}>
       <div aria-disabled={receipt.retired}>
         <h3>{receipt.title}</h3>
         <p>
@@ -162,7 +205,64 @@ function ReceiptItem({
         </p>
         {receipt.receiptDate ? <p>{receipt.receiptDate}</p> : null}
         {receipt.note ? <p>{receipt.note}</p> : null}
-        <p className="receipt-item__media">{t("receipts.metadataOnly")}</p>
+        {receipt.attachments?.map((attachment) => (
+          <div key={attachment.id}>
+            {!attachment.retired ? (
+              <img
+                alt={t("receipts.photo")}
+                loading="lazy"
+                src={`/media/receipt-attachments/${attachment.id}?organization_id=${organizationId}`}
+              />
+            ) : null}
+            <button
+              onClick={() =>
+                void attachmentLifecycle(
+                  attachment.id,
+                  attachment.retired ? "restore" : "retire",
+                )
+              }
+              type="button"
+            >
+              {t(
+                attachment.retired
+                  ? "receipts.restorePhoto"
+                  : "receipts.removePhoto",
+              )}
+            </button>
+          </div>
+        ))}
+        {!receipt.retired ? (
+          <label className="receipt-item__media">
+            {t("receipts.addPhoto")}
+            <input
+              accept="image/*"
+              capture="environment"
+              onChange={(event) => void attach(event.target.files?.[0])}
+              type="file"
+            />
+          </label>
+        ) : null}
+        {uploads.map((upload) => (
+          <p key={upload.id} role="status">
+            {t(
+              `receipts.photo${upload.state[0].toUpperCase()}${upload.state.slice(1)}`,
+            )}
+            {upload.state === "failed" ? (
+              <button
+                onClick={() => void retryReceiptUpload(upload.id)}
+                type="button"
+              >
+                {t("receipts.retryPhoto")}
+              </button>
+            ) : null}
+            <button
+              onClick={() => void removeReceiptUpload(userId, upload.id)}
+              type="button"
+            >
+              {t("receipts.removePhoto")}
+            </button>
+          </p>
+        ))}
       </div>
       <div className="receipt-item__actions">
         {!receipt.retired ? (
@@ -203,6 +303,8 @@ export function EventReceipts({
 }) {
   const { t } = useTranslation();
   const [receipts, setReceipts] = useState<ReceiptProjection[]>();
+  const [uploads, setUploads] = useState<PendingUpload[]>([]);
+  const optimisticUploadIds = useRef(new Set<string>());
   const [offline, setOffline] = useState(false);
   const [error, setError] = useState(false);
   const refresh = useCallback(async () => {
@@ -226,6 +328,28 @@ export function EventReceipts({
     void refresh();
     return () => subscription.unsubscribe();
   }, [eventId, organizationId, refresh, userId]);
+  useEffect(() => {
+    const subscription = liveQuery(() =>
+      localDb.pendingUploads.toArray(),
+    ).subscribe({
+      next: (items) => {
+        const scoped = items.filter(
+          (item) =>
+            item.userId === userId && item.organizationId === organizationId,
+        );
+        setUploads((current) => {
+          const next = new Map(scoped.map((item) => [item.id, item]));
+          for (const item of scoped)
+            optimisticUploadIds.current.delete(item.id);
+          for (const item of current)
+            if (optimisticUploadIds.current.has(item.id) && !next.has(item.id))
+              next.set(item.id, item);
+          return [...next.values()];
+        });
+      },
+    });
+    return () => subscription.unsubscribe();
+  }, [organizationId, userId]);
   if (!receipts && !error) return <p role="status">{t("receipts.loading")}</p>;
   if (error)
     return (
@@ -260,8 +384,19 @@ export function EventReceipts({
               eventId={eventId}
               key={receipt.id}
               organizationId={organizationId}
+              onQueued={(upload) => {
+                optimisticUploadIds.current.add(upload.id);
+                setUploads((current) =>
+                  current.some((item) => item.id === upload.id)
+                    ? current
+                    : [...current, upload],
+                );
+              }}
               receipt={receipt}
               userId={userId}
+              uploads={uploads.filter(
+                (upload) => upload.receiptId === receipt.id,
+              )}
             />
           ))}
         </ul>

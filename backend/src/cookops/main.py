@@ -23,9 +23,11 @@ from cookops.http_auth import (
     create_organization_access_router,
 )
 from cookops.http_events import EventHttpServices, create_events_router
+from cookops.http_media import MediaHttpServices, create_media_router
 from cookops.http_memberships import MembershipHttpServices, create_memberships_router
 from cookops.http_shopping import ShoppingHttpServices, create_shopping_router
 from cookops.http_sync import SynchronizationHttpServices, create_sync_router
+from cookops.media_storage import LocalReceiptMediaStorage
 
 ReadinessProbe = Callable[[], Awaitable[bool]]
 
@@ -161,6 +163,11 @@ def create_app(
             browser_sessions=application.state.browser_authentication.browser_sessions,
             queries=ShoppingListQueryService(session_factory),
         )
+        application.state.media = MediaHttpServices(
+            browser_sessions=application.state.browser_authentication.browser_sessions,
+            session_factory=session_factory,
+            storage=LocalReceiptMediaStorage(app_settings.receipt_media_root),
+        )
         application.state.readiness_probe = runtime.is_ready
         try:
             yield
@@ -176,6 +183,7 @@ def create_app(
     application.include_router(create_events_router(app_settings))
     application.include_router(create_memberships_router(app_settings))
     application.include_router(create_shopping_router(app_settings))
+    application.include_router(create_media_router())
     application.include_router(create_sync_router(app_settings))
     return application
 

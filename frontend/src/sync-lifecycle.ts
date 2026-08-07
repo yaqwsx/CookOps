@@ -4,6 +4,7 @@ import { useCallback, useEffect, useRef } from "react";
 import { localDb } from "./local-db";
 import { dispatchOutbox } from "./sync-dispatcher";
 import { pullOrganization } from "./sync-bootstrap";
+import { dispatchReceiptUploads } from "./receipt-media";
 
 export const SYNC_RETRY_DELAY_MS = 5_000;
 const syncLockName = "cookops-outbox-sync";
@@ -95,6 +96,9 @@ export function useOutboxSynchronization(userId: string) {
           await dispatchOutbox(organizationId, { userId });
           if (!active.current || currentGeneration !== generation.current)
             return;
+          await dispatchReceiptUploads(userId, organizationId);
+          if (!active.current || currentGeneration !== generation.current)
+            return;
           while (await pullOrganization(userId, organizationId)) {
             if (!active.current || currentGeneration !== generation.current)
               return;
@@ -135,7 +139,9 @@ export function useOutboxSynchronization(userId: string) {
 
   useEffect(() => {
     active.current = true;
-    const subscription = liveQuery(() => localDb.outbox.toArray()).subscribe({
+    const subscription = liveQuery(() =>
+      Promise.all([localDb.outbox.toArray(), localDb.pendingUploads.toArray()]),
+    ).subscribe({
       next: () => void synchronize(),
     });
     window.addEventListener("online", synchronize);
