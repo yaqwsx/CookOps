@@ -954,6 +954,9 @@ class Event(Base):
             initially="DEFERRED",
         ),
         UniqueConstraint("id", "organization_id", name="uq_events_id_organization"),
+        UniqueConstraint(
+            "id", "organization_id", "currency", name="uq_events_id_organization_currency"
+        ),
     )
 
     id: Mapped[UUID] = mapped_column(
@@ -1020,6 +1023,177 @@ class EventArchiveSnapshot(Base):
         DateTime(timezone=True), server_default=text("CURRENT_TIMESTAMP")
     )
     created_by_user_id: Mapped[UUID] = mapped_column(ForeignKey("users.id", ondelete="RESTRICT"))
+
+
+class Receipt(Base):
+    __tablename__ = "receipts"
+    __table_args__ = (
+        CheckConstraint("btrim(title) <> ''", name="ck_receipts_title_not_empty"),
+        CheckConstraint(
+            "total_amount >= 0 AND total_amount::text NOT IN ('NaN', 'Infinity', '-Infinity')",
+            name="ck_receipts_nonnegative_total",
+        ),
+        CheckConstraint("currency ~ '^[A-Z]{3}$'", name="ck_receipts_currency"),
+        CheckConstraint("last_modified_at >= created_at", name="ck_receipts_audit_order"),
+        CheckConstraint(
+            "(retired_at IS NULL AND retired_by_user_id IS NULL) OR "
+            "(retired_at IS NOT NULL AND retired_by_user_id IS NOT NULL)",
+            name="ck_receipts_retirement_attribution",
+        ),
+        ForeignKeyConstraint(
+            ["event_id", "organization_id", "currency"],
+            ["events.id", "events.organization_id", "events.currency"],
+            ondelete="RESTRICT",
+            name="fk_receipts_event_organization_currency",
+        ),
+        UniqueConstraint("id", "organization_id", name="uq_receipts_id_organization"),
+        UniqueConstraint(
+            "id", "event_id", "organization_id", name="uq_receipts_id_event_organization"
+        ),
+        Index("ix_receipts_event_created_at", "event_id", "created_at"),
+    )
+
+    id: Mapped[UUID] = mapped_column(
+        Uuid, primary_key=True, default=uuid4, server_default=text("gen_random_uuid()")
+    )
+    organization_id: Mapped[UUID] = mapped_column(Uuid)
+    event_id: Mapped[UUID] = mapped_column(Uuid)
+    title: Mapped[str] = mapped_column(String(200))
+    total_amount: Mapped[Decimal] = mapped_column(Numeric)
+    currency: Mapped[str] = mapped_column(String(3))
+    receipt_date: Mapped[date | None] = mapped_column()
+    note: Mapped[str | None] = mapped_column(Text)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=text("CURRENT_TIMESTAMP")
+    )
+    created_by_user_id: Mapped[UUID] = mapped_column(ForeignKey("users.id", ondelete="RESTRICT"))
+    last_modified_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=text("CURRENT_TIMESTAMP")
+    )
+    last_modified_by_user_id: Mapped[UUID] = mapped_column(
+        ForeignKey("users.id", ondelete="RESTRICT")
+    )
+    retired_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    retired_by_user_id: Mapped[UUID | None] = mapped_column(
+        ForeignKey("users.id", ondelete="RESTRICT")
+    )
+
+
+class ReceiptAttachment(Base):
+    __tablename__ = "receipt_attachments"
+    __table_args__ = (
+        CheckConstraint(
+            "storage_state IN ('pending', 'ready', 'failed')",
+            name="ck_receipt_attachments_storage_state",
+        ),
+        CheckConstraint(
+            "media_type IN ('image/jpeg', 'image/webp')",
+            name="ck_receipt_attachments_media_type",
+        ),
+        CheckConstraint(
+            "position_key ~ '^[0-9A-Za-z]+$'", name="ck_receipt_attachments_position_key"
+        ),
+        CheckConstraint(
+            "(retired_at IS NULL AND retired_by_user_id IS NULL) OR "
+            "(retired_at IS NOT NULL AND retired_by_user_id IS NOT NULL)",
+            name="ck_receipt_attachments_retirement_attribution",
+        ),
+        CheckConstraint(
+            "(storage_state IN ('pending', 'failed') "
+            "AND storage_object_key IS NULL AND thumbnail_object_key IS NULL "
+            "AND byte_size IS NULL AND pixel_width IS NULL AND pixel_height IS NULL "
+            "AND content_hash IS NULL AND finalized_at IS NULL AND finalized_by_user_id IS NULL) "
+            "OR (storage_state = 'ready' "
+            "AND btrim(storage_object_key) <> '' AND btrim(thumbnail_object_key) <> '' "
+            "AND byte_size > 0 AND pixel_width > 0 AND pixel_height > 0 "
+            "AND octet_length(content_hash) = 32 "
+            "AND finalized_at IS NOT NULL AND finalized_by_user_id IS NOT NULL "
+            "AND finalized_at >= created_at)",
+            name="ck_receipt_attachments_storage_metadata",
+        ),
+        ForeignKeyConstraint(
+            ["receipt_id", "organization_id"],
+            ["receipts.id", "receipts.organization_id"],
+            ondelete="RESTRICT",
+            name="fk_receipt_attachments_receipt_organization",
+        ),
+        UniqueConstraint("id", "organization_id", name="uq_receipt_attachments_id_organization"),
+        Index("ix_receipt_attachments_receipt_position", "receipt_id", "position_key", "id"),
+    )
+
+    id: Mapped[UUID] = mapped_column(
+        Uuid, primary_key=True, default=uuid4, server_default=text("gen_random_uuid()")
+    )
+    organization_id: Mapped[UUID] = mapped_column(Uuid)
+    receipt_id: Mapped[UUID] = mapped_column(Uuid)
+    storage_state: Mapped[str] = mapped_column(String(16))
+    media_type: Mapped[str] = mapped_column(String(100))
+    position_key: Mapped[str] = mapped_column(String(255, collation="C"))
+    storage_object_key: Mapped[str | None] = mapped_column(String(500))
+    thumbnail_object_key: Mapped[str | None] = mapped_column(String(500))
+    byte_size: Mapped[int | None] = mapped_column(BigInteger)
+    pixel_width: Mapped[int | None] = mapped_column()
+    pixel_height: Mapped[int | None] = mapped_column()
+    content_hash: Mapped[bytes | None] = mapped_column(LargeBinary(32))
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=text("CURRENT_TIMESTAMP")
+    )
+    created_by_user_id: Mapped[UUID] = mapped_column(ForeignKey("users.id", ondelete="RESTRICT"))
+    finalized_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    finalized_by_user_id: Mapped[UUID | None] = mapped_column(
+        ForeignKey("users.id", ondelete="RESTRICT")
+    )
+    retired_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    retired_by_user_id: Mapped[UUID | None] = mapped_column(
+        ForeignKey("users.id", ondelete="RESTRICT")
+    )
+
+
+class MediaUploadTicket(Base):
+    __tablename__ = "media_upload_tickets"
+    __table_args__ = (
+        CheckConstraint("octet_length(secret_hmac) = 32", name="ck_media_upload_tickets_secret"),
+        CheckConstraint(
+            "media_type IN ('image/jpeg', 'image/webp')",
+            name="ck_media_upload_tickets_media_type",
+        ),
+        CheckConstraint(
+            "maximum_byte_size > 0", name="ck_media_upload_tickets_positive_maximum_size"
+        ),
+        CheckConstraint("expires_at > created_at", name="ck_media_upload_tickets_expiry"),
+        CheckConstraint(
+            "used_at IS NULL OR (used_at >= created_at AND used_at <= expires_at)",
+            name="ck_media_upload_tickets_use_time",
+        ),
+        CheckConstraint(
+            "(oauth_client_id IS NULL AND oauth_grant_id IS NULL) OR "
+            "(oauth_client_id IS NOT NULL AND btrim(oauth_client_id) <> '' "
+            "AND oauth_client_id = btrim(oauth_client_id) "
+            "AND oauth_grant_id IS NOT NULL AND btrim(oauth_grant_id) <> '' "
+            "AND oauth_grant_id = btrim(oauth_grant_id))",
+            name="ck_media_upload_tickets_oauth_attribution",
+        ),
+        UniqueConstraint("secret_hmac", name="uq_media_upload_tickets_secret_hmac"),
+        Index("ix_media_upload_tickets_attachment", "receipt_attachment_id"),
+    )
+
+    id: Mapped[UUID] = mapped_column(
+        Uuid, primary_key=True, default=uuid4, server_default=text("gen_random_uuid()")
+    )
+    receipt_attachment_id: Mapped[UUID] = mapped_column(
+        ForeignKey("receipt_attachments.id", ondelete="RESTRICT")
+    )
+    user_id: Mapped[UUID] = mapped_column(ForeignKey("users.id", ondelete="RESTRICT"))
+    oauth_client_id: Mapped[str | None] = mapped_column(String(255))
+    oauth_grant_id: Mapped[str | None] = mapped_column(String(255))
+    secret_hmac: Mapped[bytes] = mapped_column(LargeBinary(32))
+    media_type: Mapped[str] = mapped_column(String(100))
+    maximum_byte_size: Mapped[int] = mapped_column(BigInteger)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=text("CURRENT_TIMESTAMP")
+    )
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    used_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
 
 class EventDay(Base):
