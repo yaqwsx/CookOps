@@ -5,26 +5,29 @@ import json
 import unicodedata
 from collections import defaultdict
 from dataclasses import dataclass
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 from typing import Literal
 from uuid import UUID, uuid4
 
-from sqlalchemy import select, text
+from sqlalchemy import func, select, text
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
-from cookops.application.events import _reserve_change_range
+from cookops.application.events import (
+    _authorize_member_and_lock_organization,
+    _reserve_change_range,
+)
 from cookops.application.organizations import (
     ApplicationServiceError,
     ExecutionContext,
     FieldViolation,
     _advisory_lock_key,
 )
-from cookops.application.recipes import _authorize_and_lock_organization
 from cookops.persistence.models import (
     Event,
     EventDay,
     EventMealRole,
+    FieldClock,
     IngredientVersion,
     Mutation,
     OrganizationChange,
@@ -335,11 +338,18 @@ def _retained_error(mutation: Mutation) -> ApplicationServiceError:
     try:
         error = payload["error"] if payload is not None else None
         violations = error["field_violations"] if isinstance(error, dict) else None
-        if (
-            not isinstance(error, dict)
-            or error.get("code") != "validation_failed"
-            or not isinstance(violations, list)
+        if not isinstance(error, dict) or error.get("code") not in (
+            "validation_failed",
+            "archived_event",
+            "client_time_too_far_ahead",
         ):
+            raise TypeError
+        if violations is None and error.get("code") in (
+            "archived_event",
+            "client_time_too_far_ahead",
+        ):
+            violations = []
+        if not isinstance(violations, list):
             raise TypeError
         parsed = tuple(
             FieldViolation(item["path"], item["code"])
@@ -350,6 +360,10 @@ def _retained_error(mutation: Mutation) -> ApplicationServiceError:
         )
         if len(parsed) != len(violations):
             raise TypeError
+        if error["code"] == "client_time_too_far_ahead":
+            return ApplicationServiceError("client_time_too_far_ahead", retry_same_identity=False)
+        if error["code"] == "archived_event":
+            return ApplicationServiceError("archived_event", retry_same_identity=False)
         return _error(parsed)
     except (KeyError, TypeError) as exc:
         raise RuntimeError("Rejected shopping-list mutation has invalid outcome payload") from exc
@@ -500,7 +514,9 @@ async def create_shopping_list(
     error: ApplicationServiceError | None = None
     result: CreateShoppingListResult | None = None
     async with session_factory() as session, session.begin():
-        role = await _authorize_and_lock_organization(session, context, prepared.organization_id)
+        role = await _authorize_member_and_lock_organization(
+            session, context, prepared.organization_id
+        )
         await session.execute(
             text("SELECT pg_advisory_xact_lock(:key)"),
             {"key": _advisory_lock_key("mutation", prepared.mutation_id)},
@@ -721,3 +737,934 @@ async def create_shopping_list(
     if result is None:
         raise RuntimeError("Shopping-list creation produced no outcome")
     return result
+
+
+# Operational shopping mutations deliberately share one small implementation.  They
+# are separate public commands because each represents one user intent in the sync
+# outbox, while their authorization/idempotency/LWW mechanics are identical.
+@dataclass(frozen=True, slots=True)
+class SetShoppingAvailableSupplyCommand:
+    mutation_id: UUID
+    organization_id: UUID
+    shopping_list_id: UUID
+    shopping_ingredient_row_id: UUID
+    quantity: Decimal
+    client_wall_time: datetime
+    logical_operation_id: UUID | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class SetShoppingManualPurchaseTargetCommand:
+    mutation_id: UUID
+    organization_id: UUID
+    shopping_list_id: UUID
+    shopping_ingredient_row_id: UUID
+    quantity: Decimal | None
+    client_wall_time: datetime
+    logical_operation_id: UUID | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class SetShoppingContributionFulfilmentCommand:
+    mutation_id: UUID
+    organization_id: UUID
+    shopping_list_id: UUID
+    shopping_contribution_id: UUID
+    fulfilled: bool
+    client_wall_time: datetime
+    logical_operation_id: UUID | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class SetShoppingRowFulfilmentCommand:
+    mutation_id: UUID
+    organization_id: UUID
+    shopping_list_id: UUID
+    shopping_ingredient_row_id: UUID
+    fulfilled: bool
+    client_wall_time: datetime
+    logical_operation_id: UUID | None = None
+
+
+ShoppingOperationCommand = (
+    SetShoppingAvailableSupplyCommand
+    | SetShoppingManualPurchaseTargetCommand
+    | SetShoppingContributionFulfilmentCommand
+    | SetShoppingRowFulfilmentCommand
+)
+_OPERATION_KIND = {
+    SetShoppingAvailableSupplyCommand: "shopping_list.set_available_supply",
+    SetShoppingManualPurchaseTargetCommand: "shopping_list.set_manual_purchase_target",
+    SetShoppingContributionFulfilmentCommand: "shopping_list.set_contribution_fulfilment",
+    SetShoppingRowFulfilmentCommand: "shopping_list.set_row_fulfilment",
+}
+
+
+@dataclass(frozen=True, slots=True)
+class ShoppingOperationResult:
+    mutation_id: UUID
+    shopping_list_id: UUID
+    shopping_ingredient_row_id: UUID
+    shopping_contribution_ids: tuple[UUID, ...]
+    first_change_sequence: int
+    last_change_sequence: int
+    replayed: bool
+    outcome: Literal["accepted", "partially_superseded"] = "accepted"
+
+
+def _operation_kind(command: ShoppingOperationCommand) -> str:
+    return _OPERATION_KIND[type(command)]
+
+
+def _operation_hash(command: ShoppingOperationCommand) -> bytes:
+    raw_quantity = getattr(command, "quantity", None)
+    raw_fulfilled = getattr(command, "fulfilled", None)
+    value: object
+    if isinstance(raw_quantity, Decimal):
+        value = (
+            _canonical_decimal(raw_quantity) if raw_quantity.is_finite() else _invalid(raw_quantity)
+        )
+    elif raw_quantity is None and isinstance(command, SetShoppingManualPurchaseTargetCommand):
+        value = None
+    elif isinstance(raw_fulfilled, bool):
+        value = raw_fulfilled
+    else:
+        value = _invalid(raw_quantity if hasattr(command, "quantity") else raw_fulfilled)
+    target = getattr(command, "shopping_ingredient_row_id", None)
+    if isinstance(command, SetShoppingContributionFulfilmentCommand):
+        target = command.shopping_contribution_id
+    return hashlib.sha256(
+        json.dumps(
+            {
+                "command_kind": _operation_kind(command),
+                "command_schema_version": COMMAND_SCHEMA_VERSION,
+                "mutation_id": _raw_uuid(command.mutation_id),
+                "organization_id": _raw_uuid(command.organization_id),
+                "shopping_list_id": _raw_uuid(command.shopping_list_id),
+                "target_id": _raw_uuid(target),
+                "value": value,
+                "client_wall_time": _raw_time(command.client_wall_time),
+                "logical_operation_id": _raw_uuid(command.logical_operation_id)
+                if command.logical_operation_id is not None
+                else None,
+            },
+            ensure_ascii=False,
+            sort_keys=True,
+            separators=(",", ":"),
+        ).encode()
+    ).digest()
+
+
+def _operation_violations(command: ShoppingOperationCommand) -> tuple[FieldViolation, ...]:
+    violations: list[FieldViolation] = []
+    for name in ("mutation_id", "organization_id", "shopping_list_id"):
+        if not isinstance(getattr(command, name), UUID):
+            violations.append(FieldViolation(name, "must_be_uuid"))
+    target_name = (
+        "shopping_contribution_id"
+        if isinstance(command, SetShoppingContributionFulfilmentCommand)
+        else "shopping_ingredient_row_id"
+    )
+    if not isinstance(getattr(command, target_name), UUID):
+        violations.append(FieldViolation(target_name, "must_be_uuid"))
+    if isinstance(
+        command, (SetShoppingAvailableSupplyCommand, SetShoppingManualPurchaseTargetCommand)
+    ):
+        if command.quantity is not None and (
+            not isinstance(command.quantity, Decimal)
+            or not command.quantity.is_finite()
+            or command.quantity < 0
+        ):
+            violations.append(
+                FieldViolation("quantity", "must_be_nonnegative_finite_decimal_or_null")
+            )
+        if isinstance(command, SetShoppingAvailableSupplyCommand) and command.quantity is None:
+            violations.append(FieldViolation("quantity", "must_be_nonnegative_finite_decimal"))
+    else:
+        if not isinstance(command.fulfilled, bool):
+            violations.append(FieldViolation("fulfilled", "must_be_boolean"))
+    if (
+        not isinstance(command.client_wall_time, datetime)
+        or command.client_wall_time.tzinfo is None
+        or command.client_wall_time.utcoffset() is None
+    ):
+        violations.append(FieldViolation("client_wall_time", "must_include_timezone"))
+    if command.logical_operation_id is not None and not isinstance(
+        command.logical_operation_id, UUID
+    ):
+        violations.append(FieldViolation("logical_operation_id", "must_be_uuid_or_null"))
+    return tuple(violations)
+
+
+def _operation_result_payload(result: ShoppingOperationResult) -> dict[str, object]:
+    return {
+        "shopping_operation": {
+            "shopping_list_id": str(result.shopping_list_id),
+            "shopping_ingredient_row_id": str(result.shopping_ingredient_row_id),
+            "shopping_contribution_ids": [str(item) for item in result.shopping_contribution_ids],
+            "outcome": result.outcome,
+        }
+    }
+
+
+def _retained_operation(mutation: Mutation) -> ShoppingOperationResult:
+    try:
+        item = mutation.outcome_payload["shopping_operation"] if mutation.outcome_payload else None
+        if not isinstance(item, dict) or mutation.outcome not in (
+            "accepted",
+            "partially_superseded",
+        ):
+            raise TypeError
+        ids = item["shopping_contribution_ids"]
+        if (
+            not isinstance(ids, list)
+            or item["outcome"] != mutation.outcome
+            or mutation.first_change_sequence is None
+            or mutation.last_change_sequence is None
+        ):
+            raise TypeError
+        return ShoppingOperationResult(
+            mutation.id,
+            UUID(str(item["shopping_list_id"])),
+            UUID(str(item["shopping_ingredient_row_id"])),
+            tuple(UUID(str(value)) for value in ids),
+            mutation.first_change_sequence,
+            mutation.last_change_sequence,
+            True,
+            item["outcome"],
+        )
+    except (KeyError, TypeError, ValueError) as exc:
+        raise RuntimeError("Retained shopping operation has invalid outcome payload") from exc
+
+
+def _operation_mutation(
+    command: ShoppingOperationCommand,
+    context: ExecutionContext,
+    role: Literal["member", "organization_admin", "system_admin"],
+    request_hash: bytes,
+    outcome: Literal["accepted", "partially_superseded", "rejected"],
+    payload: dict[str, object],
+    first: int | None = None,
+    last: int | None = None,
+) -> Mutation:
+    target_id = (
+        command.shopping_contribution_id
+        if isinstance(command, SetShoppingContributionFulfilmentCommand)
+        else command.shopping_ingredient_row_id
+    )
+    return Mutation(
+        id=command.mutation_id,
+        logical_operation_id=command.logical_operation_id
+        if isinstance(command.logical_operation_id, UUID)
+        else None,
+        organization_id=command.organization_id
+        if isinstance(command.organization_id, UUID)
+        else UUID(int=0),
+        is_system_administration_scope=False,
+        actor_user_id=context.actor_user_id,
+        actor_role=role,
+        client_installation_id=context.client_installation_id,
+        oauth_client_id=context.oauth_client_id,
+        oauth_grant_id=context.oauth_grant_id,
+        client_wall_time=command.client_wall_time.astimezone(UTC)
+        if isinstance(command.client_wall_time, datetime)
+        and command.client_wall_time.tzinfo is not None
+        else datetime(1970, 1, 1, tzinfo=UTC),
+        command_schema_version=COMMAND_SCHEMA_VERSION,
+        command_kind=_operation_kind(command),
+        target_identities=[
+            {"entity_kind": "shopping_list", "entity_id": str(command.shopping_list_id)},
+            {"entity_kind": "shopping_target", "entity_id": str(target_id)},
+        ],
+        request_hash=request_hash,
+        outcome=outcome,
+        outcome_payload=payload,
+        first_change_sequence=first,
+        last_change_sequence=last,
+    )
+
+
+_ROW_SYNCHRONIZABLE_FIELDS = (
+    "available_supply_quantity",
+    "manual_purchase_target",
+    "store_section_override_id",
+    "note",
+    "aggregate_fulfilment_credit",
+)
+_CONTRIBUTION_SYNCHRONIZABLE_FIELDS = ("fulfilment_credit",)
+
+
+async def _field_clock_metadata(
+    session: AsyncSession,
+    organization_id: UUID,
+    entity_kind: str,
+    entity_id: UUID,
+    field_names: tuple[str, ...],
+) -> dict[str, object]:
+    clocks = {
+        clock.field_name: clock
+        for clock in (
+            await session.scalars(
+                select(FieldClock).where(
+                    FieldClock.organization_id == organization_id,
+                    FieldClock.entity_kind == entity_kind,
+                    FieldClock.entity_id == entity_id,
+                    FieldClock.field_name.in_(field_names),
+                )
+            )
+        ).all()
+    }
+    return {
+        field_name: (
+            {
+                "winning_client_wall_time": clock.winning_client_wall_time.isoformat(),
+                "winning_mutation_id": str(clock.winning_mutation_id),
+            }
+            if (clock := clocks.get(field_name)) is not None
+            else None
+        )
+        for field_name in field_names
+    }
+
+
+async def _row_record(
+    session: AsyncSession, row: ShoppingIngredientRow
+) -> tuple[str, UUID, dict[str, object]]:
+    return (
+        "shopping_ingredient_row",
+        row.id,
+        {
+            "id": str(row.id),
+            "organization_id": str(row.organization_id),
+            "event_id": str(row.event_id),
+            "shopping_list_id": str(row.shopping_list_id),
+            "ingredient_id": str(row.ingredient_id),
+            "ingredient_name": row.ingredient_name,
+            "calculation_unit_id": str(row.calculation_unit_id),
+            "available_supply_quantity": _canonical_decimal(row.available_supply_quantity),
+            "manual_purchase_target": _canonical_decimal(row.manual_purchase_target)
+            if row.manual_purchase_target is not None
+            else None,
+            "manual_target_automatic_value": _canonical_decimal(row.manual_target_automatic_value)
+            if row.manual_target_automatic_value is not None
+            else None,
+            "manual_target_generation_revision_id": str(row.manual_target_generation_revision_id)
+            if row.manual_target_generation_revision_id
+            else None,
+            "default_store_section_id": str(row.default_store_section_id)
+            if row.default_store_section_id
+            else None,
+            "default_store_section_name": row.default_store_section_name,
+            "store_section_override_id": str(row.store_section_override_id)
+            if row.store_section_override_id
+            else None,
+            "note": row.note,
+            "aggregate_fulfilment_credit": _canonical_decimal(row.aggregate_fulfilment_credit),
+            "aggregate_credit_updated_at": row.aggregate_credit_updated_at.isoformat()
+            if row.aggregate_credit_updated_at
+            else None,
+            "aggregate_credit_updated_by_user_id": str(row.aggregate_credit_updated_by_user_id)
+            if row.aggregate_credit_updated_by_user_id
+            else None,
+            "aggregate_credit_updated_by_installation_id": str(
+                row.aggregate_credit_updated_by_installation_id
+            )
+            if row.aggregate_credit_updated_by_installation_id
+            else None,
+            "created_at": row.created_at.isoformat(),
+            "created_by_user_id": str(row.created_by_user_id),
+            "field_clocks": await _field_clock_metadata(
+                session,
+                row.organization_id,
+                "shopping_ingredient_row",
+                row.id,
+                _ROW_SYNCHRONIZABLE_FIELDS,
+            ),
+        },
+    )
+
+
+async def _contribution_record(
+    session: AsyncSession, contribution: ShoppingContribution
+) -> tuple[str, UUID, dict[str, object]]:
+    return (
+        "shopping_contribution",
+        contribution.id,
+        {
+            "id": str(contribution.id),
+            "organization_id": str(contribution.organization_id),
+            "event_id": str(contribution.event_id),
+            "shopping_list_id": str(contribution.shopping_list_id),
+            "shopping_ingredient_row_id": str(contribution.shopping_ingredient_row_id),
+            "ingredient_id": str(contribution.ingredient_id),
+            "scheduled_recipe_id": str(contribution.scheduled_recipe_id),
+            "fulfilment_credit": _canonical_decimal(contribution.fulfilment_credit),
+            "fulfilment_updated_at": contribution.fulfilment_updated_at.isoformat()
+            if contribution.fulfilment_updated_at
+            else None,
+            "fulfilment_updated_by_user_id": str(contribution.fulfilment_updated_by_user_id)
+            if contribution.fulfilment_updated_by_user_id
+            else None,
+            "fulfilment_updated_by_installation_id": str(
+                contribution.fulfilment_updated_by_installation_id
+            )
+            if contribution.fulfilment_updated_by_installation_id
+            else None,
+            "field_clocks": await _field_clock_metadata(
+                session,
+                contribution.organization_id,
+                "shopping_contribution",
+                contribution.id,
+                _CONTRIBUTION_SYNCHRONIZABLE_FIELDS,
+            ),
+        },
+    )
+
+
+async def _current_generated_quantity(
+    session: AsyncSession, contribution: ShoppingContribution, revision_id: UUID
+) -> Decimal:
+    quantity = await session.scalar(
+        select(ShoppingContributionSnapshot.generated_quantity).where(
+            ShoppingContributionSnapshot.generation_revision_id == revision_id,
+            ShoppingContributionSnapshot.shopping_contribution_id == contribution.id,
+            ShoppingContributionSnapshot.active_in_revision.is_(True),
+        )
+    )
+    return quantity or Decimal(0)
+
+
+async def _row_generated_quantity(
+    session: AsyncSession, row: ShoppingIngredientRow, revision_id: UUID
+) -> Decimal:
+    quantity = await session.scalar(
+        select(func.coalesce(func.sum(ShoppingContributionSnapshot.generated_quantity), 0))
+        .join(
+            ShoppingContribution,
+            ShoppingContribution.id == ShoppingContributionSnapshot.shopping_contribution_id,
+        )
+        .where(
+            ShoppingContributionSnapshot.generation_revision_id == revision_id,
+            ShoppingContributionSnapshot.active_in_revision.is_(True),
+            ShoppingContribution.shopping_ingredient_row_id == row.id,
+        )
+    )
+    return Decimal(quantity or 0)
+
+
+async def _apply_shopping_operation(
+    session_factory: async_sessionmaker[AsyncSession],
+    context: ExecutionContext,
+    command: ShoppingOperationCommand,
+) -> ShoppingOperationResult:
+    violations = _operation_violations(command)
+    request_hash = _operation_hash(command)
+    error: ApplicationServiceError | None = None
+    result: ShoppingOperationResult | None = None
+    async with session_factory() as session, session.begin():
+        org_id = (
+            command.organization_id if isinstance(command.organization_id, UUID) else UUID(int=0)
+        )
+        role = await _authorize_member_and_lock_organization(session, context, org_id)
+        mutation_id = command.mutation_id if isinstance(command.mutation_id, UUID) else UUID(int=0)
+        await session.execute(
+            text("SELECT pg_advisory_xact_lock(:key)"),
+            {"key": _advisory_lock_key("mutation", mutation_id)},
+        )
+        retained = await session.get(Mutation, mutation_id)
+        if retained is not None:
+            if (
+                retained.actor_user_id != context.actor_user_id
+                or retained.command_kind != _operation_kind(command)
+                or retained.command_schema_version != COMMAND_SCHEMA_VERSION
+                or retained.request_hash != request_hash
+            ):
+                raise ApplicationServiceError("idempotency_mismatch", retry_same_identity=False)
+            if retained.outcome in ("accepted", "partially_superseded"):
+                return _retained_operation(retained)
+            raise _retained_error(retained)
+        if violations:
+            error = _error(violations)
+        elif command.client_wall_time > datetime.now(UTC) + timedelta(hours=24):
+            error = ApplicationServiceError("client_time_too_far_ahead", retry_same_identity=False)
+        if error is not None:
+            session.add(
+                _operation_mutation(
+                    command, context, role, request_hash, "rejected", _error_payload(error)
+                )
+            )
+        else:
+            shopping_list = await session.scalar(
+                select(ShoppingList)
+                .join(Event, Event.id == ShoppingList.event_id)
+                .where(
+                    ShoppingList.id == command.shopping_list_id,
+                    ShoppingList.organization_id == command.organization_id,
+                    Event.organization_id == command.organization_id,
+                    Event.lifecycle == "active",
+                )
+                .with_for_update(of=(ShoppingList, Event))
+            )
+            if shopping_list is None:
+                archived_list_id = await session.scalar(
+                    select(ShoppingList.id).where(
+                        ShoppingList.id == command.shopping_list_id,
+                        ShoppingList.organization_id == command.organization_id,
+                    )
+                )
+                error = (
+                    ApplicationServiceError("archived_event", retry_same_identity=False)
+                    if archived_list_id is not None
+                    else _error((FieldViolation("shopping_list_id", "not_found"),))
+                )
+                session.add(
+                    _operation_mutation(
+                        command, context, role, request_hash, "rejected", _error_payload(error)
+                    )
+                )
+            elif shopping_list.current_generation_revision_id is None:
+                error = _error((FieldViolation("shopping_list_id", "not_found"),))
+                session.add(
+                    _operation_mutation(
+                        command, context, role, request_hash, "rejected", _error_payload(error)
+                    )
+                )
+            else:
+                row_id = (
+                    command.shopping_contribution_id
+                    if isinstance(command, SetShoppingContributionFulfilmentCommand)
+                    else command.shopping_ingredient_row_id
+                )
+                row = None
+                contribution: ShoppingContribution | None = None
+                if isinstance(command, SetShoppingContributionFulfilmentCommand):
+                    # All paths lock the aggregate row before any contribution.  The
+                    # initial lookup is intentionally unlocked: it only discovers
+                    # the immutable parent identity used to acquire that first lock.
+                    contribution = await session.scalar(
+                        select(ShoppingContribution).where(
+                            ShoppingContribution.id == row_id,
+                            ShoppingContribution.shopping_list_id == shopping_list.id,
+                            ShoppingContribution.organization_id == command.organization_id,
+                        )
+                    )
+                    if contribution is not None:
+                        row = await session.scalar(
+                            select(ShoppingIngredientRow)
+                            .where(
+                                ShoppingIngredientRow.id == contribution.shopping_ingredient_row_id
+                            )
+                            .with_for_update(of=ShoppingIngredientRow)
+                        )
+                        if row is not None:
+                            contribution = await session.scalar(
+                                select(ShoppingContribution)
+                                .where(
+                                    ShoppingContribution.id == contribution.id,
+                                    ShoppingContribution.shopping_ingredient_row_id == row.id,
+                                    ShoppingContribution.shopping_list_id == shopping_list.id,
+                                    ShoppingContribution.organization_id == command.organization_id,
+                                )
+                                .with_for_update(of=ShoppingContribution)
+                            )
+                            if contribution is None:
+                                row = None
+                else:
+                    row = await session.scalar(
+                        select(ShoppingIngredientRow)
+                        .where(
+                            ShoppingIngredientRow.id == row_id,
+                            ShoppingIngredientRow.shopping_list_id == shopping_list.id,
+                            ShoppingIngredientRow.organization_id == command.organization_id,
+                        )
+                        .with_for_update(of=ShoppingIngredientRow)
+                    )
+                if row is None:
+                    error = _error((FieldViolation("shopping_target_id", "not_found"),))
+                    session.add(
+                        _operation_mutation(
+                            command, context, role, request_hash, "rejected", _error_payload(error)
+                        )
+                    )
+                else:
+                    records: list[tuple[str, UUID, dict[str, object]]] = []
+                    affected: tuple[UUID, ...] = ()
+                    outcome: Literal["accepted", "partially_superseded"] = "accepted"
+                    if isinstance(
+                        command,
+                        (SetShoppingAvailableSupplyCommand, SetShoppingManualPurchaseTargetCommand),
+                    ):
+                        field = (
+                            "available_supply_quantity"
+                            if isinstance(command, SetShoppingAvailableSupplyCommand)
+                            else "manual_purchase_target"
+                        )
+                        clock = await session.scalar(
+                            select(FieldClock)
+                            .where(
+                                FieldClock.organization_id == command.organization_id,
+                                FieldClock.entity_kind == "shopping_ingredient_row",
+                                FieldClock.entity_id == row.id,
+                                FieldClock.field_name == field,
+                            )
+                            .with_for_update(of=FieldClock)
+                        )
+                        wins = clock is None or (command.client_wall_time, command.mutation_id) > (
+                            clock.winning_client_wall_time,
+                            clock.winning_mutation_id,
+                        )
+                        if wins:
+                            if isinstance(command, SetShoppingAvailableSupplyCommand):
+                                row.available_supply_quantity = command.quantity
+                            else:
+                                automatic_value = (
+                                    max(
+                                        Decimal(0),
+                                        await _row_generated_quantity(
+                                            session,
+                                            row,
+                                            shopping_list.current_generation_revision_id,
+                                        )
+                                        - row.available_supply_quantity,
+                                    )
+                                    if command.quantity is not None
+                                    else None
+                                )
+                                row.manual_purchase_target = command.quantity
+                                row.manual_target_automatic_value = automatic_value
+                                row.manual_target_generation_revision_id = (
+                                    shopping_list.current_generation_revision_id
+                                    if command.quantity is not None
+                                    else None
+                                )
+                            if clock is None:
+                                session.add(
+                                    FieldClock(
+                                        organization_id=command.organization_id,
+                                        entity_kind="shopping_ingredient_row",
+                                        entity_id=row.id,
+                                        field_name=field,
+                                        winning_client_wall_time=command.client_wall_time,
+                                        winning_mutation_id=command.mutation_id,
+                                    )
+                                )
+                            else:
+                                clock.winning_client_wall_time, clock.winning_mutation_id = (
+                                    command.client_wall_time,
+                                    command.mutation_id,
+                                )
+                        else:
+                            outcome = "partially_superseded"
+                        records.append(await _row_record(session, row))
+                    elif isinstance(command, SetShoppingContributionFulfilmentCommand):
+                        assert contribution is not None
+                        clock = await session.scalar(
+                            select(FieldClock)
+                            .where(
+                                FieldClock.organization_id == command.organization_id,
+                                FieldClock.entity_kind == "shopping_contribution",
+                                FieldClock.entity_id == contribution.id,
+                                FieldClock.field_name == "fulfilment_credit",
+                            )
+                            .with_for_update(of=FieldClock)
+                        )
+                        wins = clock is None or (command.client_wall_time, command.mutation_id) > (
+                            clock.winning_client_wall_time,
+                            clock.winning_mutation_id,
+                        )
+                        if wins:
+                            contribution.fulfilment_credit = (
+                                await _current_generated_quantity(
+                                    session,
+                                    contribution,
+                                    shopping_list.current_generation_revision_id,
+                                )
+                                if command.fulfilled
+                                else Decimal(0)
+                            )
+                            (
+                                contribution.fulfilment_updated_at,
+                                contribution.fulfilment_updated_by_user_id,
+                                contribution.fulfilment_updated_by_installation_id,
+                            ) = (
+                                command.client_wall_time,
+                                context.actor_user_id,
+                                context.client_installation_id,
+                            )
+                            if clock is None:
+                                session.add(
+                                    FieldClock(
+                                        organization_id=command.organization_id,
+                                        entity_kind="shopping_contribution",
+                                        entity_id=contribution.id,
+                                        field_name="fulfilment_credit",
+                                        winning_client_wall_time=command.client_wall_time,
+                                        winning_mutation_id=command.mutation_id,
+                                    )
+                                )
+                            else:
+                                clock.winning_client_wall_time, clock.winning_mutation_id = (
+                                    command.client_wall_time,
+                                    command.mutation_id,
+                                )
+                        else:
+                            outcome = "partially_superseded"
+                        affected, records = (
+                            (contribution.id,),
+                            [
+                                await _contribution_record(session, contribution),
+                                await _row_record(session, row),
+                            ],
+                        )
+                    else:
+                        contributions = tuple(
+                            (
+                                await session.scalars(
+                                    select(ShoppingContribution)
+                                    .where(
+                                        ShoppingContribution.shopping_ingredient_row_id == row.id
+                                    )
+                                    .order_by(ShoppingContribution.id)
+                                    .with_for_update(of=ShoppingContribution)
+                                )
+                            ).all()
+                        )
+                        # Do not let an older aggregate action overwrite a newer individual
+                        # checkbox.  It is all-or-nothing: when any involved field lost its
+                        # LWW comparison, this aggregate action changes no credit at all.
+                        generated_quantities = {
+                            item.id: await _current_generated_quantity(
+                                session, item, shopping_list.current_generation_revision_id
+                            )
+                            for item in contributions
+                        }
+                        active_contribution_ids = set(
+                            (
+                                await session.scalars(
+                                    select(
+                                        ShoppingContributionSnapshot.shopping_contribution_id
+                                    ).where(
+                                        ShoppingContributionSnapshot.generation_revision_id
+                                        == shopping_list.current_generation_revision_id,
+                                        ShoppingContributionSnapshot.active_in_revision.is_(True),
+                                        ShoppingContributionSnapshot.shopping_contribution_id.in_(
+                                            [item.id for item in contributions]
+                                        ),
+                                    )
+                                )
+                            ).all()
+                        )
+                        touched = (
+                            contributions
+                            if not command.fulfilled
+                            else tuple(
+                                item for item in contributions if item.id in active_contribution_ids
+                            )
+                        )
+                        clocks = {
+                            clock.entity_id: clock
+                            for clock in (
+                                await session.scalars(
+                                    select(FieldClock)
+                                    .where(
+                                        FieldClock.organization_id == command.organization_id,
+                                        FieldClock.entity_kind == "shopping_contribution",
+                                        FieldClock.field_name == "fulfilment_credit",
+                                        FieldClock.entity_id.in_([item.id for item in touched]),
+                                    )
+                                    .with_for_update(of=FieldClock)
+                                )
+                            ).all()
+                        }
+                        aggregate_clock = await session.scalar(
+                            select(FieldClock)
+                            .where(
+                                FieldClock.organization_id == command.organization_id,
+                                FieldClock.entity_kind == "shopping_ingredient_row",
+                                FieldClock.entity_id == row.id,
+                                FieldClock.field_name == "aggregate_fulfilment_credit",
+                            )
+                            .with_for_update(of=FieldClock)
+                        )
+                        wins_all = all(
+                            clock is None
+                            or (command.client_wall_time, command.mutation_id)
+                            > (clock.winning_client_wall_time, clock.winning_mutation_id)
+                            for clock in (
+                                *(clocks.get(item.id) for item in touched),
+                                aggregate_clock,
+                            )
+                        )
+                        if not wins_all:
+                            error = _error(
+                                (FieldViolation("fulfilment", "superseded_by_newer_change"),)
+                            )
+                            session.add(
+                                _operation_mutation(
+                                    command,
+                                    context,
+                                    role,
+                                    request_hash,
+                                    "rejected",
+                                    _error_payload(error),
+                                )
+                            )
+                        for item in touched if wins_all else ():
+                            item.fulfilment_credit = (
+                                generated_quantities[item.id] if command.fulfilled else Decimal(0)
+                            )
+                            (
+                                item.fulfilment_updated_at,
+                                item.fulfilment_updated_by_user_id,
+                                item.fulfilment_updated_by_installation_id,
+                            ) = (
+                                command.client_wall_time,
+                                context.actor_user_id,
+                                context.client_installation_id,
+                            )
+                            clock = clocks.get(item.id)
+                            if clock is None:
+                                session.add(
+                                    FieldClock(
+                                        organization_id=command.organization_id,
+                                        entity_kind="shopping_contribution",
+                                        entity_id=item.id,
+                                        field_name="fulfilment_credit",
+                                        winning_client_wall_time=command.client_wall_time,
+                                        winning_mutation_id=command.mutation_id,
+                                    )
+                                )
+                            else:
+                                clock.winning_client_wall_time, clock.winning_mutation_id = (
+                                    command.client_wall_time,
+                                    command.mutation_id,
+                                )
+                        if wins_all:
+                            contribution_credit = sum(
+                                (item.fulfilment_credit for item in contributions), Decimal(0)
+                            )
+                            automatic_target = max(
+                                Decimal(0),
+                                await _row_generated_quantity(
+                                    session, row, shopping_list.current_generation_revision_id
+                                )
+                                - row.available_supply_quantity,
+                            )
+                            target = (
+                                row.manual_purchase_target
+                                if row.manual_purchase_target is not None
+                                else automatic_target
+                            )
+                            row.aggregate_fulfilment_credit = (
+                                max(Decimal(0), target - contribution_credit)
+                                if command.fulfilled
+                                else Decimal(0)
+                            )
+                            (
+                                row.aggregate_credit_updated_at,
+                                row.aggregate_credit_updated_by_user_id,
+                                row.aggregate_credit_updated_by_installation_id,
+                            ) = (
+                                command.client_wall_time,
+                                context.actor_user_id,
+                                context.client_installation_id,
+                            )
+                            if aggregate_clock is None:
+                                session.add(
+                                    FieldClock(
+                                        organization_id=command.organization_id,
+                                        entity_kind="shopping_ingredient_row",
+                                        entity_id=row.id,
+                                        field_name="aggregate_fulfilment_credit",
+                                        winning_client_wall_time=command.client_wall_time,
+                                        winning_mutation_id=command.mutation_id,
+                                    )
+                                )
+                            else:
+                                aggregate_clock.winning_client_wall_time = command.client_wall_time
+                                aggregate_clock.winning_mutation_id = command.mutation_id
+                        affected, records = (
+                            tuple(item.id for item in contributions),
+                            [
+                                await _row_record(session, row),
+                                *[
+                                    await _contribution_record(session, item)
+                                    for item in contributions
+                                ],
+                            ],
+                        )
+                    if error is None:
+                        first, last = await _reserve_change_range(
+                            session, command.organization_id, command.mutation_id, len(records)
+                        )
+                        result = ShoppingOperationResult(
+                            command.mutation_id,
+                            shopping_list.id,
+                            row.id,
+                            affected,
+                            first,
+                            last,
+                            False,
+                            outcome,
+                        )
+                        session.add_all(
+                            OrganizationChange(
+                                organization_id=command.organization_id,
+                                sequence=first + index,
+                                mutation_id=command.mutation_id,
+                                entity_id=entity_id,
+                                entity_kind=kind,
+                                operation="upsert",
+                                payload={"record_schema_version": 1, "record": record},
+                            )
+                            for index, (kind, entity_id, record) in enumerate(records)
+                        )
+                        session.add(
+                            _operation_mutation(
+                                command,
+                                context,
+                                role,
+                                request_hash,
+                                outcome,
+                                _operation_result_payload(result),
+                                first,
+                                last,
+                            )
+                        )
+    if error is not None:
+        raise error
+    if result is None:
+        raise RuntimeError("Shopping operation produced no outcome")
+    return result
+
+
+async def set_shopping_available_supply(
+    session_factory: async_sessionmaker[AsyncSession],
+    context: ExecutionContext,
+    command: SetShoppingAvailableSupplyCommand,
+) -> ShoppingOperationResult:
+    return await _apply_shopping_operation(session_factory, context, command)
+
+
+async def set_shopping_manual_purchase_target(
+    session_factory: async_sessionmaker[AsyncSession],
+    context: ExecutionContext,
+    command: SetShoppingManualPurchaseTargetCommand,
+) -> ShoppingOperationResult:
+    return await _apply_shopping_operation(session_factory, context, command)
+
+
+async def set_shopping_contribution_fulfilment(
+    session_factory: async_sessionmaker[AsyncSession],
+    context: ExecutionContext,
+    command: SetShoppingContributionFulfilmentCommand,
+) -> ShoppingOperationResult:
+    return await _apply_shopping_operation(session_factory, context, command)
+
+
+async def set_shopping_row_fulfilment(
+    session_factory: async_sessionmaker[AsyncSession],
+    context: ExecutionContext,
+    command: SetShoppingRowFulfilmentCommand,
+) -> ShoppingOperationResult:
+    return await _apply_shopping_operation(session_factory, context, command)
