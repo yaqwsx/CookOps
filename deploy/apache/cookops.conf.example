@@ -23,29 +23,18 @@
     ProxyPassReverse /health/ http://127.0.0.1:8000/health/
     ProxyPass        /auth/ http://127.0.0.1:8000/auth/
     ProxyPassReverse /auth/ http://127.0.0.1:8000/auth/
-    ProxyPass        /.well-known/oauth-protected-resource/mcp http://127.0.0.1:8000/.well-known/oauth-protected-resource/mcp
-    ProxyPassReverse /.well-known/oauth-protected-resource/mcp http://127.0.0.1:8000/.well-known/oauth-protected-resource/mcp
-    ProxyPass        /.well-known/openid-configuration/oauth http://127.0.0.1:3000/.well-known/openid-configuration
-    ProxyPassReverse /.well-known/openid-configuration/oauth http://127.0.0.1:3000/.well-known/openid-configuration
-    ProxyPass        /.well-known/oauth-authorization-server/oauth http://127.0.0.1:3000/.well-known/oauth-authorization-server
-    ProxyPassReverse /.well-known/oauth-authorization-server/oauth http://127.0.0.1:3000/.well-known/oauth-authorization-server
-    ProxyPass        /oauth/ http://127.0.0.1:3000/oauth/
-    ProxyPassReverse /oauth/ http://127.0.0.1:3000/oauth/
+    # OAuth discovery/protocol and /mcp are deliberately absent until the
+    # separately versioned OAuth service and API token verifier are production-ready.
     ProxyPass        /api/v1/sync/notifications http://127.0.0.1:8000/api/v1/sync/notifications upgrade=websocket
     ProxyPassReverse /api/v1/sync/notifications http://127.0.0.1:8000/api/v1/sync/notifications
     ProxyPass        /api/ http://127.0.0.1:8000/api/
     ProxyPassReverse /api/ http://127.0.0.1:8000/api/
-    ProxyPass        /mcp/ http://127.0.0.1:8000/mcp/ timeout=300 connectiontimeout=5
-    ProxyPassReverse /mcp/ http://127.0.0.1:8000/mcp/
     ProxyPass        /media/ http://127.0.0.1:8000/media/
     ProxyPassReverse /media/ http://127.0.0.1:8000/media/
 
     ProxyPass        / http://127.0.0.1:8080/
     ProxyPassReverse / http://127.0.0.1:8080/
 
-    <Location /mcp/>
-        LimitRequestBody 1048576
-    </Location>
     <LocationMatch "^/(?:$|index\\.html$|sw\\.js$|registerSW\\.js$|runtime-config\\.js$)">
         Header always set Cache-Control "no-cache"
     </LocationMatch>

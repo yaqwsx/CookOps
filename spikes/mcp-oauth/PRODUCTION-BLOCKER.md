@@ -21,6 +21,10 @@ OAuth server or a source for a production FastAPI MCP mount.
   UI/CSRF transport. The spike remains loopback-only and rejects production.
 - The only OAuth package is under `spikes/`; there is no production
   `oauth-server/` package, Compose service, migration, or private API boundary.
+- The reviewed Apache example intentionally mounts neither OAuth discovery or
+  protocol paths nor `/mcp`; the deployment smoke check rejects reintroducing
+  those routes before the missing resource-verifier and OAuth-service boundaries
+  exist.
 - The OAuth tests now exercise CIMD private-IP rejection, redirect refusal,
   malformed and oversized metadata, DCR exact redirects, DCR JWKS redirects,
   public-client secret suppression, and encrypted PostgreSQL-backed OAuth flow
