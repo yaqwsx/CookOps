@@ -111,6 +111,11 @@ const resources = {
           unavailable: "Změnu stavu akce se nepodařilo uložit.",
         },
       },
+      eventDuplicate: {
+        action: "Duplikovat plán",
+        copy: "kopie",
+        name: "Název nové akce",
+      },
       recipesCatalog: {
         loading: "Načítáme recepty…",
         scope: "Katalog čte uložené projekce receptů a čekající místní změny.",
@@ -436,6 +441,11 @@ const resources = {
           online: "Archive and reactivation must be performed online.",
           unavailable: "The event lifecycle change could not be saved.",
         },
+      },
+      eventDuplicate: {
+        action: "Duplicate plan",
+        copy: "copy",
+        name: "New event name",
       },
       recipesCatalog: {
         loading: "Loading recipes…",

@@ -18,6 +18,7 @@ function eventSummary(
   const attendance = fields.base_expected_attendance;
   const lifecycle = fields.lifecycle;
   const archivedAt = fields.archived_at;
+  const currentArchiveSnapshotId = fields.current_archive_snapshot_id;
   if (
     (fields.id !== undefined && fields.id !== record.entityId) ||
     (fields.organization_id !== undefined &&
@@ -30,7 +31,10 @@ function eventSummary(
     typeof attendance !== "number" ||
     !Number.isSafeInteger(attendance) ||
     (lifecycle !== "active" && lifecycle !== "archived") ||
-    (archivedAt !== null && typeof archivedAt !== "string")
+    (archivedAt !== null && typeof archivedAt !== "string") ||
+    (currentArchiveSnapshotId !== undefined &&
+      currentArchiveSnapshotId !== null &&
+      typeof currentArchiveSnapshotId !== "string")
   ) {
     return null;
   }
@@ -45,6 +49,7 @@ function eventSummary(
     currency,
     lifecycle,
     archivedAt,
+    currentArchiveSnapshotId,
   };
 }
 

@@ -6,6 +6,7 @@ import type { EventSummary } from "./api/events";
 import { EventAttendance } from "./event-attendance-form";
 import { EventCreate } from "./event-create-form";
 import { EventLifecycle } from "./event-lifecycle-form";
+import { EventDuplicate } from "./event-duplicate-form";
 import {
   canCreateEvents,
   readVisibleEventSummaries,
@@ -88,6 +89,15 @@ function EventCard({
           eventId={event.id}
           lifecycle={event.lifecycle}
           organizationId={organizationId}
+          userId={userId}
+        />
+      ) : null}
+      {canManage && event.lifecycle === "archived" ? (
+        <EventDuplicate
+          eventId={event.id}
+          name={event.name}
+          organizationId={organizationId}
+          snapshotId={event.currentArchiveSnapshotId ?? null}
           userId={userId}
         />
       ) : null}

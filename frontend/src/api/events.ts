@@ -9,6 +9,7 @@ export type EventSummary = {
   currency: string;
   lifecycle: "active" | "archived";
   archivedAt: string | null;
+  currentArchiveSnapshotId?: string | null;
 };
 
 export type EventPage = {
@@ -45,6 +46,7 @@ function eventSummary(
   const attendance = value.base_expected_attendance;
   const lifecycle = value.lifecycle;
   const archivedAt = value.archived_at;
+  const currentArchiveSnapshotId = value.current_archive_snapshot_id;
   if (
     !id ||
     organizationId !== expectedOrganizationId ||
@@ -56,7 +58,10 @@ function eventSummary(
     typeof attendance !== "number" ||
     !Number.isSafeInteger(attendance) ||
     (lifecycle !== "active" && lifecycle !== "archived") ||
-    (archivedAt !== null && typeof archivedAt !== "string")
+    (archivedAt !== null && typeof archivedAt !== "string") ||
+    (currentArchiveSnapshotId !== undefined &&
+      currentArchiveSnapshotId !== null &&
+      typeof currentArchiveSnapshotId !== "string")
   ) {
     return null;
   }
@@ -71,6 +76,9 @@ function eventSummary(
     currency,
     lifecycle,
     archivedAt,
+    ...(currentArchiveSnapshotId === undefined
+      ? {}
+      : { currentArchiveSnapshotId }),
   };
 }
 

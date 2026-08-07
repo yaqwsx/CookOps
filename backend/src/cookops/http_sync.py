@@ -13,6 +13,7 @@ from fastapi import APIRouter, HTTPException, Request, WebSocket, WebSocketDisco
 from pydantic import BaseModel, ConfigDict, Field, StrictBool, ValidationError, field_validator
 
 from cookops.application.browser_sessions import BrowserSessionService
+from cookops.application.event_duplication import DuplicateEventCommand
 from cookops.application.event_lifecycle import SetEventLifecycleCommand
 from cookops.application.event_prices import UpdateEventPriceEstimatesCommand
 from cookops.application.events import CreateEventCommand, UpdateEventBaseAttendanceCommand
@@ -212,6 +213,16 @@ class EventLifecyclePayload(BaseModel):
 
     event_id: UUID
     operation: Literal["archive", "reactivate"]
+    logical_operation_id: UUID | None = None
+
+
+class DuplicateEventPayload(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    event_id: UUID
+    source_event_id: UUID
+    source_archive_snapshot_id: UUID
+    name: str
     logical_operation_id: UUID | None = None
 
 
@@ -538,6 +549,18 @@ def _push_command(command: PushCommandRequest, organization_id: UUID) -> SyncCom
                 operation=event_lifecycle_payload.operation,
                 client_wall_time=command.client_wall_time,
                 logical_operation_id=event_lifecycle_payload.logical_operation_id,
+            )
+        if command.command_kind == "event.duplicate":
+            duplicate_payload = DuplicateEventPayload.model_validate(command.payload)
+            return DuplicateEventCommand(
+                mutation_id=command.mutation_id,
+                event_id=duplicate_payload.event_id,
+                organization_id=organization_id,
+                source_event_id=duplicate_payload.source_event_id,
+                source_archive_snapshot_id=duplicate_payload.source_archive_snapshot_id,
+                name=duplicate_payload.name,
+                client_wall_time=command.client_wall_time,
+                logical_operation_id=duplicate_payload.logical_operation_id,
             )
         if command.command_kind == "event.update_price_estimates":
             price_payload = UpdateEventPriceEstimatesPayload.model_validate(command.payload)

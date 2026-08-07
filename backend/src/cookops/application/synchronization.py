@@ -29,6 +29,11 @@ from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from cookops.application.browser_sessions import decode_browser_session_hmac_key
+from cookops.application.event_duplication import (
+    DuplicateEventCommand,
+    DuplicateEventResult,
+    duplicate_event,
+)
 from cookops.application.event_lifecycle import (
     EventLifecycleResult,
     SetEventLifecycleCommand,
@@ -247,6 +252,7 @@ SyncCommand = (
     CreateEventCommand
     | UpdateEventBaseAttendanceCommand
     | SetEventLifecycleCommand
+    | DuplicateEventCommand
     | UpdateEventPriceEstimatesCommand
     | CreateShoppingListCommand
     | CreateRecipeCommand
@@ -269,6 +275,8 @@ def _command_kind(
     command: (
         CreateEventCommand
         | UpdateEventBaseAttendanceCommand
+        | SetEventLifecycleCommand
+        | DuplicateEventCommand
         | UpdateEventPriceEstimatesCommand
         | CreateShoppingListCommand
         | CreateRecipeCommand
@@ -291,6 +299,8 @@ def _command_kind(
         return "event.update_base_attendance"
     if isinstance(command, SetEventLifecycleCommand):
         return "event.lifecycle"
+    if isinstance(command, DuplicateEventCommand):
+        return "event.duplicate"
     if isinstance(command, UpdateEventPriceEstimatesCommand):
         return "event.update_price_estimates"
     if isinstance(command, CreateRecipeCommand):
@@ -611,6 +621,7 @@ class SynchronizationCommandService:
                 CreateEventResult
                 | UpdateEventBaseAttendanceResult
                 | EventLifecycleResult
+                | DuplicateEventResult
                 | UpdateEventPriceEstimatesResult
                 | CreateShoppingListResult
                 | CreateRecipeResult
@@ -626,10 +637,10 @@ class SynchronizationCommandService:
                 result = await update_event_base_attendance(self._session_factory, context, command)
             elif isinstance(command, SetEventLifecycleCommand):
                 result = await set_event_lifecycle(self._session_factory, context, command)
+            elif isinstance(command, DuplicateEventCommand):
+                result = await duplicate_event(self._session_factory, context, command)
             elif isinstance(command, UpdateEventPriceEstimatesCommand):
-                result = await update_event_price_estimates(
-                    self._session_factory, context, command
-                )
+                result = await update_event_price_estimates(self._session_factory, context, command)
             elif isinstance(command, CreateRecipeCommand):
                 result = await create_recipe(self._session_factory, context, command)
             elif isinstance(command, PublishRecipeVersionCommand):
@@ -770,6 +781,7 @@ class SynchronizationCommandService:
             CreateEventResult
             | UpdateEventBaseAttendanceResult
             | EventLifecycleResult
+            | DuplicateEventResult
             | UpdateEventPriceEstimatesResult
             | CreateShoppingListResult
             | CreateRecipeResult
@@ -792,6 +804,8 @@ class SynchronizationCommandService:
                 if isinstance(result, UpdateEventBaseAttendanceResult)
                 else "event.lifecycle"
                 if isinstance(result, EventLifecycleResult)
+                else "event.duplicate"
+                if isinstance(result, DuplicateEventResult)
                 else "event.update_price_estimates"
                 if isinstance(result, UpdateEventPriceEstimatesResult)
                 else "recipe.create"
