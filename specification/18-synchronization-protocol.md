@@ -125,6 +125,14 @@ based on server commit time, never client action time. Responses expose the olde
 available boundary needed for diagnostics without making sequence internals part
 of the public cursor contract.
 
+The initial implementation deliberately retains all stored feed records. It MUST
+NOT use PostgreSQL `CURRENT_TIMESTAMP` values written by the publishing
+transaction as a cleanup cutoff, because that value is the transaction start time,
+not its commit time. A future physical cleanup job requires a trustworthy
+commit-time retention marker and tests for a long-running publishing transaction;
+until then, a pull returns `bootstrap_required` only for an actual physical gap in
+the retained sequence.
+
 When a cursor predates retained history, pull returns `bootstrap_required` and no
 partial tail. The browser runs the safe staging bootstrap procedure and then
 replays its unchanged pending outbox. The seven-day offline authorization lease is

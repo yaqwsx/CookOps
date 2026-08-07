@@ -104,6 +104,7 @@ class ApplicationServiceError(Exception):
             "client_time_too_far_ahead",
             "forbidden",
             "idempotency_mismatch",
+            "stale_precondition",
             "validation_failed",
         ],
         *,

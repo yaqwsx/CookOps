@@ -1,7 +1,7 @@
 from collections.abc import AsyncIterator, Awaitable, Callable
 from contextlib import asynccontextmanager
 from datetime import timedelta
-from typing import Literal, Protocol
+from typing import Literal, Protocol, cast
 
 from fastapi import APIRouter, FastAPI, HTTPException, Request, status
 from pydantic import BaseModel
@@ -10,9 +10,11 @@ from cookops.application.browser_sessions import BrowserSessionService
 from cookops.application.dummy_identities import DummyIdentityProvider
 from cookops.application.google_identities import GoogleIdentityProvider, GoogleIdTokenVerifier
 from cookops.application.human_authentication import HumanAuthenticationService
+from cookops.application.synchronization import SynchronizationQueryService
 from cookops.config import HumanAuthProvider, Settings
 from cookops.database import create_database_runtime
 from cookops.http_auth import BrowserAuthenticationServices, create_auth_router
+from cookops.http_sync import SynchronizationHttpServices, create_sync_router
 
 ReadinessProbe = Callable[[], Awaitable[bool]]
 
@@ -117,9 +119,20 @@ def create_app(
 
         runtime = database_runtime_factory(str(app_settings.database_url))
         application.state.database = runtime
-        session_factory = getattr(runtime, "session_factory", None)
+        from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
+
+        session_factory = cast(
+            async_sessionmaker[AsyncSession], getattr(runtime, "session_factory", None)
+        )
         application.state.browser_authentication = browser_authentication_factory(
             app_settings, session_factory
+        )
+        application.state.synchronization = SynchronizationHttpServices(
+            browser_sessions=application.state.browser_authentication.browser_sessions,
+            synchronization=SynchronizationQueryService(
+                session_factory,
+                encoded_cursor_hmac_key=app_settings.resolved_browser_session_hmac_key,
+            ),
         )
         application.state.readiness_probe = runtime.is_ready
         try:
@@ -132,6 +145,7 @@ def create_app(
     application.state.readiness_probe = readiness_probe or not_ready
     application.include_router(health_router)
     application.include_router(create_auth_router(app_settings))
+    application.include_router(create_sync_router(app_settings))
     return application
 
 
