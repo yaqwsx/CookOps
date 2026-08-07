@@ -206,6 +206,25 @@ def _move_scheduled_recipe_command(
     return command
 
 
+def _scheduled_recipe_attendance_command(
+    *, mutation_id: UUID, event_id: UUID, scheduled_recipe_id: UUID, **payload: object
+) -> dict[str, object]:
+    values: dict[str, object] = {
+        "scheduled_recipe_id": str(scheduled_recipe_id),
+        "operation": "set_manual",
+        "diner_count": 17,
+    }
+    values.update(payload)
+    command = _command(
+        mutation_id=mutation_id,
+        event_id=event_id,
+        kind="scheduled_recipe.attendance",
+        **values,
+    )
+    cast(dict[str, object], command["payload"])["event_id"] = str(event_id)
+    return command
+
+
 def _scheduled_ingredient_override_command(
     *,
     mutation_id: UUID,
@@ -339,7 +358,8 @@ def test_catalog_configuration_future_time_is_retained(
 ) -> None:
     installation_id = _installation(sync_database)
     command = {
-        "mutation_id": str(uuid4()), "command_kind": "catalog_configuration.mutate",
+        "mutation_id": str(uuid4()),
+        "command_kind": "catalog_configuration.mutate",
         "command_schema_version": 1,
         "client_wall_time": (datetime.now(UTC) + timedelta(hours=25)).isoformat(),
         "payload": {
@@ -358,9 +378,12 @@ def test_catalog_configuration_future_time_is_retained(
         second = client.post("/api/v1/sync/push", json=body).json()["outcomes"][0]
     assert first["error"]["code"] == second["error"]["code"] == "client_time_too_far_ahead"
     with sync_database.engine.connect() as connection:
-        assert connection.scalar(
-            select(Mutation.outcome).where(Mutation.id == UUID(command["mutation_id"]))
-        ) == "rejected"
+        assert (
+            connection.scalar(
+                select(Mutation.outcome).where(Mutation.id == UUID(command["mutation_id"]))
+            )
+            == "rejected"
+        )
 
 
 def test_push_queues_typed_event_price_refresh_and_rejects_extra_payload(
@@ -880,6 +903,27 @@ def test_push_schedules_a_recipe_through_the_typed_shared_command(
         assert outcome["replayed"] is False
         assert outcome["first_change_sequence"] is not None
         assert client.post("/api/v1/sync/push", json=body).json()["outcomes"][0]["replayed"] is True
+        attendance = _scheduled_recipe_attendance_command(
+            mutation_id=uuid4(), event_id=event_id, scheduled_recipe_id=scheduled_recipe_id
+        )
+        attendance_response = client.post(
+            "/api/v1/sync/push", json=_body(sync_database, installation_id, [attendance])
+        )
+        assert attendance_response.json()["outcomes"][0]["status"] == "accepted"
+        for malformed_diners in ("17", True):
+            malformed_attendance = _scheduled_recipe_attendance_command(
+                mutation_id=uuid4(),
+                event_id=event_id,
+                scheduled_recipe_id=scheduled_recipe_id,
+                diner_count=malformed_diners,
+            )
+            assert (
+                client.post(
+                    "/api/v1/sync/push",
+                    json=_body(sync_database, installation_id, [malformed_attendance]),
+                ).json()["outcomes"][0]["error"]["code"]
+                == "validation_failed"
+            )
         override = _scheduled_ingredient_override_command(
             mutation_id=uuid4(),
             event_id=event_id,

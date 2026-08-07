@@ -16,6 +16,7 @@ import {
 } from "./event-price-refresh";
 import {
   queueRecipeSchedule,
+  queueScheduledRecipeAttendance,
   queueScheduledRecipeMove,
 } from "./scheduled-recipe";
 import { queueReplacementOverride } from "./scheduled-ingredient-override";
@@ -378,6 +379,17 @@ function MoveRecipe({
   );
 }
 
+function Attendance({ eventId, organizationId, userId, scheduled, active }: { eventId: string; organizationId: string; userId: string; scheduled: EventPlannerProjection["scheduled"][number]; active: boolean }) {
+  const { t } = useTranslation();
+  const [count, setCount] = useState(String(scheduled.dinerCount));
+  const [error, setError] = useState(false);
+  if (!active) return null;
+  async function save(dinerCount: number | null) {
+    try { await queueScheduledRecipeAttendance(userId, organizationId, { scheduledRecipeId: scheduled.id, eventId, dinerCount }); setError(false); } catch { setError(true); }
+  }
+  return <details><summary>{t("planner.attendanceEdit")}</summary><label>{t("planner.attendance")}<input value={count} inputMode="numeric" pattern="[0-9]+" onChange={(event) => setCount(event.target.value)} /></label><button type="button" onClick={() => void save(Number(count))}>{t("planner.saveAttendance")}</button><button type="button" onClick={() => void save(null)}>{t("planner.followEvent")}</button>{error ? <p role="alert">{t("planner.errors.unavailable")}</p> : null}</details>;
+}
+
 function ReplacementOverride({
   eventId,
   active,
@@ -392,11 +404,12 @@ function ReplacementOverride({
   scheduled: EventPlannerProjection["scheduled"][number];
 }) {
   const { t } = useTranslation();
-  const [line, setLine] = useState(scheduled.lines[0]?.id ?? "");
-  const [amount, setAmount] = useState(scheduled.lines[0]?.quantity ?? "0");
+  const lines = scheduled.lines ?? [];
+  const [line, setLine] = useState(lines[0]?.id ?? "");
+  const [amount, setAmount] = useState(lines[0]?.quantity ?? "0");
   const [error, setError] = useState(false);
   const inFlight = useRef(false);
-  if (!active || !scheduled.lines.length) return null;
+  if (!active || !lines.length) return null;
   async function submit(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
     if (inFlight.current) return;
@@ -425,7 +438,7 @@ function ReplacementOverride({
             value={line}
             onChange={(event) => setLine(event.target.value)}
           >
-            {scheduled.lines.map((item) => (
+            {lines.map((item) => (
               <option key={item.id} value={item.id}>
                 {item.quantity}
               </option>
@@ -577,6 +590,7 @@ export function EventPlanner({
                             scheduled={item}
                             userId={userId}
                           />
+                          <Attendance eventId={eventId} organizationId={organizationId} userId={userId} scheduled={item} active={planner.lifecycle === "active"} />
                           <ReplacementOverride
                             active={planner.lifecycle === "active"}
                             eventId={eventId}

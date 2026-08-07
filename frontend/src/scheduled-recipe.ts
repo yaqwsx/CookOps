@@ -18,6 +18,83 @@ export type MoveScheduledRecipeInput = {
   positionKey: string;
 };
 
+export async function queueScheduledRecipeAttendance(
+  userId: string,
+  organizationId: string,
+  input: { scheduledRecipeId: string; eventId: string; dinerCount: number | null },
+): Promise<void> {
+  if (
+    ![input.scheduledRecipeId, input.eventId].every((id) => uuid.test(id)) ||
+    (input.dinerCount !== null && (!Number.isSafeInteger(input.dinerCount) || input.dinerCount < 0))
+  )
+    throw new Error("selection");
+  const actionAt = new Date().toISOString();
+  const mutationId = crypto.randomUUID();
+  const payload = {
+    scheduled_recipe_id: input.scheduledRecipeId,
+    event_id: input.eventId,
+    operation: input.dinerCount === null ? "follow_event" : "set_manual",
+    diner_count: input.dinerCount,
+  };
+  await localDb.transaction("rw", localDb.canonicalRecords, localDb.optimisticOverlays, localDb.outbox, async () => {
+    const canonicalEvent = await localDb.canonicalRecords.get([userId, organizationId, "event", input.eventId]);
+    const canonicalScheduled = await localDb.canonicalRecords.get([userId, organizationId, "scheduled_recipe", input.scheduledRecipeId]);
+    if (canonicalEvent?.lifecycle === "retired" || canonicalScheduled?.lifecycle === "retired") throw new Error("selection");
+    const event = (await localDb.optimisticOverlays.get([userId, organizationId, "event", input.eventId])) ?? canonicalEvent;
+    const scheduled = (await localDb.optimisticOverlays.get([userId, organizationId, "scheduled_recipe", input.scheduledRecipeId])) ?? canonicalScheduled;
+    if (event?.lifecycle !== "active" || event.fields.lifecycle !== "active" || scheduled?.lifecycle !== "active" || scheduled.fields.event_id !== input.eventId)
+      throw new Error("selection");
+    const dinerCount = input.dinerCount ?? event.fields.base_expected_attendance;
+    if (!Number.isSafeInteger(dinerCount)) throw new Error("selection");
+    await localDb.optimisticOverlays.put({ ...scheduled, fields: { ...scheduled.fields, diner_count: dinerCount, attendance_mode: input.dinerCount === null ? "follows_event" : "manual" }, fieldClocks: { ...scheduled.fieldClocks, attendance: { mutationId, actionAt } }, updatedAt: actionAt });
+    await appendOutboxCommand({ id: mutationId, userId, organizationId, commandType: "scheduled_recipe.attendance", payload, actionAt, createdAt: actionAt, state: "pending" });
+  });
+}
+
+export async function replayScheduledRecipeAttendance(
+  userId: string,
+  organizationId: string,
+  command: { id: string; actionAt: string; payload: Record<string, unknown> },
+) {
+  const payload = command.payload;
+  if (
+    Object.keys(payload).length !== 4 ||
+    !["scheduled_recipe_id", "event_id", "operation", "diner_count"].every((key) => key in payload) ||
+    typeof payload.scheduled_recipe_id !== "string" ||
+    typeof payload.event_id !== "string" ||
+    !uuid.test(payload.scheduled_recipe_id) ||
+    !uuid.test(payload.event_id) ||
+    !((payload.operation === "set_manual" && Number.isSafeInteger(payload.diner_count) && (payload.diner_count as number) >= 0) || (payload.operation === "follow_event" && payload.diner_count === null))
+  ) return;
+  const canonicalEvent = await localDb.canonicalRecords.get([userId, organizationId, "event", payload.event_id]);
+  const canonical = await localDb.canonicalRecords.get([userId, organizationId, "scheduled_recipe", payload.scheduled_recipe_id]);
+  if (canonicalEvent?.lifecycle === "retired" || canonical?.lifecycle === "retired") return;
+  const event = (await localDb.optimisticOverlays.get([userId, organizationId, "event", payload.event_id])) ?? canonicalEvent;
+  const scheduled = (await localDb.optimisticOverlays.get([userId, organizationId, "scheduled_recipe", payload.scheduled_recipe_id])) ?? canonical;
+  if (event?.lifecycle !== "active" || event.fields.lifecycle !== "active" || scheduled?.lifecycle !== "active" || scheduled.fields.event_id !== payload.event_id) return;
+  const clock = scheduled.fieldClocks.attendance;
+  if (clock !== undefined) {
+    if (clock === null || typeof clock !== "object" || Array.isArray(clock)) return;
+    const attendanceClock = clock as Record<string, unknown>;
+    const currentAt = typeof attendanceClock.actionAt === "string"
+      ? attendanceClock.actionAt
+      : attendanceClock.winning_client_wall_time;
+    const currentId = typeof attendanceClock.mutationId === "string"
+      ? attendanceClock.mutationId
+      : attendanceClock.winning_mutation_id;
+    const candidateTime = Date.parse(command.actionAt);
+    const currentTime = typeof currentAt === "string" ? Date.parse(currentAt) : NaN;
+    if (
+      typeof currentId !== "string" || !Number.isFinite(candidateTime) ||
+      !Number.isFinite(currentTime) ||
+      candidateTime < currentTime || (candidateTime === currentTime && command.id <= currentId)
+    ) return;
+  }
+  const dinerCount = payload.operation === "follow_event" ? event.fields.base_expected_attendance : payload.diner_count;
+  if (!Number.isSafeInteger(dinerCount)) return;
+  await localDb.optimisticOverlays.put({ ...scheduled, fields: { ...scheduled.fields, diner_count: dinerCount, attendance_mode: payload.operation === "follow_event" ? "follows_event" : "manual" }, fieldClocks: { ...scheduled.fieldClocks, attendance: { mutationId: command.id, actionAt: command.actionAt } }, updatedAt: command.actionAt });
+}
+
 /** Persist an add-to-plan intent with the immediately visible scheduled card. */
 export async function queueRecipeSchedule(
   userId: string,

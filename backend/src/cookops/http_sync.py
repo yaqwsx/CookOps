@@ -10,7 +10,15 @@ from typing import Literal
 from uuid import UUID
 
 from fastapi import APIRouter, HTTPException, Request, WebSocket, WebSocketDisconnect, status
-from pydantic import BaseModel, ConfigDict, Field, StrictBool, ValidationError, field_validator
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    Field,
+    StrictBool,
+    StrictInt,
+    ValidationError,
+    field_validator,
+)
 
 from cookops.application.browser_sessions import BrowserSessionService
 from cookops.application.catalog_configuration import CatalogConfigurationCommand
@@ -29,6 +37,7 @@ from cookops.application.recipes import (
     PublishRecipeVersionCommand,
     RecipeIngredientLineInput,
 )
+from cookops.application.scheduled_recipe_attendance import SetScheduledRecipeAttendanceCommand
 from cookops.application.scheduled_recipe_moves import MoveScheduledRecipeCommand
 from cookops.application.scheduled_recipe_overrides import SetScheduledIngredientOverrideCommand
 from cookops.application.scheduled_recipes import ScheduleRecipeCommand
@@ -397,6 +406,16 @@ class MoveScheduledRecipePayload(BaseModel):
     event_day_id: UUID
     event_meal_role_id: UUID
     position_key: str
+    logical_operation_id: UUID | None = None
+
+
+class ScheduledRecipeAttendancePayload(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    scheduled_recipe_id: UUID
+    event_id: UUID
+    operation: Literal["set_manual", "follow_event"]
+    diner_count: StrictInt | None = None
     logical_operation_id: UUID | None = None
 
 
@@ -788,6 +807,18 @@ def _push_command(command: PushCommandRequest, organization_id: UUID) -> SyncCom
                 position_key=move_payload.position_key,
                 client_wall_time=command.client_wall_time,
                 logical_operation_id=move_payload.logical_operation_id,
+            )
+        if command.command_kind == "scheduled_recipe.attendance":
+            payload = ScheduledRecipeAttendancePayload.model_validate(command.payload)
+            return SetScheduledRecipeAttendanceCommand(
+                mutation_id=command.mutation_id,
+                scheduled_recipe_id=payload.scheduled_recipe_id,
+                organization_id=organization_id,
+                event_id=payload.event_id,
+                operation=payload.operation,
+                diner_count=payload.diner_count,
+                client_wall_time=command.client_wall_time,
+                logical_operation_id=payload.logical_operation_id,
             )
         if command.command_kind == "scheduled_recipe.ingredient_override":
             override_payload = ScheduledIngredientOverridePayload.model_validate(command.payload)

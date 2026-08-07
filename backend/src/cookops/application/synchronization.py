@@ -90,6 +90,11 @@ from cookops.application.recipes import (
     publish_recipe_version,
     recipe_version_tag_change_id,
 )
+from cookops.application.scheduled_recipe_attendance import (
+    ScheduledRecipeAttendanceResult,
+    SetScheduledRecipeAttendanceCommand,
+    set_scheduled_recipe_attendance,
+)
 from cookops.application.scheduled_recipe_moves import (
     MoveScheduledRecipeCommand,
     MoveScheduledRecipeResult,
@@ -270,6 +275,7 @@ SyncCommand = (
     | CreateIngredientCommand
     | ScheduleRecipeCommand
     | MoveScheduledRecipeCommand
+    | SetScheduledRecipeAttendanceCommand
     | SetScheduledIngredientOverrideCommand
     | SetShoppingAvailableSupplyCommand
     | SetShoppingManualPurchaseTargetCommand
@@ -296,6 +302,7 @@ def _command_kind(
         | CreateIngredientCommand
         | ScheduleRecipeCommand
         | MoveScheduledRecipeCommand
+        | SetScheduledRecipeAttendanceCommand
         | SetScheduledIngredientOverrideCommand
         | SetShoppingAvailableSupplyCommand
         | SetShoppingManualPurchaseTargetCommand
@@ -327,6 +334,8 @@ def _command_kind(
         return "scheduled_recipe.schedule"
     if isinstance(command, MoveScheduledRecipeCommand):
         return "scheduled_recipe.move"
+    if isinstance(command, SetScheduledRecipeAttendanceCommand):
+        return "scheduled_recipe.attendance"
     if isinstance(command, SetScheduledIngredientOverrideCommand):
         return "scheduled_recipe.ingredient_override"
     if isinstance(command, SetShoppingAvailableSupplyCommand):
@@ -646,6 +655,7 @@ class SynchronizationCommandService:
                 | CreateIngredientResult
                 | ScheduleRecipeResult
                 | MoveScheduledRecipeResult
+                | ScheduledRecipeAttendanceResult
                 | ScheduledIngredientOverrideResult
                 | ShoppingOperationResult
                 | ReceiptResult
@@ -671,6 +681,10 @@ class SynchronizationCommandService:
                 result = await schedule_recipe(self._session_factory, context, command)
             elif isinstance(command, MoveScheduledRecipeCommand):
                 result = await move_scheduled_recipe(self._session_factory, context, command)
+            elif isinstance(command, SetScheduledRecipeAttendanceCommand):
+                result = await set_scheduled_recipe_attendance(
+                    self._session_factory, context, command
+                )
             elif isinstance(command, SetScheduledIngredientOverrideCommand):
                 result = await set_scheduled_ingredient_override(
                     self._session_factory, context, command
@@ -816,6 +830,7 @@ class SynchronizationCommandService:
             | CreateIngredientResult
             | ScheduleRecipeResult
             | MoveScheduledRecipeResult
+            | ScheduledRecipeAttendanceResult
             | ScheduledIngredientOverrideResult
             | ShoppingOperationResult
             | ReceiptResult
@@ -846,6 +861,8 @@ class SynchronizationCommandService:
                 if isinstance(result, ScheduleRecipeResult)
                 else "scheduled_recipe.move"
                 if isinstance(result, MoveScheduledRecipeResult)
+                else "scheduled_recipe.attendance"
+                if isinstance(result, ScheduledRecipeAttendanceResult)
                 else "receipt.create"
                 if isinstance(result, ReceiptResult)
                 else "scheduled_recipe.ingredient_override"
