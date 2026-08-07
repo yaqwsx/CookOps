@@ -3,6 +3,7 @@ import { useCallback, useEffect, useRef } from "react";
 
 import { localDb } from "./local-db";
 import { dispatchOutbox } from "./sync-dispatcher";
+import { pullOrganization } from "./sync-bootstrap";
 
 export const SYNC_RETRY_DELAY_MS = 5_000;
 const syncLockName = "cookops-outbox-sync";
@@ -34,17 +35,32 @@ export function useOutboxSynchronization(userId: string) {
       }
       running.current = true;
       try {
-        const pending = await localDb.outbox
-          .where("[userId+state]")
-          .equals([userId, "pending"])
-          .toArray();
+        const [pending, metadata] = await Promise.all([
+          localDb.outbox
+            .where("[userId+state]")
+            .equals([userId, "pending"])
+            .toArray(),
+          localDb.syncMetadata.where("userId").equals(userId).toArray(),
+        ]);
         const organizationIds = [
-          ...new Set(pending.map((command) => command.organizationId)),
+          ...new Set([
+            ...pending.map((command) => command.organizationId),
+            ...metadata.map((entry) => entry.organizationId),
+          ]),
         ].sort();
         for (const organizationId of organizationIds) {
           if (!active.current || currentGeneration !== generation.current)
             return;
+          await pullOrganization(userId, organizationId);
+          if (!active.current || currentGeneration !== generation.current)
+            return;
           await dispatchOutbox(organizationId, { userId });
+          if (!active.current || currentGeneration !== generation.current)
+            return;
+          while (await pullOrganization(userId, organizationId)) {
+            if (!active.current || currentGeneration !== generation.current)
+              return;
+          }
         }
       } catch {
         if (!active.current || currentGeneration !== generation.current) return;

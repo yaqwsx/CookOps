@@ -66,6 +66,7 @@ describe("SynchronizationStatus", () => {
   it("shows offline and failed states without hiding pending photo uploads", async () => {
     await localDb.pendingUploads.add({
       id: "upload-a",
+      userId: "user-a",
       organizationId: "organization-a",
       attachmentId: "receipt-a",
       blob: new Blob(["receipt"], { type: "image/jpeg" }),

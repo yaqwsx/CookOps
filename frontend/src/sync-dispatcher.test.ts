@@ -55,6 +55,7 @@ describe("dispatchOutbox", () => {
     await addCommand("later", "2026-08-07T10:01:00.000Z");
     await addCommand("first", "2026-08-07T10:00:00.000Z");
     await localDb.syncMetadata.add({
+      userId,
       organizationId,
       activity: "caughtUp",
       cursor: "durable-cursor",
@@ -96,7 +97,7 @@ describe("dispatchOutbox", () => {
     });
     expect(await localDb.outbox.count()).toBe(0);
     await expect(
-      localDb.syncMetadata.get(organizationId),
+      localDb.syncMetadata.get([userId, organizationId]),
     ).resolves.toMatchObject({
       activity: "caughtUp",
       cursor: "durable-cursor",
@@ -137,7 +138,7 @@ describe("dispatchOutbox", () => {
     });
     await expect(localDb.outbox.get("accepted")).resolves.toBeUndefined();
     await expect(
-      localDb.syncMetadata.get(organizationId),
+      localDb.syncMetadata.get([userId, organizationId]),
     ).resolves.toMatchObject({
       activity: "blocked",
     });
@@ -196,7 +197,7 @@ describe("dispatchOutbox", () => {
       state: "pending",
     });
     await expect(
-      localDb.syncMetadata.get(organizationId),
+      localDb.syncMetadata.get([userId, organizationId]),
     ).resolves.toMatchObject({
       activity: "retrying",
     });

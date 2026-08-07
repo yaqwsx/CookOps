@@ -8,8 +8,10 @@ import {
 } from "./sync-lifecycle";
 
 const dispatchOutbox = vi.hoisted(() => vi.fn());
+const pullOrganization = vi.hoisted(() => vi.fn(async () => false));
 
 vi.mock("./sync-dispatcher", () => ({ dispatchOutbox }));
+vi.mock("./sync-bootstrap", () => ({ pullOrganization }));
 
 function Lifecycle({ userId }: { userId: string }) {
   useOutboxSynchronization(userId);
@@ -40,7 +42,8 @@ function setOnline(value: boolean) {
 describe("authenticated outbox synchronization lifecycle", () => {
   beforeEach(async () => {
     dispatchOutbox.mockReset();
-    await localDb.outbox.clear();
+    pullOrganization.mockClear();
+    await Promise.all([localDb.outbox.clear(), localDb.syncMetadata.clear()]);
     setOnline(true);
   });
 
@@ -57,6 +60,33 @@ describe("authenticated outbox synchronization lifecycle", () => {
     expect(dispatchOutbox).toHaveBeenNthCalledWith(2, "organization-b", {
       userId: "user-a",
     });
+    expect(pullOrganization).toHaveBeenCalledWith("user-a", "organization-a");
+  });
+
+  it("pulls every cached organization for the authenticated user on reconnect", async () => {
+    await localDb.syncMetadata.bulkAdd([
+      {
+        userId: "user-a",
+        organizationId: "organization-a",
+        activity: "caughtUp",
+        cursor: "a",
+      },
+      {
+        userId: "user-b",
+        organizationId: "organization-b",
+        activity: "caughtUp",
+        cursor: "b",
+      },
+    ]);
+    render(<Lifecycle userId="user-a" />);
+
+    await waitFor(() =>
+      expect(pullOrganization).toHaveBeenCalledWith("user-a", "organization-a"),
+    );
+    expect(pullOrganization).not.toHaveBeenCalledWith(
+      "user-a",
+      "organization-b",
+    );
   });
 
   it("waits offline and retries delivery when connectivity returns", async () => {

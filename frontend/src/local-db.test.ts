@@ -72,6 +72,7 @@ describe("local synchronization database", () => {
     ]);
     await localDb.pendingUploads.add({
       id: "upload-a",
+      userId: "user-a",
       organizationId: "organization-a",
       attachmentId: "receipt-a",
       blob: new Blob(["receipt"], { type: "image/jpeg" }),
@@ -80,49 +81,53 @@ describe("local synchronization database", () => {
     });
     await localDb.syncMetadata.bulkAdd([
       {
+        userId: "user-a",
         organizationId: "organization-a",
         activity: "syncing",
         cursor: "opaque-a",
       },
       {
+        userId: "user-a",
         organizationId: "organization-b",
         activity: "blocked",
         cursor: "opaque-b",
       },
     ]);
 
-    await expect(readSynchronizationSummary("organization-a")).resolves.toEqual(
-      {
-        activity: "syncing",
-        pendingCommands: 1,
-        pendingUploads: 1,
-        failedCommands: 0,
-        failedUploads: 0,
-        lastSuccessfulServerContact: undefined,
-        clockSkewWarning: undefined,
-      },
-    );
-    await expect(readSynchronizationSummary("organization-b")).resolves.toEqual(
-      {
-        activity: "blocked",
-        pendingCommands: 0,
-        pendingUploads: 0,
-        failedCommands: 1,
-        failedUploads: 0,
-        lastSuccessfulServerContact: undefined,
-        clockSkewWarning: undefined,
-      },
-    );
+    await expect(
+      readSynchronizationSummary("organization-a", "user-a"),
+    ).resolves.toEqual({
+      activity: "syncing",
+      pendingCommands: 1,
+      pendingUploads: 1,
+      failedCommands: 0,
+      failedUploads: 0,
+      lastSuccessfulServerContact: undefined,
+      clockSkewWarning: undefined,
+    });
+    await expect(
+      readSynchronizationSummary("organization-b", "user-a"),
+    ).resolves.toEqual({
+      activity: "blocked",
+      pendingCommands: 0,
+      pendingUploads: 0,
+      failedCommands: 1,
+      failedUploads: 0,
+      lastSuccessfulServerContact: undefined,
+      clockSkewWarning: undefined,
+    });
   });
 
   it("uses the most actionable activity and preserves a clock-skew warning", async () => {
     await localDb.syncMetadata.bulkAdd([
       {
+        userId: "user-a",
         organizationId: "organization-a",
         activity: "caughtUp",
         lastSuccessfulServerContact: "2026-08-07T09:00:00.000Z",
       },
       {
+        userId: "user-a",
         organizationId: "organization-b",
         activity: "retrying",
         lastSuccessfulServerContact: "2026-08-07T10:00:00.000Z",

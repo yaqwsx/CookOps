@@ -167,12 +167,14 @@ function parsePushResponse(
 }
 
 async function updateMetadata(
+  userId: string,
   organizationId: string,
   update: Partial<Omit<OrganizationSyncMetadata, "organizationId">>,
 ) {
-  const existing = await localDb.syncMetadata.get(organizationId);
+  const existing = await localDb.syncMetadata.get([userId, organizationId]);
   await localDb.syncMetadata.put({
     ...existing,
+    userId,
     organizationId,
     activity: existing?.activity ?? "caughtUp",
     ...update,
@@ -223,7 +225,7 @@ export async function dispatchOutbox(
     pending,
   );
   await rejectCommands(partition.oversized, "command_too_large");
-  await updateMetadata(organizationId, { activity: "syncing" });
+  await updateMetadata(userId, organizationId, { activity: "syncing" });
 
   try {
     for (const commands of partition.batches) {
@@ -258,9 +260,13 @@ export async function dispatchOutbox(
               await localDb.outbox.delete(outcome.mutation_id);
             }
           }
-          const existing = await localDb.syncMetadata.get(organizationId);
+          const existing = await localDb.syncMetadata.get([
+            userId,
+            organizationId,
+          ]);
           await localDb.syncMetadata.put({
             ...existing,
+            userId,
             organizationId,
             activity: "syncing",
             lastSuccessfulServerContact: result.server_time,
@@ -280,11 +286,11 @@ export async function dispatchOutbox(
       .where("[userId+organizationId+state]")
       .equals([userId, organizationId, "failed"])
       .count();
-    await updateMetadata(organizationId, {
+    await updateMetadata(userId, organizationId, {
       activity: failed ? "blocked" : "caughtUp",
     });
   } catch (error) {
-    await updateMetadata(organizationId, { activity: "retrying" });
+    await updateMetadata(userId, organizationId, { activity: "retrying" });
     throw error;
   }
 }

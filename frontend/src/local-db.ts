@@ -20,6 +20,7 @@ export interface BrowserInstallation {
 }
 
 export interface CanonicalRecord {
+  userId: string;
   organizationId: string;
   entityType: string;
   entityId: string;
@@ -45,6 +46,7 @@ export interface OutboxCommand {
 
 export interface PendingUpload {
   id: string;
+  userId: string;
   organizationId: string;
   attachmentId: string;
   blob: Blob;
@@ -54,6 +56,7 @@ export interface PendingUpload {
 }
 
 export interface OrganizationSyncMetadata {
+  userId: string;
   organizationId: string;
   cursor?: string;
   changeCursorHint?: string;
@@ -65,16 +68,28 @@ export interface OrganizationSyncMetadata {
   };
 }
 
+export interface BootstrapStagingRecord extends CanonicalRecord {
+  attemptId: string;
+}
+
 export class CookOpsDatabase extends Dexie {
   readonly browserInstallation!: EntityTable<BrowserInstallation, "id">;
   readonly organizations!: EntityTable<CachedOrganization, "id">;
-  readonly canonicalRecords!: Table<CanonicalRecord, [string, string, string]>;
+  readonly canonicalRecords!: Table<
+    CanonicalRecord,
+    [string, string, string, string]
+  >;
   readonly outbox!: EntityTable<OutboxCommand, "id">;
   readonly pendingUploads!: EntityTable<PendingUpload, "id">;
-  readonly syncMetadata!: EntityTable<
-    OrganizationSyncMetadata,
-    "organizationId"
+  readonly bootstrapStaging!: Table<
+    BootstrapStagingRecord,
+    [string, string, string, string, string]
   >;
+  readonly optimisticOverlays!: Table<
+    CanonicalRecord,
+    [string, string, string, string]
+  >;
+  readonly syncMetadata!: Table<OrganizationSyncMetadata, [string, string]>;
 
   constructor(name = "cookops") {
     super(name);
@@ -99,10 +114,55 @@ export class CookOpsDatabase extends Dexie {
           failureReason: "owner_identity_required",
         }),
       );
+    this.version(4)
+      .stores({
+        canonicalRecords:
+          "[userId+organizationId+entityType+entityId], [userId+organizationId], organizationId, [userId+organizationId+entityType], updatedAt",
+        pendingUploads:
+          "id, userId, organizationId, [userId+organizationId+state], createdAt",
+        syncMetadata: "[userId+organizationId], userId, organizationId",
+      })
+      .upgrade((transaction) => {
+        transaction
+          .table("canonicalRecords")
+          .toCollection()
+          .modify({ userId: "" });
+        transaction
+          .table("pendingUploads")
+          .toCollection()
+          .modify({ userId: "" });
+        transaction.table("syncMetadata").toCollection().modify({ userId: "" });
+      });
+    this.version(5).stores({
+      bootstrapStaging:
+        "[userId+organizationId+attemptId+entityType+entityId], [userId+organizationId+attemptId]",
+    });
+    this.version(6).stores({
+      optimisticOverlays:
+        "[userId+organizationId+entityType+entityId], [userId+organizationId]",
+    });
   }
 }
 
 export const localDb = new CookOpsDatabase();
+
+/** Read the projection users see: authoritative records plus their pending overlay. */
+export async function readVisibleCanonicalRecord(
+  userId: string,
+  organizationId: string,
+  entityType: string,
+  entityId: string,
+): Promise<CanonicalRecord | undefined> {
+  return (
+    (await localDb.optimisticOverlays.get([
+      userId,
+      organizationId,
+      entityType,
+      entityId,
+    ])) ??
+    localDb.canonicalRecords.get([userId, organizationId, entityType, entityId])
+  );
+}
 
 export async function readOrCreateBrowserInstallationId(
   userId: string,
@@ -167,8 +227,16 @@ export async function readSynchronizationSummary(
       inOrganization(command) &&
       (userId === undefined || command.userId === userId),
   );
-  const scopedUploads = uploads.filter(inOrganization);
-  const scopedMetadata = metadata.filter(inOrganization);
+  const scopedUploads = uploads.filter(
+    (upload) =>
+      inOrganization(upload) &&
+      (userId === undefined || upload.userId === userId),
+  );
+  const scopedMetadata = metadata.filter(
+    (entry) =>
+      inOrganization(entry) &&
+      (userId === undefined || entry.userId === userId),
+  );
 
   return {
     activity: chooseActivity(scopedMetadata.map((entry) => entry.activity)),
