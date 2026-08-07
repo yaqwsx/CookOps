@@ -19,7 +19,7 @@ from sqlalchemy import (
     Uuid,
     text,
 )
-from sqlalchemy.dialects.postgresql import JSONB
+from sqlalchemy.dialects.postgresql import JSONB, ExcludeConstraint
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 
 
@@ -833,6 +833,9 @@ class EventMealRole(Base):
         Uuid, primary_key=True, default=uuid4, server_default=text("gen_random_uuid()")
     )
     event_id: Mapped[UUID] = mapped_column(ForeignKey("events.id", ondelete="RESTRICT"))
+    source_preset_id: Mapped[UUID | None] = mapped_column(
+        ForeignKey("organization_meal_role_presets.id", ondelete="RESTRICT")
+    )
     built_in_translation_key: Mapped[str | None] = mapped_column(String(100))
     custom_name: Mapped[str | None] = mapped_column(String(200))
     normalized_custom_name: Mapped[str | None] = mapped_column(String(200))
@@ -878,6 +881,7 @@ class ClientInstallation(Base):
 class Mutation(Base):
     __tablename__ = "mutations"
     __table_args__ = (
+        UniqueConstraint("id", "organization_id", name="uq_mutations_id_organization"),
         CheckConstraint(
             "(organization_id IS NOT NULL AND NOT is_system_administration_scope) OR "
             "(organization_id IS NULL AND is_system_administration_scope)",
@@ -976,3 +980,99 @@ class Mutation(Base):
     outcome_payload: Mapped[dict[str, object] | None] = mapped_column(JSONB)
     first_change_sequence: Mapped[int | None] = mapped_column(BigInteger)
     last_change_sequence: Mapped[int | None] = mapped_column(BigInteger)
+
+
+class OrganizationChange(Base):
+    __tablename__ = "organization_changes"
+    __table_args__ = (
+        CheckConstraint("sequence > 0", name="ck_organization_changes_positive_sequence"),
+        CheckConstraint(
+            "entity_kind ~ '^[a-z][a-z0-9_.-]{0,99}$'",
+            name="ck_organization_changes_entity_kind",
+        ),
+        CheckConstraint(
+            "operation ~ '^[a-z][a-z0-9_.-]{0,99}$'",
+            name="ck_organization_changes_operation",
+        ),
+        CheckConstraint(
+            "jsonb_typeof(payload) = 'object' "
+            "AND payload ? 'record_schema_version' "
+            "AND jsonb_typeof(payload -> 'record_schema_version') = 'number' "
+            "AND (payload ->> 'record_schema_version') ~ '^[1-9][0-9]*$' "
+            "AND payload ? 'record' AND jsonb_typeof(payload -> 'record') = 'object' "
+            "AND NOT jsonb_path_exists(payload, "
+            '\'$.keyvalue() ? (@.key != "record_schema_version" && @.key != "record")\') '
+            "AND octet_length(payload::text) <= 262144 "
+            "AND NOT jsonb_path_exists(payload, "
+            '\'$.** ? (@.type() == "string" && @ like_regex "^data:" flag "i")\')',
+            name="ck_organization_changes_payload",
+        ),
+        ForeignKeyConstraint(
+            ["organization_id", "mutation_id"],
+            [
+                "organization_change_transactions.organization_id",
+                "organization_change_transactions.mutation_id",
+            ],
+            ondelete="RESTRICT",
+            name="fk_organization_changes_transaction",
+        ),
+        Index("ix_organization_changes_mutation_id", "mutation_id"),
+    )
+
+    organization_id: Mapped[UUID] = mapped_column(
+        ForeignKey("organizations.id", ondelete="RESTRICT"), primary_key=True
+    )
+    sequence: Mapped[int] = mapped_column(BigInteger, primary_key=True)
+    mutation_id: Mapped[UUID] = mapped_column(Uuid)
+    entity_id: Mapped[UUID] = mapped_column(Uuid)
+    entity_kind: Mapped[str] = mapped_column(String(100))
+    operation: Mapped[str] = mapped_column(String(100))
+    payload: Mapped[dict[str, object]] = mapped_column(JSONB)
+    published_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=text("CURRENT_TIMESTAMP")
+    )
+
+
+class OrganizationChangeHead(Base):
+    __tablename__ = "organization_change_heads"
+    __table_args__ = (
+        CheckConstraint("next_sequence > 0", name="ck_organization_change_heads_next_sequence"),
+    )
+
+    organization_id: Mapped[UUID] = mapped_column(
+        ForeignKey("organizations.id", ondelete="RESTRICT"), primary_key=True
+    )
+    next_sequence: Mapped[int] = mapped_column(BigInteger)
+
+
+class OrganizationChangeTransaction(Base):
+    __tablename__ = "organization_change_transactions"
+    __table_args__ = (
+        CheckConstraint(
+            "first_change_sequence > 0 AND last_change_sequence >= first_change_sequence",
+            name="ck_organization_change_transactions_range",
+        ),
+        ExcludeConstraint(
+            ("organization_id", "="),
+            (text("int8range(first_change_sequence, last_change_sequence, '[]')"), "&&"),
+            name="ex_organization_change_transactions_nonoverlapping_range",
+        ),
+        ForeignKeyConstraint(
+            ["organization_id", "mutation_id"],
+            ["mutations.organization_id", "mutations.id"],
+            ondelete="RESTRICT",
+            name="fk_organization_change_transactions_mutation",
+            deferrable=True,
+            initially="DEFERRED",
+        ),
+    )
+
+    organization_id: Mapped[UUID] = mapped_column(
+        ForeignKey("organizations.id", ondelete="RESTRICT"), primary_key=True
+    )
+    mutation_id: Mapped[UUID] = mapped_column(Uuid, primary_key=True)
+    first_change_sequence: Mapped[int] = mapped_column(BigInteger)
+    last_change_sequence: Mapped[int] = mapped_column(BigInteger)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=text("CURRENT_TIMESTAMP")
+    )

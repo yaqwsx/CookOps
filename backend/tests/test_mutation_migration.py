@@ -98,10 +98,10 @@ def valid_mutation(
         "command_kind": "event.rename",
         "target_identities": [{"entity_kind": "event", "entity_id": str(uuid4())}],
         "request_hash": b"r" * 32,
-        "outcome": "accepted",
+        "outcome": "rejected",
         "outcome_payload": {"affected_ids": [str(uuid4())]},
-        "first_change_sequence": 1,
-        "last_change_sequence": 2,
+        "first_change_sequence": None,
+        "last_change_sequence": None,
     }
 
 
