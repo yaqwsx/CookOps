@@ -50,6 +50,11 @@ from cookops.application.recipes import (
     recipe_version_tag_change_id,
 )
 from cookops.application.scheduled_recipe_overrides import _record as _override_record
+from cookops.application.scheduled_recipes import (
+    ScheduleRecipeCommand,
+    ScheduleRecipeResult,
+    schedule_recipe,
+)
 from cookops.application.shopping_lists import (
     CreateShoppingListCommand,
     CreateShoppingListResult,
@@ -191,6 +196,7 @@ SyncCommand = (
     | UpdateEventBaseAttendanceCommand
     | CreateShoppingListCommand
     | CreateRecipeCommand
+    | ScheduleRecipeCommand
     | UnsupportedSyncCommand
 )
 
@@ -201,6 +207,7 @@ def _command_kind(
         | UpdateEventBaseAttendanceCommand
         | CreateShoppingListCommand
         | CreateRecipeCommand
+        | ScheduleRecipeCommand
     ),
 ) -> str:
     if isinstance(command, CreateEventCommand):
@@ -209,6 +216,8 @@ def _command_kind(
         return "event.update_base_attendance"
     if isinstance(command, CreateRecipeCommand):
         return "recipe.create"
+    if isinstance(command, ScheduleRecipeCommand):
+        return "scheduled_recipe.schedule"
     return "shopping_list.create"
 
 
@@ -504,6 +513,7 @@ class SynchronizationCommandService:
                 | UpdateEventBaseAttendanceResult
                 | CreateShoppingListResult
                 | CreateRecipeResult
+                | ScheduleRecipeResult
             )
             if isinstance(command, CreateEventCommand):
                 result = await create_event(self._session_factory, context, command)
@@ -511,6 +521,8 @@ class SynchronizationCommandService:
                 result = await update_event_base_attendance(self._session_factory, context, command)
             elif isinstance(command, CreateRecipeCommand):
                 result = await create_recipe(self._session_factory, context, command)
+            elif isinstance(command, ScheduleRecipeCommand):
+                result = await schedule_recipe(self._session_factory, context, command)
             else:
                 result = await create_shopping_list(self._session_factory, context, command)
         except ApplicationServiceError as error:
@@ -618,6 +630,7 @@ class SynchronizationCommandService:
             | UpdateEventBaseAttendanceResult
             | CreateShoppingListResult
             | CreateRecipeResult
+            | ScheduleRecipeResult
         ),
     ) -> PushCommandOutcome:
         return PushCommandOutcome(
@@ -629,6 +642,8 @@ class SynchronizationCommandService:
                 if isinstance(result, UpdateEventBaseAttendanceResult)
                 else "recipe.create"
                 if isinstance(result, CreateRecipeResult)
+                else "scheduled_recipe.schedule"
+                if isinstance(result, ScheduleRecipeResult)
                 else "shopping_list.create"
             ),
             status=result.outcome,

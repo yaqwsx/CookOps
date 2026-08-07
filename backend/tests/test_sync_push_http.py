@@ -14,11 +14,14 @@ from test_sync_pull_http import sync_database as _sync_database_fixture
 from cookops.main import create_app
 from cookops.persistence.models import (
     ClientInstallation,
+    EventDay,
+    EventMealRole,
     Ingredient,
     IngredientVersion,
     OrganizationMembership,
     RecipeVersion,
     RecipeVersionIngredientLine,
+    ScheduledRecipe,
     ShoppingList,
     UnitDefinition,
 )
@@ -124,6 +127,38 @@ def _recipe_command(
         kind="recipe.create",
         **recipe_payload,
     )
+
+
+def _schedule_recipe_command(
+    *,
+    mutation_id: UUID,
+    scheduled_recipe_id: UUID,
+    event_id: UUID,
+    event_day_id: UUID,
+    event_meal_role_id: UUID,
+    recipe_id: UUID,
+    recipe_version_id: UUID,
+    **payload: object,
+) -> dict[str, object]:
+    values: dict[str, object] = {
+        "scheduled_recipe_id": str(scheduled_recipe_id),
+        "event_day_id": str(event_day_id),
+        "event_meal_role_id": str(event_meal_role_id),
+        "recipe_id": str(recipe_id),
+        "recipe_version_id": str(recipe_version_id),
+        "consumption_percentage": "75.5",
+        "position_key": "b",
+        "note": "  Serve warm  ",
+    }
+    values.update(payload)
+    command = _command(
+        mutation_id=mutation_id,
+        event_id=event_id,
+        kind="scheduled_recipe.schedule",
+        **values,
+    )
+    cast(dict[str, object], command["payload"])["event_id"] = str(event_id)
+    return command
 
 
 def test_push_applies_ordered_commands_and_replays_a_retained_outcome(
@@ -351,6 +386,123 @@ def test_push_creates_a_recipe_through_the_typed_shared_command(
             )
             == "fixed"
         )
+
+
+def test_push_schedules_a_recipe_through_the_typed_shared_command(
+    sync_database: SyncDatabase,
+) -> None:
+    installation_id = _installation(sync_database)
+    event_id, recipe_id, recipe_version_id = uuid4(), uuid4(), uuid4()
+    with sync_database.engine.connect() as connection:
+        scaling_unit_id = connection.scalar(
+            select(UnitDefinition.id).where(
+                UnitDefinition.organization_id.is_(None), UnitDefinition.code == "person"
+            )
+        )
+    assert isinstance(scaling_unit_id, UUID)
+    with TestClient(create_app(_settings()), base_url="https://testserver") as client:
+        _sign_in(client, "dummy-member")
+        setup = client.post(
+            "/api/v1/sync/push",
+            json=_body(
+                sync_database,
+                installation_id,
+                [
+                    _command(mutation_id=uuid4(), event_id=event_id),
+                    _recipe_command(
+                        mutation_id=uuid4(),
+                        scaling_unit_id=scaling_unit_id,
+                        recipe_id=str(recipe_id),
+                        recipe_version_id=str(recipe_version_id),
+                    ),
+                ],
+            ),
+        )
+        assert [outcome["status"] for outcome in setup.json()["outcomes"]] == [
+            "accepted",
+            "accepted",
+        ]
+        with sync_database.engine.connect() as connection:
+            event_day_id = connection.scalar(
+                select(EventDay.id).where(EventDay.event_id == event_id)
+            )
+            actor_id = connection.scalar(
+                select(OrganizationMembership.user_id).where(
+                    OrganizationMembership.organization_id == sync_database.organization_id
+                )
+            )
+        assert isinstance(event_day_id, UUID)
+        assert isinstance(actor_id, UUID)
+        event_meal_role_id = uuid4()
+        with sync_database.engine.begin() as connection:
+            connection.execute(
+                insert(EventMealRole).values(
+                    id=event_meal_role_id,
+                    event_id=event_id,
+                    built_in_translation_key="meal.dinner",
+                    position_key="a",
+                    created_by_user_id=actor_id,
+                )
+            )
+        scheduled_recipe_id, mutation_id = uuid4(), uuid4()
+        command = _schedule_recipe_command(
+            mutation_id=mutation_id,
+            scheduled_recipe_id=scheduled_recipe_id,
+            event_id=event_id,
+            event_day_id=event_day_id,
+            event_meal_role_id=event_meal_role_id,
+            recipe_id=recipe_id,
+            recipe_version_id=recipe_version_id,
+        )
+        body = _body(sync_database, installation_id, [command])
+        response = client.post("/api/v1/sync/push", json=body)
+        assert response.status_code == 200
+        outcome = response.json()["outcomes"][0]
+        assert outcome["command_kind"] == "scheduled_recipe.schedule"
+        assert outcome["status"] == "accepted"
+        assert outcome["replayed"] is False
+        assert outcome["first_change_sequence"] is not None
+        assert client.post("/api/v1/sync/push", json=body).json()["outcomes"][0]["replayed"] is True
+        changed = _schedule_recipe_command(
+            mutation_id=mutation_id,
+            scheduled_recipe_id=scheduled_recipe_id,
+            event_id=event_id,
+            event_day_id=event_day_id,
+            event_meal_role_id=event_meal_role_id,
+            recipe_id=recipe_id,
+            recipe_version_id=recipe_version_id,
+            note="Other",
+        )
+        assert (
+            client.post(
+                "/api/v1/sync/push", json=_body(sync_database, installation_id, [changed])
+            ).json()["outcomes"][0]["error"]["code"]
+            == "idempotency_mismatch"
+        )
+        invalid = _schedule_recipe_command(
+            mutation_id=uuid4(),
+            scheduled_recipe_id=uuid4(),
+            event_id=event_id,
+            event_day_id=event_day_id,
+            event_meal_role_id=event_meal_role_id,
+            recipe_id=recipe_id,
+            recipe_version_id=recipe_version_id,
+            unexpected="value",
+        )
+        assert (
+            client.post(
+                "/api/v1/sync/push", json=_body(sync_database, installation_id, [invalid])
+            ).json()["outcomes"][0]["error"]["code"]
+            == "validation_failed"
+        )
+    with sync_database.engine.connect() as connection:
+        assert connection.execute(
+            select(
+                ScheduledRecipe.consumption_percentage,
+                ScheduledRecipe.position_key,
+                ScheduledRecipe.note,
+            ).where(ScheduledRecipe.id == scheduled_recipe_id)
+        ).one() == (Decimal("75.5"), "b", "  Serve warm  ")
 
 
 def test_push_rejects_unknown_commands_and_untrusted_batch_shapes(

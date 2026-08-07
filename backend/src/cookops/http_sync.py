@@ -14,6 +14,7 @@ from pydantic import BaseModel, ConfigDict, Field, StrictBool, ValidationError, 
 from cookops.application.browser_sessions import BrowserSessionService
 from cookops.application.events import CreateEventCommand, UpdateEventBaseAttendanceCommand
 from cookops.application.recipes import CreateRecipeCommand, RecipeIngredientLineInput
+from cookops.application.scheduled_recipes import ScheduleRecipeCommand
 from cookops.application.shopping_lists import CreateShoppingListCommand
 from cookops.application.synchronization import (
     MAX_COMMANDS_PER_PUSH,
@@ -222,6 +223,28 @@ class CreateRecipePayload(BaseModel):
         return value
 
 
+class ScheduleRecipePayload(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    scheduled_recipe_id: UUID
+    event_id: UUID
+    event_day_id: UUID
+    event_meal_role_id: UUID
+    recipe_id: UUID
+    recipe_version_id: UUID
+    consumption_percentage: Decimal = Decimal("100")
+    position_key: str = "a"
+    note: str | None = None
+    logical_operation_id: UUID | None = None
+
+    @field_validator("consumption_percentage", mode="before")
+    @classmethod
+    def consumption_percentage_must_be_decimal_string(cls, value: object) -> object:
+        if not isinstance(value, str):
+            raise ValueError("must be a decimal string")
+        return value
+
+
 class PushCommandErrorResponse(BaseModel):
     code: str
     field_violations: tuple[dict[str, str], ...]
@@ -381,6 +404,23 @@ def _push_command(command: PushCommandRequest, organization_id: UUID) -> SyncCom
                 ),
                 round_suggestions_up=recipe_payload.round_suggestions_up,
                 logical_operation_id=recipe_payload.logical_operation_id,
+            )
+        if command.command_kind == "scheduled_recipe.schedule":
+            scheduled_recipe_payload = ScheduleRecipePayload.model_validate(command.payload)
+            return ScheduleRecipeCommand(
+                mutation_id=command.mutation_id,
+                scheduled_recipe_id=scheduled_recipe_payload.scheduled_recipe_id,
+                organization_id=organization_id,
+                event_id=scheduled_recipe_payload.event_id,
+                event_day_id=scheduled_recipe_payload.event_day_id,
+                event_meal_role_id=scheduled_recipe_payload.event_meal_role_id,
+                recipe_id=scheduled_recipe_payload.recipe_id,
+                recipe_version_id=scheduled_recipe_payload.recipe_version_id,
+                client_wall_time=command.client_wall_time,
+                consumption_percentage=scheduled_recipe_payload.consumption_percentage,
+                position_key=scheduled_recipe_payload.position_key,
+                note=scheduled_recipe_payload.note,
+                logical_operation_id=scheduled_recipe_payload.logical_operation_id,
             )
     except ValidationError:
         return UnsupportedSyncCommand(
