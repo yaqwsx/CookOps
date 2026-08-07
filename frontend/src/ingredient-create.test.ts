@@ -105,6 +105,7 @@ describe("offline ingredient creation", () => {
       ingredients: [
         {
           id: ingredientId,
+          versionId: expect.any(String),
           name: "Rajčata",
           canonicalUnitName: "g",
           massPerCanonicalQuantity: "1",
