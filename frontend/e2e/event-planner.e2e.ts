@@ -8,6 +8,7 @@ const ids = {
   role: "5d8b2b21-c378-4574-9e46-9338c81305ef",
   recipe: "6d8b2b21-c378-4574-9e46-9338c81305ef",
   version: "7d8b2b21-c378-4574-9e46-9338c81305ef",
+  line: "8d8b2b21-c378-4574-9e46-9338c81305ef",
 };
 
 function record(entity_id: string, entity_kind: string, value: object) {
@@ -100,6 +101,12 @@ test("opens the cached planner and schedules a recipe offline", async ({
             name: "Chili",
             immutable: true,
           }),
+          record(ids.line, "recipe_ingredient_line", {
+            id: ids.line,
+            line_key: ids.line,
+            recipe_version_id: ids.version,
+            base_quantity: "1",
+          }),
         ],
       }),
     });
@@ -143,6 +150,9 @@ test("opens the cached planner and schedules a recipe offline", async ({
   await page.getByText("Přesunout", { exact: true }).click();
   await page.getByLabel("Pořadí").fill("z9");
   await page.getByRole("button", { name: "Přesunout sem" }).click();
+  await page.getByText("Změnit množství suroviny", { exact: true }).click();
+  await page.getByLabel("Množství").fill("2");
+  await page.getByRole("button", { name: "Uložit změnu" }).click();
   await expect
     .poll(() =>
       page.evaluate(

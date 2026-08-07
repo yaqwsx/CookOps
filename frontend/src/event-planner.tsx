@@ -18,6 +18,7 @@ import {
   queueRecipeSchedule,
   queueScheduledRecipeMove,
 } from "./scheduled-recipe";
+import { queueReplacementOverride } from "./scheduled-ingredient-override";
 import { pullOrganization, SyncRequestError } from "./sync-bootstrap";
 
 type PlannerState = "loading" | "ready" | "offline" | "error";
@@ -377,6 +378,77 @@ function MoveRecipe({
   );
 }
 
+function ReplacementOverride({
+  eventId,
+  active,
+  organizationId,
+  userId,
+  scheduled,
+}: {
+  eventId: string;
+  active: boolean;
+  organizationId: string;
+  userId: string;
+  scheduled: EventPlannerProjection["scheduled"][number];
+}) {
+  const { t } = useTranslation();
+  const [line, setLine] = useState(scheduled.lines[0]?.id ?? "");
+  const [amount, setAmount] = useState(scheduled.lines[0]?.quantity ?? "0");
+  const [error, setError] = useState(false);
+  const inFlight = useRef(false);
+  if (!active || !scheduled.lines.length) return null;
+  async function submit(event: React.FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (inFlight.current) return;
+    inFlight.current = true;
+    try {
+      await queueReplacementOverride(userId, organizationId, {
+        eventId,
+        scheduledRecipeId: scheduled.id,
+        targetLineKey: line,
+        quantity: amount,
+      });
+      setError(false);
+    } catch {
+      setError(true);
+    } finally {
+      inFlight.current = false;
+    }
+  }
+  return (
+    <details>
+      <summary>{t("planner.overrideQuantity")}</summary>
+      <form onSubmit={(event) => void submit(event)}>
+        <label>
+          {t("planner.ingredientLine")}
+          <select
+            value={line}
+            onChange={(event) => setLine(event.target.value)}
+          >
+            {scheduled.lines.map((item) => (
+              <option key={item.id} value={item.id}>
+                {item.quantity}
+              </option>
+            ))}
+          </select>
+        </label>
+        <label>
+          {t("planner.quantity")}
+          <input
+            value={amount}
+            onChange={(event) => setAmount(event.target.value)}
+            inputMode="decimal"
+            pattern="(?:0|[1-9][0-9]*)(?:\.[0-9]+)?"
+            required
+          />
+        </label>
+        <button type="submit">{t("planner.saveOverride")}</button>
+        {error ? <p role="alert">{t("planner.errors.unavailable")}</p> : null}
+      </form>
+    </details>
+  );
+}
+
 export function EventPlanner({
   eventId,
   organizationId,
@@ -504,6 +576,13 @@ export function EventPlanner({
                             planner={planner}
                             scheduled={item}
                             userId={userId}
+                          />
+                          <ReplacementOverride
+                            active={planner.lifecycle === "active"}
+                            eventId={eventId}
+                            organizationId={organizationId}
+                            userId={userId}
+                            scheduled={item}
                           />
                         </li>
                       ))}

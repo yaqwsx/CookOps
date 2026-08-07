@@ -28,6 +28,7 @@ from sqlalchemy import func, select, text
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
+from cookops.application import scheduled_recipe_overrides
 from cookops.application.browser_sessions import decode_browser_session_hmac_key
 from cookops.application.catalog_configuration import (
     CatalogConfigurationCommand,
@@ -94,7 +95,11 @@ from cookops.application.scheduled_recipe_moves import (
     MoveScheduledRecipeResult,
     move_scheduled_recipe,
 )
-from cookops.application.scheduled_recipe_overrides import _record as _override_record
+from cookops.application.scheduled_recipe_overrides import (
+    ScheduledIngredientOverrideResult,
+    SetScheduledIngredientOverrideCommand,
+    set_scheduled_ingredient_override,
+)
 from cookops.application.scheduled_recipes import (
     ScheduleRecipeCommand,
     ScheduleRecipeResult,
@@ -265,6 +270,7 @@ SyncCommand = (
     | CreateIngredientCommand
     | ScheduleRecipeCommand
     | MoveScheduledRecipeCommand
+    | SetScheduledIngredientOverrideCommand
     | SetShoppingAvailableSupplyCommand
     | SetShoppingManualPurchaseTargetCommand
     | SetShoppingContributionFulfilmentCommand
@@ -290,6 +296,7 @@ def _command_kind(
         | CreateIngredientCommand
         | ScheduleRecipeCommand
         | MoveScheduledRecipeCommand
+        | SetScheduledIngredientOverrideCommand
         | SetShoppingAvailableSupplyCommand
         | SetShoppingManualPurchaseTargetCommand
         | SetShoppingContributionFulfilmentCommand
@@ -320,6 +327,8 @@ def _command_kind(
         return "scheduled_recipe.schedule"
     if isinstance(command, MoveScheduledRecipeCommand):
         return "scheduled_recipe.move"
+    if isinstance(command, SetScheduledIngredientOverrideCommand):
+        return "scheduled_recipe.ingredient_override"
     if isinstance(command, SetShoppingAvailableSupplyCommand):
         return "shopping_list.set_available_supply"
     if isinstance(command, SetShoppingManualPurchaseTargetCommand):
@@ -637,6 +646,7 @@ class SynchronizationCommandService:
                 | CreateIngredientResult
                 | ScheduleRecipeResult
                 | MoveScheduledRecipeResult
+                | ScheduledIngredientOverrideResult
                 | ShoppingOperationResult
                 | ReceiptResult
                 | CatalogConfigurationResult
@@ -661,6 +671,10 @@ class SynchronizationCommandService:
                 result = await schedule_recipe(self._session_factory, context, command)
             elif isinstance(command, MoveScheduledRecipeCommand):
                 result = await move_scheduled_recipe(self._session_factory, context, command)
+            elif isinstance(command, SetScheduledIngredientOverrideCommand):
+                result = await set_scheduled_ingredient_override(
+                    self._session_factory, context, command
+                )
             elif isinstance(command, SetShoppingAvailableSupplyCommand):
                 result = await set_shopping_available_supply(
                     self._session_factory, context, command
@@ -802,6 +816,7 @@ class SynchronizationCommandService:
             | CreateIngredientResult
             | ScheduleRecipeResult
             | MoveScheduledRecipeResult
+            | ScheduledIngredientOverrideResult
             | ShoppingOperationResult
             | ReceiptResult
             | CatalogConfigurationResult
@@ -833,6 +848,8 @@ class SynchronizationCommandService:
                 if isinstance(result, MoveScheduledRecipeResult)
                 else "receipt.create"
                 if isinstance(result, ReceiptResult)
+                else "scheduled_recipe.ingredient_override"
+                if isinstance(result, ScheduledIngredientOverrideResult)
                 else "catalog_configuration.mutate"
                 if isinstance(result, CatalogConfigurationResult)
                 else "shopping_list.create"
@@ -1728,7 +1745,7 @@ async def _bootstrap_records(
             .order_by(ScheduledIngredientOverride.id)
         )
     ).scalars():
-        record = _override_record(item)
+        record = scheduled_recipe_overrides._record(item)
         record["field_clocks"] = _clock_fields(clocks, "scheduled_ingredient_override", item.id)
         append("scheduled_ingredient_override", item.id, record)
     for item in (

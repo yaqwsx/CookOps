@@ -11,6 +11,7 @@ export type PlannedRecipe = {
   name: string;
   dinerCount: number;
   position: string;
+  lines: { id: string; quantity: string }[];
 };
 export type EventPlannerProjection = {
   name: string;
@@ -56,6 +57,7 @@ export async function readEventPlanner(
     roleRecords,
     recipeRecords,
     versionRecords,
+    lineRecords,
     scheduledRecords,
   ] = await Promise.all([
     readVisibleRecords(userId, organizationId, "event", true),
@@ -63,6 +65,7 @@ export async function readEventPlanner(
     readVisibleRecords(userId, organizationId, "event_meal_role"),
     readVisibleRecords(userId, organizationId, "recipe"),
     readVisibleRecords(userId, organizationId, "recipe_version"),
+    readVisibleRecords(userId, organizationId, "recipe_ingredient_line"),
     readVisibleRecords(userId, organizationId, "scheduled_recipe"),
   ]);
   const event = eventRecords.find(
@@ -163,6 +166,17 @@ export async function readEventPlanner(
         left.name.localeCompare(right.name) || left.id.localeCompare(right.id),
     );
   const names = new Map(recipes.map((recipe) => [recipe.id, recipe.name]));
+  const lines = new Map<string, { id: string; quantity: string }[]>();
+  for (const record of lineRecords) {
+    const versionId = value(record, "recipe_version_id");
+    const baseQuantity = value(record, "base_quantity");
+    const lineKey = value(record, "line_key");
+    if (hasId(record) && versionId && baseQuantity && lineKey && uuid.test(lineKey))
+      lines.set(versionId, [
+        ...(lines.get(versionId) ?? []),
+        { id: lineKey, quantity: baseQuantity },
+      ]);
+  }
   const scheduled = scheduledRecords
     .filter(
       (record) =>
@@ -175,6 +189,7 @@ export async function readEventPlanner(
       dayId: value(record, "event_day_id"),
       roleId: value(record, "event_meal_role_id"),
       name: names.get(value(record, "recipe_id") ?? ""),
+      lines: lines.get(value(record, "recipe_version_id") ?? "") ?? [],
       dinerCount: record.fields.diner_count,
       position: value(record, "position_key"),
     }))

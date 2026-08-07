@@ -9,6 +9,7 @@ import { replayShoppingOperation } from "./shopping-operations";
 import { replayRecipeCreate } from "./recipe-create";
 import { replayRecipeVersionPublish } from "./recipe-publish";
 import { replayIngredientCreate } from "./ingredient-create";
+import { replayReplacementOverride } from "./scheduled-ingredient-override";
 import { replayReceiptCommand } from "./receipt-metadata";
 import { replayCatalogConfiguration } from "./catalog-configuration";
 
@@ -240,6 +241,8 @@ async function replayOptimisticCommands(
     if (command.commandType === "ingredient.create") {
       await replayIngredientCreate(userId, organizationId, command);
     }
+    if (command.commandType === "scheduled_recipe.ingredient_override")
+      await replayReplacementOverride(userId, organizationId, command);
     if (command.commandType.startsWith("receipt.")) {
       await replayReceiptCommand(userId, organizationId, command);
     }

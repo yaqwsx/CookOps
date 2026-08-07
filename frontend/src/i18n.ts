@@ -206,6 +206,10 @@ const resources = {
         move: "Přesunout",
         position: "Pořadí",
         moveTo: "Přesunout sem",
+        overrideQuantity: "Změnit množství suroviny",
+        ingredientLine: "Řádek suroviny",
+        quantity: "Množství",
+        saveOverride: "Uložit změnu",
         errors: {
           unavailable: "Recept se nepodařilo uložit místně. Zkuste to znovu.",
         },
@@ -542,6 +546,10 @@ const resources = {
         move: "Move",
         position: "Position",
         moveTo: "Move here",
+        overrideQuantity: "Override ingredient quantity",
+        ingredientLine: "Ingredient line",
+        quantity: "Quantity",
+        saveOverride: "Save override",
         errors: {
           unavailable:
             "The recipe could not be saved locally. Please try again.",

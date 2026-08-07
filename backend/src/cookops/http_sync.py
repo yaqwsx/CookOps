@@ -30,6 +30,7 @@ from cookops.application.recipes import (
     RecipeIngredientLineInput,
 )
 from cookops.application.scheduled_recipe_moves import MoveScheduledRecipeCommand
+from cookops.application.scheduled_recipe_overrides import SetScheduledIngredientOverrideCommand
 from cookops.application.scheduled_recipes import ScheduleRecipeCommand
 from cookops.application.shopping_lists import (
     CreateShoppingListCommand,
@@ -399,6 +400,27 @@ class MoveScheduledRecipePayload(BaseModel):
     logical_operation_id: UUID | None = None
 
 
+class ScheduledIngredientOverridePayload(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    override_id: UUID
+    event_id: UUID
+    scheduled_recipe_id: UUID
+    operation: Literal["set"]
+    override_kind: Literal["replace"]
+    target_line_key: UUID
+    quantity: Decimal
+    note: str | None = None
+    logical_operation_id: UUID | None = None
+
+    @field_validator("quantity", mode="before")
+    @classmethod
+    def quantity_must_be_decimal_string(cls, value: object) -> object:
+        if not isinstance(value, str):
+            raise ValueError("must be a decimal string")
+        return value
+
+
 class ReceiptMetadataPayload(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -766,6 +788,22 @@ def _push_command(command: PushCommandRequest, organization_id: UUID) -> SyncCom
                 position_key=move_payload.position_key,
                 client_wall_time=command.client_wall_time,
                 logical_operation_id=move_payload.logical_operation_id,
+            )
+        if command.command_kind == "scheduled_recipe.ingredient_override":
+            override_payload = ScheduledIngredientOverridePayload.model_validate(command.payload)
+            return SetScheduledIngredientOverrideCommand(
+                mutation_id=command.mutation_id,
+                override_id=override_payload.override_id,
+                organization_id=organization_id,
+                event_id=override_payload.event_id,
+                scheduled_recipe_id=override_payload.scheduled_recipe_id,
+                operation=override_payload.operation,
+                override_kind="replace",
+                target_line_key=override_payload.target_line_key,
+                quantity=override_payload.quantity,
+                note=override_payload.note,
+                client_wall_time=command.client_wall_time,
+                logical_operation_id=override_payload.logical_operation_id,
             )
         if command.command_kind in ("receipt.create", "receipt.update"):
             receipt_payload = ReceiptMetadataPayload.model_validate(command.payload)

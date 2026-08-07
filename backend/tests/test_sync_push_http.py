@@ -206,6 +206,33 @@ def _move_scheduled_recipe_command(
     return command
 
 
+def _scheduled_ingredient_override_command(
+    *,
+    mutation_id: UUID,
+    event_id: UUID,
+    scheduled_recipe_id: UUID,
+    line_key: UUID,
+    **payload: object,
+) -> dict[str, object]:
+    values: dict[str, object] = {
+        "override_id": str(uuid4()),
+        "scheduled_recipe_id": str(scheduled_recipe_id),
+        "operation": "set",
+        "override_kind": "replace",
+        "target_line_key": str(line_key),
+        "quantity": "2.5",
+    }
+    values.update(payload)
+    command = _command(
+        mutation_id=mutation_id,
+        event_id=event_id,
+        kind="scheduled_recipe.ingredient_override",
+        **values,
+    )
+    cast(dict[str, object], command["payload"])["event_id"] = str(event_id)
+    return command
+
+
 def _shopping_operation_command(
     *, mutation_id: UUID, kind: str, **payload: object
 ) -> dict[str, object]:
@@ -750,7 +777,41 @@ def test_push_schedules_a_recipe_through_the_typed_shared_command(
                 UnitDefinition.organization_id.is_(None), UnitDefinition.code == "person"
             )
         )
+        grams_id = connection.scalar(
+            select(UnitDefinition.id).where(
+                UnitDefinition.organization_id.is_(None), UnitDefinition.code == "g"
+            )
+        )
+        actor_id = connection.scalar(
+            select(OrganizationMembership.user_id).where(
+                OrganizationMembership.organization_id == sync_database.organization_id
+            )
+        )
     assert isinstance(scaling_unit_id, UUID)
+    assert isinstance(grams_id, UUID)
+    assert isinstance(actor_id, UUID)
+    ingredient_id, ingredient_version_id, line_key = uuid4(), uuid4(), uuid4()
+    with sync_database.engine.begin() as connection:
+        connection.execute(
+            insert(Ingredient).values(
+                id=ingredient_id,
+                organization_id=sync_database.organization_id,
+                current_version_id=ingredient_version_id,
+                created_by_user_id=actor_id,
+            )
+        )
+        connection.execute(
+            insert(IngredientVersion).values(
+                id=ingredient_version_id,
+                organization_id=sync_database.organization_id,
+                ingredient_id=ingredient_id,
+                name="Override ingredient",
+                normalized_name="override ingredient",
+                canonical_unit_id=grams_id,
+                mass_per_canonical_quantity=Decimal("1"),
+                published_by_user_id=actor_id,
+            )
+        )
     with TestClient(create_app(_settings()), base_url="https://testserver") as client:
         _sign_in(client, "dummy-member")
         setup = client.post(
@@ -765,6 +826,17 @@ def test_push_schedules_a_recipe_through_the_typed_shared_command(
                         scaling_unit_id=scaling_unit_id,
                         recipe_id=str(recipe_id),
                         recipe_version_id=str(recipe_version_id),
+                        ingredient_lines=[
+                            {
+                                "id": str(uuid4()),
+                                "line_key": str(line_key),
+                                "ingredient_version_id": str(ingredient_version_id),
+                                "base_quantity": "1",
+                                "position_key": "a",
+                                "scaling_behavior": "fixed",
+                                "include_in_portion_weight": True,
+                            }
+                        ],
                     ),
                 ],
             ),
@@ -777,13 +849,7 @@ def test_push_schedules_a_recipe_through_the_typed_shared_command(
             event_day_id = connection.scalar(
                 select(EventDay.id).where(EventDay.event_id == event_id)
             )
-            actor_id = connection.scalar(
-                select(OrganizationMembership.user_id).where(
-                    OrganizationMembership.organization_id == sync_database.organization_id
-                )
-            )
-        assert isinstance(event_day_id, UUID)
-        assert isinstance(actor_id, UUID)
+            assert isinstance(event_day_id, UUID)
         event_meal_role_id = uuid4()
         with sync_database.engine.begin() as connection:
             connection.execute(
@@ -814,6 +880,49 @@ def test_push_schedules_a_recipe_through_the_typed_shared_command(
         assert outcome["replayed"] is False
         assert outcome["first_change_sequence"] is not None
         assert client.post("/api/v1/sync/push", json=body).json()["outcomes"][0]["replayed"] is True
+        override = _scheduled_ingredient_override_command(
+            mutation_id=uuid4(),
+            event_id=event_id,
+            scheduled_recipe_id=scheduled_recipe_id,
+            line_key=line_key,
+        )
+        override_body = _body(sync_database, installation_id, [override])
+        override_outcome = client.post("/api/v1/sync/push", json=override_body).json()["outcomes"][
+            0
+        ]
+        assert override_outcome["status"] == "accepted"
+        assert override_outcome["command_kind"] == "scheduled_recipe.ingredient_override"
+        assert client.post("/api/v1/sync/push", json=override_body).json()["outcomes"][0][
+            "replayed"
+        ]
+        malformed_override = _scheduled_ingredient_override_command(
+            mutation_id=uuid4(),
+            event_id=event_id,
+            scheduled_recipe_id=scheduled_recipe_id,
+            line_key=line_key,
+            quantity=2.5,
+        )
+        assert (
+            client.post(
+                "/api/v1/sync/push",
+                json=_body(sync_database, installation_id, [malformed_override]),
+            ).json()["outcomes"][0]["error"]["code"]
+            == "validation_failed"
+        )
+        clear_override = _scheduled_ingredient_override_command(
+            mutation_id=uuid4(),
+            event_id=event_id,
+            scheduled_recipe_id=scheduled_recipe_id,
+            line_key=line_key,
+            operation="clear",
+        )
+        assert (
+            client.post(
+                "/api/v1/sync/push",
+                json=_body(sync_database, installation_id, [clear_override]),
+            ).json()["outcomes"][0]["error"]["code"]
+            == "validation_failed"
+        )
         move = _move_scheduled_recipe_command(
             mutation_id=uuid4(),
             scheduled_recipe_id=scheduled_recipe_id,
