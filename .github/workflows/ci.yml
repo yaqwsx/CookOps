@@ -53,6 +53,14 @@ jobs:
         run: uv run mypy
       - name: Test
         run: uv run pytest
+      - name: Check MCP resource server
+        working-directory: spikes/mcp-oauth/resource-server
+        run: |
+          uv run --locked ruff format --check .
+          uv run --locked ruff check .
+      - name: Test MCP resource server
+        working-directory: spikes/mcp-oauth/resource-server
+        run: uv run --locked pytest
 
   frontend:
     name: Frontend
