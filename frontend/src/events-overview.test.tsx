@@ -203,6 +203,37 @@ describe("EventOverview", () => {
     );
   });
 
+  it("offers an administrator an explicit online archive confirmation", async () => {
+    await addOrganization();
+    await addEvent({});
+    const user = userEvent.setup();
+    render(
+      <EventOverview
+        onUnauthenticated={vi.fn()}
+        organizationId={organizationId}
+        userId={userId}
+      />,
+    );
+    const card = await screen.findByRole("article");
+    await user.click(
+      within(card).getByRole("button", { name: "Archivovat akci" }),
+    );
+    expect(
+      within(card).getByText(
+        "Archivace vytvoří neměnný historický záznam. Aktivní plán už nepůjde upravovat.",
+      ),
+    ).toBeInTheDocument();
+    await user.click(
+      within(card).getByRole("button", { name: "Potvrdit archivaci" }),
+    );
+    await expect(localDb.outbox.toArray()).resolves.toContainEqual(
+      expect.objectContaining({
+        commandType: "event.lifecycle",
+        payload: { event_id: eventId, operation: "archive" },
+      }),
+    );
+  });
+
   it("creates a valid event locally while offline and exposes it as pending work", async () => {
     await addOrganization();
     setOnline(false);

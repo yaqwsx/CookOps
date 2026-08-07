@@ -12,6 +12,7 @@ from fastapi import APIRouter, HTTPException, Request, status
 from pydantic import BaseModel, ConfigDict, Field, StrictBool, ValidationError, field_validator
 
 from cookops.application.browser_sessions import BrowserSessionService
+from cookops.application.event_lifecycle import SetEventLifecycleCommand
 from cookops.application.events import CreateEventCommand, UpdateEventBaseAttendanceCommand
 from cookops.application.ingredients import CreateIngredientCommand, InitialPrice
 from cookops.application.receipts import (
@@ -178,6 +179,14 @@ class UpdateEventBaseAttendancePayload(BaseModel):
 
     event_id: UUID
     base_expected_attendance: int
+    logical_operation_id: UUID | None = None
+
+
+class EventLifecyclePayload(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    event_id: UUID
+    operation: Literal["archive", "reactivate"]
     logical_operation_id: UUID | None = None
 
 
@@ -483,6 +492,16 @@ def _push_command(command: PushCommandRequest, organization_id: UUID) -> SyncCom
                 base_expected_attendance=attendance_payload.base_expected_attendance,
                 client_wall_time=command.client_wall_time,
                 logical_operation_id=attendance_payload.logical_operation_id,
+            )
+        if command.command_kind == "event.lifecycle":
+            event_lifecycle_payload = EventLifecyclePayload.model_validate(command.payload)
+            return SetEventLifecycleCommand(
+                mutation_id=command.mutation_id,
+                event_id=event_lifecycle_payload.event_id,
+                organization_id=organization_id,
+                operation=event_lifecycle_payload.operation,
+                client_wall_time=command.client_wall_time,
+                logical_operation_id=event_lifecycle_payload.logical_operation_id,
             )
         if command.command_kind == "shopping_list.create":
             shopping_payload = CreateShoppingListPayload.model_validate(command.payload)

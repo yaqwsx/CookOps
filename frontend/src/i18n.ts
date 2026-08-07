@@ -76,6 +76,25 @@ const resources = {
           unavailable: "Účast se nepodařilo uložit místně. Zkuste to znovu.",
         },
       },
+      eventLifecycle: {
+        archive: "Archivovat akci",
+        reactivate: "Znovu aktivovat akci",
+        cancel: "Zrušit",
+        confirm: {
+          archive:
+            "Archivace vytvoří neměnný historický záznam. Aktivní plán už nepůjde upravovat.",
+          reactivate: "Chcete akci znovu odemknout pro běžné úpravy?",
+        },
+        confirmAction: {
+          archive: "Potvrdit archivaci",
+          reactivate: "Potvrdit obnovení",
+        },
+        errors: {
+          event: "Stav akce se mezitím změnil.",
+          online: "Archivaci a obnovení je nutné provést online.",
+          unavailable: "Změnu stavu akce se nepodařilo uložit.",
+        },
+      },
       recipesCatalog: {
         loading: "Načítáme recepty…",
         scope: "Katalog čte uložené projekce receptů a čekající místní změny.",
@@ -329,6 +348,25 @@ const resources = {
           event: "The event cannot be edited locally.",
           unavailable:
             "Attendance could not be saved locally. Please try again.",
+        },
+      },
+      eventLifecycle: {
+        archive: "Archive event",
+        reactivate: "Reactivate event",
+        cancel: "Cancel",
+        confirm: {
+          archive:
+            "Archiving creates an immutable historical record. The active plan will no longer be editable.",
+          reactivate: "Unlock this event for ordinary edits again?",
+        },
+        confirmAction: {
+          archive: "Confirm archive",
+          reactivate: "Confirm reactivation",
+        },
+        errors: {
+          event: "The event lifecycle changed in the meantime.",
+          online: "Archive and reactivation must be performed online.",
+          unavailable: "The event lifecycle change could not be saved.",
         },
       },
       recipesCatalog: {

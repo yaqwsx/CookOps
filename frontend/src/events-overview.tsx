@@ -5,6 +5,7 @@ import { useTranslation } from "react-i18next";
 import type { EventSummary } from "./api/events";
 import { EventAttendance } from "./event-attendance-form";
 import { EventCreate } from "./event-create-form";
+import { EventLifecycle } from "./event-lifecycle-form";
 import {
   canCreateEvents,
   readVisibleEventSummaries,
@@ -29,11 +30,13 @@ function EventCard({
   onOpen,
   organizationId,
   userId,
+  canManage,
 }: {
   event: EventSummary;
   onOpen: (eventId: string) => void;
   organizationId: string;
   userId: string;
+  canManage: boolean;
 }) {
   const { i18n, t } = useTranslation();
   const dateRange =
@@ -76,6 +79,14 @@ function EventCard({
         <EventAttendance
           attendance={event.baseExpectedAttendance}
           eventId={event.id}
+          organizationId={organizationId}
+          userId={userId}
+        />
+      ) : null}
+      {canManage ? (
+        <EventLifecycle
+          eventId={event.id}
+          lifecycle={event.lifecycle}
           organizationId={organizationId}
           userId={userId}
         />
@@ -203,6 +214,7 @@ export function EventOverview({
             onOpen={onOpen}
             organizationId={organizationId}
             userId={userId}
+            canManage={canCreate}
           />
         ))}
       </div>

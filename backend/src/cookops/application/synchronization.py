@@ -29,6 +29,11 @@ from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from cookops.application.browser_sessions import decode_browser_session_hmac_key
+from cookops.application.event_lifecycle import (
+    EventLifecycleResult,
+    SetEventLifecycleCommand,
+    set_event_lifecycle,
+)
 from cookops.application.event_prices import _price_pointer_record, _snapshot_record
 from cookops.application.events import (
     CreateEventCommand,
@@ -225,6 +230,7 @@ class UnsupportedSyncCommand:
 SyncCommand = (
     CreateEventCommand
     | UpdateEventBaseAttendanceCommand
+    | SetEventLifecycleCommand
     | CreateShoppingListCommand
     | CreateRecipeCommand
     | CreateIngredientCommand
@@ -263,6 +269,8 @@ def _command_kind(
         return "event.create"
     if isinstance(command, UpdateEventBaseAttendanceCommand):
         return "event.update_base_attendance"
+    if isinstance(command, SetEventLifecycleCommand):
+        return "event.lifecycle"
     if isinstance(command, CreateRecipeCommand):
         return "recipe.create"
     if isinstance(command, CreateIngredientCommand):
@@ -578,6 +586,7 @@ class SynchronizationCommandService:
             result: (
                 CreateEventResult
                 | UpdateEventBaseAttendanceResult
+                | EventLifecycleResult
                 | CreateShoppingListResult
                 | CreateRecipeResult
                 | CreateIngredientResult
@@ -590,6 +599,8 @@ class SynchronizationCommandService:
                 result = await create_event(self._session_factory, context, command)
             elif isinstance(command, UpdateEventBaseAttendanceCommand):
                 result = await update_event_base_attendance(self._session_factory, context, command)
+            elif isinstance(command, SetEventLifecycleCommand):
+                result = await set_event_lifecycle(self._session_factory, context, command)
             elif isinstance(command, CreateRecipeCommand):
                 result = await create_recipe(self._session_factory, context, command)
             elif isinstance(command, CreateIngredientCommand):
@@ -727,6 +738,7 @@ class SynchronizationCommandService:
         result: (
             CreateEventResult
             | UpdateEventBaseAttendanceResult
+            | EventLifecycleResult
             | CreateShoppingListResult
             | CreateRecipeResult
             | CreateIngredientResult
@@ -746,6 +758,8 @@ class SynchronizationCommandService:
                 if isinstance(result, CreateEventResult)
                 else "event.update_base_attendance"
                 if isinstance(result, UpdateEventBaseAttendanceResult)
+                else "event.lifecycle"
+                if isinstance(result, EventLifecycleResult)
                 else "recipe.create"
                 if isinstance(result, CreateRecipeResult)
                 else "ingredient.create"

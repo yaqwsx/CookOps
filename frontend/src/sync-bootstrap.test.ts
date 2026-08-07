@@ -825,4 +825,41 @@ describe("bootstrapOrganization", () => {
       ),
     ).resolves.toMatchObject({ fields: { base_expected_attendance: 7 } });
   });
+
+  it("keeps a canonical archived event authoritative over a pending reactivation", async () => {
+    const eventId = "3d8b2b21-c378-4574-9e46-9338c81305ef";
+    await localDb.outbox.add({
+      id: "reactivate",
+      userId,
+      organizationId,
+      commandType: "event.lifecycle",
+      payload: { event_id: eventId, operation: "reactivate" },
+      actionAt: "2026-08-07T10:00:00.000Z",
+      createdAt: "2026-08-07T10:00:00.000Z",
+      state: "pending",
+    });
+    await bootstrapOrganization(userId, organizationId, {
+      fetch: vi.fn<typeof fetch>(async () =>
+        response([
+          {
+            ...record(eventId),
+            payload: {
+              record_schema_version: 1,
+              record: {
+                id: eventId,
+                lifecycle: "archived",
+                archived_at: "2026-08-07T09:00:00.000Z",
+              },
+            },
+          },
+        ]),
+      ),
+    });
+    await expect(
+      readVisibleCanonicalRecord(userId, organizationId, "event", eventId),
+    ).resolves.toMatchObject({
+      lifecycle: "retired",
+      fields: { lifecycle: "archived" },
+    });
+  });
 });
