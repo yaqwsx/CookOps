@@ -11,12 +11,13 @@ from datetime import UTC, datetime, timedelta
 from typing import Literal
 from uuid import UUID
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from cookops.application.browser_sessions import BrowserSessionService, IssuedBrowserSession
 from cookops.persistence.models import (
     ExternalIdentity,
+    Organization,
     OrganizationMembership,
     SystemRoleAssignment,
     User,
@@ -90,6 +91,14 @@ class CurrentHumanIdentity:
     user_id: UUID
     display_name: str
     verified_email: str
+
+
+@dataclass(frozen=True, slots=True)
+class AvailableOrganization:
+    """An active organization the current user may open."""
+
+    organization_id: UUID
+    name: str
 
 
 def _utc_now() -> datetime:
@@ -191,6 +200,46 @@ class HumanAuthenticationService:
                 user_id=user.id,
                 display_name=user.display_name,
                 verified_email=user.verified_email,
+            )
+
+    async def available_organizations(
+        self, user_id: UUID
+    ) -> tuple[AvailableOrganization, ...] | None:
+        """List currently readable active organizations without accepting client scope."""
+
+        async with self._session_factory() as session:
+            user = await session.scalar(
+                select(User).where(User.id == user_id, User.disabled_at.is_(None))
+            )
+            if user is None or not await self._has_current_access(
+                session, user.id, user.normalized_email
+            ):
+                return None
+            is_system_admin = await session.scalar(
+                select(SystemRoleAssignment.id).where(
+                    SystemRoleAssignment.user_id == user_id,
+                    SystemRoleAssignment.role == "system_admin",
+                    SystemRoleAssignment.revoked_at.is_(None),
+                )
+            )
+            statement = select(Organization.id, Organization.name).where(
+                Organization.retired_at.is_(None)
+            )
+            if is_system_admin is None:
+                statement = statement.join(
+                    OrganizationMembership,
+                    OrganizationMembership.organization_id == Organization.id,
+                ).where(
+                    OrganizationMembership.user_id == user_id,
+                    OrganizationMembership.invited_email == user.normalized_email,
+                    OrganizationMembership.state == "active",
+                )
+            rows = await session.execute(
+                statement.order_by(func.lower(Organization.name), Organization.id)
+            )
+            return tuple(
+                AvailableOrganization(organization_id=organization_id, name=name)
+                for organization_id, name in rows
             )
 
     @staticmethod

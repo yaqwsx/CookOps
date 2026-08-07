@@ -14,6 +14,10 @@ const resources = {
         recipes: "Recepty",
         ingredients: "Suroviny",
         settings: "Nastavení organizace",
+        organization: "Organizace",
+        organizationsLoading: "Načítáme organizace…",
+        organizationsError: "Organizace se nepodařilo načíst. Zkuste to znovu.",
+        noOrganizations: "Nemáte přístup k žádné aktivní organizaci.",
         language: "Jazyk",
         heading: "Plánování společného vaření",
         introduction:
@@ -117,6 +121,11 @@ const resources = {
         recipes: "Recipes",
         ingredients: "Ingredients",
         settings: "Organization settings",
+        organization: "Organization",
+        organizationsLoading: "Loading organizations…",
+        organizationsError:
+          "Organizations could not be loaded. Please try again.",
+        noOrganizations: "You do not have access to an active organization.",
         language: "Language",
         heading: "Plan group cooking",
         introduction:

@@ -10,6 +10,11 @@ import {
   getDevelopmentIdentities,
   logout,
 } from "./api/auth";
+import {
+  type AvailableOrganization,
+  getAvailableOrganizations,
+  OrganizationRequestError,
+} from "./api/organizations";
 import { loadGoogleIdentityServices } from "./google-identity-services";
 import { EventOverview } from "./events-overview";
 import type { SupportedLocale } from "./i18n";
@@ -20,11 +25,11 @@ import "./app.css";
 
 const sections = ["events", "recipes", "ingredients", "settings"] as const;
 
-const eventOverviewPath =
-  /^\/organizations\/([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})\/events\/?$/i;
+const organizationPath =
+  /^\/organizations\/([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})(?:\/|$)/i;
 
-function organizationIdFromEventOverviewPath() {
-  return window.location.pathname.match(eventOverviewPath)?.[1];
+function eventOverviewPathFor(organizationId: string) {
+  return `/organizations/${organizationId}/events`;
 }
 
 type AuthenticationState =
@@ -34,6 +39,11 @@ type AuthenticationState =
   | { status: "googleLogin"; googleClientId: string }
   | { status: "configurationError" }
   | { status: "authenticated"; identity: CurrentIdentity };
+
+type OrganizationState =
+  | { status: "loading" }
+  | { status: "error" }
+  | { status: "ready"; organizations: AvailableOrganization[] };
 
 function LocalePicker() {
   const { i18n, t } = useTranslation();
@@ -286,8 +296,67 @@ function AuthenticatedShell({
 }) {
   const { t } = useTranslation();
   const [logoutError, setLogoutError] = useState(false);
-  const organizationId = organizationIdFromEventOverviewPath();
+  const [organizations, setOrganizations] = useState<OrganizationState>({
+    status: "loading",
+  });
+  const [pathname, setPathname] = useState(window.location.pathname);
   useOutboxSynchronization(identity.id);
+
+  const loadOrganizations = useCallback(async () => {
+    setOrganizations({ status: "loading" });
+    try {
+      const available = await getAvailableOrganizations();
+      setOrganizations({ status: "ready", organizations: available });
+    } catch (error) {
+      if (error instanceof OrganizationRequestError && error.status === 401) {
+        onUnauthenticated();
+        return;
+      }
+      setOrganizations({ status: "error" });
+    }
+  }, [onUnauthenticated]);
+
+  useEffect(() => {
+    function updatePathname() {
+      setPathname(window.location.pathname);
+    }
+    window.addEventListener("popstate", updatePathname);
+    return () => window.removeEventListener("popstate", updatePathname);
+  }, []);
+
+  useEffect(() => {
+    void loadOrganizations();
+  }, [loadOrganizations]);
+
+  const pathOrganizationId = pathname
+    .match(organizationPath)?.[1]
+    ?.toLowerCase();
+  const organizationId =
+    pathOrganizationId &&
+    (organizations.status !== "ready" ||
+      organizations.organizations.some(({ id }) => id === pathOrganizationId))
+      ? pathOrganizationId
+      : undefined;
+
+  useEffect(() => {
+    if (
+      organizations.status !== "ready" ||
+      organizations.organizations.length === 0
+    )
+      return;
+    if (organizationId) return;
+    const firstOrganization = organizations.organizations[0];
+    if (!firstOrganization) return;
+    const nextPath = eventOverviewPathFor(firstOrganization.id);
+    window.history.replaceState(null, "", nextPath);
+    setPathname(nextPath);
+  }, [organizationId, organizations]);
+
+  function selectOrganization(nextOrganizationId: string) {
+    const nextPath = eventOverviewPathFor(nextOrganizationId);
+    window.history.pushState(null, "", nextPath);
+    setPathname(nextPath);
+  }
 
   async function signOut() {
     setLogoutError(false);
@@ -316,6 +385,21 @@ function AuthenticatedShell({
         </nav>
 
         <div className="header-actions">
+          {organizations.status === "ready" ? (
+            <label className="organization-picker">
+              <span>{t("shell.organization")}</span>
+              <select
+                onChange={(event) => selectOrganization(event.target.value)}
+                value={organizationId ?? ""}
+              >
+                {organizations.organizations.map((organization) => (
+                  <option key={organization.id} value={organization.id}>
+                    {organization.name}
+                  </option>
+                ))}
+              </select>
+            </label>
+          ) : null}
           <SynchronizationStatus userId={identity.id} />
           <LocalePicker />
           <div className="user-menu">
@@ -331,6 +415,23 @@ function AuthenticatedShell({
       </header>
 
       <main id="main" className="app-main">
+        {organizations.status === "loading" ? (
+          <p aria-live="polite" role="status">
+            {t("shell.organizationsLoading")}
+          </p>
+        ) : null}
+        {organizations.status === "error" ? (
+          <div role="alert">
+            <p>{t("shell.organizationsError")}</p>
+            <button onClick={() => void loadOrganizations()} type="button">
+              {t("authentication.retry")}
+            </button>
+          </div>
+        ) : null}
+        {organizations.status === "ready" &&
+        organizations.organizations.length === 0 ? (
+          <p role="status">{t("shell.noOrganizations")}</p>
+        ) : null}
         <section className="introduction" aria-labelledby="app-heading">
           <p className="eyebrow">CookOps</p>
           <h1 id="app-heading">{t("shell.heading")}</h1>

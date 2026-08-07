@@ -68,18 +68,36 @@ async function addEvent(
 }
 
 async function addOrganization() {
-  await localDb.canonicalRecords.put({
-    userId,
-    organizationId,
-    entityType: "organization",
-    entityId: organizationId,
-    recordSchemaVersion: 1,
-    lifecycle: "active",
-    fields: { id: organizationId, default_currency: "CZK" },
-    fieldClocks: {},
-    immutable: false,
-    updatedAt: "2026-08-07T12:00:00.000Z",
-  });
+  await localDb.canonicalRecords.bulkPut([
+    {
+      userId,
+      organizationId,
+      entityType: "organization",
+      entityId: organizationId,
+      recordSchemaVersion: 1,
+      lifecycle: "active",
+      fields: { id: organizationId, default_currency: "CZK" },
+      fieldClocks: {},
+      immutable: false,
+      updatedAt: "2026-08-07T12:00:00.000Z",
+    },
+    {
+      userId,
+      organizationId,
+      entityType: "organization_capabilities",
+      entityId: organizationId,
+      recordSchemaVersion: 1,
+      lifecycle: "active",
+      fields: {
+        actor_user_id: userId,
+        can_manage_organization: true,
+        organization_id: organizationId,
+      },
+      fieldClocks: {},
+      immutable: false,
+      updatedAt: "2026-08-07T12:00:00.000Z",
+    },
+  ]);
 }
 
 describe("EventOverview", () => {
@@ -136,6 +154,23 @@ describe("EventOverview", () => {
     expect(pullOrganization).not.toHaveBeenCalled();
   });
 
+  it("does not offer event creation without the cached administrator capability", async () => {
+    await addEvent({});
+    setOnline(false);
+    render(
+      <EventOverview
+        onUnauthenticated={vi.fn()}
+        organizationId={organizationId}
+        userId={userId}
+      />,
+    );
+
+    await screen.findByRole("heading", { name: "Letní vaření" });
+    expect(
+      screen.queryByRole("heading", { name: "Nová akce" }),
+    ).not.toBeInTheDocument();
+  });
+
   it("edits cached active attendance through the offline outbox", async () => {
     await addEvent({});
     setOnline(false);
@@ -149,8 +184,10 @@ describe("EventOverview", () => {
     );
 
     const card = await screen.findByRole("article");
-    await user.clear(within(card).getByLabelText("Očekávaná účast"));
-    await user.type(within(card).getByLabelText("Očekávaná účast"), "9");
+    const attendance = within(card).getByLabelText("Očekávaná účast");
+    await waitFor(() => expect(attendance).toHaveValue(24));
+    await user.clear(attendance);
+    await user.type(attendance, "9");
     await user.click(
       within(card).getByRole("button", { name: "Uložit účast" }),
     );
@@ -178,7 +215,7 @@ describe("EventOverview", () => {
       />,
     );
 
-    await user.type(screen.getByLabelText("Název"), "Offline picnic");
+    await user.type(await screen.findByLabelText("Název"), "Offline picnic");
     await user.type(screen.getByLabelText("Začátek"), "2026-08-10");
     await user.type(screen.getByLabelText("Konec"), "2026-08-10");
     await user.clear(screen.getByLabelText("Očekávaná účast"));
@@ -228,7 +265,10 @@ describe("EventOverview", () => {
     );
 
     expect(await screen.findByRole("alert")).toBeInTheDocument();
-    await user.type(screen.getByLabelText("Název"), "Cached organization");
+    await user.type(
+      await screen.findByLabelText("Název"),
+      "Cached organization",
+    );
     await user.type(screen.getByLabelText("Začátek"), "2026-08-10");
     await user.type(screen.getByLabelText("Konec"), "2026-08-10");
     await user.click(screen.getByRole("button", { name: "Uložit akci" }));

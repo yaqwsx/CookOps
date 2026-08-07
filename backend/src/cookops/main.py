@@ -17,7 +17,11 @@ from cookops.application.synchronization import (
 )
 from cookops.config import HumanAuthProvider, Settings
 from cookops.database import create_database_runtime
-from cookops.http_auth import BrowserAuthenticationServices, create_auth_router
+from cookops.http_auth import (
+    BrowserAuthenticationServices,
+    create_auth_router,
+    create_organization_access_router,
+)
 from cookops.http_events import EventHttpServices, create_events_router
 from cookops.http_shopping import ShoppingHttpServices, create_shopping_router
 from cookops.http_sync import SynchronizationHttpServices, create_sync_router
@@ -163,6 +167,7 @@ def create_app(
     application.state.readiness_probe = readiness_probe or not_ready
     application.include_router(health_router)
     application.include_router(create_auth_router(app_settings))
+    application.include_router(create_organization_access_router(app_settings))
     application.include_router(create_events_router(app_settings))
     application.include_router(create_shopping_router(app_settings))
     application.include_router(create_sync_router(app_settings))

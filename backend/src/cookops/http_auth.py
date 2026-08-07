@@ -59,6 +59,15 @@ class CurrentIdentityResponse(BaseModel):
     verified_email: str
 
 
+class AvailableOrganizationResponse(BaseModel):
+    id: UUID
+    name: str
+
+
+class AvailableOrganizationListResponse(BaseModel):
+    organizations: tuple[AvailableOrganizationResponse, ...]
+
+
 def _services(request: Request) -> BrowserAuthenticationServices:
     services = getattr(request.app.state, "browser_authentication", None)
     if not isinstance(services, BrowserAuthenticationServices):
@@ -217,5 +226,34 @@ def create_auth_router(settings: Settings) -> APIRouter:
         _delete_cookie(response, settings)
         response.status_code = status.HTTP_204_NO_CONTENT
         return response
+
+    return router
+
+
+def create_organization_access_router(settings: Settings) -> APIRouter:
+    """Create the cookie-authenticated organization-switcher query endpoint."""
+
+    router = APIRouter(prefix="/api/v1", tags=["organizations"])
+
+    @router.get("/organizations", response_model=AvailableOrganizationListResponse)
+    async def available_organizations(request: Request) -> AvailableOrganizationListResponse:
+        services = _services(request)
+        secret = request.cookies.get(settings.browser_session_cookie_name)
+        if secret is None:
+            raise _unauthenticated()
+        session = await services.browser_sessions.authenticate(secret)
+        if session is None:
+            raise _unauthenticated()
+        organizations = await services.human_authentication.available_organizations(session.user_id)
+        if organizations is None:
+            raise _unauthenticated()
+        return AvailableOrganizationListResponse(
+            organizations=tuple(
+                AvailableOrganizationResponse(
+                    id=organization.organization_id, name=organization.name
+                )
+                for organization in organizations
+            )
+        )
 
     return router

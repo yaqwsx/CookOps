@@ -22,6 +22,16 @@ test("creates an event in the offline outbox without horizontal overflow", async
     }
     await route.fulfill({ status: 404 });
   });
+  await page.route("**/api/v1/organizations", async (route) => {
+    await route.fulfill({
+      contentType: "application/json",
+      body: JSON.stringify({
+        organizations: [
+          { id: organizationId, name: "CookOps test organization" },
+        ],
+      }),
+    });
+  });
   await page.route("**/api/v1/sync/bootstrap", async (route) => {
     await route.fulfill({
       contentType: "application/json",
@@ -42,6 +52,21 @@ test("creates an event in the offline outbox without horizontal overflow", async
                 name: "CookOps test organization",
                 default_currency: "CZK",
                 retired_at: null,
+              },
+            },
+          },
+          {
+            organization_id: organizationId,
+            entity_id: organizationId,
+            entity_kind: "organization_capabilities",
+            operation: "upsert",
+            payload: {
+              record_schema_version: 1,
+              record: {
+                actor_user_id: "a6a58bd6-214e-49af-8fae-e5f974bf8e08",
+                can_manage_organization: true,
+                organization_id: organizationId,
+                role: "organization_admin",
               },
             },
           },

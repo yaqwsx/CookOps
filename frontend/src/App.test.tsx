@@ -10,6 +10,17 @@ const alice = {
   display_name: "Alice Member",
   verified_email: "alice@example.test",
 };
+const organizations = {
+  organizations: [
+    {
+      id: "5ce17d2f-8365-4b1f-a80b-34d10425d51c",
+      name: "Development organization",
+    },
+  ],
+};
+const primaryOrganization = organizations.organizations[0];
+if (!primaryOrganization)
+  throw new Error("Missing primary organization fixture.");
 
 function response(body: object | null, status = 200) {
   return new Response(body === null ? null : JSON.stringify(body), {
@@ -18,16 +29,26 @@ function response(body: object | null, status = 200) {
   });
 }
 
-function mockAnonymousDevelopmentSession({ logoutFails = false } = {}) {
+function mockAnonymousDevelopmentSession({
+  logoutFails = false,
+  organizationList = organizations,
+  organizationUnauthorized = false,
+} = {}) {
   window.COOKOPS_RUNTIME_CONFIG = { authentication: { provider: "dummy" } };
   let signedIn = false;
+  let accessRevoked = false;
   const fetchMock = vi.fn(
     async (input: RequestInfo | URL, init?: RequestInit) => {
       const path = String(input);
       if (path === "/auth/session") {
-        return signedIn
+        return signedIn && !accessRevoked
           ? response(alice)
           : response({ detail: "not authenticated" }, 401);
+      }
+      if (path === "/api/v1/organizations") {
+        if (!organizationUnauthorized) return response(organizationList);
+        accessRevoked = true;
+        return response({ detail: "not authenticated" }, 401);
       }
       if (path === "/auth/dummy/identities") {
         return response({
@@ -63,6 +84,7 @@ function mockAnonymousGoogleSession() {
           ? response(alice)
           : response({ detail: "not authenticated" }, 401);
       }
+      if (path === "/api/v1/organizations") return response(organizations);
       if (path === "/auth/google/session" && init?.method === "POST") {
         signedIn = true;
         return response(null, 204);
@@ -79,6 +101,7 @@ describe("development authentication", () => {
     await i18n.changeLanguage(defaultLocale);
     delete window.COOKOPS_RUNTIME_CONFIG;
     delete window.google;
+    window.history.replaceState(null, "", "/");
   });
 
   afterEach(() => {
@@ -234,6 +257,77 @@ describe("development authentication", () => {
     );
     expect(sessionRequests).toHaveLength(2);
     expect(sessionRequests[1]?.[1]).toEqual({ credentials: "same-origin" });
+    expect(
+      await screen.findByRole("combobox", { name: "Organizace" }),
+    ).toHaveValue(primaryOrganization.id);
+    await waitFor(() => {
+      expect(window.location.pathname).toBe(
+        `/organizations/${primaryOrganization.id}/events`,
+      );
+    });
+  });
+
+  it("switches organizations through the existing events route", async () => {
+    const user = userEvent.setup();
+    const secondOrganization = {
+      id: "a6a58bd6-214e-49af-8fae-e5f974bf8e08",
+      name: "Second organization",
+    };
+    mockAnonymousDevelopmentSession({
+      organizationList: {
+        organizations: [...organizations.organizations, secondOrganization],
+      },
+    });
+    render(<App />);
+
+    await user.click(
+      await screen.findByRole("button", {
+        name: "Přihlásit se jako Alice Member",
+      }),
+    );
+    await user.selectOptions(
+      await screen.findByRole("combobox", { name: "Organizace" }),
+      secondOrganization.id,
+    );
+    expect(window.location.pathname).toBe(
+      `/organizations/${secondOrganization.id}/events`,
+    );
+  });
+
+  it("keeps a case-insensitive bookmarked organization route", async () => {
+    const user = userEvent.setup();
+    window.history.replaceState(
+      null,
+      "",
+      `/organizations/${primaryOrganization.id.toUpperCase()}/recipes`,
+    );
+    mockAnonymousDevelopmentSession();
+    render(<App />);
+
+    await user.click(
+      await screen.findByRole("button", {
+        name: "Přihlásit se jako Alice Member",
+      }),
+    );
+    await screen.findByRole("combobox", { name: "Organizace" });
+    expect(window.location.pathname).toBe(
+      `/organizations/${primaryOrganization.id.toUpperCase()}/recipes`,
+    );
+  });
+
+  it("returns to authentication when current organization access is revoked", async () => {
+    const user = userEvent.setup();
+    mockAnonymousDevelopmentSession({ organizationUnauthorized: true });
+    render(<App />);
+
+    await user.click(
+      await screen.findByRole("button", {
+        name: "Přihlásit se jako Alice Member",
+      }),
+    );
+    expect(
+      await screen.findByRole("heading", { name: "Vývojové přihlášení" }),
+    ).toBeInTheDocument();
   });
 
   it("posts a Google ID token only to the Google session endpoint", async () => {

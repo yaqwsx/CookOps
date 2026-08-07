@@ -38,6 +38,7 @@ class DummyAuthDatabase:
     sync_engine: Engine
     actor_id: UUID
     authorized_user_id: UUID
+    organization_id: UUID
 
 
 @pytest.fixture
@@ -139,6 +140,7 @@ def dummy_auth_database() -> Iterator[DummyAuthDatabase]:
         sync_engine=sync_engine,
         actor_id=actor_id,
         authorized_user_id=authorized_user_id,
+        organization_id=organization_id,
     )
     try:
         yield database
@@ -205,6 +207,16 @@ def test_dummy_authentication_only_selects_existing_identities_and_issues_a_secu
             "display_name": "Alice Member",
             "verified_email": "alice@example.test",
         }
+        organizations = client.get("/api/v1/organizations")
+        assert organizations.status_code == 200
+        assert organizations.json() == {
+            "organizations": [
+                {
+                    "id": str(dummy_auth_database.organization_id),
+                    "name": "Development organization",
+                }
+            ]
+        }
 
         with dummy_auth_database.sync_engine.begin() as connection:
             connection.execute(
@@ -217,6 +229,7 @@ def test_dummy_authentication_only_selects_existing_identities_and_issues_a_secu
                 )
             )
         assert client.get("/auth/session").status_code == 401
+        assert client.get("/api/v1/organizations").status_code == 401
 
         logged_out = client.post("/auth/session/logout")
         assert logged_out.status_code == 204

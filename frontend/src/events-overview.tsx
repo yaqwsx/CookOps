@@ -5,7 +5,10 @@ import { useTranslation } from "react-i18next";
 import type { EventSummary } from "./api/events";
 import { EventAttendance } from "./event-attendance-form";
 import { EventCreate } from "./event-create-form";
-import { readVisibleEventSummaries } from "./event-projections";
+import {
+  canCreateEvents,
+  readVisibleEventSummaries,
+} from "./event-projections";
 import { pullOrganization, SyncRequestError } from "./sync-bootstrap";
 
 type EventOverviewState = "loading" | "ready" | "offline" | "error";
@@ -84,6 +87,7 @@ export function EventOverview({
   const { t } = useTranslation();
   const [state, setState] = useState<EventOverviewState>("loading");
   const [events, setEvents] = useState<EventSummary[]>([]);
+  const [canCreate, setCanCreate] = useState(false);
   const generation = useRef(0);
   const synchronize = useCallback(async () => {
     const currentGeneration = generation.current;
@@ -106,11 +110,15 @@ export function EventOverview({
   useEffect(() => {
     let active = true;
     generation.current += 1;
-    const subscription = liveQuery(() =>
-      readVisibleEventSummaries(userId, organizationId),
-    ).subscribe({
-      next: (nextEvents) => {
-        if (active) setEvents(nextEvents);
+    const subscription = liveQuery(async () => ({
+      canCreate: await canCreateEvents(userId, organizationId),
+      events: await readVisibleEventSummaries(userId, organizationId),
+    })).subscribe({
+      next: (projection) => {
+        if (active) {
+          setCanCreate(projection.canCreate);
+          setEvents(projection.events);
+        }
       },
       error: () => {
         if (active) setState("error");
@@ -141,7 +149,9 @@ export function EventOverview({
   if (state === "error" && events.length === 0) {
     return (
       <div className="event-overview">
-        <EventCreate organizationId={organizationId} userId={userId} />
+        {canCreate ? (
+          <EventCreate organizationId={organizationId} userId={userId} />
+        ) : null}
         <div className="event-overview-error" role="alert">
           <p>{t("eventsOverview.error")}</p>
           <button onClick={() => void synchronize()} type="button">
@@ -154,7 +164,9 @@ export function EventOverview({
   if (state === "ready" && events.length === 0) {
     return (
       <div className="event-overview">
-        <EventCreate organizationId={organizationId} userId={userId} />
+        {canCreate ? (
+          <EventCreate organizationId={organizationId} userId={userId} />
+        ) : null}
         <p>{t("eventsOverview.empty")}</p>
       </div>
     );
@@ -164,7 +176,9 @@ export function EventOverview({
       <p className="event-overview__scope" role="note">
         {t("eventsOverview.scope")}
       </p>
-      <EventCreate organizationId={organizationId} userId={userId} />
+      {canCreate ? (
+        <EventCreate organizationId={organizationId} userId={userId} />
+      ) : null}
       {state === "offline" ? (
         <p aria-live="polite" role="status">
           {t("eventsOverview.offline")}

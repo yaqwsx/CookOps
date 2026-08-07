@@ -70,7 +70,8 @@ textarea:focus-visible {
   text-underline-offset: 0.3rem;
 }
 
-.locale-picker {
+.locale-picker,
+.organization-picker {
   display: flex;
   align-items: center;
   gap: 0.5rem;
@@ -146,7 +147,8 @@ button:disabled {
   opacity: 0.65;
 }
 
-.locale-picker select {
+.locale-picker select,
+.organization-picker select {
   min-height: 2.5rem;
   padding: 0.4rem 2rem 0.4rem 0.6rem;
   border: 1px solid #9d9283;
@@ -457,7 +459,8 @@ h1 {
     overflow-x: auto;
   }
 
-  .locale-picker {
+  .locale-picker,
+  .organization-picker {
     justify-self: start;
   }
 

@@ -77,3 +77,19 @@ export async function readVisibleEventSummaries(
         left.id.localeCompare(right.id),
     );
 }
+
+export async function canCreateEvents(
+  userId: string,
+  organizationId: string,
+): Promise<boolean> {
+  const capabilities = await localDb.canonicalRecords.get([
+    userId,
+    organizationId,
+    "organization_capabilities",
+    organizationId,
+  ]);
+  return (
+    capabilities?.fields.actor_user_id === userId &&
+    capabilities.fields.can_manage_organization === true
+  );
+}
