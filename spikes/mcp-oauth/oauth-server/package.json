@@ -16,6 +16,7 @@
     "pg": "8.22.0"
   },
   "devDependencies": {
+    "@modelcontextprotocol/sdk": "1.30.0",
     "@types/node": "22.19.9",
     "@types/oidc-provider": "9.11.0",
     "@types/pg": "8.20.4",

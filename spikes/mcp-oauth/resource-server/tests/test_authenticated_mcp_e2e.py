@@ -93,6 +93,43 @@ class OAuthFixture:
             raise RuntimeError(self._process.stderr.read())
 
 
+async def assert_official_node_sdk_client(
+    configuration: dict[str, str | int],
+) -> None:
+    resource = configuration["resource"]
+    issuer = configuration["issuer"]
+    subject = configuration["subject"]
+    assert (
+        isinstance(resource, str)
+        and isinstance(issuer, str)
+        and isinstance(subject, str)
+    )
+    oauth_server = Path(__file__).parents[2] / "oauth-server"
+    environment = os.environ.copy()
+    environment.update(
+        {
+            "MCP_E2E_ISSUER": issuer,
+            "MCP_E2E_RESOURCE": resource,
+            "MCP_E2E_SUBJECT": subject,
+        }
+    )
+    result = await asyncio.to_thread(
+        subprocess.run,
+        [
+            "node",
+            "--import",
+            "tsx",
+            "test-fixtures/official-node-mcp-client.ts",
+        ],
+        cwd=oauth_server,
+        env=environment,
+        capture_output=True,
+        text=True,
+        timeout=30,
+    )
+    assert result.returncode == 0, result.stderr
+
+
 @asynccontextmanager
 async def resource_server(
     configuration: dict[str, str | int], listener: socket.socket
@@ -280,6 +317,7 @@ async def scenario(database_url: str) -> None:
                     "resource": resource,
                     "subject": subject,
                 }
+                await assert_official_node_sdk_client(configuration)
 
 
 def test_real_opaque_token_authenticates_an_mcp_request() -> None:

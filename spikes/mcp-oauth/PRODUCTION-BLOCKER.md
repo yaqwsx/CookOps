@@ -17,10 +17,12 @@ OAuth server or a source for a production FastAPI MCP mount.
 - The OAuth tests now exercise CIMD private-IP rejection, redirect refusal,
   malformed and oversized metadata, DCR exact redirects, DCR JWKS redirects,
   public-client secret suppression, and encrypted PostgreSQL-backed OAuth flow
-  storage. The required spike gates still lack two independent
-  clients/conformance coverage and Google and dummy traversal of the same
-  interaction bridge. The PostgreSQL tests require `TEST_DATABASE_URL` (the
-  disposable Compose test service supplies it).
+  storage. PostgreSQL E2E coverage drives opaque, resource-bound tokens through
+  both the official Python MCP SDK and the official TypeScript MCP SDK;
+  the latter performs RFC 9728/RFC 8414 discovery and PKCE itself. The required
+  spike gates still lack official conformance-suite coverage and Google and
+  dummy traversal of the same interaction bridge. The PostgreSQL tests require
+  `TEST_DATABASE_URL` (the disposable Compose test service supplies it).
 
 ## Required production boundary
 
