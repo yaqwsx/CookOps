@@ -11,7 +11,10 @@ from cookops.application.dummy_identities import DummyIdentityProvider
 from cookops.application.google_identities import GoogleIdentityProvider, GoogleIdTokenVerifier
 from cookops.application.human_authentication import HumanAuthenticationService
 from cookops.application.shopping_lists import ShoppingListQueryService
-from cookops.application.synchronization import SynchronizationQueryService
+from cookops.application.synchronization import (
+    SynchronizationCommandService,
+    SynchronizationQueryService,
+)
 from cookops.config import HumanAuthProvider, Settings
 from cookops.database import create_database_runtime
 from cookops.http_auth import BrowserAuthenticationServices, create_auth_router
@@ -133,6 +136,10 @@ def create_app(
         application.state.synchronization = SynchronizationHttpServices(
             browser_sessions=application.state.browser_authentication.browser_sessions,
             synchronization=SynchronizationQueryService(
+                session_factory,
+                encoded_cursor_hmac_key=app_settings.resolved_browser_session_hmac_key,
+            ),
+            commands=SynchronizationCommandService(
                 session_factory,
                 encoded_cursor_hmac_key=app_settings.resolved_browser_session_hmac_key,
             ),

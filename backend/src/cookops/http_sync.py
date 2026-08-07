@@ -1,21 +1,32 @@
-"""Cookie-authenticated read adapter for the organization synchronization feed."""
+"""Cookie-authenticated adapters for the organization synchronization protocol."""
 
+import hashlib
+import json
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import date, datetime
+from decimal import Decimal
 from typing import Literal
 from uuid import UUID
 
 from fastapi import APIRouter, HTTPException, Request, status
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator
 
 from cookops.application.browser_sessions import BrowserSessionService
+from cookops.application.events import CreateEventCommand, UpdateEventBaseAttendanceCommand
 from cookops.application.synchronization import (
+    MAX_COMMANDS_PER_PUSH,
     MAX_TRANSACTION_GROUPS_PER_PULL,
     InvalidSyncCursor,
     PullRequest,
     PullResult,
+    PushCommandOutcome,
+    PushRequest,
+    SyncCommand,
+    SynchronizationCommandService,
     SynchronizationQueryService,
+    SyncPushDenied,
     SyncQueryDenied,
+    UnsupportedSyncCommand,
 )
 from cookops.config import Settings
 
@@ -24,6 +35,10 @@ from cookops.config import Settings
 class SynchronizationHttpServices:
     browser_sessions: BrowserSessionService
     synchronization: SynchronizationQueryService
+    commands: SynchronizationCommandService
+
+
+MAX_PUSH_REQUEST_BYTES = 1024 * 1024
 
 
 class PullChangesRequest(BaseModel):
@@ -61,6 +76,100 @@ class PullChangesResponse(BaseModel):
     next_cursor: str | None
     transaction_groups: tuple[SyncTransactionGroupResponse, ...]
     oldest_available_at: datetime | None
+
+
+class PushCommandRequest(BaseModel):
+    """Forward-compatible command envelope; each known payload is validated below."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    mutation_id: UUID
+    command_kind: str = Field(min_length=1, max_length=100, pattern=r"^[a-z][a-z0-9_.-]*$")
+    command_schema_version: Literal[1]
+    client_wall_time: datetime
+    payload: dict[str, object]
+
+    @field_validator("client_wall_time")
+    @classmethod
+    def client_wall_time_must_include_timezone(cls, value: datetime) -> datetime:
+        if value.tzinfo is None or value.utcoffset() is None:
+            raise ValueError("must include a timezone")
+        return value
+
+
+class PushChangesRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    organization_id: UUID
+    client_installation_id: UUID
+    request_sent_at: datetime
+    sync_schema_version: Literal[1]
+    commands: tuple[PushCommandRequest, ...] = Field(max_length=MAX_COMMANDS_PER_PUSH)
+
+    @field_validator("request_sent_at")
+    @classmethod
+    def request_sent_at_must_include_timezone(cls, value: datetime) -> datetime:
+        if value.tzinfo is None or value.utcoffset() is None:
+            raise ValueError("must include a timezone")
+        return value
+
+
+class CreateEventPayload(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    event_id: UUID
+    name: str
+    start_date: date
+    end_date: date
+    base_expected_attendance: int
+    budget_amount: Decimal
+    location: str | None = None
+    general_note: str | None = None
+    logical_operation_id: UUID | None = None
+
+    @field_validator("budget_amount", mode="before")
+    @classmethod
+    def budget_amount_must_be_decimal_string(cls, value: object) -> object:
+        if not isinstance(value, str):
+            raise ValueError("must be a decimal string")
+        return value
+
+
+class UpdateEventBaseAttendancePayload(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    event_id: UUID
+    base_expected_attendance: int
+    logical_operation_id: UUID | None = None
+
+
+class PushCommandErrorResponse(BaseModel):
+    code: str
+    field_violations: tuple[dict[str, str], ...]
+    retry_same_identity: bool
+
+
+class PushCommandOutcomeResponse(BaseModel):
+    mutation_id: UUID
+    command_kind: str
+    status: Literal["accepted", "partially_superseded", "rejected"]
+    replayed: bool
+    first_change_sequence: int | None
+    last_change_sequence: int | None
+    error: PushCommandErrorResponse | None
+
+
+class ClockSkewWarningResponse(BaseModel):
+    difference_seconds: int
+    server_time: datetime
+
+
+class PushChangesResponse(BaseModel):
+    sync_schema_version: Literal[1]
+    server_time: datetime
+    clock_skew_warning: ClockSkewWarningResponse | None
+    change_cursor: str
+    outcomes: tuple[PushCommandOutcomeResponse, ...]
 
 
 def _services(request: Request) -> SynchronizationHttpServices:
@@ -102,8 +211,160 @@ def _result_response(result: PullResult) -> PullChangesResponse:
     )
 
 
+def _push_command(command: PushCommandRequest, organization_id: UUID) -> SyncCommand:
+    try:
+        if command.command_kind == "event.create":
+            payload = CreateEventPayload.model_validate(command.payload)
+            return CreateEventCommand(
+                mutation_id=command.mutation_id,
+                event_id=payload.event_id,
+                organization_id=organization_id,
+                name=payload.name,
+                start_date=payload.start_date,
+                end_date=payload.end_date,
+                base_expected_attendance=payload.base_expected_attendance,
+                budget_amount=payload.budget_amount,
+                client_wall_time=command.client_wall_time,
+                location=payload.location,
+                general_note=payload.general_note,
+                logical_operation_id=payload.logical_operation_id,
+            )
+        if command.command_kind == "event.update_base_attendance":
+            attendance_payload = UpdateEventBaseAttendancePayload.model_validate(command.payload)
+            return UpdateEventBaseAttendanceCommand(
+                mutation_id=command.mutation_id,
+                event_id=attendance_payload.event_id,
+                organization_id=organization_id,
+                base_expected_attendance=attendance_payload.base_expected_attendance,
+                client_wall_time=command.client_wall_time,
+                logical_operation_id=attendance_payload.logical_operation_id,
+            )
+    except ValidationError:
+        return UnsupportedSyncCommand(
+            mutation_id=command.mutation_id,
+            command_kind=command.command_kind,
+            request_hash=_push_command_hash(command),
+            client_wall_time=command.client_wall_time,
+            rejection_code="validation_failed",
+        )
+    return UnsupportedSyncCommand(
+        mutation_id=command.mutation_id,
+        command_kind=command.command_kind,
+        request_hash=_push_command_hash(command),
+        client_wall_time=command.client_wall_time,
+    )
+
+
+def _push_command_hash(command: PushCommandRequest) -> bytes:
+    return hashlib.sha256(
+        json.dumps(
+            command.model_dump(mode="json"),
+            ensure_ascii=False,
+            separators=(",", ":"),
+            sort_keys=True,
+        ).encode()
+    ).digest()
+
+
+def _push_outcome_response(outcome: PushCommandOutcome) -> PushCommandOutcomeResponse:
+    error = None
+    if outcome.error_code is not None:
+        error = PushCommandErrorResponse(
+            code=outcome.error_code,
+            field_violations=tuple(
+                {"path": path, "code": code} for path, code in outcome.field_violations
+            ),
+            retry_same_identity=outcome.retry_same_identity,
+        )
+    return PushCommandOutcomeResponse(
+        mutation_id=outcome.mutation_id,
+        command_kind=outcome.command_kind,
+        status=outcome.status,
+        replayed=outcome.replayed,
+        first_change_sequence=outcome.first_change_sequence,
+        last_change_sequence=outcome.last_change_sequence,
+        error=error,
+    )
+
+
+async def _push_body(request: Request) -> PushChangesRequest:
+    content_length = request.headers.get("content-length")
+    if content_length is not None and (
+        not content_length.isdigit() or int(content_length) > MAX_PUSH_REQUEST_BYTES
+    ):
+        raise HTTPException(
+            status_code=status.HTTP_413_CONTENT_TOO_LARGE, detail="request too large"
+        )
+    raw = await request.body()
+    if len(raw) > MAX_PUSH_REQUEST_BYTES:
+        raise HTTPException(
+            status_code=status.HTTP_413_CONTENT_TOO_LARGE, detail="request too large"
+        )
+    try:
+        return PushChangesRequest.model_validate(json.loads(raw))
+    except (json.JSONDecodeError, ValidationError) as error:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_CONTENT, detail="invalid push request"
+        ) from error
+
+
 def create_sync_router(settings: Settings) -> APIRouter:
     router = APIRouter(prefix="/api/v1/sync", tags=["synchronization"])
+
+    @router.post(
+        "/push",
+        response_model=PushChangesResponse,
+        openapi_extra={
+            "requestBody": {
+                "required": True,
+                "content": {"application/json": {"schema": PushChangesRequest.model_json_schema()}},
+            }
+        },
+    )
+    async def push_changes(request: Request) -> PushChangesResponse:
+        body = await _push_body(request)
+        services = _services(request)
+        secret = request.cookies.get(settings.browser_session_cookie_name)
+        if secret is None:
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED, detail="not authenticated"
+            )
+        authenticated = await services.browser_sessions.authenticate(secret)
+        if authenticated is None:
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED, detail="not authenticated"
+            )
+        try:
+            result = await services.commands.push(
+                actor_user_id=authenticated.user_id,
+                request=PushRequest(
+                    organization_id=body.organization_id,
+                    client_installation_id=body.client_installation_id,
+                    request_sent_at=body.request_sent_at,
+                    commands=tuple(
+                        _push_command(command, body.organization_id) for command in body.commands
+                    ),
+                ),
+            )
+        except SyncPushDenied as error:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="organization access denied",
+            ) from error
+        return PushChangesResponse(
+            sync_schema_version=result.sync_schema_version,
+            server_time=result.server_time,
+            clock_skew_warning=(
+                ClockSkewWarningResponse(
+                    difference_seconds=result.clock_skew_seconds,
+                    server_time=result.server_time,
+                )
+                if result.clock_skew_seconds is not None
+                else None
+            ),
+            change_cursor=result.change_cursor,
+            outcomes=tuple(_push_outcome_response(outcome) for outcome in result.outcomes),
+        )
 
     @router.post("/pull", response_model=PullChangesResponse)
     async def pull_changes(body: PullChangesRequest, request: Request) -> PullChangesResponse:
