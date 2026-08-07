@@ -270,6 +270,7 @@ def test_provisioning_refuses_production_before_acquiring_a_database_session() -
     production_settings = Settings(
         environment=Environment.PRODUCTION,
         human_auth_provider=HumanAuthProvider.GOOGLE,
+        google_client_id="test-client.apps.googleusercontent.com",
         database_url=PostgresDsn(os.environ["TEST_DATABASE_URL"]),
         browser_session_hmac_key=KEY,
     )

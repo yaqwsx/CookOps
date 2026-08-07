@@ -1,7 +1,7 @@
 from enum import StrEnum
 from typing import Literal, Self
 
-from pydantic import PostgresDsn, model_validator
+from pydantic import Field, PostgresDsn, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 _DEVELOPMENT_BROWSER_SESSION_HMAC_KEY = "MDEyMzQ1Njc4OWFiY2RlZjAxMjM0NTY3ODlhYmNkZWY"
@@ -23,6 +23,8 @@ class Settings(BaseSettings):
 
     environment: Environment = Environment.DEVELOPMENT
     human_auth_provider: HumanAuthProvider = HumanAuthProvider.DUMMY
+    google_client_id: str | None = None
+    google_id_token_verification_timeout_seconds: int = Field(default=5, gt=0, le=30)
     database_url: PostgresDsn = PostgresDsn(
         "postgresql+psycopg://cookops:cookops@localhost:5432/cookops"
     )
@@ -54,6 +56,15 @@ class Settings(BaseSettings):
             and self.human_auth_provider is HumanAuthProvider.DUMMY
         ):
             raise ValueError("dummy authentication cannot be enabled in production")
+        if self.human_auth_provider is HumanAuthProvider.GOOGLE and (
+            self.google_client_id is None
+            or not self.google_client_id
+            or self.google_client_id != self.google_client_id.strip()
+            or len(self.google_client_id) > 255
+        ):
+            raise ValueError(
+                "google client ID must be a nonblank trimmed string of at most 255 characters"
+            )
         if self.database_url.scheme != "postgresql+psycopg":
             raise ValueError("database URL must use the postgresql+psycopg scheme")
         if self.environment is Environment.PRODUCTION and self.browser_session_hmac_key is None:

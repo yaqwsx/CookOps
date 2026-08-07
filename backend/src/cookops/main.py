@@ -8,8 +8,9 @@ from pydantic import BaseModel
 
 from cookops.application.browser_sessions import BrowserSessionService
 from cookops.application.dummy_identities import DummyIdentityProvider
+from cookops.application.google_identities import GoogleIdentityProvider, GoogleIdTokenVerifier
 from cookops.application.human_authentication import HumanAuthenticationService
-from cookops.config import Settings
+from cookops.config import HumanAuthProvider, Settings
 from cookops.database import create_database_runtime
 from cookops.http_auth import BrowserAuthenticationServices, create_auth_router
 
@@ -69,14 +70,32 @@ def create_browser_authentication_services(
         session_factory,
         encoded_hmac_key=settings.resolved_browser_session_hmac_key,
     )
+    human_authentication = HumanAuthenticationService(
+        session_factory,
+        browser_sessions,
+        session_lifetime=timedelta(seconds=settings.browser_session_lifetime_seconds),
+    )
+    google_identities = None
+    if settings.human_auth_provider is HumanAuthProvider.GOOGLE:
+        google_client_id = settings.google_client_id
+        if google_client_id is None:
+            raise RuntimeError("Google authentication requires a configured Google client ID")
+        google_identities = GoogleIdentityProvider(
+            human_authentication,
+            google_client_id,
+            token_verifier=GoogleIdTokenVerifier(
+                settings.google_id_token_verification_timeout_seconds
+            ),
+        )
     return BrowserAuthenticationServices(
         browser_sessions=browser_sessions,
-        human_authentication=HumanAuthenticationService(
-            session_factory,
-            browser_sessions,
-            session_lifetime=timedelta(seconds=settings.browser_session_lifetime_seconds),
+        human_authentication=human_authentication,
+        dummy_identities=(
+            DummyIdentityProvider(session_factory)
+            if settings.human_auth_provider is HumanAuthProvider.DUMMY
+            else None
         ),
-        dummy_identities=DummyIdentityProvider(session_factory),
+        google_identities=google_identities,
     )
 
 

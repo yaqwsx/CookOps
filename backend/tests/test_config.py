@@ -16,6 +16,7 @@ def test_environment_rejects_dummy_auth_in_production(monkeypatch: pytest.Monkey
 def test_environment_allows_google_auth_in_production(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("COOKOPS_ENVIRONMENT", "production")
     monkeypatch.setenv("COOKOPS_HUMAN_AUTH_PROVIDER", "google")
+    monkeypatch.setenv("COOKOPS_GOOGLE_CLIENT_ID", "test-client.apps.googleusercontent.com")
     monkeypatch.setenv(
         "COOKOPS_BROWSER_SESSION_HMAC_KEY",
         "MDEyMzQ1Njc4OWFiY2RlZjAxMjM0NTY3ODlhYmNkZWY",
@@ -35,6 +36,7 @@ def test_production_rejects_missing_or_malformed_browser_session_key(
 ) -> None:
     monkeypatch.setenv("COOKOPS_ENVIRONMENT", "production")
     monkeypatch.setenv("COOKOPS_HUMAN_AUTH_PROVIDER", "google")
+    monkeypatch.setenv("COOKOPS_GOOGLE_CLIENT_ID", "test-client.apps.googleusercontent.com")
     if value is None:
         monkeypatch.delenv("COOKOPS_BROWSER_SESSION_HMAC_KEY", raising=False)
     else:
@@ -50,6 +52,7 @@ def test_production_accepts_exactly_the_key_parsed_by_session_service(
     key = "MDEyMzQ1Njc4OWFiY2RlZjAxMjM0NTY3ODlhYmNkZWY"
     monkeypatch.setenv("COOKOPS_ENVIRONMENT", "production")
     monkeypatch.setenv("COOKOPS_HUMAN_AUTH_PROVIDER", "google")
+    monkeypatch.setenv("COOKOPS_GOOGLE_CLIENT_ID", "test-client.apps.googleusercontent.com")
     monkeypatch.setenv("COOKOPS_BROWSER_SESSION_HMAC_KEY", key)
 
     assert (
@@ -63,6 +66,7 @@ def test_production_rejects_an_insecure_browser_session_cookie(
 ) -> None:
     monkeypatch.setenv("COOKOPS_ENVIRONMENT", "production")
     monkeypatch.setenv("COOKOPS_HUMAN_AUTH_PROVIDER", "google")
+    monkeypatch.setenv("COOKOPS_GOOGLE_CLIENT_ID", "test-client.apps.googleusercontent.com")
     monkeypatch.setenv(
         "COOKOPS_BROWSER_SESSION_HMAC_KEY",
         "MDEyMzQ1Njc4OWFiY2RlZjAxMjM0NTY3ODlhYmNkZWY",
@@ -86,6 +90,26 @@ def test_development_has_a_deterministic_nonproduction_session_key() -> None:
     )
     with pytest.raises(RuntimeError, match="must be configured in production"):
         _ = unvalidated_production_copy.resolved_browser_session_hmac_key
+
+
+@pytest.mark.parametrize("value", [None, "", " client.apps.googleusercontent.com", "x" * 256])
+def test_google_provider_requires_a_valid_client_id(
+    monkeypatch: pytest.MonkeyPatch, value: str | None
+) -> None:
+    monkeypatch.setenv("COOKOPS_HUMAN_AUTH_PROVIDER", "google")
+    if value is None:
+        monkeypatch.delenv("COOKOPS_GOOGLE_CLIENT_ID", raising=False)
+    else:
+        monkeypatch.setenv("COOKOPS_GOOGLE_CLIENT_ID", value)
+
+    with pytest.raises(ValidationError, match="google client ID"):
+        Settings()
+
+
+@pytest.mark.parametrize("value", [0, -1, 31])
+def test_google_certificate_request_timeout_is_bounded(value: int) -> None:
+    with pytest.raises(ValidationError):
+        Settings(google_id_token_verification_timeout_seconds=value)
 
 
 @pytest.mark.parametrize(

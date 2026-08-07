@@ -3,16 +3,20 @@ import os
 from collections.abc import Iterator
 from dataclasses import dataclass
 from datetime import UTC, datetime
+from unittest.mock import AsyncMock, MagicMock
 from uuid import UUID, uuid4
 
 import pytest
 from alembic.config import Config
+from fastapi import FastAPI
 from fastapi.testclient import TestClient
 from pydantic import PostgresDsn
 from sqlalchemy import Engine, create_engine, insert, select, update
 
 from alembic import command as alembic_command
+from cookops.application.human_authentication import HumanAuthenticationDenied
 from cookops.config import Environment, HumanAuthProvider, Settings
+from cookops.http_auth import BrowserAuthenticationServices, create_auth_router
 from cookops.main import create_app
 from cookops.persistence.models import (
     BrowserSession,
@@ -230,9 +234,97 @@ def test_dummy_authentication_only_selects_existing_identities_and_issues_a_secu
 def test_dummy_routes_are_not_mounted_when_google_is_selected(
     dummy_auth_database: DummyAuthDatabase,
 ) -> None:
-    app_settings = settings().model_copy(update={"human_auth_provider": HumanAuthProvider.GOOGLE})
+    app_settings = settings().model_copy(
+        update={
+            "human_auth_provider": HumanAuthProvider.GOOGLE,
+            "google_client_id": "test-client.apps.googleusercontent.com",
+        }
+    )
     with TestClient(create_app(app_settings), base_url="https://testserver") as client:
         assert client.get("/auth/dummy/identities").status_code == 404
         assert (
             client.post("/auth/dummy/session", json={"subject": "dummy-alice"}).status_code == 404
         )
+
+
+def test_google_route_issues_the_same_cookie_and_does_not_mount_dummy_routes() -> None:
+    app_settings = Settings(
+        environment=Environment.PRODUCTION,
+        human_auth_provider=HumanAuthProvider.GOOGLE,
+        google_client_id="test-client.apps.googleusercontent.com",
+        browser_session_hmac_key=KEY,
+    )
+    google_provider = MagicMock()
+    google_provider.complete_id_token = AsyncMock(
+        return_value=MagicMock(browser_session=MagicMock(secret="google-session-secret"))
+    )
+
+    def authentication_factory(
+        _settings: Settings, _session_factory: object
+    ) -> BrowserAuthenticationServices:
+        return BrowserAuthenticationServices(
+            browser_sessions=MagicMock(),
+            human_authentication=MagicMock(),
+            dummy_identities=None,
+            google_identities=google_provider,
+        )
+
+    class Runtime:
+        session_factory = MagicMock()
+
+        async def is_ready(self) -> bool:
+            return True
+
+        async def close(self) -> None:
+            return None
+
+    with TestClient(
+        create_app(
+            app_settings,
+            database_runtime_factory=lambda _url: Runtime(),
+            browser_authentication_factory=authentication_factory,
+        ),
+        base_url="https://testserver",
+    ) as client:
+        created = client.post("/auth/google/session", json={"id_token": "opaque-google-token"})
+
+        assert created.status_code == 204
+        assert "google-session-secret" in created.headers["set-cookie"]
+        assert "HttpOnly" in created.headers["set-cookie"]
+        assert client.get("/auth/dummy/identities").status_code == 404
+        assert client.post("/auth/google/session", json={}).status_code == 422
+
+        google_provider.complete_id_token.side_effect = HumanAuthenticationDenied(
+            "authentication denied"
+        )
+        denied = client.post("/auth/google/session", json={"id_token": "invalid-token"})
+        assert denied.status_code == 403
+        assert denied.json() == {"detail": "authentication denied"}
+        assert "set-cookie" not in denied.headers
+
+    assert google_provider.complete_id_token.await_args_list[0].args == ("opaque-google-token",)
+
+
+def test_production_google_route_rejects_plain_http_before_token_verification() -> None:
+    settings = Settings(
+        environment=Environment.PRODUCTION,
+        human_auth_provider=HumanAuthProvider.GOOGLE,
+        google_client_id="test-client.apps.googleusercontent.com",
+        browser_session_hmac_key=KEY,
+    )
+    google_provider = MagicMock()
+    app = FastAPI()
+    app.state.browser_authentication = BrowserAuthenticationServices(
+        browser_sessions=MagicMock(),
+        human_authentication=MagicMock(),
+        dummy_identities=None,
+        google_identities=google_provider,
+    )
+    app.include_router(create_auth_router(settings))
+
+    with TestClient(app, base_url="http://testserver") as client:
+        response = client.post("/auth/google/session", json={"id_token": "opaque-google-token"})
+
+    assert response.status_code == 400
+    assert response.json() == {"detail": "secure transport required"}
+    google_provider.complete_id_token.assert_not_called()
