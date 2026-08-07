@@ -118,6 +118,23 @@ class BrowserSessionService:
         session, even if a stale authentication adapter attempts issuance.
         """
 
+        async with self._session_factory() as session, session.begin():
+            return await self.issue_in_transaction(session, user_id=user_id, expires_at=expires_at)
+
+    async def issue_in_transaction(
+        self,
+        session: AsyncSession,
+        *,
+        user_id: UUID,
+        expires_at: datetime,
+    ) -> IssuedBrowserSession:
+        """Issue within a caller-owned transaction after its authorization locks.
+
+        Authentication completion uses this primitive to hold the current
+        membership/role locks through session creation.  The caller must already
+        have started ``session.begin()``; this method never commits or rolls back.
+        """
+
         now = self._now()
         normalized_expiry = _normalize_timestamp(expires_at, field="expires_at")
         if normalized_expiry <= now:
@@ -133,16 +150,15 @@ class BrowserSessionService:
             created_at=now,
             expires_at=normalized_expiry,
         )
-        async with self._session_factory() as session, session.begin():
-            active_user_id = await session.scalar(
-                select(User.id)
-                .where(User.id == user_id, User.disabled_at.is_(None))
-                .with_for_update(read=True, of=User)
-            )
-            if active_user_id is None:
-                raise PermissionError("cannot issue a session for an inactive user")
-            session.add(record)
-            await session.flush()
+        active_user_id = await session.scalar(
+            select(User.id)
+            .where(User.id == user_id, User.disabled_at.is_(None))
+            .with_for_update(read=True, of=User)
+        )
+        if active_user_id is None:
+            raise PermissionError("cannot issue a session for an inactive user")
+        session.add(record)
+        await session.flush()
         return IssuedBrowserSession(
             id=record.id,
             secret=secret,
