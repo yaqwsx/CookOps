@@ -3,9 +3,9 @@ import os
 import random
 from collections.abc import Iterator
 from dataclasses import dataclass, replace
-from datetime import UTC, date, datetime
+from datetime import UTC, date, datetime, timedelta
 from decimal import Decimal
-from typing import cast
+from typing import Literal, cast
 from uuid import UUID, uuid4
 
 import pytest
@@ -17,6 +17,10 @@ from sqlalchemy.pool import NullPool
 
 from alembic import command as alembic_command
 from cookops.application.organizations import ApplicationServiceError, ExecutionContext
+from cookops.application.scheduled_recipe_overrides import (
+    SetScheduledIngredientOverrideCommand,
+    set_scheduled_ingredient_override,
+)
 from cookops.application.scheduled_recipes import (
     ScheduleRecipeCommand,
     _prepare_command,
@@ -31,12 +35,16 @@ from cookops.persistence.models import (
     EventArchiveSnapshot,
     EventDay,
     EventMealRole,
+    Ingredient,
+    IngredientVersion,
     Mutation,
     Organization,
     OrganizationChange,
     OrganizationMembership,
     Recipe,
     RecipeVersion,
+    RecipeVersionIngredientLine,
+    ScheduledIngredientOverride,
     ScheduledRecipe,
     UnitDefinition,
     User,
@@ -66,6 +74,11 @@ class ServiceDatabase:
     person_recipe_version_id: UUID
     no_capacity_recipe_id: UUID
     no_capacity_recipe_version_id: UUID
+    recipe_ingredient_id: UUID
+    recipe_ingredient_version_id: UUID
+    recipe_line_key: UUID
+    added_ingredient_id: UUID
+    added_ingredient_version_id: UUID
 
 
 @pytest.fixture
@@ -89,6 +102,8 @@ def service_database() -> Iterator[ServiceDatabase]:
     recipe_id, recipe_version_id = uuid4(), uuid4()
     person_recipe_id, person_recipe_version_id = uuid4(), uuid4()
     no_capacity_recipe_id, no_capacity_recipe_version_id = uuid4(), uuid4()
+    recipe_ingredient_id, recipe_ingredient_version_id, recipe_line_key = uuid4(), uuid4(), uuid4()
+    added_ingredient_id, added_ingredient_version_id = uuid4(), uuid4()
     now = datetime.now(UTC)
     with sync_engine.begin() as connection:
         connection.execute(
@@ -136,7 +151,12 @@ def service_database() -> Iterator[ServiceDatabase]:
                 UnitDefinition.organization_id.is_(None), UnitDefinition.code == "tray"
             )
         )
-        assert person_id is not None and tray_id is not None
+        gram_id = connection.scalar(
+            select(UnitDefinition.id).where(
+                UnitDefinition.organization_id.is_(None), UnitDefinition.code == "g"
+            )
+        )
+        assert person_id is not None and tray_id is not None and gram_id is not None
         connection.execute(
             insert(Event),
             [
@@ -236,6 +256,60 @@ def service_database() -> Iterator[ServiceDatabase]:
             ],
         )
         connection.execute(
+            insert(Ingredient),
+            [
+                {
+                    "id": recipe_ingredient_id,
+                    "organization_id": organization_id,
+                    "current_version_id": recipe_ingredient_version_id,
+                    "created_by_user_id": actor_id,
+                },
+                {
+                    "id": added_ingredient_id,
+                    "organization_id": organization_id,
+                    "current_version_id": added_ingredient_version_id,
+                    "created_by_user_id": actor_id,
+                },
+            ],
+        )
+        connection.execute(
+            insert(IngredientVersion),
+            [
+                {
+                    "id": recipe_ingredient_version_id,
+                    "organization_id": organization_id,
+                    "ingredient_id": recipe_ingredient_id,
+                    "name": "Tomatoes",
+                    "normalized_name": "tomatoes",
+                    "canonical_unit_id": gram_id,
+                    "mass_per_canonical_quantity": Decimal("1"),
+                    "published_by_user_id": actor_id,
+                },
+                {
+                    "id": added_ingredient_version_id,
+                    "organization_id": organization_id,
+                    "ingredient_id": added_ingredient_id,
+                    "name": "Basil",
+                    "normalized_name": "basil",
+                    "canonical_unit_id": gram_id,
+                    "mass_per_canonical_quantity": Decimal("1"),
+                    "published_by_user_id": actor_id,
+                },
+            ],
+        )
+        connection.execute(
+            insert(RecipeVersionIngredientLine).values(
+                id=uuid4(),
+                organization_id=organization_id,
+                recipe_id=recipe_id,
+                recipe_version_id=recipe_version_id,
+                line_key=recipe_line_key,
+                ingredient_version_id=recipe_ingredient_version_id,
+                base_quantity=Decimal("500"),
+                position_key="a",
+            )
+        )
+        connection.execute(
             insert(RecipeVersion),
             [
                 {
@@ -270,6 +344,11 @@ def service_database() -> Iterator[ServiceDatabase]:
         person_recipe_version_id=person_recipe_version_id,
         no_capacity_recipe_id=no_capacity_recipe_id,
         no_capacity_recipe_version_id=no_capacity_recipe_version_id,
+        recipe_ingredient_id=recipe_ingredient_id,
+        recipe_ingredient_version_id=recipe_ingredient_version_id,
+        recipe_line_key=recipe_line_key,
+        added_ingredient_id=added_ingredient_id,
+        added_ingredient_version_id=added_ingredient_version_id,
     )
     try:
         yield database
@@ -305,6 +384,57 @@ def schedule_command(
         position_key=position_key,
         note=note,
         client_wall_time=datetime.now(UTC),
+    )
+
+
+def schedule_then_override(database: ServiceDatabase) -> UUID:
+    scheduled_recipe_id = uuid4()
+    asyncio.run(
+        schedule_recipe(
+            database.sessions,
+            context(database),
+            schedule_command(database, scheduled_recipe_id=scheduled_recipe_id),
+        )
+    )
+    return scheduled_recipe_id
+
+
+def override_command(
+    database: ServiceDatabase,
+    scheduled_recipe_id: UUID,
+    *,
+    mutation_id: UUID | None = None,
+    override_id: UUID | None = None,
+    operation: str = "set",
+    override_kind: str = "replace",
+    target_line_key: UUID | None = None,
+    ingredient_id: UUID | None = None,
+    ingredient_version_id: UUID | None = None,
+    quantity: Decimal | None = Decimal("750"),
+    include_in_portion_weight: bool | None = None,
+    position_key: str | None = None,
+    client_wall_time: datetime | None = None,
+) -> SetScheduledIngredientOverrideCommand:
+    return SetScheduledIngredientOverrideCommand(
+        mutation_id=mutation_id or uuid4(),
+        override_id=override_id or uuid4(),
+        organization_id=database.organization_id,
+        event_id=database.event_id,
+        scheduled_recipe_id=scheduled_recipe_id,
+        operation=cast(Literal["set", "clear"], operation),
+        override_kind=cast(Literal["replace", "add"], override_kind),
+        client_wall_time=client_wall_time or datetime.now(UTC),
+        target_line_key=(
+            target_line_key
+            if override_kind == "add"
+            else target_line_key or database.recipe_line_key
+        ),
+        ingredient_id=ingredient_id,
+        ingredient_version_id=ingredient_version_id,
+        quantity=quantity,
+        include_in_portion_weight=include_in_portion_weight,
+        note="Local note\r\n",
+        position_key=position_key,
     )
 
 
@@ -372,6 +502,222 @@ def test_member_schedules_pinned_version_with_derived_default_and_atomic_feed(
         assert change.entity_id == command.scheduled_recipe_id
         assert change.payload["record_schema_version"] == 1
         assert change.payload["record"]["selected_scale_amount"] == "2"
+
+
+def test_member_sets_replaces_and_clears_pinned_recipe_ingredient(
+    service_database: ServiceDatabase,
+) -> None:
+    scheduled_recipe_id = schedule_then_override(service_database)
+    override_id = uuid4()
+    set_command = override_command(service_database, scheduled_recipe_id, override_id=override_id)
+    set_result = asyncio.run(
+        set_scheduled_ingredient_override(
+            service_database.sessions, context(service_database), set_command
+        )
+    )
+    assert set_result.outcome == "accepted"
+    assert set_result.ingredient_id == service_database.recipe_ingredient_id
+    assert set_result.ingredient_version_id == service_database.recipe_ingredient_version_id
+    assert set_result.quantity == Decimal("750")
+    assert set_result.include_in_portion_weight is None
+    assert set_result.note == "Local note\n"
+    assert set_result.first_change_sequence == set_result.last_change_sequence
+
+    clear_command = override_command(
+        service_database,
+        scheduled_recipe_id,
+        override_id=override_id,
+        operation="clear",
+        quantity=None,
+        client_wall_time=set_command.client_wall_time + timedelta(seconds=1),
+    )
+    clear_result = asyncio.run(
+        set_scheduled_ingredient_override(
+            service_database.sessions, context(service_database), clear_command
+        )
+    )
+    assert clear_result.retired_at is not None
+    with service_database.sync_engine.connect() as connection:
+        stored = connection.execute(
+            select(
+                ScheduledIngredientOverride.quantity,
+                ScheduledIngredientOverride.retired_at,
+                Mutation.outcome,
+                OrganizationChange.entity_kind,
+            )
+            .select_from(ScheduledIngredientOverride)
+            .join(Mutation, Mutation.id == clear_command.mutation_id)
+            .join(OrganizationChange, OrganizationChange.mutation_id == clear_command.mutation_id)
+            .where(ScheduledIngredientOverride.id == override_id)
+        ).one()
+        assert stored.quantity == Decimal("750")
+        assert stored.retired_at is not None
+        assert stored.outcome == "accepted"
+        assert stored.entity_kind == "scheduled_ingredient_override"
+
+
+def test_member_adds_active_catalog_ingredient_and_replay_is_idempotent(
+    service_database: ServiceDatabase,
+) -> None:
+    scheduled_recipe_id = schedule_then_override(service_database)
+    command = override_command(
+        service_database,
+        scheduled_recipe_id,
+        override_kind="add",
+        target_line_key=None,
+        ingredient_id=service_database.added_ingredient_id,
+        ingredient_version_id=service_database.added_ingredient_version_id,
+        quantity=Decimal("30"),
+        include_in_portion_weight=True,
+        position_key="z",
+    )
+    result = asyncio.run(
+        set_scheduled_ingredient_override(
+            service_database.sessions, context(service_database), command
+        )
+    )
+    replay = asyncio.run(
+        set_scheduled_ingredient_override(
+            service_database.sessions, context(service_database), command
+        )
+    )
+    assert result.ingredient_id == service_database.added_ingredient_id
+    assert result.include_in_portion_weight is True
+    assert replay.replayed is True
+    assert replay.first_change_sequence == result.first_change_sequence
+
+
+def test_override_lww_retains_newer_canonical_quantity_and_reports_supersession(
+    service_database: ServiceDatabase,
+) -> None:
+    scheduled_recipe_id = schedule_then_override(service_database)
+    override_id = uuid4()
+    newer_time = datetime.now(UTC)
+    newer = override_command(
+        service_database,
+        scheduled_recipe_id,
+        override_id=override_id,
+        quantity=Decimal("900"),
+        client_wall_time=newer_time,
+    )
+    asyncio.run(
+        set_scheduled_ingredient_override(
+            service_database.sessions, context(service_database), newer
+        )
+    )
+    older = override_command(
+        service_database,
+        scheduled_recipe_id,
+        override_id=uuid4(),
+        quantity=Decimal("100"),
+        client_wall_time=newer_time - timedelta(seconds=1),
+    )
+    result = asyncio.run(
+        set_scheduled_ingredient_override(
+            service_database.sessions, context(service_database), older
+        )
+    )
+    assert result.outcome == "partially_superseded"
+    assert result.override_id == override_id
+    assert result.quantity == Decimal("900")
+
+
+def test_stale_set_after_clear_reconciles_the_retained_tombstone(
+    service_database: ServiceDatabase,
+) -> None:
+    scheduled_recipe_id = schedule_then_override(service_database)
+    override_id = uuid4()
+    action_time = datetime.now(UTC)
+    initial = override_command(
+        service_database,
+        scheduled_recipe_id,
+        override_id=override_id,
+        client_wall_time=action_time,
+    )
+    asyncio.run(
+        set_scheduled_ingredient_override(
+            service_database.sessions, context(service_database), initial
+        )
+    )
+    clear = override_command(
+        service_database,
+        scheduled_recipe_id,
+        override_id=override_id,
+        operation="clear",
+        quantity=None,
+        client_wall_time=action_time + timedelta(seconds=2),
+    )
+    asyncio.run(
+        set_scheduled_ingredient_override(
+            service_database.sessions, context(service_database), clear
+        )
+    )
+    stale = override_command(
+        service_database,
+        scheduled_recipe_id,
+        override_id=uuid4(),
+        quantity=Decimal("1"),
+        client_wall_time=action_time + timedelta(seconds=1),
+    )
+    result = asyncio.run(
+        set_scheduled_ingredient_override(
+            service_database.sessions, context(service_database), stale
+        )
+    )
+    assert result.outcome == "partially_superseded"
+    assert result.override_id == override_id
+    assert result.retired_at is not None
+
+
+def test_override_rejects_pinned_line_and_added_catalog_errors(
+    service_database: ServiceDatabase,
+) -> None:
+    scheduled_recipe_id = schedule_then_override(service_database)
+    invalid_line = override_command(service_database, scheduled_recipe_id, target_line_key=uuid4())
+    with pytest.raises(ApplicationServiceError, match="validation_failed"):
+        asyncio.run(
+            set_scheduled_ingredient_override(
+                service_database.sessions, context(service_database), invalid_line
+            )
+        )
+    invalid_add = override_command(
+        service_database,
+        scheduled_recipe_id,
+        override_kind="add",
+        target_line_key=None,
+        ingredient_id=service_database.recipe_ingredient_id,
+        ingredient_version_id=service_database.recipe_ingredient_version_id,
+        include_in_portion_weight=True,
+        position_key="z",
+    )
+    with pytest.raises(ApplicationServiceError, match="validation_failed"):
+        asyncio.run(
+            set_scheduled_ingredient_override(
+                service_database.sessions, context(service_database), invalid_add
+            )
+        )
+
+
+def test_override_decimal_validation_fuzzes_nonnegative_finite_inputs(
+    service_database: ServiceDatabase,
+) -> None:
+    scheduled_recipe_id = schedule_then_override(service_database)
+    randomizer = random.Random(841)
+    for _ in range(80):
+        quantity = Decimal(randomizer.randrange(0, 1_000_000)).scaleb(-randomizer.randrange(0, 6))
+        command = override_command(
+            service_database,
+            scheduled_recipe_id,
+            override_id=uuid4(),
+            quantity=quantity,
+            client_wall_time=datetime.now(UTC) + timedelta(microseconds=_),
+        )
+        result = asyncio.run(
+            set_scheduled_ingredient_override(
+                service_database.sessions, context(service_database), command
+            )
+        )
+        assert result.quantity == quantity
 
 
 def test_archived_event_cannot_receive_a_scheduled_recipe(
