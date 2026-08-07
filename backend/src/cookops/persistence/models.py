@@ -1025,6 +1025,167 @@ class EventArchiveSnapshot(Base):
     created_by_user_id: Mapped[UUID] = mapped_column(ForeignKey("users.id", ondelete="RESTRICT"))
 
 
+class EventIngredientPrice(Base):
+    """A retained event-local price stream for one logical ingredient."""
+
+    __tablename__ = "event_ingredient_prices"
+    __table_args__ = (
+        ForeignKeyConstraint(
+            ["event_id", "organization_id"],
+            ["events.id", "events.organization_id"],
+            ondelete="RESTRICT",
+            name="fk_event_ingredient_prices_event_organization",
+        ),
+        ForeignKeyConstraint(
+            ["ingredient_id", "organization_id"],
+            ["ingredients.id", "ingredients.organization_id"],
+            ondelete="RESTRICT",
+            name="fk_event_ingredient_prices_ingredient_organization",
+        ),
+        ForeignKeyConstraint(
+            ["current_snapshot_id", "id"],
+            [
+                "event_ingredient_price_snapshots.id",
+                "event_ingredient_price_snapshots.event_ingredient_price_id",
+            ],
+            ondelete="RESTRICT",
+            name="fk_event_ingredient_prices_current_snapshot",
+            deferrable=True,
+            initially="DEFERRED",
+            use_alter=True,
+        ),
+        UniqueConstraint(
+            "event_id", "organization_id", "ingredient_id", name="uq_event_ingredient_prices_scope"
+        ),
+        UniqueConstraint(
+            "id",
+            "event_id",
+            "organization_id",
+            "ingredient_id",
+            name="uq_event_ingredient_prices_id_scope",
+        ),
+    )
+
+    id: Mapped[UUID] = mapped_column(
+        Uuid, primary_key=True, default=uuid4, server_default=text("gen_random_uuid()")
+    )
+    organization_id: Mapped[UUID] = mapped_column(Uuid)
+    event_id: Mapped[UUID] = mapped_column(Uuid)
+    ingredient_id: Mapped[UUID] = mapped_column(Uuid)
+    current_snapshot_id: Mapped[UUID | None] = mapped_column(Uuid)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=text("CURRENT_TIMESTAMP")
+    )
+    created_by_user_id: Mapped[UUID] = mapped_column(ForeignKey("users.id", ondelete="RESTRICT"))
+
+
+class EventIngredientPriceSnapshot(Base):
+    """An immutable event-local capture of a catalog price estimate."""
+
+    __tablename__ = "event_ingredient_price_snapshots"
+    __table_args__ = (
+        CheckConstraint(
+            "state IN ('available', 'unavailable')",
+            name="ck_event_ingredient_price_snapshots_state",
+        ),
+        CheckConstraint(
+            "(state = 'available' AND price_amount IS NOT NULL "
+            "AND price_amount >= 0 "
+            "AND price_amount::text NOT IN ('NaN', 'Infinity', '-Infinity') "
+            "AND priced_quantity IS NOT NULL AND priced_quantity > 0 "
+            "AND priced_quantity::text NOT IN ('NaN', 'Infinity', '-Infinity') "
+            "AND priced_unit_id IS NOT NULL "
+            "AND currency IS NOT NULL AND currency ~ '^[A-Z]{3}$') OR "
+            "(state = 'unavailable' AND price_amount IS NULL "
+            "AND priced_quantity IS NULL AND priced_unit_id IS NULL AND currency IS NULL)",
+            name="ck_event_ingredient_price_snapshots_value_shape",
+        ),
+        CheckConstraint(
+            "previous_snapshot_id IS NULL OR previous_snapshot_id <> id",
+            name="ck_event_ingredient_price_snapshots_nonrecursive_previous",
+        ),
+        ForeignKeyConstraint(
+            ["event_ingredient_price_id", "event_id", "organization_id", "ingredient_id"],
+            [
+                "event_ingredient_prices.id",
+                "event_ingredient_prices.event_id",
+                "event_ingredient_prices.organization_id",
+                "event_ingredient_prices.ingredient_id",
+            ],
+            ondelete="RESTRICT",
+            name="fk_event_ingredient_price_snapshots_price_scope",
+        ),
+        ForeignKeyConstraint(
+            ["previous_snapshot_id", "event_ingredient_price_id"],
+            [
+                "event_ingredient_price_snapshots.id",
+                "event_ingredient_price_snapshots.event_ingredient_price_id",
+            ],
+            ondelete="RESTRICT",
+            name="fk_event_ingredient_price_snapshots_previous_same_stream",
+            deferrable=True,
+            initially="DEFERRED",
+        ),
+        ForeignKeyConstraint(
+            ["source_ingredient_price_estimate_id", "ingredient_id"],
+            ["ingredient_price_estimates.id", "ingredient_price_estimates.ingredient_id"],
+            ondelete="RESTRICT",
+            name="fk_event_ingredient_price_snapshots_source_ingredient_price",
+        ),
+        ForeignKeyConstraint(
+            ["event_id", "organization_id", "currency"],
+            ["events.id", "events.organization_id", "events.currency"],
+            ondelete="RESTRICT",
+            name="fk_event_ingredient_price_snapshots_event_currency",
+        ),
+        ForeignKeyConstraint(
+            ["organization_id", "originating_mutation_id"],
+            ["mutations.organization_id", "mutations.id"],
+            ondelete="RESTRICT",
+            name="fk_event_ingredient_price_snapshots_mutation",
+            deferrable=True,
+            initially="DEFERRED",
+        ),
+        UniqueConstraint(
+            "id", "event_ingredient_price_id", name="uq_event_ingredient_price_snapshots_id_price"
+        ),
+        Index(
+            "uq_event_ingredient_price_snapshots_first",
+            "event_ingredient_price_id",
+            unique=True,
+            postgresql_where=text("previous_snapshot_id IS NULL"),
+        ),
+        Index(
+            "uq_event_ingredient_price_snapshots_predecessor",
+            "event_ingredient_price_id",
+            "previous_snapshot_id",
+            unique=True,
+            postgresql_where=text("previous_snapshot_id IS NOT NULL"),
+        ),
+    )
+
+    id: Mapped[UUID] = mapped_column(
+        Uuid, primary_key=True, default=uuid4, server_default=text("gen_random_uuid()")
+    )
+    organization_id: Mapped[UUID] = mapped_column(Uuid)
+    event_id: Mapped[UUID] = mapped_column(Uuid)
+    ingredient_id: Mapped[UUID] = mapped_column(Uuid)
+    event_ingredient_price_id: Mapped[UUID] = mapped_column(Uuid)
+    previous_snapshot_id: Mapped[UUID | None] = mapped_column(Uuid)
+    source_ingredient_price_estimate_id: Mapped[UUID | None] = mapped_column(Uuid)
+    state: Mapped[str] = mapped_column(String(16))
+    price_amount: Mapped[Decimal | None] = mapped_column(Numeric)
+    priced_quantity: Mapped[Decimal | None] = mapped_column(Numeric)
+    priced_unit_id: Mapped[UUID | None] = mapped_column(
+        ForeignKey("unit_definitions.id", ondelete="RESTRICT")
+    )
+    currency: Mapped[str | None] = mapped_column(String(3))
+    captured_by_user_id: Mapped[UUID] = mapped_column(ForeignKey("users.id", ondelete="RESTRICT"))
+    effective_client_action_time: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    server_received_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    originating_mutation_id: Mapped[UUID] = mapped_column(Uuid)
+
+
 class Receipt(Base):
     __tablename__ = "receipts"
     __table_args__ = (
