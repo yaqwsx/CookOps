@@ -35,7 +35,7 @@ def sync_database() -> Iterator[SyncDatabase]:
     registration mechanism during full collection.
     """
 
-    setup = cast(Callable[[], Iterator[SyncDatabase]], _sync_database_fixture.__wrapped__)
+    setup = cast(Callable[[], Iterator[SyncDatabase]], vars(_sync_database_fixture)["__wrapped__"])
     yield from setup()
 
 
