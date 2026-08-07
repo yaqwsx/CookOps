@@ -452,6 +452,185 @@ describe("bootstrapOrganization", () => {
     ).resolves.toMatchObject({ fields: { diner_count: 20 } });
   });
 
+  it("replays a pending scheduled-recipe move over canonical placement clocks", async () => {
+    const ids = {
+      event: "3d8b2b21-c378-4574-9e46-9338c81305ef",
+      day: "4d8b2b21-c378-4574-9e46-9338c81305ef",
+      role: "5d8b2b21-c378-4574-9e46-9338c81305ef",
+      scheduled: "8d8b2b21-c378-4574-9e46-9338c81305ef",
+    };
+    await localDb.outbox.add({
+      id: "move",
+      userId,
+      organizationId,
+      commandType: "scheduled_recipe.move",
+      payload: {
+        scheduled_recipe_id: ids.scheduled,
+        event_id: ids.event,
+        event_day_id: ids.day,
+        event_meal_role_id: ids.role,
+        position_key: "z9",
+      },
+      actionAt: "2026-08-07T10:01:00.000Z",
+      createdAt: "2026-08-07T10:01:00.000Z",
+      state: "pending",
+    });
+    await bootstrapOrganization(userId, organizationId, {
+      fetch: vi.fn<typeof fetch>(async () =>
+        response([
+          {
+            organization_id: organizationId,
+            entity_id: ids.event,
+            entity_kind: "event",
+            operation: "upsert",
+            payload: {
+              record_schema_version: 1,
+              record: { id: ids.event, lifecycle: "active" },
+            },
+          },
+          {
+            organization_id: organizationId,
+            entity_id: ids.day,
+            entity_kind: "event_day",
+            operation: "upsert",
+            payload: {
+              record_schema_version: 1,
+              record: { id: ids.day, event_id: ids.event, retired_at: null },
+            },
+          },
+          {
+            organization_id: organizationId,
+            entity_id: ids.role,
+            entity_kind: "event_meal_role",
+            operation: "upsert",
+            payload: {
+              record_schema_version: 1,
+              record: { id: ids.role, event_id: ids.event, retired_at: null },
+            },
+          },
+          {
+            organization_id: organizationId,
+            entity_id: ids.scheduled,
+            entity_kind: "scheduled_recipe",
+            operation: "upsert",
+            payload: {
+              record_schema_version: 1,
+              record: {
+                id: ids.scheduled,
+                event_id: ids.event,
+                event_day_id: ids.day,
+                event_meal_role_id: ids.role,
+                position_key: "a",
+                field_clocks: { placement: { winning_mutation_id: "server" } },
+              },
+            },
+          },
+        ]),
+      ),
+    });
+    await expect(
+      localDb.optimisticOverlays.get([
+        userId,
+        organizationId,
+        "scheduled_recipe",
+        ids.scheduled,
+      ]),
+    ).resolves.toMatchObject({
+      fields: { position_key: "z9" },
+      fieldClocks: { placement: { mutationId: "move" } },
+    });
+  });
+
+  it("does not replay a move whose bootstrap target is retired or from another event", async () => {
+    const ids = {
+      event: "3d8b2b21-c378-4574-9e46-9338c81305ef",
+      otherEvent: "9d8b2b21-c378-4574-9e46-9338c81305ef",
+      day: "4d8b2b21-c378-4574-9e46-9338c81305ef",
+      role: "5d8b2b21-c378-4574-9e46-9338c81305ef",
+      scheduled: "8d8b2b21-c378-4574-9e46-9338c81305ef",
+    };
+    await localDb.outbox.add({
+      id: "invalid-move",
+      userId,
+      organizationId,
+      commandType: "scheduled_recipe.move",
+      payload: {
+        scheduled_recipe_id: ids.scheduled,
+        event_id: ids.event,
+        event_day_id: ids.day,
+        event_meal_role_id: ids.role,
+        position_key: "z9",
+      },
+      actionAt: "2026-08-07T10:01:00.000Z",
+      createdAt: "2026-08-07T10:01:00.000Z",
+      state: "pending",
+    });
+    await bootstrapOrganization(userId, organizationId, {
+      fetch: vi.fn<typeof fetch>(async () =>
+        response([
+          {
+            organization_id: organizationId,
+            entity_id: ids.event,
+            entity_kind: "event",
+            operation: "upsert",
+            payload: {
+              record_schema_version: 1,
+              record: { id: ids.event, lifecycle: "active" },
+            },
+          },
+          {
+            organization_id: organizationId,
+            entity_id: ids.day,
+            entity_kind: "event_day",
+            operation: "upsert",
+            payload: {
+              record_schema_version: 1,
+              record: {
+                id: ids.day,
+                event_id: ids.otherEvent,
+                retired_at: "now",
+              },
+            },
+          },
+          {
+            organization_id: organizationId,
+            entity_id: ids.role,
+            entity_kind: "event_meal_role",
+            operation: "upsert",
+            payload: {
+              record_schema_version: 1,
+              record: { id: ids.role, event_id: ids.event, retired_at: null },
+            },
+          },
+          {
+            organization_id: organizationId,
+            entity_id: ids.scheduled,
+            entity_kind: "scheduled_recipe",
+            operation: "upsert",
+            payload: {
+              record_schema_version: 1,
+              record: {
+                id: ids.scheduled,
+                event_id: ids.event,
+                event_day_id: ids.day,
+                event_meal_role_id: ids.role,
+                position_key: "a",
+              },
+            },
+          },
+        ]),
+      ),
+    });
+    await expect(
+      localDb.optimisticOverlays.get([
+        userId,
+        organizationId,
+        "scheduled_recipe",
+        ids.scheduled,
+      ]),
+    ).resolves.toBeUndefined();
+  });
+
   it("replays a dependent event update after its pending creator", async () => {
     await localDb.outbox.bulkAdd([
       {

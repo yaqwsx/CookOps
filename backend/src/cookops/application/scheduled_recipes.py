@@ -28,6 +28,7 @@ from cookops.persistence.models import (
     Event,
     EventDay,
     EventMealRole,
+    FieldClock,
     IngredientVersion,
     Mutation,
     OrganizationChange,
@@ -692,6 +693,22 @@ async def schedule_recipe(
                 )
                 record = _result_payload(result)["scheduled_recipe"]
                 assert isinstance(record, dict)
+                placement_clock = FieldClock(
+                    organization_id=result.organization_id,
+                    entity_kind="scheduled_recipe",
+                    entity_id=result.scheduled_recipe_id,
+                    field_name="placement",
+                    winning_client_wall_time=prepared.client_wall_time,
+                    winning_mutation_id=prepared.mutation_id,
+                )
+                record["field_clocks"] = {
+                    "placement": {
+                        "winning_client_wall_time": (
+                            placement_clock.winning_client_wall_time.isoformat()
+                        ),
+                        "winning_mutation_id": str(placement_clock.winning_mutation_id),
+                    }
+                }
                 session.add(
                     ScheduledRecipe(
                         id=result.scheduled_recipe_id,
@@ -711,6 +728,7 @@ async def schedule_recipe(
                         created_by_user_id=context.actor_user_id,
                     )
                 )
+                session.add(placement_clock)
                 session.add(
                     OrganizationChange(
                         organization_id=result.organization_id,

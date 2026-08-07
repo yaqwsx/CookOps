@@ -6,7 +6,10 @@ import {
   readEventPlanner,
   type EventPlannerProjection,
 } from "./planner-projections";
-import { queueRecipeSchedule } from "./scheduled-recipe";
+import {
+  queueRecipeSchedule,
+  queueScheduledRecipeMove,
+} from "./scheduled-recipe";
 import { pullOrganization, SyncRequestError } from "./sync-bootstrap";
 
 type PlannerState = "loading" | "ready" | "offline" | "error";
@@ -148,6 +151,95 @@ function AddRecipe({
   );
 }
 
+function MoveRecipe({
+  planner,
+  eventId,
+  organizationId,
+  userId,
+  scheduled,
+}: {
+  planner: EventPlannerProjection;
+  eventId: string;
+  organizationId: string;
+  userId: string;
+  scheduled: EventPlannerProjection["scheduled"][number];
+}) {
+  const { t } = useTranslation();
+  const [dayId, setDayId] = useState(scheduled.dayId);
+  const [roleId, setRoleId] = useState(scheduled.roleId);
+  const [positionKey, setPositionKey] = useState(scheduled.position);
+  const [error, setError] = useState(false);
+  const inFlight = useRef(false);
+
+  if (planner.lifecycle !== "active") return null;
+
+  async function submit(event: React.FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (inFlight.current) return;
+    inFlight.current = true;
+    try {
+      await queueScheduledRecipeMove(userId, organizationId, {
+        scheduledRecipeId: scheduled.id,
+        eventId,
+        eventDayId: dayId,
+        eventMealRoleId: roleId,
+        positionKey,
+      });
+      setError(false);
+    } catch {
+      setError(true);
+    } finally {
+      inFlight.current = false;
+    }
+  }
+
+  return (
+    <details>
+      <summary>{t("planner.move")}</summary>
+      <form onSubmit={(event) => void submit(event)}>
+        <label>
+          {t("planner.day")}
+          <select
+            onChange={(event) => setDayId(event.target.value)}
+            value={dayId}
+          >
+            {planner.days.map((day) => (
+              <option key={day.id} value={day.id}>
+                {day.date}
+              </option>
+            ))}
+          </select>
+        </label>
+        <label>
+          {t("planner.role")}
+          <select
+            onChange={(event) => setRoleId(event.target.value)}
+            value={roleId}
+          >
+            {planner.roles.map((role) => (
+              <option key={role.id} value={role.id}>
+                {role.name}
+              </option>
+            ))}
+          </select>
+        </label>
+        <label>
+          {t("planner.position")}
+          <input
+            maxLength={255}
+            onChange={(event) => setPositionKey(event.target.value)}
+            pattern="[0-9A-Za-z]+"
+            required
+            value={positionKey}
+          />
+        </label>
+        <button type="submit">{t("planner.moveTo")}</button>
+        {error ? <p role="alert">{t("planner.errors.unavailable")}</p> : null}
+      </form>
+    </details>
+  );
+}
+
 export function EventPlanner({
   eventId,
   organizationId,
@@ -256,6 +348,13 @@ export function EventPlanner({
                         <li key={item.id}>
                           {item.name} ·{" "}
                           {t("planner.diners", { count: item.dinerCount })}
+                          <MoveRecipe
+                            eventId={eventId}
+                            organizationId={organizationId}
+                            planner={planner}
+                            scheduled={item}
+                            userId={userId}
+                          />
                         </li>
                       ))}
                     </ul>

@@ -2,7 +2,10 @@ import { beforeEach, describe, expect, it } from "vitest";
 
 import { localDb } from "./local-db";
 import { readEventPlanner } from "./planner-projections";
-import { queueRecipeSchedule } from "./scheduled-recipe";
+import {
+  queueRecipeSchedule,
+  queueScheduledRecipeMove,
+} from "./scheduled-recipe";
 
 const ids = {
   user: "a6a58bd6-214e-49af-8fae-e5f974bf8e08",
@@ -146,6 +149,46 @@ describe("offline recipe scheduling", () => {
     ).rejects.toThrow("selection");
     await expect(localDb.outbox.count()).resolves.toBe(0);
     await expect(localDb.optimisticOverlays.count()).resolves.toBe(0);
+  });
+
+  it("moves a stored scheduled recipe with one scoped overlay and outbox command", async () => {
+    await seed();
+    await queueRecipeSchedule(ids.user, ids.organization, {
+      eventId: ids.event,
+      eventDayId: ids.day,
+      eventMealRoleId: ids.role,
+      recipeId: ids.recipe,
+    });
+    const schedule = await localDb.outbox.toCollection().first();
+    const scheduledRecipeId = schedule?.payload.scheduled_recipe_id;
+    expect(typeof scheduledRecipeId).toBe("string");
+    await queueScheduledRecipeMove(ids.user, ids.organization, {
+      scheduledRecipeId: scheduledRecipeId as string,
+      eventId: ids.event,
+      eventDayId: ids.day,
+      eventMealRoleId: ids.role,
+      positionKey: "z9",
+    });
+    await expect(localDb.outbox.toArray()).resolves.toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ commandType: "scheduled_recipe.schedule" }),
+        expect.objectContaining({
+          commandType: "scheduled_recipe.move",
+          payload: expect.objectContaining({
+            scheduled_recipe_id: scheduledRecipeId,
+            position_key: "z9",
+          }),
+        }),
+      ]),
+    );
+    await expect(
+      localDb.optimisticOverlays.get([
+        ids.user,
+        ids.organization,
+        "scheduled_recipe",
+        scheduledRecipeId as string,
+      ]),
+    ).resolves.toMatchObject({ fields: { position_key: "z9" } });
   });
 
   it("keeps a canonical archived event read-only despite a stale active overlay", async () => {

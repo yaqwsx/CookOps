@@ -49,6 +49,11 @@ from cookops.application.recipes import (
     create_recipe,
     recipe_version_tag_change_id,
 )
+from cookops.application.scheduled_recipe_moves import (
+    MoveScheduledRecipeCommand,
+    MoveScheduledRecipeResult,
+    move_scheduled_recipe,
+)
 from cookops.application.scheduled_recipe_overrides import _record as _override_record
 from cookops.application.scheduled_recipes import (
     ScheduleRecipeCommand,
@@ -197,6 +202,7 @@ SyncCommand = (
     | CreateShoppingListCommand
     | CreateRecipeCommand
     | ScheduleRecipeCommand
+    | MoveScheduledRecipeCommand
     | UnsupportedSyncCommand
 )
 
@@ -208,6 +214,7 @@ def _command_kind(
         | CreateShoppingListCommand
         | CreateRecipeCommand
         | ScheduleRecipeCommand
+        | MoveScheduledRecipeCommand
     ),
 ) -> str:
     if isinstance(command, CreateEventCommand):
@@ -218,6 +225,8 @@ def _command_kind(
         return "recipe.create"
     if isinstance(command, ScheduleRecipeCommand):
         return "scheduled_recipe.schedule"
+    if isinstance(command, MoveScheduledRecipeCommand):
+        return "scheduled_recipe.move"
     return "shopping_list.create"
 
 
@@ -514,6 +523,7 @@ class SynchronizationCommandService:
                 | CreateShoppingListResult
                 | CreateRecipeResult
                 | ScheduleRecipeResult
+                | MoveScheduledRecipeResult
             )
             if isinstance(command, CreateEventCommand):
                 result = await create_event(self._session_factory, context, command)
@@ -523,6 +533,8 @@ class SynchronizationCommandService:
                 result = await create_recipe(self._session_factory, context, command)
             elif isinstance(command, ScheduleRecipeCommand):
                 result = await schedule_recipe(self._session_factory, context, command)
+            elif isinstance(command, MoveScheduledRecipeCommand):
+                result = await move_scheduled_recipe(self._session_factory, context, command)
             else:
                 result = await create_shopping_list(self._session_factory, context, command)
         except ApplicationServiceError as error:
@@ -631,6 +643,7 @@ class SynchronizationCommandService:
             | CreateShoppingListResult
             | CreateRecipeResult
             | ScheduleRecipeResult
+            | MoveScheduledRecipeResult
         ),
     ) -> PushCommandOutcome:
         return PushCommandOutcome(
@@ -644,6 +657,8 @@ class SynchronizationCommandService:
                 if isinstance(result, CreateRecipeResult)
                 else "scheduled_recipe.schedule"
                 if isinstance(result, ScheduleRecipeResult)
+                else "scheduled_recipe.move"
+                if isinstance(result, MoveScheduledRecipeResult)
                 else "shopping_list.create"
             ),
             status=result.outcome,
@@ -1451,7 +1466,11 @@ async def _bootstrap_records(
             .order_by(ScheduledRecipe.id)
         )
     ).scalars():
-        append(*_scheduled_recipe_change_record(item))
+        append(
+            *_scheduled_recipe_change_record(
+                item, clocks.get(("scheduled_recipe", item.id, "placement"))
+            )
+        )
     for item in (
         await session.execute(
             select(ScheduledIngredientOverride)

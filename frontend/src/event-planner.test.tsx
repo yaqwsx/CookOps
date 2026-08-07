@@ -5,15 +5,22 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { EventPlanner } from "./event-planner";
 import i18n, { defaultLocale } from "./i18n";
 
-const { readEventPlanner, queueRecipeSchedule, pullOrganization } = vi.hoisted(
-  () => ({
-    readEventPlanner: vi.fn(),
-    queueRecipeSchedule: vi.fn(),
-    pullOrganization: vi.fn(),
-  }),
-);
+const {
+  readEventPlanner,
+  queueRecipeSchedule,
+  queueScheduledRecipeMove,
+  pullOrganization,
+} = vi.hoisted(() => ({
+  readEventPlanner: vi.fn(),
+  queueRecipeSchedule: vi.fn(),
+  queueScheduledRecipeMove: vi.fn(),
+  pullOrganization: vi.fn(),
+}));
 vi.mock("./planner-projections", () => ({ readEventPlanner }));
-vi.mock("./scheduled-recipe", () => ({ queueRecipeSchedule }));
+vi.mock("./scheduled-recipe", () => ({
+  queueRecipeSchedule,
+  queueScheduledRecipeMove,
+}));
 vi.mock("./sync-bootstrap", () => ({
   pullOrganization,
   SyncRequestError: class SyncRequestError extends Error {},
@@ -74,5 +81,90 @@ describe("EventPlanner", () => {
         recipeId: ids.recipe,
       },
     );
+  });
+
+  it("moves a card through labelled controls without drag precision", async () => {
+    await i18n.changeLanguage(defaultLocale);
+    readEventPlanner.mockResolvedValue({
+      name: "Letní vaření",
+      startDate: "2026-08-10",
+      endDate: "2026-08-10",
+      attendance: 12,
+      lifecycle: "active",
+      days: [{ id: ids.day, date: "2026-08-10", note: null }],
+      roles: [{ id: ids.role, name: "Večeře", position: "a" }],
+      recipes: [],
+      scheduled: [
+        {
+          id: ids.recipe,
+          name: "Chili",
+          dinerCount: 12,
+          dayId: ids.day,
+          roleId: ids.role,
+          position: "a",
+        },
+      ],
+    });
+    pullOrganization.mockResolvedValue(false);
+    const user = userEvent.setup();
+    render(
+      <EventPlanner
+        eventId={ids.event}
+        onUnauthenticated={vi.fn()}
+        organizationId={ids.organization}
+        userId="a6a58bd6-214e-49af-8fae-e5f974bf8e08"
+      />,
+    );
+    await user.click(await screen.findByText("Přesunout"));
+    await user.clear(screen.getByLabelText("Pořadí"));
+    await user.type(screen.getByLabelText("Pořadí"), "z9");
+    await user.click(screen.getByRole("button", { name: "Přesunout sem" }));
+    expect(queueScheduledRecipeMove).toHaveBeenCalledWith(
+      "a6a58bd6-214e-49af-8fae-e5f974bf8e08",
+      ids.organization,
+      {
+        scheduledRecipeId: ids.recipe,
+        eventId: ids.event,
+        eventDayId: ids.day,
+        eventMealRoleId: ids.role,
+        positionKey: "z9",
+      },
+    );
+  });
+
+  it("does not render move controls for an archived planner", async () => {
+    readEventPlanner.mockResolvedValue({
+      name: "Archived",
+      startDate: "2026-08-10",
+      endDate: "2026-08-10",
+      attendance: 12,
+      lifecycle: "archived",
+      days: [{ id: ids.day, date: "2026-08-10", note: null }],
+      roles: [{ id: ids.role, name: "Večeře", position: "a" }],
+      recipes: [],
+      scheduled: [
+        {
+          id: ids.recipe,
+          name: "Chili",
+          dinerCount: 12,
+          dayId: ids.day,
+          roleId: ids.role,
+          position: "a",
+        },
+      ],
+    });
+    pullOrganization.mockResolvedValue(false);
+    render(
+      <EventPlanner
+        eventId={ids.event}
+        onUnauthenticated={vi.fn()}
+        organizationId={ids.organization}
+        userId="a6a58bd6-214e-49af-8fae-e5f974bf8e08"
+      />,
+    );
+    await screen.findByRole("heading", { name: "Plán akce" });
+    expect(
+      screen.queryByText("Přesunout", { exact: true }),
+    ).not.toBeInTheDocument();
   });
 });

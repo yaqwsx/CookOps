@@ -131,6 +131,9 @@ test("opens the cached planner and schedules a recipe offline", async ({
   await expect(
     page.getByText("Recept je uložen místně a bude synchronizován."),
   ).toBeVisible();
+  await page.getByText("Přesunout", { exact: true }).click();
+  await page.getByLabel("Pořadí").fill("z9");
+  await page.getByRole("button", { name: "Přesunout sem" }).click();
   await expect
     .poll(() =>
       page.evaluate(

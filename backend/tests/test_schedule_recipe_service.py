@@ -17,6 +17,12 @@ from sqlalchemy.pool import NullPool
 
 from alembic import command as alembic_command
 from cookops.application.organizations import ApplicationServiceError, ExecutionContext
+from cookops.application.scheduled_recipe_moves import (
+    MoveScheduledRecipeCommand,
+    MoveScheduledRecipeResult,
+    _prepare,
+    move_scheduled_recipe,
+)
 from cookops.application.scheduled_recipe_overrides import (
     SetScheduledIngredientOverrideCommand,
     set_scheduled_ingredient_override,
@@ -29,12 +35,14 @@ from cookops.application.scheduled_recipes import (
     _suggested_scale,
     schedule_recipe,
 )
+from cookops.application.synchronization import SynchronizationQueryService
 from cookops.persistence.models import (
     ClientInstallation,
     Event,
     EventArchiveSnapshot,
     EventDay,
     EventMealRole,
+    FieldClock,
     Ingredient,
     IngredientVersion,
     Mutation,
@@ -399,6 +407,28 @@ def schedule_then_override(database: ServiceDatabase) -> UUID:
     return scheduled_recipe_id
 
 
+def move_command(
+    database: ServiceDatabase,
+    scheduled_recipe_id: UUID,
+    *,
+    mutation_id: UUID | None = None,
+    event_day_id: UUID | None = None,
+    event_meal_role_id: UUID | None = None,
+    position_key: str = "z",
+    client_wall_time: datetime | None = None,
+) -> MoveScheduledRecipeCommand:
+    return MoveScheduledRecipeCommand(
+        mutation_id=mutation_id or uuid4(),
+        scheduled_recipe_id=scheduled_recipe_id,
+        organization_id=database.organization_id,
+        event_id=database.event_id,
+        event_day_id=event_day_id or database.event_day_id,
+        event_meal_role_id=event_meal_role_id or database.event_role_id,
+        position_key=position_key,
+        client_wall_time=client_wall_time or datetime.now(UTC),
+    )
+
+
 def override_command(
     database: ServiceDatabase,
     scheduled_recipe_id: UUID,
@@ -508,6 +538,9 @@ def test_member_schedules_pinned_version_with_derived_default_and_atomic_feed(
         assert changes[0].entity_id == command.scheduled_recipe_id
         assert changes[0].payload["record_schema_version"] == 1
         assert changes[0].payload["record"]["selected_scale_amount"] == "2"
+        assert changes[0].payload["record"]["field_clocks"]["placement"][
+            "winning_mutation_id"
+        ] == str(command.mutation_id)
         assert changes[1].payload["record_schema_version"] == 1
         assert changes[2].payload["record_schema_version"] == 1
 
@@ -1099,6 +1132,179 @@ def test_same_scheduled_identity_concurrently_creates_once(
             )
             == 3
         )
+
+
+def test_member_moves_a_scheduled_recipe_with_lww_placement_and_feed(
+    service_database: ServiceDatabase,
+) -> None:
+    scheduled_recipe_id = schedule_then_override(service_database)
+    command = move_command(service_database, scheduled_recipe_id, position_key="z9")
+    result = asyncio.run(
+        move_scheduled_recipe(service_database.sessions, context(service_database), command)
+    )
+
+    assert result.outcome == "accepted"
+    assert result.position_key == "z9"
+    assert result.first_change_sequence == result.last_change_sequence
+    with service_database.sync_engine.connect() as connection:
+        assert connection.execute(
+            select(
+                ScheduledRecipe.event_day_id,
+                ScheduledRecipe.event_meal_role_id,
+                ScheduledRecipe.position_key,
+            ).where(ScheduledRecipe.id == scheduled_recipe_id)
+        ).one() == (service_database.event_day_id, service_database.event_role_id, "z9")
+        clock = connection.execute(
+            select(FieldClock.winning_client_wall_time, FieldClock.winning_mutation_id).where(
+                FieldClock.organization_id == service_database.organization_id,
+                FieldClock.entity_kind == "scheduled_recipe",
+                FieldClock.entity_id == scheduled_recipe_id,
+                FieldClock.field_name == "placement",
+            )
+        ).one()
+        assert clock == (command.client_wall_time, command.mutation_id)
+        record = connection.scalar(
+            select(OrganizationChange.payload).where(
+                OrganizationChange.mutation_id == command.mutation_id
+            )
+        )
+        assert isinstance(record, dict)
+        canonical = record.get("record")
+        assert isinstance(canonical, dict)
+        clocks = canonical.get("field_clocks")
+        assert isinstance(clocks, dict)
+        placement = clocks.get("placement")
+        assert isinstance(placement, dict)
+        assert placement["winning_mutation_id"] == str(command.mutation_id)
+    bootstrap = asyncio.run(
+        SynchronizationQueryService(
+            service_database.sessions,
+            encoded_cursor_hmac_key="MDEyMzQ1Njc4OWFiY2RlZjAxMjM0NTY3ODlhYmNkZWY",
+        ).bootstrap(
+            actor_user_id=service_database.actor_id,
+            organization_id=service_database.organization_id,
+        )
+    )
+    bootstrap_record = next(
+        item for item in bootstrap.records if item.entity_id == scheduled_recipe_id
+    )
+    bootstrap_canonical = bootstrap_record.payload.get("record")
+    assert isinstance(bootstrap_canonical, dict)
+    bootstrap_clocks = bootstrap_canonical.get("field_clocks")
+    assert isinstance(bootstrap_clocks, dict)
+    bootstrap_placement = bootstrap_clocks.get("placement")
+    assert isinstance(bootstrap_placement, dict)
+    assert bootstrap_placement["winning_mutation_id"] == str(command.mutation_id)
+
+
+def test_move_lww_concurrent_actions_converge_to_newer_placement(
+    service_database: ServiceDatabase,
+) -> None:
+    scheduled_recipe_id = schedule_then_override(service_database)
+    newest = move_command(
+        service_database,
+        scheduled_recipe_id,
+        position_key="z",
+        client_wall_time=datetime.now(UTC),
+    )
+    older = move_command(
+        service_database,
+        scheduled_recipe_id,
+        position_key="a",
+        client_wall_time=newest.client_wall_time - timedelta(seconds=1),
+    )
+
+    async def move_both() -> tuple[MoveScheduledRecipeResult, MoveScheduledRecipeResult]:
+        return await asyncio.gather(
+            move_scheduled_recipe(service_database.sessions, context(service_database), newest),
+            move_scheduled_recipe(service_database.sessions, context(service_database), older),
+        )
+
+    outcomes = asyncio.run(move_both())
+    assert {outcome.outcome for outcome in outcomes} == {"accepted", "partially_superseded"}
+    loser = next(outcome for outcome in outcomes if outcome.outcome == "partially_superseded")
+    assert loser.position_key == "z"
+    replay = asyncio.run(
+        move_scheduled_recipe(
+            service_database.sessions,
+            context(service_database),
+            older,
+        )
+    )
+    assert replay.replayed is True
+    assert replay.position_key == "z"
+    with service_database.sync_engine.connect() as connection:
+        assert (
+            connection.scalar(
+                select(ScheduledRecipe.position_key).where(
+                    ScheduledRecipe.id == scheduled_recipe_id
+                )
+            )
+            == "z"
+        )
+
+
+def test_move_rejects_archived_or_cross_event_placement(service_database: ServiceDatabase) -> None:
+    scheduled_recipe_id = schedule_then_override(service_database)
+    cross_event = move_command(
+        service_database,
+        scheduled_recipe_id,
+        event_day_id=service_database.other_event_day_id,
+        event_meal_role_id=service_database.other_event_role_id,
+    )
+    with pytest.raises(ApplicationServiceError) as rejected:
+        asyncio.run(
+            move_scheduled_recipe(service_database.sessions, context(service_database), cross_event)
+        )
+    assert rejected.value.field_violations[0].path == "placement"
+    with service_database.sync_engine.begin() as connection:
+        snapshot_id = uuid4()
+        connection.execute(
+            insert(EventArchiveSnapshot).values(
+                id=snapshot_id,
+                event_id=service_database.event_id,
+                archive_schema_version=1,
+                payload={},
+                content_hash=b"0" * 32,
+                attachment_manifest=[],
+                created_by_user_id=service_database.actor_id,
+            )
+        )
+        connection.execute(
+            update(Event)
+            .where(Event.id == service_database.event_id)
+            .values(
+                lifecycle="archived",
+                current_archive_snapshot_id=snapshot_id,
+                archived_at=datetime.now(UTC),
+                archived_by_user_id=service_database.actor_id,
+            )
+        )
+    with pytest.raises(ApplicationServiceError) as archived:
+        asyncio.run(
+            move_scheduled_recipe(
+                service_database.sessions,
+                context(service_database),
+                move_command(service_database, scheduled_recipe_id),
+            )
+        )
+    assert archived.value.code == "archived_event"
+
+
+def test_fuzz_move_position_keys_are_validated_without_normalizing_identity(
+    service_database: ServiceDatabase,
+) -> None:
+    random_source = random.Random(20260807)
+    scheduled_recipe_id = uuid4()
+    for _ in range(200):
+        candidate = "".join(chr(random_source.randrange(0, 128)) for _ in range(12))
+        prepared = _prepare(
+            move_command(service_database, scheduled_recipe_id, position_key=candidate)
+        )
+        expected = (
+            bool(candidate.strip()) and candidate.strip().isascii() and candidate.strip().isalnum()
+        )
+        assert bool(prepared.violations) is not expected
 
 
 def test_fuzz_numeric_suggestion_is_nonnegative_or_rejected(

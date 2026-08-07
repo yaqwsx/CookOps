@@ -161,6 +161,28 @@ def _schedule_recipe_command(
     return command
 
 
+def _move_scheduled_recipe_command(
+    *,
+    mutation_id: UUID,
+    scheduled_recipe_id: UUID,
+    event_id: UUID,
+    event_day_id: UUID,
+    event_meal_role_id: UUID,
+    position_key: str = "z",
+) -> dict[str, object]:
+    command = _command(
+        mutation_id=mutation_id,
+        event_id=event_id,
+        kind="scheduled_recipe.move",
+        scheduled_recipe_id=str(scheduled_recipe_id),
+        event_day_id=str(event_day_id),
+        event_meal_role_id=str(event_meal_role_id),
+        position_key=position_key,
+    )
+    cast(dict[str, object], command["payload"])["event_id"] = str(event_id)
+    return command
+
+
 def test_push_applies_ordered_commands_and_replays_a_retained_outcome(
     sync_database: SyncDatabase,
 ) -> None:
@@ -463,6 +485,52 @@ def test_push_schedules_a_recipe_through_the_typed_shared_command(
         assert outcome["replayed"] is False
         assert outcome["first_change_sequence"] is not None
         assert client.post("/api/v1/sync/push", json=body).json()["outcomes"][0]["replayed"] is True
+        move = _move_scheduled_recipe_command(
+            mutation_id=uuid4(),
+            scheduled_recipe_id=scheduled_recipe_id,
+            event_id=event_id,
+            event_day_id=event_day_id,
+            event_meal_role_id=event_meal_role_id,
+            position_key="z9",
+        )
+        move_body = _body(sync_database, installation_id, [move])
+        move_response = client.post("/api/v1/sync/push", json=move_body)
+        assert move_response.json()["outcomes"][0]["command_kind"] == "scheduled_recipe.move"
+        assert move_response.json()["outcomes"][0]["status"] == "accepted"
+        assert client.post("/api/v1/sync/push", json=move_body).json()["outcomes"][0]["replayed"]
+        invalid_move = _move_scheduled_recipe_command(
+            mutation_id=uuid4(),
+            scheduled_recipe_id=scheduled_recipe_id,
+            event_id=event_id,
+            event_day_id=event_day_id,
+            event_meal_role_id=event_meal_role_id,
+            position_key="not-a-key",
+        )
+        assert (
+            client.post(
+                "/api/v1/sync/push",
+                json=_body(sync_database, installation_id, [invalid_move]),
+            ).json()["outcomes"][0]["error"]["code"]
+            == "validation_failed"
+        )
+        cross_event_move = _move_scheduled_recipe_command(
+            mutation_id=uuid4(),
+            scheduled_recipe_id=scheduled_recipe_id,
+            event_id=event_id,
+            event_day_id=uuid4(),
+            event_meal_role_id=event_meal_role_id,
+        )
+        cross_outcome = client.post(
+            "/api/v1/sync/push",
+            json=_body(sync_database, installation_id, [cross_event_move]),
+        ).json()["outcomes"][0]
+        assert cross_outcome["error"]["code"] == "validation_failed"
+        assert cross_outcome["error"]["field_violations"] == [
+            {
+                "path": "placement",
+                "code": "must_reference_active_day_and_meal_role_in_event",
+            }
+        ]
         changed = _schedule_recipe_command(
             mutation_id=mutation_id,
             scheduled_recipe_id=scheduled_recipe_id,
@@ -502,7 +570,7 @@ def test_push_schedules_a_recipe_through_the_typed_shared_command(
                 ScheduledRecipe.position_key,
                 ScheduledRecipe.note,
             ).where(ScheduledRecipe.id == scheduled_recipe_id)
-        ).one() == (Decimal("75.5"), "b", "  Serve warm  ")
+        ).one() == (Decimal("75.5"), "z9", "  Serve warm  ")
 
 
 def test_push_rejects_unknown_commands_and_untrusted_batch_shapes(

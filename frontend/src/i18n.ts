@@ -97,6 +97,9 @@ const resources = {
         emptyRole: "Pro tento chod zatím není naplánovaný recept.",
         diners: "Strávníci: {{count}}",
         shopping: "Nákupy",
+        move: "Přesunout",
+        position: "Pořadí",
+        moveTo: "Přesunout sem",
         errors: {
           unavailable: "Recept se nepodařilo uložit místně. Zkuste to znovu.",
         },
@@ -262,6 +265,9 @@ const resources = {
         emptyRole: "No recipe is scheduled for this meal role yet.",
         diners: "Diners: {{count}}",
         shopping: "Shopping",
+        move: "Move",
+        position: "Position",
+        moveTo: "Move here",
         errors: {
           unavailable:
             "The recipe could not be saved locally. Please try again.",

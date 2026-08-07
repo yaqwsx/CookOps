@@ -14,6 +14,7 @@ from pydantic import BaseModel, ConfigDict, Field, StrictBool, ValidationError, 
 from cookops.application.browser_sessions import BrowserSessionService
 from cookops.application.events import CreateEventCommand, UpdateEventBaseAttendanceCommand
 from cookops.application.recipes import CreateRecipeCommand, RecipeIngredientLineInput
+from cookops.application.scheduled_recipe_moves import MoveScheduledRecipeCommand
 from cookops.application.scheduled_recipes import ScheduleRecipeCommand
 from cookops.application.shopping_lists import CreateShoppingListCommand
 from cookops.application.synchronization import (
@@ -245,6 +246,17 @@ class ScheduleRecipePayload(BaseModel):
         return value
 
 
+class MoveScheduledRecipePayload(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    scheduled_recipe_id: UUID
+    event_id: UUID
+    event_day_id: UUID
+    event_meal_role_id: UUID
+    position_key: str
+    logical_operation_id: UUID | None = None
+
+
 class PushCommandErrorResponse(BaseModel):
     code: str
     field_violations: tuple[dict[str, str], ...]
@@ -421,6 +433,19 @@ def _push_command(command: PushCommandRequest, organization_id: UUID) -> SyncCom
                 position_key=scheduled_recipe_payload.position_key,
                 note=scheduled_recipe_payload.note,
                 logical_operation_id=scheduled_recipe_payload.logical_operation_id,
+            )
+        if command.command_kind == "scheduled_recipe.move":
+            move_payload = MoveScheduledRecipePayload.model_validate(command.payload)
+            return MoveScheduledRecipeCommand(
+                mutation_id=command.mutation_id,
+                scheduled_recipe_id=move_payload.scheduled_recipe_id,
+                organization_id=organization_id,
+                event_id=move_payload.event_id,
+                event_day_id=move_payload.event_day_id,
+                event_meal_role_id=move_payload.event_meal_role_id,
+                position_key=move_payload.position_key,
+                client_wall_time=command.client_wall_time,
+                logical_operation_id=move_payload.logical_operation_id,
             )
     except ValidationError:
         return UnsupportedSyncCommand(

@@ -1256,7 +1256,7 @@ def _retained_attendance_result(mutation: Mutation) -> UpdateEventBaseAttendance
 
 
 def _scheduled_recipe_change_record(
-    scheduled_recipe: ScheduledRecipe,
+    scheduled_recipe: ScheduledRecipe, placement_clock: FieldClock | None = None
 ) -> tuple[str, UUID, dict[str, object]]:
     return (
         "scheduled_recipe",
@@ -1291,6 +1291,18 @@ def _scheduled_recipe_change_record(
                 else None
             ),
             "created_by_user_id": str(scheduled_recipe.created_by_user_id),
+            "field_clocks": {
+                "placement": (
+                    {
+                        "winning_client_wall_time": (
+                            placement_clock.winning_client_wall_time.isoformat()
+                        ),
+                        "winning_mutation_id": str(placement_clock.winning_mutation_id),
+                    }
+                    if placement_clock is not None
+                    else None
+                )
+            },
         },
     )
 
@@ -1417,6 +1429,21 @@ async def update_event_base_attendance(
                         )
                     ).scalars()
                 )
+                placement_clocks = {
+                    clock.entity_id: clock
+                    for clock in (
+                        await session.execute(
+                            select(FieldClock).where(
+                                FieldClock.organization_id == prepared.organization_id,
+                                FieldClock.entity_kind == "scheduled_recipe",
+                                FieldClock.field_name == "placement",
+                                FieldClock.entity_id.in_(
+                                    tuple(recipe.id for recipe in following_recipes)
+                                ),
+                            )
+                        )
+                    ).scalars()
+                }
                 clock_wins = _field_clock_wins(clock, prepared)
                 if clock_wins:
                     event.base_expected_attendance = prepared.base_expected_attendance
@@ -1437,7 +1464,10 @@ async def update_event_base_attendance(
                         clock.winning_mutation_id = prepared.mutation_id
                     change_records = (
                         _event_change_record(event, clock),
-                        *(_scheduled_recipe_change_record(recipe) for recipe in following_recipes),
+                        *(
+                            _scheduled_recipe_change_record(recipe, placement_clocks.get(recipe.id))
+                            for recipe in following_recipes
+                        ),
                     )
                     outcome: Literal["accepted", "partially_superseded"] = "accepted"
                 else:

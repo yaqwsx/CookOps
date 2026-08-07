@@ -303,6 +303,65 @@ async function replayOptimisticCommands(
         updatedAt: command.actionAt,
       });
     }
+    if (
+      command.commandType === "scheduled_recipe.move" &&
+      typeof command.payload.scheduled_recipe_id === "string" &&
+      typeof command.payload.event_id === "string" &&
+      typeof command.payload.event_day_id === "string" &&
+      typeof command.payload.event_meal_role_id === "string" &&
+      typeof command.payload.position_key === "string" &&
+      [
+        command.payload.scheduled_recipe_id,
+        command.payload.event_id,
+        command.payload.event_day_id,
+        command.payload.event_meal_role_id,
+      ].every((id) => uuid.test(id)) &&
+      /^[0-9A-Za-z]{1,255}$/.test(command.payload.position_key)
+    ) {
+      const canonicalEvent = await localDb.canonicalRecords.get([
+        userId,
+        organizationId,
+        "event",
+        command.payload.event_id,
+      ]);
+      if (canonicalEvent?.lifecycle === "retired") continue;
+      const scheduled = await current(
+        "scheduled_recipe",
+        command.payload.scheduled_recipe_id,
+      );
+      const [day, role] = await Promise.all([
+        localDb.canonicalRecords.get([
+          userId,
+          organizationId,
+          "event_day",
+          command.payload.event_day_id,
+        ]),
+        localDb.canonicalRecords.get([
+          userId,
+          organizationId,
+          "event_meal_role",
+          command.payload.event_meal_role_id,
+        ]),
+      ]);
+      if (
+        scheduled?.lifecycle !== "active" ||
+        scheduled.fields.event_id !== command.payload.event_id ||
+        day?.lifecycle !== "active" ||
+        day.fields.event_id !== command.payload.event_id ||
+        role?.lifecycle !== "active" ||
+        role.fields.event_id !== command.payload.event_id
+      )
+        continue;
+      await localDb.optimisticOverlays.put({
+        ...scheduled,
+        fields: { ...scheduled.fields, ...command.payload },
+        fieldClocks: {
+          ...scheduled.fieldClocks,
+          placement: { mutationId: command.id, actionAt: command.actionAt },
+        },
+        updatedAt: command.actionAt,
+      });
+    }
   }
 }
 
