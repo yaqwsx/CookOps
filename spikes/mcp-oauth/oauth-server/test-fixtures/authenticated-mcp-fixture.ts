@@ -192,6 +192,7 @@ async function main(): Promise<void> {
       },
       databaseUrl: isolatedDatabaseUrl.href,
       adapterSecret: Buffer.alloc(32, 0x5a),
+      interactionApprovalSecret: Buffer.alloc(32, 0x6b),
       host: "127.0.0.1",
       port: 0,
     });

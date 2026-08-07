@@ -43,6 +43,7 @@ test("runtime settings require explicit canonical base64url adapter key material
     OAUTH_JWKS: JSON.stringify(JWKS),
     OAUTH_DATABASE_URL: "postgresql://cookops:secret@postgres/cookops",
     OAUTH_ADAPTER_SECRET_BASE64URL: ADAPTER_SECRET.toString("base64url"),
+    OAUTH_INTERACTION_APPROVAL_SECRET_BASE64URL: ADAPTER_SECRET.toString("base64url"),
   };
   assert.equal(
     runtimeConfigurationFromEnvironment(validEnvironment).databaseUrl,
@@ -78,6 +79,14 @@ test("runtime settings require explicit canonical base64url adapter key material
       }),
     /PostgreSQL URL/,
   );
+  assert.throws(
+    () =>
+      runtimeConfigurationFromEnvironment({
+        ...validEnvironment,
+        OAUTH_INTERACTION_APPROVAL_SECRET_BASE64URL: "not-a-private-credential",
+      }),
+    /INTERACTION_APPROVAL_SECRET_BASE64URL/,
+  );
 });
 
 test("runtime refuses a direct public bind before connecting to PostgreSQL", async () => {
@@ -91,6 +100,7 @@ test("runtime refuses a direct public bind before connecting to PostgreSQL", asy
       jwks: JWKS,
       databaseUrl: "postgresql://unreachable:unreachable@127.0.0.1:1/unreachable",
       adapterSecret: ADAPTER_SECRET,
+      interactionApprovalSecret: ADAPTER_SECRET,
       host: "0.0.0.0",
       port: 0,
     }),
@@ -119,6 +129,7 @@ test(
       jwks: JWKS,
       databaseUrl: url.href,
       adapterSecret: ADAPTER_SECRET,
+      interactionApprovalSecret: ADAPTER_SECRET,
       host: "127.0.0.1",
       port: 0,
     };

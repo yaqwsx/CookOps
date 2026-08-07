@@ -9,6 +9,11 @@ import {
   initializePostgresAdapter,
 } from "./postgres-adapter.js";
 import {
+  InteractionApprovalStore,
+  initializeInteractionApprovals,
+} from "./interaction-approvals.js";
+import { handleInteractionBridgeRequest } from "./interaction-bridge.js";
+import {
   createProvider,
   providerHttpHandler,
   serverPort,
@@ -23,12 +28,14 @@ export interface OAuthRuntimeConfiguration {
   jwks: NonNullable<Configuration["jwks"]>;
   databaseUrl: string;
   adapterSecret: Uint8Array;
+  interactionApprovalSecret: Uint8Array;
   host: string;
   port: number;
 }
 
 interface OAuthRuntime {
   provider: Provider;
+  approvals: InteractionApprovalStore;
   close(): Promise<void>;
 }
 
@@ -53,6 +60,16 @@ export function decodeAdapterSecret(encoded: string): Uint8Array {
     );
   }
   return decoded;
+}
+
+export function decodeInteractionApprovalSecret(encoded: string): Uint8Array {
+  try {
+    return decodeAdapterSecret(encoded);
+  } catch {
+    throw new TypeError(
+      "OAUTH_INTERACTION_APPROVAL_SECRET_BASE64URL must canonically encode at least 32 bytes",
+    );
+  }
 }
 
 function databaseUrl(value: string): string {
@@ -97,6 +114,9 @@ export function runtimeConfigurationFromEnvironment(
     adapterSecret: decodeAdapterSecret(
       required(environment, "OAUTH_ADAPTER_SECRET_BASE64URL"),
     ),
+    interactionApprovalSecret: decodeInteractionApprovalSecret(
+      required(environment, "OAUTH_INTERACTION_APPROVAL_SECRET_BASE64URL"),
+    ),
     host: loopbackHost(environment.HOST ?? "127.0.0.1"),
     port: serverPort(issuer, environment.PORT),
   };
@@ -111,6 +131,7 @@ async function createOAuthRuntime(
   });
   try {
     await initializePostgresAdapter(pool);
+    await initializeInteractionApprovals(pool);
     const provider = createProvider({
       issuer: configuration.issuer,
       resource: configuration.resource,
@@ -127,6 +148,7 @@ async function createOAuthRuntime(
     let closed = false;
     return {
       provider,
+      approvals: new InteractionApprovalStore(pool, configuration.interactionApprovalSecret),
       async close() {
         if (closed) return;
         closed = true;
@@ -144,9 +166,22 @@ export async function startOAuthServer(
 ): Promise<RunningOAuthServer> {
   const host = loopbackHost(configuration.host);
   const runtime = await createOAuthRuntime(configuration);
-  const server = createServer(
-    providerHttpHandler(runtime.provider, configuration.issuer),
-  );
+  const providerHandler = providerHttpHandler(runtime.provider, configuration.issuer);
+  const basePath = new URL(configuration.issuer).pathname.replace(/\/$/, "");
+  const server = createServer((request, response) => {
+    void handleInteractionBridgeRequest(
+      runtime.provider,
+      runtime.approvals,
+      configuration.interactionApprovalSecret,
+      basePath,
+      request,
+      response,
+    )
+      .then((handled) => {
+        if (!handled) providerHandler(request, response);
+      })
+      .catch(() => response.writeHead(500).end());
+  });
   try {
     server.listen(configuration.port, host);
     await once(server, "listening");

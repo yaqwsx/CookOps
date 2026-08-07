@@ -366,6 +366,7 @@ test(
         jwks: JWKS,
         databaseUrl: databaseUrl.href,
         adapterSecret: ADAPTER_SECRET,
+        interactionApprovalSecret: ADAPTER_SECRET,
         host: "127.0.0.1",
         port: 0,
       };
