@@ -1,12 +1,15 @@
 import json
+from collections.abc import Callable, Iterator
 from datetime import UTC, date, datetime, timedelta
 from decimal import Decimal
+from typing import cast
 from uuid import UUID, uuid4
 
 import pytest
 from fastapi.testclient import TestClient
 from sqlalchemy import insert, select, update
 from test_sync_pull_http import SyncDatabase, _settings, _sign_in
+from test_sync_pull_http import sync_database as _sync_database_fixture
 
 from cookops.main import create_app
 from cookops.persistence.models import (
@@ -20,7 +23,19 @@ from cookops.persistence.models import (
     UnitDefinition,
 )
 
-pytest_plugins = ("test_sync_pull_http",)
+
+@pytest.fixture
+def sync_database() -> Iterator[SyncDatabase]:
+    """Reuse the pull fixture when this module is collected in the full suite.
+
+    ``pytest_plugins`` in a test module is not a reliable cross-module fixture
+    registration mechanism during full collection.
+    """
+
+    setup = cast(
+        Callable[[], Iterator[SyncDatabase]], _sync_database_fixture.__wrapped__
+    )
+    yield from setup()
 
 
 def _installation(database: SyncDatabase) -> UUID:
