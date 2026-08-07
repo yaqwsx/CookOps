@@ -1,5 +1,6 @@
 """Cookie-authenticated adapters for the organization synchronization protocol."""
 
+import asyncio
 import hashlib
 import json
 from dataclasses import dataclass
@@ -8,7 +9,7 @@ from decimal import Decimal
 from typing import Literal
 from uuid import UUID
 
-from fastapi import APIRouter, HTTPException, Request, status
+from fastapi import APIRouter, HTTPException, Request, WebSocket, WebSocketDisconnect, status
 from pydantic import BaseModel, ConfigDict, Field, StrictBool, ValidationError, field_validator
 
 from cookops.application.browser_sessions import BrowserSessionService
@@ -40,6 +41,7 @@ from cookops.application.synchronization import (
     PushCommandOutcome,
     PushRequest,
     SyncCommand,
+    SyncHintsDenied,
     SynchronizationCommandService,
     SynchronizationQueryService,
     SyncPushDenied,
@@ -57,6 +59,8 @@ class SynchronizationHttpServices:
 
 
 MAX_PUSH_REQUEST_BYTES = 1024 * 1024
+MAX_HINT_ORGANIZATIONS = 20
+HINT_POLL_SECONDS = 2
 
 
 class PullChangesRequest(BaseModel):
@@ -75,6 +79,22 @@ class BootstrapRequest(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     organization_id: UUID
+
+
+class HintSubscriptionRequest(BaseModel):
+    """Small client message; organization authorization is never trusted from it."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    type: Literal["subscribe"]
+    organization_ids: tuple[UUID, ...] = Field(min_length=1, max_length=MAX_HINT_ORGANIZATIONS)
+
+    @field_validator("organization_ids")
+    @classmethod
+    def organization_ids_must_be_unique(cls, value: tuple[UUID, ...]) -> tuple[UUID, ...]:
+        if len(set(value)) != len(value):
+            raise ValueError("organization IDs must be unique")
+        return value
 
 
 class SyncRecordResponse(BaseModel):
@@ -408,7 +428,7 @@ class PushChangesResponse(BaseModel):
     outcomes: tuple[PushCommandOutcomeResponse, ...]
 
 
-def _services(request: Request) -> SynchronizationHttpServices:
+def _services(request: Request | WebSocket) -> SynchronizationHttpServices:
     services = getattr(request.app.state, "synchronization", None)
     if not isinstance(services, SynchronizationHttpServices):
         raise HTTPException(
@@ -753,6 +773,90 @@ async def _push_body(request: Request) -> PushChangesRequest:
 
 def create_sync_router(settings: Settings) -> APIRouter:
     router = APIRouter(prefix="/api/v1/sync", tags=["synchronization"])
+
+    @router.websocket("/hints")
+    async def change_hints(websocket: WebSocket) -> None:
+        """Poll authorized feed heads and send only availability hints.
+
+        PostgreSQL is already the shared change source.  Polling its tiny per-org
+        head avoids inventing a process-local broker which would lose cross-worker
+        notifications; pull remains recovery for every missed hint.
+        """
+
+        services = _services(websocket)
+        secret = websocket.cookies.get(settings.browser_session_cookie_name)
+        if secret is None:
+            await websocket.close(code=4401)
+            return
+        authenticated = await services.browser_sessions.authenticate(secret)
+        if authenticated is None:
+            await websocket.close(code=4401)
+            return
+        await websocket.accept()
+        try:
+            message = await asyncio.wait_for(websocket.receive_json(), timeout=10)
+            subscription = HintSubscriptionRequest.model_validate(message)
+        except WebSocketDisconnect:
+            return
+        except (TimeoutError, ValidationError, ValueError):
+            await websocket.close(code=4400)
+            return
+        organization_ids = tuple(sorted(subscription.organization_ids, key=str))
+        try:
+            known = await services.synchronization.change_hints(
+                actor_user_id=authenticated.user_id, organization_ids=organization_ids
+            )
+        except SyncQueryDenied:
+            # A forbidden and an unknown organization intentionally look the same
+            # on this transport, and no subscription details are reflected.
+            await websocket.close(code=4403)
+            return
+        for organization_id, cursor in known.items():
+            await websocket.send_json(
+                {
+                    "type": "change_available",
+                    "organization_id": str(organization_id),
+                    "cursor": cursor,
+                    "reason": "subscription",
+                }
+            )
+        while True:
+            try:
+                await asyncio.wait_for(websocket.receive_text(), timeout=HINT_POLL_SECONDS)
+                await websocket.close(code=4400)
+                return
+            except TimeoutError:
+                pass
+            except WebSocketDisconnect:
+                return
+            current_session = await services.browser_sessions.authenticate(secret)
+            if current_session is None or current_session.user_id != authenticated.user_id:
+                await websocket.close(code=4401)
+                return
+            try:
+                current = await services.synchronization.change_hints(
+                    actor_user_id=current_session.user_id,
+                    organization_ids=organization_ids,
+                )
+            except SyncHintsDenied as error:
+                # The client only subscribed to these already-authorized IDs;
+                # signal a recheck without disclosing which access check failed.
+                await websocket.send_json(
+                    {"type": "access_changed", "organization_id": str(error.organization_id)}
+                )
+                await websocket.close(code=4403)
+                return
+            for organization_id, cursor in current.items():
+                if cursor != known[organization_id]:
+                    known[organization_id] = cursor
+                    await websocket.send_json(
+                        {
+                            "type": "change_available",
+                            "organization_id": str(organization_id),
+                            "cursor": cursor,
+                            "reason": "domain_change",
+                        }
+                    )
 
     @router.post("/bootstrap", response_model=BootstrapResponse)
     async def bootstrap(request: Request, body: BootstrapRequest) -> BootstrapResponse:

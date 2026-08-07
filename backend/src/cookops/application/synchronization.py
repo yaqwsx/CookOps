@@ -155,6 +155,14 @@ class SyncQueryDenied(PermissionError):
     """The caller is not currently allowed to read this organization."""
 
 
+class SyncHintsDenied(SyncQueryDenied):
+    """One already-subscribed organization no longer has current access."""
+
+    def __init__(self, organization_id: UUID) -> None:
+        self.organization_id = organization_id
+        super().__init__("organization access denied")
+
+
 class InvalidSyncCursor(ValueError):
     """The supplied opaque cursor is malformed, forged, or not a safe boundary."""
 
@@ -936,6 +944,41 @@ class SynchronizationQueryService:
                 ),
                 records=records,
             )
+
+    async def change_hints(
+        self, *, actor_user_id: UUID, organization_ids: Sequence[UUID]
+    ) -> dict[UUID, str]:
+        """Return the current opaque pull boundary after checking live access.
+
+        Hints deliberately expose no records.  The normal pull endpoint remains
+        the only source of authoritative synchronization data.
+        """
+
+        async with self._session_factory() as session, session.begin():
+            for organization_id in organization_ids:
+                try:
+                    await self._authorize_read(session, actor_user_id, organization_id)
+                except SyncQueryDenied as error:
+                    raise SyncHintsDenied(organization_id) from error
+            heads: dict[UUID, int] = dict(
+                (
+                    await session.execute(
+                        select(
+                            OrganizationChangeHead.organization_id,
+                            OrganizationChangeHead.next_sequence,
+                        ).where(OrganizationChangeHead.organization_id.in_(organization_ids))
+                    )
+                ).all()
+            )
+            return {
+                organization_id: self._cursor_codec.encode(
+                    SyncCursor(
+                        organization_id=organization_id,
+                        after_sequence=(heads.get(organization_id) or 1) - 1,
+                    )
+                )
+                for organization_id in organization_ids
+            }
 
     def _decode_cursor(self, request: PullRequest) -> SyncCursor | None:
         if request.cursor is None:
