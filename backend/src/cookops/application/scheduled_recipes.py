@@ -299,7 +299,11 @@ async def _load_references(
 ) -> _ScheduleReferences | None:
     event = await session.execute(
         select(Event.base_expected_attendance)
-        .where(Event.id == command.event_id, Event.organization_id == command.organization_id)
+        .where(
+            Event.id == command.event_id,
+            Event.organization_id == command.organization_id,
+            Event.lifecycle == "active",
+        )
         .with_for_update(of=Event)
     )
     diner_count = event.scalar_one_or_none()

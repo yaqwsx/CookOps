@@ -28,6 +28,7 @@ from cookops.application.scheduled_recipes import (
 from cookops.persistence.models import (
     ClientInstallation,
     Event,
+    EventArchiveSnapshot,
     EventDay,
     EventMealRole,
     Mutation,
@@ -371,6 +372,43 @@ def test_member_schedules_pinned_version_with_derived_default_and_atomic_feed(
         assert change.entity_id == command.scheduled_recipe_id
         assert change.payload["record_schema_version"] == 1
         assert change.payload["record"]["selected_scale_amount"] == "2"
+
+
+def test_archived_event_cannot_receive_a_scheduled_recipe(
+    service_database: ServiceDatabase,
+) -> None:
+    snapshot_id = uuid4()
+    with service_database.sync_engine.begin() as connection:
+        connection.execute(
+            insert(EventArchiveSnapshot).values(
+                id=snapshot_id,
+                event_id=service_database.event_id,
+                archive_schema_version=1,
+                payload={"event": {}},
+                content_hash=b"s" * 32,
+                attachment_manifest=[],
+                created_by_user_id=service_database.actor_id,
+            )
+        )
+        connection.execute(
+            update(Event)
+            .where(Event.id == service_database.event_id)
+            .values(
+                lifecycle="archived",
+                current_archive_snapshot_id=snapshot_id,
+                archived_at=datetime.now(UTC),
+                archived_by_user_id=service_database.actor_id,
+            )
+        )
+
+    command = schedule_command(service_database)
+    with pytest.raises(ApplicationServiceError, match="validation_failed"):
+        asyncio.run(schedule_recipe(service_database.sessions, context(service_database), command))
+    with service_database.sync_engine.connect() as connection:
+        assert (
+            connection.scalar(select(Mutation.outcome).where(Mutation.id == command.mutation_id))
+            == "rejected"
+        )
 
 
 def test_scale_suggestion_uses_person_capacity_and_base_fallback(

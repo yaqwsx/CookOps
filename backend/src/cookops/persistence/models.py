@@ -935,6 +935,24 @@ class Event(Base):
             name="ck_events_nonnegative_budget",
         ),
         CheckConstraint("currency ~ '^[A-Z]{3}$'", name="ck_events_currency"),
+        CheckConstraint("lifecycle IN ('active', 'archived')", name="ck_events_lifecycle"),
+        CheckConstraint(
+            "(lifecycle = 'active' AND current_archive_snapshot_id IS NULL "
+            "AND archived_at IS NULL AND archived_by_user_id IS NULL) OR "
+            "(lifecycle = 'archived' AND current_archive_snapshot_id IS NOT NULL "
+            "AND archived_at IS NOT NULL AND archived_by_user_id IS NOT NULL "
+            "AND archived_at >= created_at)",
+            name="ck_events_archive_lifecycle_attribution",
+        ),
+        ForeignKeyConstraint(
+            ["current_archive_snapshot_id", "id"],
+            ["event_archive_snapshots.id", "event_archive_snapshots.event_id"],
+            ondelete="RESTRICT",
+            name="fk_events_current_archive_snapshot",
+            use_alter=True,
+            deferrable=True,
+            initially="DEFERRED",
+        ),
         UniqueConstraint("id", "organization_id", name="uq_events_id_organization"),
     )
 
@@ -952,6 +970,52 @@ class Event(Base):
     base_expected_attendance: Mapped[int] = mapped_column()
     budget_amount: Mapped[Decimal] = mapped_column(Numeric)
     currency: Mapped[str] = mapped_column(String(3))
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=text("CURRENT_TIMESTAMP")
+    )
+    created_by_user_id: Mapped[UUID] = mapped_column(ForeignKey("users.id", ondelete="RESTRICT"))
+    lifecycle: Mapped[str] = mapped_column(String(16), server_default=text("'active'"))
+    current_archive_snapshot_id: Mapped[UUID | None] = mapped_column(Uuid)
+    archived_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    archived_by_user_id: Mapped[UUID | None] = mapped_column(
+        ForeignKey("users.id", ondelete="RESTRICT")
+    )
+
+
+class EventArchiveSnapshot(Base):
+    __tablename__ = "event_archive_snapshots"
+    __table_args__ = (
+        CheckConstraint("archive_schema_version > 0", name="ck_event_archive_snapshots_schema"),
+        CheckConstraint(
+            "jsonb_typeof(payload) = 'object'", name="ck_event_archive_snapshots_payload"
+        ),
+        CheckConstraint(
+            "jsonb_typeof(attachment_manifest) = 'array'",
+            name="ck_event_archive_snapshots_attachment_manifest",
+        ),
+        CheckConstraint(
+            "octet_length(content_hash) = 32", name="ck_event_archive_snapshots_content_hash"
+        ),
+        ForeignKeyConstraint(
+            ["previous_snapshot_id", "event_id"],
+            ["event_archive_snapshots.id", "event_archive_snapshots.event_id"],
+            ondelete="RESTRICT",
+            name="fk_event_archive_snapshots_previous_snapshot",
+            deferrable=True,
+            initially="DEFERRED",
+        ),
+        UniqueConstraint("id", "event_id", name="uq_event_archive_snapshots_id_event"),
+    )
+
+    id: Mapped[UUID] = mapped_column(
+        Uuid, primary_key=True, default=uuid4, server_default=text("gen_random_uuid()")
+    )
+    event_id: Mapped[UUID] = mapped_column(ForeignKey("events.id", ondelete="RESTRICT"))
+    previous_snapshot_id: Mapped[UUID | None] = mapped_column(Uuid)
+    archive_schema_version: Mapped[int] = mapped_column(SmallInteger)
+    payload: Mapped[dict[str, object]] = mapped_column(JSONB)
+    content_hash: Mapped[bytes] = mapped_column(LargeBinary(32))
+    attachment_manifest: Mapped[list[dict[str, object]]] = mapped_column(JSONB)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=text("CURRENT_TIMESTAMP")
     )
@@ -1374,6 +1438,42 @@ class Mutation(Base):
     outcome_payload: Mapped[dict[str, object] | None] = mapped_column(JSONB)
     first_change_sequence: Mapped[int | None] = mapped_column(BigInteger)
     last_change_sequence: Mapped[int | None] = mapped_column(BigInteger)
+
+
+class FieldClock(Base):
+    """The deterministic winning action for one synchronizable scalar field.
+
+    Attribution is intentionally sourced from ``winning_mutation_id``.  That keeps
+    it impossible for a clock to claim a different actor or installation than the
+    recorded idempotency command.
+    """
+
+    __tablename__ = "field_clocks"
+    __table_args__ = (
+        CheckConstraint(
+            "entity_kind ~ '^[a-z][a-z0-9_.-]{0,99}$'", name="ck_field_clocks_entity_kind"
+        ),
+        CheckConstraint(
+            "field_name ~ '^[a-z][a-z0-9_.-]{0,99}$'", name="ck_field_clocks_field_name"
+        ),
+        ForeignKeyConstraint(
+            ["organization_id", "winning_mutation_id"],
+            ["mutations.organization_id", "mutations.id"],
+            ondelete="RESTRICT",
+            name="fk_field_clocks_winning_mutation",
+            deferrable=True,
+            initially="DEFERRED",
+        ),
+    )
+
+    organization_id: Mapped[UUID] = mapped_column(
+        ForeignKey("organizations.id", ondelete="RESTRICT"), primary_key=True
+    )
+    entity_kind: Mapped[str] = mapped_column(String(100), primary_key=True)
+    entity_id: Mapped[UUID] = mapped_column(Uuid, primary_key=True)
+    field_name: Mapped[str] = mapped_column(String(100), primary_key=True)
+    winning_client_wall_time: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    winning_mutation_id: Mapped[UUID] = mapped_column(Uuid)
 
 
 class OrganizationChange(Base):

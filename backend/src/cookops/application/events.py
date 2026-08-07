@@ -6,7 +6,7 @@ import unicodedata
 from dataclasses import dataclass
 from datetime import UTC, date, datetime, timedelta
 from decimal import Decimal
-from typing import Literal
+from typing import Literal, cast
 from uuid import UUID, uuid4
 
 from sqlalchemy import select, text
@@ -23,11 +23,13 @@ from cookops.persistence.models import (
     Event,
     EventDay,
     EventMealRole,
+    FieldClock,
     Mutation,
     Organization,
     OrganizationChange,
     OrganizationMealRolePreset,
     OrganizationMembership,
+    ScheduledRecipe,
     SystemRoleAssignment,
     User,
 )
@@ -35,6 +37,7 @@ from cookops.persistence.models import (
 COMMAND_KIND = "event.create"
 COMMAND_SCHEMA_VERSION = 1
 MAX_EVENT_DAY_COUNT = 366
+UPDATE_BASE_ATTENDANCE_COMMAND_KIND = "event.update_base_attendance"
 
 
 @dataclass(frozen=True, slots=True)
@@ -91,6 +94,31 @@ class CreateEventResult:
 
 
 @dataclass(frozen=True, slots=True)
+class UpdateEventBaseAttendanceCommand:
+    """Set an event's base attendance and refresh its following recipe instances."""
+
+    mutation_id: UUID
+    event_id: UUID
+    organization_id: UUID
+    base_expected_attendance: int
+    client_wall_time: datetime
+    logical_operation_id: UUID | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class UpdateEventBaseAttendanceResult:
+    mutation_id: UUID
+    event_id: UUID
+    organization_id: UUID
+    base_expected_attendance: int
+    updated_scheduled_recipe_ids: tuple[UUID, ...]
+    first_change_sequence: int
+    last_change_sequence: int
+    replayed: bool
+    outcome: Literal["accepted", "partially_superseded"] = "accepted"
+
+
+@dataclass(frozen=True, slots=True)
 class _PreparedCommand:
     mutation_id: UUID
     event_id: UUID
@@ -103,6 +131,17 @@ class _PreparedCommand:
     client_wall_time: datetime
     location: str | None
     general_note: str | None
+    logical_operation_id: UUID | None
+    violations: tuple[FieldViolation, ...]
+
+
+@dataclass(frozen=True, slots=True)
+class _PreparedAttendanceCommand:
+    mutation_id: UUID
+    event_id: UUID
+    organization_id: UUID
+    base_expected_attendance: int
+    client_wall_time: datetime
     logical_operation_id: UUID | None
     violations: tuple[FieldViolation, ...]
 
@@ -128,6 +167,7 @@ def _prepare_command(command: CreateEventCommand) -> _PreparedCommand:
     general_note = (
         _canonical_note(command.general_note) if isinstance(command.general_note, str) else None
     )
+
     if command.general_note is not None and not isinstance(command.general_note, str):
         violations.append(FieldViolation("general_note", "must_be_string_or_null"))
     valid_start_date = isinstance(command.start_date, date) and not isinstance(
@@ -209,6 +249,58 @@ def _prepare_command(command: CreateEventCommand) -> _PreparedCommand:
     )
 
 
+def _prepare_attendance_command(
+    command: UpdateEventBaseAttendanceCommand,
+) -> _PreparedAttendanceCommand:
+    violations: list[FieldViolation] = []
+    attendance = (
+        command.base_expected_attendance
+        if isinstance(command.base_expected_attendance, int)
+        and not isinstance(command.base_expected_attendance, bool)
+        else 0
+    )
+    if (
+        not isinstance(command.base_expected_attendance, int)
+        or isinstance(command.base_expected_attendance, bool)
+        or command.base_expected_attendance < 0
+    ):
+        violations.append(FieldViolation("base_expected_attendance", "must_be_nonnegative_integer"))
+    wall_time_has_timezone = (
+        isinstance(command.client_wall_time, datetime)
+        and command.client_wall_time.tzinfo is not None
+        and command.client_wall_time.utcoffset() is not None
+    )
+    if not wall_time_has_timezone:
+        violations.append(FieldViolation("client_wall_time", "must_include_timezone"))
+    if not isinstance(command.mutation_id, UUID):
+        violations.append(FieldViolation("mutation_id", "must_be_uuid"))
+    if not isinstance(command.event_id, UUID):
+        violations.append(FieldViolation("event_id", "must_be_uuid"))
+    if not isinstance(command.organization_id, UUID):
+        violations.append(FieldViolation("organization_id", "must_be_uuid"))
+    if command.logical_operation_id is not None and not isinstance(
+        command.logical_operation_id, UUID
+    ):
+        violations.append(FieldViolation("logical_operation_id", "must_be_uuid_or_null"))
+    return _PreparedAttendanceCommand(
+        mutation_id=command.mutation_id if isinstance(command.mutation_id, UUID) else UUID(int=0),
+        event_id=command.event_id if isinstance(command.event_id, UUID) else UUID(int=0),
+        organization_id=(
+            command.organization_id if isinstance(command.organization_id, UUID) else UUID(int=0)
+        ),
+        base_expected_attendance=attendance,
+        client_wall_time=(
+            command.client_wall_time.astimezone(UTC)
+            if wall_time_has_timezone
+            else datetime(1970, 1, 1, tzinfo=UTC)
+        ),
+        logical_operation_id=(
+            command.logical_operation_id if isinstance(command.logical_operation_id, UUID) else None
+        ),
+        violations=tuple(violations),
+    )
+
+
 def _request_hash(command: _PreparedCommand) -> bytes:
     semantic_request = {
         "base_expected_attendance": command.base_expected_attendance,
@@ -230,6 +322,53 @@ def _request_hash(command: _PreparedCommand) -> bytes:
     return hashlib.sha256(
         json.dumps(
             semantic_request, ensure_ascii=False, separators=(",", ":"), sort_keys=True
+        ).encode()
+    ).digest()
+
+
+def _invalid_hash_value(value: object) -> dict[str, str]:
+    return {"invalid_type": type(value).__qualname__, "repr": repr(value)}
+
+
+def _raw_uuid_hash_value(value: object) -> str | dict[str, str]:
+    return str(value) if isinstance(value, UUID) else _invalid_hash_value(value)
+
+
+def _raw_wall_time_hash_value(value: object) -> str | dict[str, str]:
+    if isinstance(value, datetime) and value.tzinfo is not None and value.utcoffset() is not None:
+        return value.astimezone(UTC).isoformat().replace("+00:00", "Z")
+    return _invalid_hash_value(value)
+
+
+def _raw_attendance_hash_value(value: object) -> int | dict[str, str]:
+    return (
+        value
+        if isinstance(value, int) and not isinstance(value, bool)
+        else _invalid_hash_value(value)
+    )
+
+
+def _attendance_request_hash(command: UpdateEventBaseAttendanceCommand) -> bytes:
+    return hashlib.sha256(
+        json.dumps(
+            {
+                "base_expected_attendance": _raw_attendance_hash_value(
+                    command.base_expected_attendance
+                ),
+                "client_wall_time": _raw_wall_time_hash_value(command.client_wall_time),
+                "command_kind": UPDATE_BASE_ATTENDANCE_COMMAND_KIND,
+                "command_schema_version": COMMAND_SCHEMA_VERSION,
+                "event_id": _raw_uuid_hash_value(command.event_id),
+                "logical_operation_id": (
+                    _raw_uuid_hash_value(command.logical_operation_id)
+                    if command.logical_operation_id is not None
+                    else None
+                ),
+                "organization_id": _raw_uuid_hash_value(command.organization_id),
+            },
+            ensure_ascii=False,
+            separators=(",", ":"),
+            sort_keys=True,
         ).encode()
     ).digest()
 
@@ -298,6 +437,60 @@ async def _authorize_and_lock_organization(
     if organization_admin is None:
         raise ApplicationServiceError("forbidden", retry_same_identity=True)
     return "organization_admin", organization
+
+
+async def _authorize_member_and_lock_organization(
+    session: AsyncSession, context: ExecutionContext, organization_id: UUID
+) -> Literal["member", "organization_admin", "system_admin"]:
+    """Authorize ordinary event planning against current installation and membership state."""
+
+    expected_installation_kind = "agent" if context.oauth_client_id is not None else "browser"
+    actor = await session.scalar(
+        select(User.id)
+        .join(
+            ClientInstallation,
+            (ClientInstallation.user_id == User.id)
+            & (ClientInstallation.id == context.client_installation_id),
+        )
+        .where(
+            User.id == context.actor_user_id,
+            User.disabled_at.is_(None),
+            ClientInstallation.disabled_at.is_(None),
+            ClientInstallation.installation_kind == expected_installation_kind,
+        )
+        .with_for_update(of=(User, ClientInstallation))
+    )
+    organization = await session.scalar(
+        select(Organization.id)
+        .where(Organization.id == organization_id, Organization.retired_at.is_(None))
+        .with_for_update(of=Organization)
+    )
+    if actor is None or organization is None:
+        raise ApplicationServiceError("forbidden", retry_same_identity=True)
+    is_system_admin = await session.scalar(
+        select(SystemRoleAssignment.id)
+        .where(
+            SystemRoleAssignment.user_id == context.actor_user_id,
+            SystemRoleAssignment.role == "system_admin",
+            SystemRoleAssignment.revoked_at.is_(None),
+        )
+        .with_for_update(of=SystemRoleAssignment)
+    )
+    if is_system_admin is not None:
+        return "system_admin"
+    membership = await session.scalar(
+        select(OrganizationMembership.role)
+        .where(
+            OrganizationMembership.organization_id == organization_id,
+            OrganizationMembership.user_id == context.actor_user_id,
+            OrganizationMembership.state == "active",
+            OrganizationMembership.role.in_(("member", "organization_admin")),
+        )
+        .with_for_update(of=OrganizationMembership)
+    )
+    if membership not in ("member", "organization_admin"):
+        raise ApplicationServiceError("forbidden", retry_same_identity=True)
+    return cast(Literal["member", "organization_admin"], membership)
 
 
 def _result_payload(result: CreateEventResult) -> dict[str, object]:
@@ -506,9 +699,12 @@ def _retained_error(mutation: Mutation) -> ApplicationServiceError:
     if not isinstance(error, dict):
         raise RuntimeError("Rejected event mutation has an invalid outcome payload")
     try:
-        if _required_str(error, "code") != "validation_failed":
+        code = _required_str(error, "code")
+        if code not in ("archived_event", "client_time_too_far_ahead", "validation_failed"):
             raise TypeError
         raw_violations = error.get("field_violations")
+        if raw_violations is None and code != "validation_failed":
+            raw_violations = []
         if not isinstance(raw_violations, list):
             raise TypeError
         violations = tuple(
@@ -522,16 +718,23 @@ def _retained_error(mutation: Mutation) -> ApplicationServiceError:
         raise RuntimeError(
             "Rejected event mutation has an invalid outcome payload"
         ) from error_value
-    return _validation_error(violations)
+    return ApplicationServiceError(
+        cast(
+            Literal["archived_event", "client_time_too_far_ahead", "validation_failed"],
+            code,
+        ),
+        field_violations=violations,
+        retry_same_identity=False,
+    )
 
 
 def _mutation(
     *,
-    command: _PreparedCommand,
+    command: _PreparedCommand | _PreparedAttendanceCommand,
     context: ExecutionContext,
-    actor_role: Literal["organization_admin", "system_admin"],
+    actor_role: Literal["member", "organization_admin", "system_admin"],
     request_hash: bytes,
-    outcome: Literal["accepted", "rejected"],
+    outcome: Literal["accepted", "partially_superseded", "rejected"],
     outcome_payload: dict[str, object],
     first_change_sequence: int | None = None,
     last_change_sequence: int | None = None,
@@ -548,13 +751,58 @@ def _mutation(
         oauth_grant_id=context.oauth_grant_id,
         client_wall_time=command.client_wall_time,
         command_schema_version=COMMAND_SCHEMA_VERSION,
-        command_kind=COMMAND_KIND,
+        command_kind=(
+            COMMAND_KIND
+            if isinstance(command, _PreparedCommand)
+            else UPDATE_BASE_ATTENDANCE_COMMAND_KIND
+        ),
         target_identities=[{"entity_kind": "event", "entity_id": str(command.event_id)}],
         request_hash=request_hash,
         outcome=outcome,
         outcome_payload=outcome_payload,
         first_change_sequence=first_change_sequence,
         last_change_sequence=last_change_sequence,
+    )
+
+
+def _field_clock_wins(clock: FieldClock | None, command: _PreparedAttendanceCommand) -> bool:
+    """Apply the protocol's total ordering without depending on receive order."""
+
+    if clock is None:
+        return True
+    return (command.client_wall_time, command.mutation_id) > (
+        clock.winning_client_wall_time,
+        clock.winning_mutation_id,
+    )
+
+
+def _event_change_record(event: Event) -> tuple[str, UUID, dict[str, object]]:
+    return (
+        "event",
+        event.id,
+        {
+            "id": str(event.id),
+            "organization_id": str(event.organization_id),
+            "name": event.name,
+            "start_date": event.start_date.isoformat(),
+            "end_date": event.end_date.isoformat(),
+            "location": event.location,
+            "general_note": event.general_note,
+            "base_expected_attendance": event.base_expected_attendance,
+            "budget_amount": _canonical_decimal_string(event.budget_amount),
+            "currency": event.currency,
+            "lifecycle": event.lifecycle,
+            "current_archive_snapshot_id": (
+                str(event.current_archive_snapshot_id)
+                if event.current_archive_snapshot_id is not None
+                else None
+            ),
+            "archived_at": event.archived_at.isoformat() if event.archived_at is not None else None,
+            "archived_by_user_id": (
+                str(event.archived_by_user_id) if event.archived_by_user_id is not None else None
+            ),
+            "created_by_user_id": str(event.created_by_user_id),
+        },
     )
 
 
@@ -726,21 +974,20 @@ async def create_event(
                     last_change_sequence=last_change_sequence,
                     replayed=False,
                 )
-                session.add(
-                    Event(
-                        id=prepared.event_id,
-                        organization_id=prepared.organization_id,
-                        name=prepared.name,
-                        start_date=prepared.start_date,
-                        end_date=prepared.end_date,
-                        location=prepared.location,
-                        general_note=prepared.general_note,
-                        base_expected_attendance=prepared.base_expected_attendance,
-                        budget_amount=prepared.budget_amount,
-                        currency=currency,
-                        created_by_user_id=context.actor_user_id,
-                    )
+                event = Event(
+                    id=prepared.event_id,
+                    organization_id=prepared.organization_id,
+                    name=prepared.name,
+                    start_date=prepared.start_date,
+                    end_date=prepared.end_date,
+                    location=prepared.location,
+                    general_note=prepared.general_note,
+                    base_expected_attendance=prepared.base_expected_attendance,
+                    budget_amount=prepared.budget_amount,
+                    currency=currency,
+                    created_by_user_id=context.actor_user_id,
                 )
+                session.add(event)
                 await session.flush()
                 session.add_all(
                     EventDay(
@@ -790,9 +1037,314 @@ async def create_event(
                         last_change_sequence=last_change_sequence,
                     )
                 )
+                session.add(
+                    FieldClock(
+                        organization_id=prepared.organization_id,
+                        entity_kind="event",
+                        entity_id=event.id,
+                        field_name="base_expected_attendance",
+                        winning_client_wall_time=prepared.client_wall_time,
+                        winning_mutation_id=prepared.mutation_id,
+                    )
+                )
 
     if deferred_error is not None:
         raise deferred_error
     if result is None:
         raise RuntimeError("Event creation produced no outcome")
+    return result
+
+
+def _attendance_result_payload(result: UpdateEventBaseAttendanceResult) -> dict[str, object]:
+    return {
+        "event": {
+            "id": str(result.event_id),
+            "organization_id": str(result.organization_id),
+            "base_expected_attendance": result.base_expected_attendance,
+        },
+        "updated_scheduled_recipe_ids": [
+            str(scheduled_recipe_id) for scheduled_recipe_id in result.updated_scheduled_recipe_ids
+        ],
+        "outcome": result.outcome,
+    }
+
+
+def _retained_attendance_result(mutation: Mutation) -> UpdateEventBaseAttendanceResult:
+    payload = mutation.outcome_payload
+    event = payload.get("event") if payload is not None else None
+    scheduled_recipe_ids = (
+        payload.get("updated_scheduled_recipe_ids") if payload is not None else None
+    )
+    outcome = payload.get("outcome") if payload is not None else None
+    if (
+        not isinstance(event, dict)
+        or not isinstance(scheduled_recipe_ids, list)
+        or outcome not in ("accepted", "partially_superseded")
+        or outcome != mutation.outcome
+    ):
+        raise RuntimeError("Accepted attendance mutation has an invalid outcome payload")
+    try:
+        attendance = event.get("base_expected_attendance")
+        if not isinstance(attendance, int) or isinstance(attendance, bool):
+            raise TypeError
+        updated_ids = tuple(UUID(value) for value in scheduled_recipe_ids if isinstance(value, str))
+        if len(updated_ids) != len(scheduled_recipe_ids):
+            raise TypeError
+        first_change_sequence = mutation.first_change_sequence
+        last_change_sequence = mutation.last_change_sequence
+        if first_change_sequence is None or last_change_sequence is None:
+            raise TypeError
+        return UpdateEventBaseAttendanceResult(
+            mutation_id=mutation.id,
+            event_id=UUID(_required_str(event, "id")),
+            organization_id=UUID(_required_str(event, "organization_id")),
+            base_expected_attendance=attendance,
+            updated_scheduled_recipe_ids=updated_ids,
+            first_change_sequence=first_change_sequence,
+            last_change_sequence=last_change_sequence,
+            replayed=True,
+            outcome=outcome,
+        )
+    except (TypeError, ValueError) as error:
+        raise RuntimeError("Accepted attendance mutation has an invalid outcome payload") from error
+
+
+def _scheduled_recipe_change_record(
+    scheduled_recipe: ScheduledRecipe,
+) -> tuple[str, UUID, dict[str, object]]:
+    return (
+        "scheduled_recipe",
+        scheduled_recipe.id,
+        {
+            "id": str(scheduled_recipe.id),
+            "organization_id": str(scheduled_recipe.organization_id),
+            "event_id": str(scheduled_recipe.event_id),
+            "event_day_id": str(scheduled_recipe.event_day_id),
+            "event_meal_role_id": str(scheduled_recipe.event_meal_role_id),
+            "recipe_id": str(scheduled_recipe.recipe_id),
+            "recipe_version_id": str(scheduled_recipe.recipe_version_id),
+            "diner_count": scheduled_recipe.diner_count,
+            "attendance_mode": scheduled_recipe.attendance_mode,
+            "consumption_percentage": _canonical_decimal_string(
+                scheduled_recipe.consumption_percentage
+            ),
+            "selected_scale_amount": _canonical_decimal_string(
+                scheduled_recipe.selected_scale_amount
+            ),
+            "scale_mode": scheduled_recipe.scale_mode,
+            "note": scheduled_recipe.note,
+            "position_key": scheduled_recipe.position_key,
+            "retired_at": (
+                scheduled_recipe.retired_at.isoformat()
+                if scheduled_recipe.retired_at is not None
+                else None
+            ),
+            "retired_by_user_id": (
+                str(scheduled_recipe.retired_by_user_id)
+                if scheduled_recipe.retired_by_user_id is not None
+                else None
+            ),
+            "created_by_user_id": str(scheduled_recipe.created_by_user_id),
+        },
+    )
+
+
+async def update_event_base_attendance(
+    session_factory: async_sessionmaker[AsyncSession],
+    context: ExecutionContext,
+    command: UpdateEventBaseAttendanceCommand,
+) -> UpdateEventBaseAttendanceResult:
+    """Atomically update event attendance and every non-retired following scheduled recipe."""
+
+    prepared = _prepare_attendance_command(command)
+    request_hash = _attendance_request_hash(command)
+    deferred_error: ApplicationServiceError | None = None
+    result: UpdateEventBaseAttendanceResult | None = None
+
+    async with session_factory() as session, session.begin():
+        actor_role = await _authorize_member_and_lock_organization(
+            session, context, prepared.organization_id
+        )
+        await session.execute(
+            text("SELECT pg_advisory_xact_lock(:lock_key)"),
+            {"lock_key": _advisory_lock_key("mutation", prepared.mutation_id)},
+        )
+        retained = await session.get(Mutation, prepared.mutation_id)
+        if retained is not None:
+            if (
+                retained.actor_user_id != context.actor_user_id
+                or retained.command_kind != UPDATE_BASE_ATTENDANCE_COMMAND_KIND
+                or retained.command_schema_version != COMMAND_SCHEMA_VERSION
+                or retained.request_hash != request_hash
+            ):
+                raise ApplicationServiceError("idempotency_mismatch", retry_same_identity=False)
+            if retained.outcome in ("accepted", "partially_superseded"):
+                return _retained_attendance_result(retained)
+            if retained.outcome == "rejected":
+                deferred_error = _retained_error(retained)
+            else:
+                raise RuntimeError("Event attendance retained an unsupported outcome")
+        elif prepared.violations:
+            deferred_error = _validation_error(prepared.violations)
+            session.add(
+                _mutation(
+                    command=prepared,
+                    context=context,
+                    actor_role=actor_role,
+                    request_hash=request_hash,
+                    outcome="rejected",
+                    outcome_payload=_error_payload(deferred_error),
+                )
+            )
+        elif prepared.client_wall_time > datetime.now(UTC) + timedelta(hours=24):
+            deferred_error = ApplicationServiceError(
+                "client_time_too_far_ahead", retry_same_identity=False
+            )
+            session.add(
+                _mutation(
+                    command=prepared,
+                    context=context,
+                    actor_role=actor_role,
+                    request_hash=request_hash,
+                    outcome="rejected",
+                    outcome_payload=_error_payload(deferred_error),
+                )
+            )
+        else:
+            event = await session.scalar(
+                select(Event)
+                .where(
+                    Event.id == prepared.event_id,
+                    Event.organization_id == prepared.organization_id,
+                )
+                .with_for_update(of=Event)
+            )
+            if event is None:
+                deferred_error = _validation_error((FieldViolation("event_id", "not_found"),))
+                session.add(
+                    _mutation(
+                        command=prepared,
+                        context=context,
+                        actor_role=actor_role,
+                        request_hash=request_hash,
+                        outcome="rejected",
+                        outcome_payload=_error_payload(deferred_error),
+                    )
+                )
+            elif event.lifecycle != "active":
+                deferred_error = ApplicationServiceError(
+                    "archived_event", retry_same_identity=False
+                )
+                session.add(
+                    _mutation(
+                        command=prepared,
+                        context=context,
+                        actor_role=actor_role,
+                        request_hash=request_hash,
+                        outcome="rejected",
+                        outcome_payload=_error_payload(deferred_error),
+                    )
+                )
+            else:
+                clock = await session.scalar(
+                    select(FieldClock)
+                    .where(
+                        FieldClock.organization_id == prepared.organization_id,
+                        FieldClock.entity_kind == "event",
+                        FieldClock.entity_id == event.id,
+                        FieldClock.field_name == "base_expected_attendance",
+                    )
+                    .with_for_update(of=FieldClock)
+                )
+                following_recipes = tuple(
+                    (
+                        await session.execute(
+                            select(ScheduledRecipe)
+                            .where(
+                                ScheduledRecipe.event_id == event.id,
+                                ScheduledRecipe.organization_id == prepared.organization_id,
+                                ScheduledRecipe.attendance_mode == "follows_event",
+                                ScheduledRecipe.retired_at.is_(None),
+                            )
+                            .order_by(ScheduledRecipe.id)
+                            .with_for_update(of=ScheduledRecipe)
+                        )
+                    ).scalars()
+                )
+                clock_wins = _field_clock_wins(clock, prepared)
+                if clock_wins:
+                    event.base_expected_attendance = prepared.base_expected_attendance
+                    for scheduled_recipe in following_recipes:
+                        scheduled_recipe.diner_count = prepared.base_expected_attendance
+                    if clock is None:
+                        session.add(
+                            FieldClock(
+                                organization_id=prepared.organization_id,
+                                entity_kind="event",
+                                entity_id=event.id,
+                                field_name="base_expected_attendance",
+                                winning_client_wall_time=prepared.client_wall_time,
+                                winning_mutation_id=prepared.mutation_id,
+                            )
+                        )
+                    else:
+                        clock.winning_client_wall_time = prepared.client_wall_time
+                        clock.winning_mutation_id = prepared.mutation_id
+                    change_records = (
+                        _event_change_record(event),
+                        *(_scheduled_recipe_change_record(recipe) for recipe in following_recipes),
+                    )
+                    outcome: Literal["accepted", "partially_superseded"] = "accepted"
+                else:
+                    # Publish the canonical event record so an outbox reconciliation has
+                    # a concrete field value even though this action lost the LWW race.
+                    following_recipes = ()
+                    change_records = (_event_change_record(event),)
+                    outcome = "partially_superseded"
+                first_change_sequence, last_change_sequence = await _reserve_change_range(
+                    session,
+                    prepared.organization_id,
+                    prepared.mutation_id,
+                    len(change_records),
+                )
+                result = UpdateEventBaseAttendanceResult(
+                    mutation_id=prepared.mutation_id,
+                    event_id=event.id,
+                    organization_id=prepared.organization_id,
+                    base_expected_attendance=event.base_expected_attendance,
+                    updated_scheduled_recipe_ids=tuple(recipe.id for recipe in following_recipes),
+                    first_change_sequence=first_change_sequence,
+                    last_change_sequence=last_change_sequence,
+                    replayed=False,
+                    outcome=outcome,
+                )
+                session.add_all(
+                    OrganizationChange(
+                        organization_id=prepared.organization_id,
+                        sequence=first_change_sequence + index,
+                        mutation_id=prepared.mutation_id,
+                        entity_id=entity_id,
+                        entity_kind=entity_kind,
+                        operation="upsert",
+                        payload={"record_schema_version": 1, "record": record},
+                    )
+                    for index, (entity_kind, entity_id, record) in enumerate(change_records)
+                )
+                session.add(
+                    _mutation(
+                        command=prepared,
+                        context=context,
+                        actor_role=actor_role,
+                        request_hash=request_hash,
+                        outcome=outcome,
+                        outcome_payload=_attendance_result_payload(result),
+                        first_change_sequence=first_change_sequence,
+                        last_change_sequence=last_change_sequence,
+                    )
+                )
+
+    if deferred_error is not None:
+        raise deferred_error
+    if result is None:
+        raise RuntimeError("Event attendance update produced no outcome")
     return result

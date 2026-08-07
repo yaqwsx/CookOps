@@ -99,7 +99,13 @@ class FieldViolation:
 class ApplicationServiceError(Exception):
     def __init__(
         self,
-        code: Literal["forbidden", "validation_failed", "idempotency_mismatch"],
+        code: Literal[
+            "archived_event",
+            "client_time_too_far_ahead",
+            "forbidden",
+            "idempotency_mismatch",
+            "validation_failed",
+        ],
         *,
         field_violations: tuple[FieldViolation, ...] = (),
         retry_same_identity: bool,
