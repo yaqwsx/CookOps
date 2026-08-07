@@ -96,6 +96,8 @@ describe("offline recipe creation", () => {
     );
     await expect(readRecipeCatalog(userId, organizationId)).resolves.toEqual({
       scalingUnits: [{ id: unitId, name: "person" }],
+      ingredients: [],
+      tags: [],
       recipes: [
         expect.objectContaining({
           id: recipeId,

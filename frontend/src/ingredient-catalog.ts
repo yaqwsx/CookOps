@@ -3,6 +3,7 @@ import { readVisibleRecords } from "./visible-records";
 
 export type CatalogIngredient = {
   id: string;
+  versionId: string;
   name: string;
   canonicalUnitName: string;
   massPerCanonicalQuantity: string;
@@ -92,6 +93,7 @@ export async function readIngredientCatalog(
           : undefined;
       return {
         id: root.entityId,
+        versionId,
         name: version && text(version, "name"),
         canonicalUnitId: version && text(version, "canonical_unit_id"),
         massPerCanonicalQuantity:
@@ -103,12 +105,15 @@ export async function readIngredientCatalog(
         item,
       ): item is {
         id: string;
+        versionId: string;
         name: string;
         canonicalUnitId: string;
         massPerCanonicalQuantity: string;
       } =>
         Boolean(
           item.name &&
+            item.versionId &&
+            uuid.test(item.versionId) &&
             item.canonicalUnitId &&
             item.massPerCanonicalQuantity &&
             unitNames.has(item.canonicalUnitId) &&

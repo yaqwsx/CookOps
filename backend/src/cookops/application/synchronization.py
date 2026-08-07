@@ -68,7 +68,9 @@ from cookops.application.receipts import (
 from cookops.application.recipes import (
     CreateRecipeCommand,
     CreateRecipeResult,
+    PublishRecipeVersionCommand,
     create_recipe,
+    publish_recipe_version,
     recipe_version_tag_change_id,
 )
 from cookops.application.scheduled_recipe_moves import (
@@ -241,6 +243,7 @@ SyncCommand = (
     | SetEventLifecycleCommand
     | CreateShoppingListCommand
     | CreateRecipeCommand
+    | PublishRecipeVersionCommand
     | CreateIngredientCommand
     | ScheduleRecipeCommand
     | MoveScheduledRecipeCommand
@@ -261,6 +264,7 @@ def _command_kind(
         | UpdateEventBaseAttendanceCommand
         | CreateShoppingListCommand
         | CreateRecipeCommand
+        | PublishRecipeVersionCommand
         | CreateIngredientCommand
         | ScheduleRecipeCommand
         | MoveScheduledRecipeCommand
@@ -281,6 +285,8 @@ def _command_kind(
         return "event.lifecycle"
     if isinstance(command, CreateRecipeCommand):
         return "recipe.create"
+    if isinstance(command, PublishRecipeVersionCommand):
+        return "recipe.publish_version"
     if isinstance(command, CreateIngredientCommand):
         return "ingredient.create"
     if isinstance(command, ScheduleRecipeCommand):
@@ -611,6 +617,8 @@ class SynchronizationCommandService:
                 result = await set_event_lifecycle(self._session_factory, context, command)
             elif isinstance(command, CreateRecipeCommand):
                 result = await create_recipe(self._session_factory, context, command)
+            elif isinstance(command, PublishRecipeVersionCommand):
+                result = await publish_recipe_version(self._session_factory, context, command)
             elif isinstance(command, CreateIngredientCommand):
                 result = await create_ingredient(self._session_factory, context, command)
             elif isinstance(command, ScheduleRecipeCommand):

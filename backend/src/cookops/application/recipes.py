@@ -3,7 +3,7 @@
 import hashlib
 import json
 import unicodedata
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import UTC, datetime
 from decimal import Decimal
 from typing import Literal, cast
@@ -37,6 +37,7 @@ from cookops.persistence.models import (
 )
 
 COMMAND_KIND = "recipe.create"
+PUBLISH_COMMAND_KIND = "recipe.publish_version"
 COMMAND_SCHEMA_VERSION = 1
 RECIPE_VERSION_TAG_CHANGE_NAMESPACE = UUID("82baf1fe-cee8-4306-b6a8-4d92c10f5c4a")
 
@@ -59,6 +60,25 @@ class CreateRecipeCommand:
     mutation_id: UUID
     recipe_id: UUID
     recipe_version_id: UUID
+    organization_id: UUID
+    name: str
+    scaling_unit_id: UUID
+    base_scaling_amount: Decimal
+    client_wall_time: datetime
+    ingredient_lines: tuple[RecipeIngredientLineInput, ...]
+    description: str | None = None
+    recipe_tag_ids: tuple[UUID, ...] = ()
+    estimated_diners_per_scaling_unit: Decimal | None = None
+    round_suggestions_up: bool = False
+    logical_operation_id: UUID | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class PublishRecipeVersionCommand:
+    mutation_id: UUID
+    recipe_id: UUID
+    recipe_version_id: UUID
+    based_on_version_id: UUID
     organization_id: UUID
     name: str
     scaling_unit_id: UUID
@@ -163,7 +183,9 @@ def recipe_version_tag_change_id(recipe_version_id: UUID, recipe_tag_id: UUID) -
     return uuid5(RECIPE_VERSION_TAG_CHANGE_NAMESPACE, f"{recipe_version_id}:{recipe_tag_id}")
 
 
-def _prepare_command(command: CreateRecipeCommand) -> _PreparedCommand:
+def _prepare_command(
+    command: CreateRecipeCommand | PublishRecipeVersionCommand,
+) -> _PreparedCommand:
     violations: list[FieldViolation] = []
     name = _canonical_text(command.name) if isinstance(command.name, str) else ""
     if not isinstance(command.name, str) or not name or len(name) > 200:
@@ -352,11 +374,16 @@ def _prepare_command(command: CreateRecipeCommand) -> _PreparedCommand:
     )
 
 
-def _request_hash(command: _PreparedCommand) -> bytes:
+def _request_hash(
+    command: _PreparedCommand,
+    *,
+    command_kind: str = COMMAND_KIND,
+    based_on_version_id: UUID | None = None,
+) -> bytes:
     semantic_request = {
         "base_scaling_amount": _canonical_decimal_string(command.base_scaling_amount),
         "client_wall_time": command.client_wall_time.isoformat().replace("+00:00", "Z"),
-        "command_kind": COMMAND_KIND,
+        "command_kind": command_kind,
         "command_schema_version": COMMAND_SCHEMA_VERSION,
         "description": command.description,
         "estimated_diners_per_scaling_unit": (
@@ -388,6 +415,7 @@ def _request_hash(command: _PreparedCommand) -> bytes:
         "name": command.name,
         "organization_id": str(command.organization_id),
         "recipe_id": str(command.recipe_id),
+        "based_on_version_id": str(based_on_version_id) if based_on_version_id else None,
         "recipe_tag_ids": [str(tag_id) for tag_id in command.recipe_tag_ids],
         "recipe_version_id": str(command.recipe_version_id),
         "round_suggestions_up": command.round_suggestions_up,
@@ -626,8 +654,7 @@ def _retained_error(mutation: Mutation) -> ApplicationServiceError:
     if not isinstance(error, dict):
         raise RuntimeError("Rejected recipe mutation has an invalid outcome payload")
     try:
-        if _required_str(error, "code") != "validation_failed":
-            raise TypeError
+        code = _required_str(error, "code")
         raw_violations = error.get("field_violations")
         if not isinstance(raw_violations, list):
             raise TypeError
@@ -642,7 +669,21 @@ def _retained_error(mutation: Mutation) -> ApplicationServiceError:
         raise RuntimeError(
             "Rejected recipe mutation has an invalid outcome payload"
         ) from error_value
-    return _validation_error(violations)
+    return ApplicationServiceError(
+        cast(
+            Literal[
+                "archived_event",
+                "client_time_too_far_ahead",
+                "forbidden",
+                "idempotency_mismatch",
+                "stale_precondition",
+                "validation_failed",
+            ],
+            code,
+        ),
+        field_violations=violations,
+        retry_same_identity=False,
+    )
 
 
 def _mutation(
@@ -655,6 +696,7 @@ def _mutation(
     outcome_payload: dict[str, object],
     first_change_sequence: int | None = None,
     last_change_sequence: int | None = None,
+    command_kind: str = COMMAND_KIND,
 ) -> Mutation:
     return Mutation(
         id=command.mutation_id,
@@ -668,7 +710,7 @@ def _mutation(
         oauth_grant_id=context.oauth_grant_id,
         client_wall_time=command.client_wall_time,
         command_schema_version=COMMAND_SCHEMA_VERSION,
-        command_kind=COMMAND_KIND,
+        command_kind=command_kind,
         target_identities=[
             {"entity_kind": "recipe", "entity_id": str(command.recipe_id)},
             {"entity_kind": "recipe_version", "entity_id": str(command.recipe_version_id)},
@@ -788,20 +830,23 @@ async def _validate_catalog_references(session: AsyncSession, command: _Prepared
 
 
 def _change_records(
-    command: _PreparedCommand, actor_user_id: UUID
+    command: _PreparedCommand,
+    actor_user_id: UUID,
+    based_on_version_id: UUID | None = None,
+    created_by_user_id: UUID | None = None,
 ) -> tuple[tuple[str, UUID, dict[str, object]], ...]:
     recipe_record: dict[str, object] = {
         "id": str(command.recipe_id),
         "organization_id": str(command.organization_id),
         "current_version_id": str(command.recipe_version_id),
         "retired_at": None,
-        "created_by_user_id": str(actor_user_id),
+        "created_by_user_id": str(created_by_user_id or actor_user_id),
     }
     version_record: dict[str, object] = {
         "id": str(command.recipe_version_id),
         "recipe_id": str(command.recipe_id),
         "organization_id": str(command.organization_id),
-        "based_on_version_id": None,
+        "based_on_version_id": str(based_on_version_id) if based_on_version_id else None,
         "name": command.name,
         "description": command.description,
         "scaling_model": "single_variable",
@@ -1053,4 +1098,221 @@ async def create_recipe(
         raise deferred_error
     if result is None:
         raise RuntimeError("Recipe creation produced no outcome")
+    return result
+
+
+async def publish_recipe_version(
+    session_factory: async_sessionmaker[AsyncSession],
+    context: ExecutionContext,
+    command: PublishRecipeVersionCommand,
+) -> CreateRecipeResult:
+    """Publish a complete new version only when the editor's base is still current."""
+
+    prepared = _prepare_command(command)
+    violations = list(prepared.violations)
+    based_on = command.based_on_version_id
+    if not isinstance(based_on, UUID):
+        violations.append(FieldViolation("based_on_version_id", "must_be_uuid"))
+        based_on = UUID(int=0)
+    elif based_on == prepared.recipe_version_id:
+        violations.append(
+            FieldViolation("based_on_version_id", "must_differ_from_recipe_version_id")
+        )
+    prepared = replace(prepared, violations=tuple(violations))
+    request_hash = _request_hash(
+        prepared, command_kind=PUBLISH_COMMAND_KIND, based_on_version_id=based_on
+    )
+    deferred_error: ApplicationServiceError | None = None
+    result: CreateRecipeResult | None = None
+    async with session_factory() as session, session.begin():
+        actor_role = await _authorize_and_lock_organization(
+            session, context, prepared.organization_id
+        )
+        await session.execute(
+            text("SELECT pg_advisory_xact_lock(:lock_key)"),
+            {"lock_key": _advisory_lock_key("mutation", prepared.mutation_id)},
+        )
+        retained = await session.get(Mutation, prepared.mutation_id)
+        if retained is not None:
+            if (
+                retained.actor_user_id != context.actor_user_id
+                or retained.command_kind != PUBLISH_COMMAND_KIND
+                or retained.command_schema_version != COMMAND_SCHEMA_VERSION
+                or retained.request_hash != request_hash
+            ):
+                raise ApplicationServiceError("idempotency_mismatch", retry_same_identity=False)
+            if retained.outcome == "accepted":
+                return _retained_result(retained)
+            if retained.outcome == "rejected":
+                deferred_error = _retained_error(retained)
+            else:
+                raise RuntimeError("Recipe publication retained an unsupported outcome")
+        elif prepared.violations:
+            deferred_error = _validation_error(prepared.violations)
+        else:
+            for kind, identity in (
+                ("recipe", prepared.recipe_id),
+                ("recipe_version", prepared.recipe_version_id),
+            ):
+                await session.execute(
+                    text("SELECT pg_advisory_xact_lock(:lock_key)"),
+                    {"lock_key": _advisory_lock_key(kind, identity)},
+                )
+            for line_id in sorted(line.id for line in prepared.ingredient_lines):
+                await session.execute(
+                    text("SELECT pg_advisory_xact_lock(:lock_key)"),
+                    {"lock_key": _advisory_lock_key("recipe_ingredient_line", line_id)},
+                )
+            recipe = await session.scalar(
+                select(Recipe)
+                .where(
+                    Recipe.id == prepared.recipe_id,
+                    Recipe.organization_id == prepared.organization_id,
+                    Recipe.retired_at.is_(None),
+                )
+                .with_for_update(of=Recipe)
+            )
+            version_exists = await session.scalar(
+                select(RecipeVersion.id).where(RecipeVersion.id == prepared.recipe_version_id)
+            )
+            base = await session.scalar(
+                select(RecipeVersion.id)
+                .where(
+                    RecipeVersion.id == based_on,
+                    RecipeVersion.recipe_id == prepared.recipe_id,
+                    RecipeVersion.organization_id == prepared.organization_id,
+                )
+                .with_for_update(of=RecipeVersion)
+            )
+            if recipe is None or base is None or recipe.current_version_id != based_on:
+                deferred_error = ApplicationServiceError(
+                    "stale_precondition", retry_same_identity=False
+                )
+            elif version_exists is not None:
+                deferred_error = _validation_error(
+                    (FieldViolation("recipe_version_id", "already_exists"),)
+                )
+            elif not await _validate_catalog_references(session, prepared):
+                deferred_error = _validation_error(
+                    (
+                        FieldViolation(
+                            "catalog_references", "must_be_active_and_owned_by_organization"
+                        ),
+                    )
+                )
+            if deferred_error is None:
+                assert recipe is not None
+                records = _change_records(
+                    prepared,
+                    context.actor_user_id,
+                    based_on,
+                    recipe.created_by_user_id,
+                )
+                first, last = await _reserve_change_range(
+                    session, prepared.organization_id, prepared.mutation_id, len(records)
+                )
+                result = CreateRecipeResult(
+                    mutation_id=prepared.mutation_id,
+                    recipe_id=prepared.recipe_id,
+                    recipe_version_id=prepared.recipe_version_id,
+                    organization_id=prepared.organization_id,
+                    name=prepared.name,
+                    description=prepared.description,
+                    scaling_unit_id=prepared.scaling_unit_id,
+                    base_scaling_amount=prepared.base_scaling_amount,
+                    estimated_diners_per_scaling_unit=prepared.estimated_diners_per_scaling_unit,
+                    round_suggestions_up=prepared.round_suggestions_up,
+                    recipe_tag_ids=prepared.recipe_tag_ids,
+                    ingredient_lines=tuple(
+                        _line_result(line) for line in prepared.ingredient_lines
+                    ),
+                    first_change_sequence=first,
+                    last_change_sequence=last,
+                    replayed=False,
+                )
+                recipe.current_version_id = prepared.recipe_version_id
+                session.add(
+                    RecipeVersion(
+                        id=prepared.recipe_version_id,
+                        organization_id=prepared.organization_id,
+                        recipe_id=prepared.recipe_id,
+                        based_on_version_id=based_on,
+                        name=prepared.name,
+                        description=prepared.description,
+                        scaling_unit_id=prepared.scaling_unit_id,
+                        base_scaling_amount=prepared.base_scaling_amount,
+                        estimated_diners_per_scaling_unit=prepared.estimated_diners_per_scaling_unit,
+                        round_suggestions_up=prepared.round_suggestions_up,
+                        published_by_user_id=context.actor_user_id,
+                    )
+                )
+                session.add_all(
+                    RecipeVersionTag(
+                        recipe_version_id=prepared.recipe_version_id,
+                        recipe_tag_id=tag_id,
+                        organization_id=prepared.organization_id,
+                    )
+                    for tag_id in prepared.recipe_tag_ids
+                )
+                session.add_all(
+                    RecipeVersionIngredientLine(
+                        id=line.id,
+                        organization_id=prepared.organization_id,
+                        recipe_id=prepared.recipe_id,
+                        recipe_version_id=prepared.recipe_version_id,
+                        line_key=line.line_key,
+                        ingredient_version_id=line.ingredient_version_id,
+                        base_quantity=line.base_quantity,
+                        preferred_display_unit_id=line.preferred_display_unit_id,
+                        note=line.note,
+                        position_key=line.position_key,
+                        scaling_behavior=line.scaling_behavior,
+                        include_in_portion_weight=line.include_in_portion_weight,
+                    )
+                    for line in prepared.ingredient_lines
+                )
+                session.add_all(
+                    OrganizationChange(
+                        organization_id=prepared.organization_id,
+                        sequence=first + index,
+                        mutation_id=prepared.mutation_id,
+                        entity_id=entity_id,
+                        entity_kind=entity_kind,
+                        operation="upsert",
+                        payload={"record_schema_version": 1, "record": record},
+                    )
+                    for index, (entity_kind, entity_id, record) in enumerate(records)
+                )
+            else:
+                result = None
+        if deferred_error is not None:
+            session.add(
+                _mutation(
+                    command=prepared,
+                    context=context,
+                    actor_role=actor_role,
+                    request_hash=request_hash,
+                    outcome="rejected",
+                    outcome_payload=_error_payload(deferred_error),
+                    command_kind=PUBLISH_COMMAND_KIND,
+                )
+            )
+        elif result is not None:
+            session.add(
+                _mutation(
+                    command=prepared,
+                    context=context,
+                    actor_role=actor_role,
+                    request_hash=request_hash,
+                    outcome="accepted",
+                    outcome_payload=_result_payload(result),
+                    first_change_sequence=result.first_change_sequence,
+                    last_change_sequence=result.last_change_sequence,
+                    command_kind=PUBLISH_COMMAND_KIND,
+                )
+            )
+    if deferred_error is not None:
+        raise deferred_error
+    if result is None:
+        raise RuntimeError("Recipe publication produced no outcome")
     return result

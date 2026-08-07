@@ -126,6 +126,16 @@ const resources = {
         noScalingUnits:
           "Pro vytvoření receptu je potřeba uložená jednotka škálování.",
         create: "Uložit recept",
+        edit: "Upravit recept",
+        editHeading: "Nová verze receptu",
+        publish: "Publikovat verzi",
+        cancel: "Zrušit",
+        ingredients: "Suroviny",
+        ingredient: "Surovina",
+        quantity: "Množství",
+        addLine: "Přidat surovinu",
+        removeLine: "Odebrat surovinu",
+        tags: "Štítky",
         saved: "Recept je uložen místně a bude synchronizován.",
         scaling: "Základ: {{amount}}",
         errors: {
@@ -134,6 +144,10 @@ const resources = {
           scalingUnit: "Vyberte uloženou jednotku škálování.",
           baseScalingAmount:
             "Základní množství musí být kladné desetinné číslo.",
+          ingredientLines: "Každá surovina musí mít platné nezáporné množství.",
+          tags: "Vybrané štítky nejsou dostupné.",
+          recipe:
+            "Recept se mezitím změnil. Obnovte katalog a zkuste to znovu.",
           unavailable: "Recept se nepodařilo uložit místně. Zkuste to znovu.",
         },
       },
@@ -416,6 +430,16 @@ const resources = {
         baseScalingAmount: "Base scaling amount",
         noScalingUnits: "A stored scaling unit is required to create a recipe.",
         create: "Save recipe",
+        edit: "Edit recipe",
+        editHeading: "New recipe version",
+        publish: "Publish version",
+        cancel: "Cancel",
+        ingredients: "Ingredients",
+        ingredient: "Ingredient",
+        quantity: "Quantity",
+        addLine: "Add ingredient",
+        removeLine: "Remove ingredient",
+        tags: "Tags",
         saved: "The recipe is saved locally and will synchronize.",
         scaling: "Base: {{amount}}",
         errors: {
@@ -424,6 +448,10 @@ const resources = {
           scalingUnit: "Select a stored scaling unit.",
           baseScalingAmount:
             "The base amount must be a positive decimal number.",
+          ingredientLines:
+            "Each ingredient needs a valid non-negative quantity.",
+          tags: "The selected tags are unavailable.",
+          recipe: "The recipe changed. Refresh the catalog and try again.",
           unavailable:
             "The recipe could not be saved locally. Please try again.",
         },

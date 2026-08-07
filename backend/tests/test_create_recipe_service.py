@@ -21,8 +21,10 @@ from cookops.application.organizations import (
 )
 from cookops.application.recipes import (
     CreateRecipeCommand,
+    PublishRecipeVersionCommand,
     RecipeIngredientLineInput,
     create_recipe,
+    publish_recipe_version,
     recipe_version_tag_change_id,
 )
 from cookops.persistence.models import (
@@ -506,3 +508,109 @@ def test_concurrent_creates_for_one_recipe_identity_admit_exactly_one(
             )
             == 1
         )
+
+
+def test_publish_recipe_version_advances_only_the_current_pointer(
+    service_database: ServiceDatabase,
+) -> None:
+    created = asyncio.run(
+        create_recipe(
+            service_database.sessions, context(service_database), recipe_command(service_database)
+        )
+    )
+    published = asyncio.run(
+        publish_recipe_version(
+            service_database.sessions,
+            context(service_database),
+            PublishRecipeVersionCommand(
+                mutation_id=uuid4(),
+                recipe_id=created.recipe_id,
+                recipe_version_id=uuid4(),
+                based_on_version_id=created.recipe_version_id,
+                organization_id=service_database.organization_id,
+                name="Updated tomato soup",
+                scaling_unit_id=service_database.person_id,
+                base_scaling_amount=Decimal("12"),
+                client_wall_time=datetime.now(UTC),
+                ingredient_lines=(),
+            ),
+        )
+    )
+    with service_database.sync_engine.connect() as connection:
+        assert (
+            connection.scalar(
+                select(Recipe.current_version_id).where(Recipe.id == created.recipe_id)
+            )
+            == published.recipe_version_id
+        )
+        assert (
+            connection.scalar(
+                select(RecipeVersion.based_on_version_id).where(
+                    RecipeVersion.id == published.recipe_version_id
+                )
+            )
+            == created.recipe_version_id
+        )
+
+
+def test_publish_preserves_recipe_root_author_for_a_different_member(
+    service_database: ServiceDatabase,
+) -> None:
+    created = asyncio.run(
+        create_recipe(
+            service_database.sessions, context(service_database), recipe_command(service_database)
+        )
+    )
+    publisher_id, installation_id = uuid4(), uuid4()
+    with service_database.sync_engine.begin() as connection:
+        connection.execute(
+            insert(User).values(
+                id=publisher_id,
+                display_name="Second recipe member",
+                verified_email="second@example.test",
+                normalized_email="second@example.test",
+            )
+        )
+        connection.execute(
+            insert(ClientInstallation).values(
+                id=installation_id, user_id=publisher_id, installation_kind="browser"
+            )
+        )
+        connection.execute(
+            insert(OrganizationMembership).values(
+                organization_id=service_database.organization_id,
+                user_id=publisher_id,
+                invited_email="second@example.test",
+                role="member",
+                state="active",
+                invited_by_user_id=service_database.actor_id,
+                claimed_at=datetime.now(UTC),
+            )
+        )
+    result = asyncio.run(
+        publish_recipe_version(
+            service_database.sessions,
+            ExecutionContext(publisher_id, installation_id),
+            PublishRecipeVersionCommand(
+                mutation_id=uuid4(),
+                recipe_id=created.recipe_id,
+                recipe_version_id=uuid4(),
+                based_on_version_id=created.recipe_version_id,
+                organization_id=service_database.organization_id,
+                name="Second member version",
+                scaling_unit_id=service_database.person_id,
+                base_scaling_amount=Decimal("12"),
+                client_wall_time=datetime.now(UTC),
+                ingredient_lines=(),
+            ),
+        )
+    )
+    with service_database.sync_engine.connect() as connection:
+        record = connection.scalar(
+            select(OrganizationChange.payload).where(
+                OrganizationChange.mutation_id == result.mutation_id,
+                OrganizationChange.entity_kind == "recipe",
+            )
+        )
+    assert record is not None
+    assert record["record"]["created_by_user_id"] == str(service_database.actor_id)

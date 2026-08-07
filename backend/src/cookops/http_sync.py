@@ -21,7 +21,11 @@ from cookops.application.receipts import (
     SetReceiptLifecycleCommand,
     UpdateReceiptCommand,
 )
-from cookops.application.recipes import CreateRecipeCommand, RecipeIngredientLineInput
+from cookops.application.recipes import (
+    CreateRecipeCommand,
+    PublishRecipeVersionCommand,
+    RecipeIngredientLineInput,
+)
 from cookops.application.scheduled_recipe_moves import MoveScheduledRecipeCommand
 from cookops.application.scheduled_recipes import ScheduleRecipeCommand
 from cookops.application.shopping_lists import (
@@ -298,6 +302,10 @@ class CreateRecipePayload(BaseModel):
         if value is not None and not isinstance(value, str):
             raise ValueError("must be a decimal string or null")
         return value
+
+
+class PublishRecipeVersionPayload(CreateRecipePayload):
+    based_on_version_id: UUID
 
 
 class InitialIngredientPricePayload(BaseModel):
@@ -612,6 +620,38 @@ def _push_command(command: PushCommandRequest, organization_id: UUID) -> SyncCom
                 estimated_diners_per_scaling_unit=(
                     recipe_payload.estimated_diners_per_scaling_unit
                 ),
+                round_suggestions_up=recipe_payload.round_suggestions_up,
+                logical_operation_id=recipe_payload.logical_operation_id,
+            )
+        if command.command_kind == "recipe.publish_version":
+            recipe_payload = PublishRecipeVersionPayload.model_validate(command.payload)
+            return PublishRecipeVersionCommand(
+                mutation_id=command.mutation_id,
+                recipe_id=recipe_payload.recipe_id,
+                recipe_version_id=recipe_payload.recipe_version_id,
+                based_on_version_id=recipe_payload.based_on_version_id,
+                organization_id=organization_id,
+                name=recipe_payload.name,
+                scaling_unit_id=recipe_payload.scaling_unit_id,
+                base_scaling_amount=recipe_payload.base_scaling_amount,
+                client_wall_time=command.client_wall_time,
+                ingredient_lines=tuple(
+                    RecipeIngredientLineInput(
+                        id=line.id,
+                        line_key=line.line_key,
+                        ingredient_version_id=line.ingredient_version_id,
+                        base_quantity=line.base_quantity,
+                        position_key=line.position_key,
+                        scaling_behavior=line.scaling_behavior,
+                        include_in_portion_weight=line.include_in_portion_weight,
+                        preferred_display_unit_id=line.preferred_display_unit_id,
+                        note=line.note,
+                    )
+                    for line in recipe_payload.ingredient_lines
+                ),
+                description=recipe_payload.description,
+                recipe_tag_ids=recipe_payload.recipe_tag_ids,
+                estimated_diners_per_scaling_unit=recipe_payload.estimated_diners_per_scaling_unit,
                 round_suggestions_up=recipe_payload.round_suggestions_up,
                 logical_operation_id=recipe_payload.logical_operation_id,
             )

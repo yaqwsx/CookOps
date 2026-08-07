@@ -1,12 +1,26 @@
 import type { CanonicalRecord } from "./local-db";
+import {
+  readIngredientCatalog,
+  type CatalogIngredient,
+} from "./ingredient-catalog";
 import { readVisibleRecords } from "./visible-records";
 
 export type CatalogRecipe = {
   id: string;
+  versionId: string;
   name: string;
   description: string | null;
   scalingUnitId: string;
   baseScalingAmount: string;
+  ingredientLines: {
+    id: string;
+    ingredientVersionId: string;
+    baseQuantity: string;
+    scalingBehavior: "proportional" | "fixed";
+    includeInPortionWeight: boolean;
+    note: string;
+  }[];
+  recipeTagIds: string[];
 };
 type ValidCatalogRecipeCandidate = CatalogRecipe & { versionId: string };
 
@@ -14,6 +28,8 @@ export type RecipeScalingUnit = { id: string; name: string };
 export type RecipeCatalogProjection = {
   recipes: CatalogRecipe[];
   scalingUnits: RecipeScalingUnit[];
+  ingredients: CatalogIngredient[];
+  tags: { id: string; name: string }[];
 };
 
 const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -30,11 +46,23 @@ export async function readRecipeCatalog(
   organizationId: string,
 ): Promise<RecipeCatalogProjection> {
   if (!uuid.test(userId) || !uuid.test(organizationId))
-    return { recipes: [], scalingUnits: [] };
-  const [recipeRecords, versionRecords, unitRecords] = await Promise.all([
+    return { recipes: [], scalingUnits: [], ingredients: [], tags: [] };
+  const [
+    recipeRecords,
+    versionRecords,
+    unitRecords,
+    tagRecords,
+    ingredientCatalog,
+    lineRecords,
+    versionTagRecords,
+  ] = await Promise.all([
     readVisibleRecords(userId, organizationId, "recipe"),
     readVisibleRecords(userId, organizationId, "recipe_version"),
     readVisibleRecords(userId, organizationId, "unit_definition"),
+    readVisibleRecords(userId, organizationId, "recipe_tag"),
+    readIngredientCatalog(userId, organizationId),
+    readVisibleRecords(userId, organizationId, "recipe_ingredient_line"),
+    readVisibleRecords(userId, organizationId, "recipe_version_tag"),
   ]);
   const versions = new Map(
     versionRecords
@@ -66,6 +94,35 @@ export async function readRecipeCatalog(
       const scalingUnitId = text(version ?? record, "scaling_unit_id");
       const baseScalingAmount = text(version ?? record, "base_scaling_amount");
       const description = (version ?? record).fields.description;
+      const ingredientLines = version
+        ? lineRecords
+            .filter(
+              (line) =>
+                text(line, "recipe_version_id") === versionId &&
+                typeof text(line, "ingredient_version_id") === "string" &&
+                decimal.test(text(line, "base_quantity") ?? "") &&
+                (line.fields.scaling_behavior === "proportional" ||
+                  line.fields.scaling_behavior === "fixed") &&
+                typeof line.fields.include_in_portion_weight === "boolean",
+            )
+            .map((line) => ({
+              id: line.entityId,
+              ingredientVersionId: text(line, "ingredient_version_id") ?? "",
+              baseQuantity: text(line, "base_quantity") ?? "0",
+              scalingBehavior: line.fields.scaling_behavior as
+                | "proportional"
+                | "fixed",
+              includeInPortionWeight: line.fields
+                .include_in_portion_weight as boolean,
+              note: text(line, "note") ?? "",
+            }))
+        : [];
+      const recipeTagIds = version
+        ? versionTagRecords
+            .filter((tag) => text(tag, "recipe_version_id") === versionId)
+            .map((tag) => text(tag, "recipe_tag_id"))
+            .filter((tag): tag is string => Boolean(tag && uuid.test(tag)))
+        : [];
       return {
         id: record.entityId,
         versionId,
@@ -73,6 +130,8 @@ export async function readRecipeCatalog(
         scalingUnitId,
         baseScalingAmount,
         description,
+        ingredientLines,
+        recipeTagIds,
       };
     })
     .filter((recipe): recipe is ValidCatalogRecipeCandidate =>
@@ -92,7 +151,7 @@ export async function readRecipeCatalog(
       (left, right) =>
         left.name.localeCompare(right.name) || left.id.localeCompare(right.id),
     )
-    .map(({ versionId: _versionId, ...recipe }) => recipe);
+    .map((recipe) => recipe);
   const scalingUnits = unitRecords
     .filter((record) => {
       const owner = record.fields.organization_id;
@@ -112,5 +171,20 @@ export async function readRecipeCatalog(
       (left, right) =>
         left.name.localeCompare(right.name) || left.id.localeCompare(right.id),
     );
-  return { recipes, scalingUnits };
+  const tags = tagRecords
+    .filter(
+      (record) =>
+        record.lifecycle === "active" &&
+        text(record, "organization_id") === organizationId,
+    )
+    .map((record) => ({ id: record.entityId, name: text(record, "name") }))
+    .filter((tag): tag is { id: string; name: string } =>
+      Boolean(uuid.test(tag.id) && tag.name),
+    );
+  return {
+    recipes,
+    scalingUnits,
+    ingredients: ingredientCatalog.ingredients,
+    tags,
+  };
 }

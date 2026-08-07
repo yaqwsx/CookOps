@@ -7,6 +7,10 @@ import {
   type RecipeCatalogProjection,
 } from "./recipe-catalog";
 import { queueRecipeCreate, type RecipeCreateInput } from "./recipe-create";
+import {
+  queueRecipeVersionPublish,
+  type RecipeVersionInput,
+} from "./recipe-publish";
 import { pullOrganization, SyncRequestError } from "./sync-bootstrap";
 
 type CatalogState =
@@ -143,6 +147,210 @@ function RecipeCreateForm({
   );
 }
 
+function RecipeEditor({
+  catalog,
+  recipe,
+  organizationId,
+  userId,
+}: {
+  catalog: RecipeCatalogProjection;
+  recipe: RecipeCatalogProjection["recipes"][number];
+  organizationId: string;
+  userId: string;
+}) {
+  const { t } = useTranslation();
+  const [open, setOpen] = useState(false);
+  const [input, setInput] = useState<RecipeVersionInput>(() => ({
+    recipeId: recipe.id,
+    basedOnVersionId: recipe.versionId,
+    name: recipe.name,
+    description: recipe.description ?? "",
+    scalingUnitId: recipe.scalingUnitId,
+    baseScalingAmount: recipe.baseScalingAmount,
+    ingredientLines: recipe.ingredientLines,
+    recipeTagIds: recipe.recipeTagIds,
+  }));
+  const [error, setError] = useState<string>();
+  const [saved, setSaved] = useState(false);
+  useEffect(
+    () =>
+      setInput((current) => ({
+        ...current,
+        recipeId: recipe.id,
+        basedOnVersionId: recipe.versionId,
+      })),
+    [recipe.id, recipe.versionId],
+  );
+  if (!open)
+    return (
+      <button onClick={() => setOpen(true)} type="button">
+        {t("recipesCatalog.edit")}
+      </button>
+    );
+  const change = (field: keyof RecipeVersionInput, value: string) =>
+    setInput((current) => ({ ...current, [field]: value }));
+  async function submit(event: React.FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    setError(undefined);
+    setSaved(false);
+    try {
+      await queueRecipeVersionPublish(userId, organizationId, input);
+      setSaved(true);
+      setOpen(false);
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : "unavailable");
+    }
+  }
+  return (
+    <form className="recipe-create" onSubmit={(event) => void submit(event)}>
+      <h4>{t("recipesCatalog.editHeading")}</h4>
+      <label>
+        {t("recipesCatalog.name")}
+        <input
+          maxLength={200}
+          onChange={(event) => change("name", event.target.value)}
+          required
+          value={input.name}
+        />
+      </label>
+      <label>
+        {t("recipesCatalog.scalingUnit")}
+        <select
+          onChange={(event) => change("scalingUnitId", event.target.value)}
+          value={input.scalingUnitId}
+        >
+          {catalog.scalingUnits.map((unit) => (
+            <option key={unit.id} value={unit.id}>
+              {unit.name}
+            </option>
+          ))}
+        </select>
+      </label>
+      <label>
+        {t("recipesCatalog.baseScalingAmount")}
+        <input
+          inputMode="decimal"
+          onChange={(event) => change("baseScalingAmount", event.target.value)}
+          required
+          value={input.baseScalingAmount}
+        />
+      </label>
+      <label className="recipe-create__description">
+        {t("recipesCatalog.description")}
+        <textarea
+          onChange={(event) => change("description", event.target.value)}
+          value={input.description}
+        />
+      </label>
+      <fieldset>
+        <legend>{t("recipesCatalog.ingredients")}</legend>
+        {input.ingredientLines.map((line, index) => (
+          <div key={line.id}>
+            <select
+              aria-label={t("recipesCatalog.ingredient")}
+              onChange={(event) =>
+                setInput((current) => ({
+                  ...current,
+                  ingredientLines: current.ingredientLines.map(
+                    (item, itemIndex) =>
+                      itemIndex === index
+                        ? { ...item, ingredientVersionId: event.target.value }
+                        : item,
+                  ),
+                }))
+              }
+              value={line.ingredientVersionId}
+            >
+              {catalog.ingredients.map((ingredient) => (
+                <option key={ingredient.id} value={ingredient.versionId}>
+                  {ingredient.name}
+                </option>
+              ))}
+            </select>
+            <input
+              aria-label={t("recipesCatalog.quantity")}
+              inputMode="decimal"
+              onChange={(event) =>
+                setInput((current) => ({
+                  ...current,
+                  ingredientLines: current.ingredientLines.map(
+                    (item, itemIndex) =>
+                      itemIndex === index
+                        ? { ...item, baseQuantity: event.target.value }
+                        : item,
+                  ),
+                }))
+              }
+              value={line.baseQuantity}
+            />
+            <button
+              onClick={() =>
+                setInput((current) => ({
+                  ...current,
+                  ingredientLines: current.ingredientLines.filter(
+                    (_, itemIndex) => itemIndex !== index,
+                  ),
+                }))
+              }
+              type="button"
+            >
+              {t("recipesCatalog.removeLine")}
+            </button>
+          </div>
+        ))}
+      </fieldset>
+      <button
+        disabled={!catalog.ingredients.length}
+        onClick={() =>
+          setInput((current) => ({
+            ...current,
+            ingredientLines: [
+              ...current.ingredientLines,
+              {
+                id: crypto.randomUUID(),
+                ingredientVersionId: catalog.ingredients[0]?.versionId ?? "",
+                baseQuantity: "0",
+                scalingBehavior: "proportional",
+                includeInPortionWeight: true,
+                note: "",
+              },
+            ],
+          }))
+        }
+        type="button"
+      >
+        {t("recipesCatalog.addLine")}
+      </button>
+      <fieldset>
+        <legend>{t("recipesCatalog.tags")}</legend>
+        {catalog.tags.map((tag) => (
+          <label key={tag.id}>
+            <input
+              checked={input.recipeTagIds.includes(tag.id)}
+              onChange={(event) =>
+                setInput((current) => ({
+                  ...current,
+                  recipeTagIds: event.target.checked
+                    ? [...current.recipeTagIds, tag.id]
+                    : current.recipeTagIds.filter((id) => id !== tag.id),
+                }))
+              }
+              type="checkbox"
+            />
+            {tag.name}
+          </label>
+        ))}
+      </fieldset>
+      {error ? <p role="alert">{t(`recipesCatalog.errors.${error}`)}</p> : null}
+      {saved ? <p role="status">{t("recipesCatalog.saved")}</p> : null}
+      <button type="submit">{t("recipesCatalog.publish")}</button>
+      <button onClick={() => setOpen(false)} type="button">
+        {t("recipesCatalog.cancel")}
+      </button>
+    </form>
+  );
+}
+
 export function RecipeCatalog({
   organizationId,
   userId,
@@ -228,6 +436,12 @@ export function RecipeCatalog({
                 })}
               </p>
               {recipe.description ? <p>{recipe.description}</p> : null}
+              <RecipeEditor
+                catalog={state.catalog}
+                organizationId={organizationId}
+                recipe={recipe}
+                userId={userId}
+              />
             </li>
           ))}
         </ul>

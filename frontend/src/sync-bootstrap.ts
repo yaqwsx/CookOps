@@ -7,6 +7,7 @@ import {
 } from "./local-db";
 import { replayShoppingOperation } from "./shopping-operations";
 import { replayRecipeCreate } from "./recipe-create";
+import { replayRecipeVersionPublish } from "./recipe-publish";
 import { replayIngredientCreate } from "./ingredient-create";
 import { replayReceiptCommand } from "./receipt-metadata";
 
@@ -231,6 +232,9 @@ async function replayOptimisticCommands(
     }
     if (command.commandType === "recipe.create") {
       await replayRecipeCreate(userId, organizationId, command);
+    }
+    if (command.commandType === "recipe.publish_version") {
+      await replayRecipeVersionPublish(userId, organizationId, command);
     }
     if (command.commandType === "ingredient.create") {
       await replayIngredientCreate(userId, organizationId, command);
