@@ -202,17 +202,17 @@ export async function dispatchOutbox(
     now = () => new Date(),
   }: DispatchOutboxOptions,
 ): Promise<void> {
+  if (!userId) {
+    throw new Error("Authenticated user ID is required for synchronization.");
+  }
   const pending = await localDb.outbox
-    .where("[organizationId+state]")
-    .equals([organizationId, "pending"])
+    .where("[userId+organizationId+state]")
+    .equals([userId, organizationId, "pending"])
     .toArray();
   if (pending.length === 0) return;
 
   let clientInstallationId = suppliedInstallationId;
   if (!clientInstallationId) {
-    if (!userId) {
-      throw new Error("Authenticated user ID is required for synchronization.");
-    }
     clientInstallationId = await readOrCreateBrowserInstallationId(userId);
   }
   const sizingSentAt = now().toISOString();
@@ -277,8 +277,8 @@ export async function dispatchOutbox(
       );
     }
     const failed = await localDb.outbox
-      .where("[organizationId+state]")
-      .equals([organizationId, "failed"])
+      .where("[userId+organizationId+state]")
+      .equals([userId, organizationId, "failed"])
       .count();
     await updateMetadata(organizationId, {
       activity: failed ? "blocked" : "caughtUp",

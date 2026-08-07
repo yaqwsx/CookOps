@@ -5,6 +5,7 @@ import { dispatchOutbox } from "./sync-dispatcher";
 
 const organizationId = "organization-a";
 const installationId = "installation-a";
+const userId = "user-a";
 
 async function clearLocalDatabase() {
   await localDb.transaction(
@@ -24,6 +25,7 @@ async function addCommand(
 ) {
   await localDb.outbox.add({
     id,
+    userId,
     organizationId,
     commandType: "event.create",
     payload,
@@ -75,6 +77,7 @@ describe("dispatchOutbox", () => {
     );
 
     await dispatchOutbox(organizationId, {
+      userId,
       clientInstallationId: installationId,
       fetch: send,
       now: () => new Date("2026-08-07T11:00:00.000Z"),
@@ -123,6 +126,7 @@ describe("dispatchOutbox", () => {
     );
 
     await dispatchOutbox(organizationId, {
+      userId,
       clientInstallationId: installationId,
       fetch: send,
     });
@@ -160,6 +164,7 @@ describe("dispatchOutbox", () => {
     });
 
     await dispatchOutbox(organizationId, {
+      userId,
       clientInstallationId: installationId,
       fetch: send,
     });
@@ -181,6 +186,7 @@ describe("dispatchOutbox", () => {
 
     await expect(
       dispatchOutbox(organizationId, {
+        userId,
         clientInstallationId: installationId,
         fetch: send,
       }),
@@ -218,6 +224,7 @@ describe("dispatchOutbox", () => {
 
     await expect(
       dispatchOutbox(organizationId, {
+        userId,
         clientInstallationId: installationId,
         fetch: send,
       }),
@@ -233,6 +240,7 @@ describe("dispatchOutbox", () => {
     const send = vi.fn();
 
     await dispatchOutbox(organizationId, {
+      userId,
       clientInstallationId: installationId,
       fetch: send,
     });

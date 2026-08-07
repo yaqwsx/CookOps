@@ -14,6 +14,7 @@ import { loadGoogleIdentityServices } from "./google-identity-services";
 import type { SupportedLocale } from "./i18n";
 import { runtimeAuthentication } from "./runtime-config";
 import { SynchronizationStatus } from "./synchronization-status";
+import { useOutboxSynchronization } from "./sync-lifecycle";
 import "./app.css";
 
 const sections = ["events", "recipes", "ingredients", "settings"] as const;
@@ -275,6 +276,7 @@ function AuthenticatedShell({
 }) {
   const { t } = useTranslation();
   const [logoutError, setLogoutError] = useState(false);
+  useOutboxSynchronization(identity.id);
 
   async function signOut() {
     setLogoutError(false);
@@ -303,7 +305,7 @@ function AuthenticatedShell({
         </nav>
 
         <div className="header-actions">
-          <SynchronizationStatus />
+          <SynchronizationStatus userId={identity.id} />
           <LocalePicker />
           <div className="user-menu">
             <span className="identity-name">{identity.display_name}</span>

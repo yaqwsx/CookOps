@@ -50,6 +50,7 @@ describe("local synchronization database", () => {
     await localDb.outbox.bulkAdd([
       {
         id: "mutation-a",
+        userId: "user-a",
         organizationId: "organization-a",
         commandType: "event.update",
         payload: { name: "Weekend cook" },
@@ -59,6 +60,7 @@ describe("local synchronization database", () => {
       },
       {
         id: "mutation-b",
+        userId: "user-a",
         organizationId: "organization-b",
         commandType: "recipe.publish",
         payload: { name: "Soup" },

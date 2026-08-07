@@ -49,6 +49,7 @@ describe("SynchronizationStatus", () => {
     );
     await localDb.outbox.add({
       id: "mutation-a",
+      userId: "user-a",
       organizationId: "organization-a",
       commandType: "event.update",
       payload: {},

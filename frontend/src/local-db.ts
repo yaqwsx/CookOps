@@ -33,6 +33,7 @@ export interface CanonicalRecord {
 
 export interface OutboxCommand {
   id: string;
+  userId: string;
   organizationId: string;
   commandType: string;
   payload: Record<string, unknown>;
@@ -86,6 +87,18 @@ export class CookOpsDatabase extends Dexie {
       syncMetadata: "organizationId",
     });
     this.version(2).stores({ browserInstallation: "id" });
+    this.version(3)
+      .stores({
+        outbox:
+          "id, userId, organizationId, [userId+state], [userId+organizationId+state], createdAt",
+      })
+      .upgrade((transaction) =>
+        transaction.table("outbox").toCollection().modify({
+          userId: "",
+          state: "failed",
+          failureReason: "owner_identity_required",
+        }),
+      );
   }
 }
 
@@ -140,6 +153,7 @@ function latestContact(
 
 export async function readSynchronizationSummary(
   organizationId?: string,
+  userId?: string,
 ): Promise<SynchronizationSummary> {
   const inOrganization = <T extends { organizationId: string }>(entry: T) =>
     organizationId === undefined || entry.organizationId === organizationId;
@@ -148,7 +162,11 @@ export async function readSynchronizationSummary(
     localDb.pendingUploads.toArray(),
     localDb.syncMetadata.toArray(),
   ]);
-  const scopedCommands = commands.filter(inOrganization);
+  const scopedCommands = commands.filter(
+    (command) =>
+      inOrganization(command) &&
+      (userId === undefined || command.userId === userId),
+  );
   const scopedUploads = uploads.filter(inOrganization);
   const scopedMetadata = metadata.filter(inOrganization);
 

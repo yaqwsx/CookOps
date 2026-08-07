@@ -27,13 +27,13 @@ function useOnline() {
   return online;
 }
 
-function useSynchronizationSummary(organizationId?: string) {
+function useSynchronizationSummary(organizationId?: string, userId?: string) {
   const [summary, setSummary] = useState<SynchronizationSummary | null>(null);
   const [storageUnavailable, setStorageUnavailable] = useState(false);
 
   useEffect(() => {
     const subscription = liveQuery(() =>
-      readSynchronizationSummary(organizationId),
+      readSynchronizationSummary(organizationId, userId),
     ).subscribe({
       next: (nextSummary) => {
         setSummary(nextSummary);
@@ -45,20 +45,24 @@ function useSynchronizationSummary(organizationId?: string) {
       },
     });
     return () => subscription.unsubscribe();
-  }, [organizationId]);
+  }, [organizationId, userId]);
 
   return { storageUnavailable, summary };
 }
 
 export function SynchronizationStatus({
   organizationId,
+  userId,
 }: {
   organizationId?: string;
+  userId?: string;
 }) {
   const { t } = useTranslation();
   const online = useOnline();
-  const { storageUnavailable, summary } =
-    useSynchronizationSummary(organizationId);
+  const { storageUnavailable, summary } = useSynchronizationSummary(
+    organizationId,
+    userId,
+  );
   const pendingCount =
     (summary?.pendingCommands ?? 0) + (summary?.pendingUploads ?? 0);
   const failedCount =
