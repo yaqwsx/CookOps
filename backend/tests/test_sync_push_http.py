@@ -32,9 +32,7 @@ def sync_database() -> Iterator[SyncDatabase]:
     registration mechanism during full collection.
     """
 
-    setup = cast(
-        Callable[[], Iterator[SyncDatabase]], _sync_database_fixture.__wrapped__
-    )
+    setup = cast(Callable[[], Iterator[SyncDatabase]], _sync_database_fixture.__wrapped__)
     yield from setup()
 
 
@@ -418,19 +416,23 @@ def test_push_registers_an_authenticated_browser_installation_once(
 
 
 @pytest.mark.parametrize(
-    ("request_sent_at", "status_code", "has_warning"),
+    ("offset_minutes", "status_code", "has_warning"),
     [
-        (datetime.now(UTC).isoformat(), 200, False),
-        ((datetime.now(UTC) + timedelta(minutes=6)).isoformat(), 200, True),
-        ("2026-08-10T12:00:00", 422, False),
+        (0, 200, False),
+        (6, 200, True),
+        (None, 422, False),
     ],
 )
 def test_push_clock_and_timestamp_boundaries_are_safe(
-    sync_database: SyncDatabase, request_sent_at: str, status_code: int, has_warning: bool
+    sync_database: SyncDatabase, offset_minutes: int | None, status_code: int, has_warning: bool
 ) -> None:
     installation_id = _installation(sync_database)
     body = _body(sync_database, installation_id, [])
-    body["request_sent_at"] = request_sent_at
+    body["request_sent_at"] = (
+        (datetime.now(UTC) + timedelta(minutes=offset_minutes)).isoformat()
+        if offset_minutes is not None
+        else "2026-08-10T12:00:00"
+    )
     with TestClient(create_app(_settings()), base_url="https://testserver") as client:
         _sign_in(client, "dummy-member")
         response = client.post("/api/v1/sync/push", json=body)
