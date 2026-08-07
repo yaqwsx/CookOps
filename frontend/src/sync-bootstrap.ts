@@ -233,7 +233,12 @@ async function replayOptimisticCommands(
         entityId,
         recordSchemaVersion: 1,
         lifecycle: "active",
-        fields: { ...command.payload, id: entityId, lifecycle: "active" },
+        fields: {
+          ...command.payload,
+          id: entityId,
+          organization_id: organizationId,
+          lifecycle: "active",
+        },
         fieldClocks: {
           optimistic: { mutationId: command.id, actionAt: command.actionAt },
         },

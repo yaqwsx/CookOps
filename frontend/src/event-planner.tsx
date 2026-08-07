@@ -153,11 +153,13 @@ export function EventPlanner({
   organizationId,
   userId,
   onUnauthenticated,
+  onOpenShopping,
 }: {
   eventId: string;
   organizationId: string;
   userId: string;
   onUnauthenticated: () => void;
+  onOpenShopping?: () => void;
 }) {
   const { t } = useTranslation();
   const [state, setState] = useState<PlannerState>("loading");
@@ -217,6 +219,11 @@ export function EventPlanner({
       ) : null}
       {state === "offline" ? <p role="status">{t("planner.offline")}</p> : null}
       <h2 id="planner-heading">{t("planner.heading")}</h2>
+      {onOpenShopping ? (
+        <button onClick={onOpenShopping} type="button">
+          {t("planner.shopping")}
+        </button>
+      ) : null}
       <AddRecipe
         eventId={eventId}
         organizationId={organizationId}

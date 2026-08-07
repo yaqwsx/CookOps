@@ -18,6 +18,7 @@ import {
 import { loadGoogleIdentityServices } from "./google-identity-services";
 import { EventOverview } from "./events-overview";
 import { EventPlanner } from "./event-planner";
+import { EventShopping } from "./event-shopping";
 import type { SupportedLocale } from "./i18n";
 import { runtimeAuthentication } from "./runtime-config";
 import { SynchronizationStatus } from "./synchronization-status";
@@ -28,8 +29,8 @@ const sections = ["events", "recipes", "ingredients", "settings"] as const;
 
 const organizationPath =
   /^\/organizations\/([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})(?:\/|$)/i;
-const plannerPath =
-  /^\/organizations\/([0-9a-f-]{36})\/events\/([0-9a-f-]{36})\/planner$/i;
+const eventSectionPath =
+  /^\/organizations\/([0-9a-f-]{36})\/events\/([0-9a-f-]{36})\/(planner|shopping)(?:\/([0-9a-f-]{36}))?$/i;
 
 function eventOverviewPathFor(organizationId: string) {
   return `/organizations/${organizationId}/events`;
@@ -367,7 +368,16 @@ function AuthenticatedShell({
     setPathname(nextPath);
   }
 
-  const plannerEventId = pathname.match(plannerPath)?.[2]?.toLowerCase();
+  const eventSection = pathname.match(eventSectionPath);
+  const eventId = eventSection?.[2]?.toLowerCase();
+  const eventSectionName = eventSection?.[3]?.toLowerCase();
+  const shoppingListId = eventSection?.[4]?.toLowerCase();
+
+  function openShopping(eventId: string, listId?: string) {
+    const nextPath = `/organizations/${organizationId}/events/${eventId}/shopping${listId ? `/${listId}` : ""}`;
+    window.history.pushState(null, "", nextPath);
+    setPathname(nextPath);
+  }
 
   async function signOut() {
     setLogoutError(false);
@@ -456,11 +466,23 @@ function AuthenticatedShell({
                 {t(`shell.${section}`)}
               </h2>
               {section === "events" && organizationId ? (
-                plannerEventId ? (
+                eventId && eventSectionName === "planner" ? (
                   <EventPlanner
-                    eventId={plannerEventId}
+                    eventId={eventId}
+                    onOpenShopping={() => openShopping(eventId)}
                     onUnauthenticated={onUnauthenticated}
                     organizationId={organizationId}
+                    userId={identity.id}
+                  />
+                ) : eventId && eventSectionName === "shopping" ? (
+                  <EventShopping
+                    eventId={eventId}
+                    onBack={() => openShopping(eventId)}
+                    onOpenList={(listId) => openShopping(eventId, listId)}
+                    onOpenPlanner={() => openEvent(eventId)}
+                    onUnauthenticated={onUnauthenticated}
+                    organizationId={organizationId}
+                    shoppingListId={shoppingListId}
                     userId={identity.id}
                   />
                 ) : (

@@ -445,7 +445,10 @@ h1 {
 .event-workspace,
 .planner-days,
 .planner-day,
-.planner-add {
+.planner-add,
+.event-shopping,
+.shopping-create,
+.shopping-detail {
   display: grid;
   gap: 1rem;
 }
@@ -456,6 +459,131 @@ h1 {
   border: 1px solid #ddd2c2;
   border-radius: 0.6rem;
   background: #fff;
+}
+
+.shopping-create,
+.shopping-detail,
+.shopping-list-index li,
+.shopping-rows li {
+  padding: 1rem;
+  border: 1px solid #ddd2c2;
+  border-radius: 0.6rem;
+  background: #fff;
+}
+
+.shopping-create {
+  display: grid;
+  gap: 1rem;
+}
+
+.shopping-create h3,
+.shopping-create p,
+.shopping-create fieldset,
+.shopping-detail h3,
+.shopping-detail > p,
+.shopping-rows h4,
+.shopping-rows p,
+.shopping-rows dl {
+  margin: 0;
+}
+
+.shopping-create > label {
+  display: grid;
+  gap: 0.35rem;
+  font-weight: 700;
+}
+
+.shopping-create input[type="text"],
+.shopping-create input:not([type]) {
+  width: 100%;
+  min-height: 2.5rem;
+  padding: 0.45rem 0.6rem;
+  border: 1px solid #9d9283;
+  border-radius: 0.5rem;
+  color: inherit;
+  background: white;
+  font: inherit;
+}
+
+.shopping-create fieldset {
+  display: grid;
+  gap: 0.5rem;
+  min-width: 0;
+  padding: 0.75rem;
+  border: 1px solid #ddd2c2;
+  border-radius: 0.5rem;
+}
+
+.shopping-create__source {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.5rem;
+  line-height: 1.4;
+}
+
+.shopping-list-index,
+.shopping-rows {
+  display: grid;
+  gap: 0.75rem;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.shopping-section {
+  display: grid;
+  gap: 0.5rem;
+}
+
+.shopping-section > h4,
+.shopping-rows h5 {
+  margin: 0;
+}
+
+.shopping-list-index li,
+.shopping-rows li {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+}
+
+.shopping-list-index h3,
+.shopping-list-index p {
+  margin: 0;
+}
+
+.shopping-list-index p,
+.shopping-rows p,
+.shopping-rows dt,
+.shopping-detail > p {
+  color: #62584c;
+}
+
+.shopping-detail {
+  display: grid;
+  gap: 1rem;
+}
+
+.shopping-detail__back {
+  justify-self: start;
+}
+
+.shopping-rows dl {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.75rem;
+}
+
+.shopping-rows dl div {
+  display: grid;
+  gap: 0.2rem;
+}
+
+.shopping-rows dd {
+  margin: 0;
+  font-weight: 700;
 }
 
 .event-workspace__summary {
