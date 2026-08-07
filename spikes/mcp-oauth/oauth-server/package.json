@@ -12,11 +12,13 @@
     "test": "node --import tsx --test src/*.test.ts"
   },
   "dependencies": {
-    "oidc-provider": "9.11.2"
+    "oidc-provider": "9.11.2",
+    "pg": "8.22.0"
   },
   "devDependencies": {
     "@types/node": "22.19.9",
     "@types/oidc-provider": "9.11.0",
+    "@types/pg": "8.20.4",
     "tsx": "4.23.9",
     "typescript": "5.9.3"
   }
