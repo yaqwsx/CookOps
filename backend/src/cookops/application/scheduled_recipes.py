@@ -12,6 +12,10 @@ from uuid import UUID
 from sqlalchemy import select, text
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
+from cookops.application.event_prices import (
+    _emit_event_price_snapshots,
+    _prepare_initial_event_price_captures,
+)
 from cookops.application.events import _reserve_change_range
 from cookops.application.organizations import (
     ApplicationServiceError,
@@ -24,10 +28,12 @@ from cookops.persistence.models import (
     Event,
     EventDay,
     EventMealRole,
+    IngredientVersion,
     Mutation,
     OrganizationChange,
     Recipe,
     RecipeVersion,
+    RecipeVersionIngredientLine,
     ScheduledRecipe,
     UnitDefinition,
 )
@@ -370,6 +376,39 @@ async def _load_references(
     )
 
 
+async def _nonzero_recipe_ingredient_ids(
+    session: AsyncSession,
+    *,
+    recipe_version_id: UUID,
+    selected_scale_amount: Decimal,
+    base_scaling_amount: Decimal,
+) -> set[UUID]:
+    """Return resolved ingredients whose scheduled quantity is nonzero."""
+
+    rows = await session.execute(
+        select(
+            IngredientVersion.ingredient_id,
+            RecipeVersionIngredientLine.base_quantity,
+            RecipeVersionIngredientLine.scaling_behavior,
+        )
+        .join(
+            IngredientVersion,
+            IngredientVersion.id == RecipeVersionIngredientLine.ingredient_version_id,
+        )
+        .where(RecipeVersionIngredientLine.recipe_version_id == recipe_version_id)
+    )
+    return {
+        ingredient_id
+        for ingredient_id, base_quantity, scaling_behavior in rows
+        if (
+            base_quantity
+            if scaling_behavior == "fixed"
+            else base_quantity * selected_scale_amount / base_scaling_amount
+        )
+        > 0
+    }
+
+
 def _result_payload(result: ScheduleRecipeResult) -> dict[str, object]:
     return {
         "scheduled_recipe": {
@@ -602,8 +641,34 @@ async def schedule_recipe(
             else:
                 assert references is not None
                 selected_scale_amount = _suggested_scale(prepared, references)
+                event = await session.scalar(
+                    select(Event)
+                    .where(
+                        Event.id == prepared.event_id,
+                        Event.organization_id == prepared.organization_id,
+                        Event.lifecycle == "active",
+                    )
+                    .with_for_update(of=Event)
+                )
+                if event is None:
+                    raise RuntimeError("Validated active event disappeared while scheduling")
+                initial_price_captures = await _prepare_initial_event_price_captures(
+                    session,
+                    organization_id=prepared.organization_id,
+                    event=event,
+                    ingredient_ids=await _nonzero_recipe_ingredient_ids(
+                        session,
+                        recipe_version_id=prepared.recipe_version_id,
+                        selected_scale_amount=selected_scale_amount,
+                        base_scaling_amount=references.base_scaling_amount,
+                    ),
+                    actor_user_id=context.actor_user_id,
+                )
                 first_change_sequence, last_change_sequence = await _reserve_change_range(
-                    session, prepared.organization_id, prepared.mutation_id, 1
+                    session,
+                    prepared.organization_id,
+                    prepared.mutation_id,
+                    1 + len(initial_price_captures) * 2,
                 )
                 result = ScheduleRecipeResult(
                     mutation_id=prepared.mutation_id,
@@ -668,6 +733,20 @@ async def schedule_recipe(
                         first_change_sequence=first_change_sequence,
                         last_change_sequence=last_change_sequence,
                     )
+                )
+                await session.flush()
+                mutation = await session.get(Mutation, prepared.mutation_id)
+                if mutation is None:
+                    raise RuntimeError("Scheduled recipe mutation was not persisted")
+                await _emit_event_price_snapshots(
+                    session,
+                    captures=initial_price_captures,
+                    organization_id=prepared.organization_id,
+                    event=event,
+                    actor_user_id=context.actor_user_id,
+                    client_wall_time=prepared.client_wall_time,
+                    originating_mutation=mutation,
+                    first_change_sequence=first_change_sequence + 1,
                 )
     if deferred_error is not None:
         raise deferred_error

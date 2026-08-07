@@ -22,6 +22,7 @@ from cookops.persistence.models import (
     Event,
     EventDay,
     EventMealRole,
+    FieldClock,
     Mutation,
     Organization,
     OrganizationChange,
@@ -219,9 +220,19 @@ def test_create_event_copies_current_presets_and_range_days(
                 Event.budget_amount,
                 Event.currency,
                 Event.created_by_user_id,
+                Event.created_at,
             ).where(Event.id == command.event_id)
         ).one()
-        assert event == ("Výprava", 42, Decimal("1250.50"), "EUR", service_database.actor_id)
+        assert event[:5] == ("Výprava", 42, Decimal("1250.50"), "EUR", service_database.actor_id)
+        event_created_at = event[5]
+        attendance_clock = connection.execute(
+            select(FieldClock.winning_client_wall_time, FieldClock.winning_mutation_id).where(
+                FieldClock.organization_id == service_database.organization_id,
+                FieldClock.entity_kind == "event",
+                FieldClock.entity_id == command.event_id,
+                FieldClock.field_name == "base_expected_attendance",
+            )
+        ).one()
         days = connection.execute(
             select(EventDay.calendar_date, EventDay.provenance, EventDay.is_visible)
             .where(EventDay.event_id == command.event_id)
@@ -349,9 +360,67 @@ def test_create_event_copies_current_presets_and_range_days(
                 "base_expected_attendance": 42,
                 "budget_amount": "1250.5",
                 "currency": "EUR",
+                "created_at": event_created_at.isoformat(),
+                "lifecycle": "active",
+                "current_archive_snapshot_id": None,
+                "archived_at": None,
+                "archived_by_user_id": None,
                 "created_by_user_id": str(service_database.actor_id),
+                "field_clocks": {
+                    "base_expected_attendance": {
+                        "winning_client_wall_time": (
+                            attendance_clock.winning_client_wall_time.isoformat()
+                        ),
+                        "winning_mutation_id": str(attendance_clock.winning_mutation_id),
+                    }
+                },
             },
         }
+        day_record = changes[1].payload["record"]
+        assert set(day_record) == {
+            "id",
+            "event_id",
+            "calendar_date",
+            "note",
+            "is_visible",
+            "provenance",
+            "created_at",
+            "created_by_user_id",
+            "retired_at",
+            "retired_by_user_id",
+            "field_clocks",
+        }
+        assert day_record["id"] == str(result.days[0].id)
+        day_created_at = connection.scalar(
+            select(EventDay.created_at).where(EventDay.id == result.days[0].id)
+        )
+        assert day_created_at is not None
+        assert day_record["created_at"] == day_created_at.isoformat()
+        assert day_record["retired_by_user_id"] is None
+        assert day_record["field_clocks"] == {"note": None, "is_visible": None}
+        meal_role_record = changes[4].payload["record"]
+        assert set(meal_role_record) == {
+            "id",
+            "event_id",
+            "source_preset_id",
+            "built_in_translation_key",
+            "custom_name",
+            "normalized_custom_name",
+            "position_key",
+            "created_at",
+            "created_by_user_id",
+            "retired_at",
+            "retired_by_user_id",
+            "field_clocks",
+        }
+        assert meal_role_record["id"] == str(result.meal_roles[0].id)
+        meal_role_created_at = connection.scalar(
+            select(EventMealRole.created_at).where(EventMealRole.id == result.meal_roles[0].id)
+        )
+        assert meal_role_created_at is not None
+        assert meal_role_record["created_at"] == meal_role_created_at.isoformat()
+        assert meal_role_record["retired_by_user_id"] is None
+        assert meal_role_record["field_clocks"] == {"position_key": None}
     assert all(role.source_preset_id is not None for role in result.meal_roles)
     with service_database.sync_engine.begin() as connection:
         connection.execute(

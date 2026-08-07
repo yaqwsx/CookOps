@@ -634,38 +634,30 @@ def _error_payload(error: ApplicationServiceError) -> dict[str, object]:
 
 
 def _event_change_records(
-    command: _PreparedCommand,
-    currency: str,
-    days: tuple[EventDayResult, ...],
-    role_records: tuple[tuple[EventMealRoleResult, str | None], ...],
-    actor_user_id: UUID,
+    event: Event,
+    days: tuple[EventDay, ...],
+    meal_roles: tuple[EventMealRole, ...],
+    attendance_clock: FieldClock,
 ) -> tuple[tuple[str, UUID, dict[str, object]], ...]:
-    event_record: dict[str, object] = {
-        "id": str(command.event_id),
-        "organization_id": str(command.organization_id),
-        "name": command.name,
-        "start_date": command.start_date.isoformat(),
-        "end_date": command.end_date.isoformat(),
-        "location": command.location,
-        "general_note": command.general_note,
-        "base_expected_attendance": command.base_expected_attendance,
-        "budget_amount": _canonical_decimal_string(command.budget_amount),
-        "currency": currency,
-        "created_by_user_id": str(actor_user_id),
-    }
+    event_record = _event_change_record(event, attendance_clock)[2]
     day_records: tuple[tuple[str, UUID, dict[str, object]], ...] = tuple(
         (
             "event_day",
             day.id,
             {
                 "id": str(day.id),
-                "event_id": str(command.event_id),
+                "event_id": str(event.id),
                 "calendar_date": day.calendar_date.isoformat(),
-                "note": None,
-                "is_visible": True,
+                "note": day.note,
+                "is_visible": day.is_visible,
                 "provenance": day.provenance,
-                "retired_at": None,
-                "created_by_user_id": str(actor_user_id),
+                "created_at": day.created_at.isoformat(),
+                "created_by_user_id": str(day.created_by_user_id),
+                "retired_at": day.retired_at.isoformat() if day.retired_at else None,
+                "retired_by_user_id": (
+                    str(day.retired_by_user_id) if day.retired_by_user_id else None
+                ),
+                "field_clocks": {"note": None, "is_visible": None},
             },
         )
         for day in days
@@ -673,24 +665,31 @@ def _event_change_records(
     role_change_records: tuple[tuple[str, UUID, dict[str, object]], ...] = tuple(
         (
             "event_meal_role",
-            role.id,
+            meal_role.id,
             {
-                "id": str(role.id),
-                "event_id": str(command.event_id),
+                "id": str(meal_role.id),
+                "event_id": str(event.id),
                 "source_preset_id": (
-                    str(role.source_preset_id) if role.source_preset_id is not None else None
+                    str(meal_role.source_preset_id)
+                    if meal_role.source_preset_id is not None
+                    else None
                 ),
-                "built_in_translation_key": role.built_in_translation_key,
-                "custom_name": role.custom_name,
-                "normalized_custom_name": normalized_custom_name,
-                "position_key": role.position_key,
-                "retired_at": None,
-                "created_by_user_id": str(actor_user_id),
+                "built_in_translation_key": meal_role.built_in_translation_key,
+                "custom_name": meal_role.custom_name,
+                "normalized_custom_name": meal_role.normalized_custom_name,
+                "position_key": meal_role.position_key,
+                "created_at": meal_role.created_at.isoformat(),
+                "created_by_user_id": str(meal_role.created_by_user_id),
+                "retired_at": meal_role.retired_at.isoformat() if meal_role.retired_at else None,
+                "retired_by_user_id": (
+                    str(meal_role.retired_by_user_id) if meal_role.retired_by_user_id else None
+                ),
+                "field_clocks": {"position_key": None},
             },
         )
-        for role, normalized_custom_name in role_records
+        for meal_role in meal_roles
     )
-    return (("event", command.event_id, event_record), *day_records, *role_change_records)
+    return (("event", event.id, event_record), *day_records, *role_change_records)
 
 
 def _retained_error(mutation: Mutation) -> ApplicationServiceError:
@@ -776,7 +775,9 @@ def _field_clock_wins(clock: FieldClock | None, command: _PreparedAttendanceComm
     )
 
 
-def _event_change_record(event: Event) -> tuple[str, UUID, dict[str, object]]:
+def _event_change_record(
+    event: Event, attendance_clock: FieldClock | None = None
+) -> tuple[str, UUID, dict[str, object]]:
     return (
         "event",
         event.id,
@@ -791,6 +792,7 @@ def _event_change_record(event: Event) -> tuple[str, UUID, dict[str, object]]:
             "base_expected_attendance": event.base_expected_attendance,
             "budget_amount": _canonical_decimal_string(event.budget_amount),
             "currency": event.currency,
+            "created_at": event.created_at.isoformat(),
             "lifecycle": event.lifecycle,
             "current_archive_snapshot_id": (
                 str(event.current_archive_snapshot_id)
@@ -802,6 +804,18 @@ def _event_change_record(event: Event) -> tuple[str, UUID, dict[str, object]]:
                 str(event.archived_by_user_id) if event.archived_by_user_id is not None else None
             ),
             "created_by_user_id": str(event.created_by_user_id),
+            "field_clocks": {
+                "base_expected_attendance": (
+                    {
+                        "winning_client_wall_time": (
+                            attendance_clock.winning_client_wall_time.isoformat()
+                        ),
+                        "winning_mutation_id": str(attendance_clock.winning_mutation_id),
+                    }
+                    if attendance_clock is not None
+                    else None
+                )
+            },
         },
     )
 
@@ -943,12 +957,61 @@ async def create_event(
                     ) in presets
                 )
                 roles = tuple(role for role, _ in role_records)
+                event = Event(
+                    id=prepared.event_id,
+                    organization_id=prepared.organization_id,
+                    name=prepared.name,
+                    start_date=prepared.start_date,
+                    end_date=prepared.end_date,
+                    location=prepared.location,
+                    general_note=prepared.general_note,
+                    base_expected_attendance=prepared.base_expected_attendance,
+                    budget_amount=prepared.budget_amount,
+                    currency=currency,
+                    created_by_user_id=context.actor_user_id,
+                )
+                session.add(event)
+                await session.flush()
+                attendance_clock = FieldClock(
+                    organization_id=prepared.organization_id,
+                    entity_kind="event",
+                    entity_id=event.id,
+                    field_name="base_expected_attendance",
+                    winning_client_wall_time=prepared.client_wall_time,
+                    winning_mutation_id=prepared.mutation_id,
+                )
+                session.add(attendance_clock)
+                day_entities = tuple(
+                    EventDay(
+                        id=day.id,
+                        event_id=prepared.event_id,
+                        calendar_date=day.calendar_date,
+                        is_visible=True,
+                        provenance=day.provenance,
+                        created_by_user_id=context.actor_user_id,
+                    )
+                    for day in days
+                )
+                meal_role_entities = tuple(
+                    EventMealRole(
+                        id=role.id,
+                        event_id=prepared.event_id,
+                        source_preset_id=role.source_preset_id,
+                        built_in_translation_key=role.built_in_translation_key,
+                        custom_name=role.custom_name,
+                        normalized_custom_name=normalized_custom_name,
+                        position_key=role.position_key,
+                        created_by_user_id=context.actor_user_id,
+                    )
+                    for role, normalized_custom_name in role_records
+                )
+                session.add_all((*day_entities, *meal_role_entities))
+                await session.flush()
                 change_records = _event_change_records(
-                    prepared,
-                    currency,
-                    days,
-                    role_records,
-                    context.actor_user_id,
+                    event,
+                    day_entities,
+                    meal_role_entities,
+                    attendance_clock,
                 )
                 first_change_sequence, last_change_sequence = await _reserve_change_range(
                     session,
@@ -974,45 +1037,6 @@ async def create_event(
                     last_change_sequence=last_change_sequence,
                     replayed=False,
                 )
-                event = Event(
-                    id=prepared.event_id,
-                    organization_id=prepared.organization_id,
-                    name=prepared.name,
-                    start_date=prepared.start_date,
-                    end_date=prepared.end_date,
-                    location=prepared.location,
-                    general_note=prepared.general_note,
-                    base_expected_attendance=prepared.base_expected_attendance,
-                    budget_amount=prepared.budget_amount,
-                    currency=currency,
-                    created_by_user_id=context.actor_user_id,
-                )
-                session.add(event)
-                await session.flush()
-                session.add_all(
-                    EventDay(
-                        id=day.id,
-                        event_id=prepared.event_id,
-                        calendar_date=day.calendar_date,
-                        is_visible=True,
-                        provenance=day.provenance,
-                        created_by_user_id=context.actor_user_id,
-                    )
-                    for day in days
-                )
-                session.add_all(
-                    EventMealRole(
-                        id=role.id,
-                        event_id=prepared.event_id,
-                        source_preset_id=role.source_preset_id,
-                        built_in_translation_key=role.built_in_translation_key,
-                        custom_name=role.custom_name,
-                        normalized_custom_name=normalized_custom_name,
-                        position_key=role.position_key,
-                        created_by_user_id=context.actor_user_id,
-                    )
-                    for role, normalized_custom_name in role_records
-                )
                 session.add_all(
                     OrganizationChange(
                         organization_id=prepared.organization_id,
@@ -1035,16 +1059,6 @@ async def create_event(
                         outcome_payload=_result_payload(result),
                         first_change_sequence=first_change_sequence,
                         last_change_sequence=last_change_sequence,
-                    )
-                )
-                session.add(
-                    FieldClock(
-                        organization_id=prepared.organization_id,
-                        entity_kind="event",
-                        entity_id=event.id,
-                        field_name="base_expected_attendance",
-                        winning_client_wall_time=prepared.client_wall_time,
-                        winning_mutation_id=prepared.mutation_id,
                     )
                 )
 
@@ -1277,21 +1291,20 @@ async def update_event_base_attendance(
                     for scheduled_recipe in following_recipes:
                         scheduled_recipe.diner_count = prepared.base_expected_attendance
                     if clock is None:
-                        session.add(
-                            FieldClock(
-                                organization_id=prepared.organization_id,
-                                entity_kind="event",
-                                entity_id=event.id,
-                                field_name="base_expected_attendance",
-                                winning_client_wall_time=prepared.client_wall_time,
-                                winning_mutation_id=prepared.mutation_id,
-                            )
+                        clock = FieldClock(
+                            organization_id=prepared.organization_id,
+                            entity_kind="event",
+                            entity_id=event.id,
+                            field_name="base_expected_attendance",
+                            winning_client_wall_time=prepared.client_wall_time,
+                            winning_mutation_id=prepared.mutation_id,
                         )
+                        session.add(clock)
                     else:
                         clock.winning_client_wall_time = prepared.client_wall_time
                         clock.winning_mutation_id = prepared.mutation_id
                     change_records = (
-                        _event_change_record(event),
+                        _event_change_record(event, clock),
                         *(_scheduled_recipe_change_record(recipe) for recipe in following_recipes),
                     )
                     outcome: Literal["accepted", "partially_superseded"] = "accepted"
@@ -1299,7 +1312,7 @@ async def update_event_base_attendance(
                     # Publish the canonical event record so an outbox reconciliation has
                     # a concrete field value even though this action lost the LWW race.
                     following_recipes = ()
-                    change_records = (_event_change_record(event),)
+                    change_records = (_event_change_record(event, clock),)
                     outcome = "partially_superseded"
                 first_change_sequence, last_change_sequence = await _reserve_change_range(
                     session,

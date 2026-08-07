@@ -196,6 +196,12 @@ def test_member_updates_event_attendance_and_only_following_recipes(
             .order_by(OrganizationChange.sequence)
         ).all()
         assert [change.entity_kind for change in changes] == ["event", "scheduled_recipe"]
+        assert changes[0].payload["record"]["field_clocks"] == {
+            "base_expected_attendance": {
+                "winning_client_wall_time": command.client_wall_time.isoformat(),
+                "winning_mutation_id": str(command.mutation_id),
+            }
+        }
         assert changes[1].payload["record"]["diner_count"] == 57
 
     replayed = asyncio.run(

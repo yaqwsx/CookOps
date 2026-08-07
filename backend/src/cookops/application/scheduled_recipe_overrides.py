@@ -12,6 +12,10 @@ from uuid import UUID
 from sqlalchemy import select, text
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
+from cookops.application.event_prices import (
+    _emit_event_price_snapshots,
+    _prepare_initial_event_price_captures,
+)
 from cookops.application.events import _reserve_change_range
 from cookops.application.organizations import (
     ApplicationServiceError,
@@ -27,6 +31,7 @@ from cookops.persistence.models import (
     IngredientVersion,
     Mutation,
     OrganizationChange,
+    RecipeVersion,
     RecipeVersionIngredientLine,
     ScheduledIngredientOverride,
     ScheduledRecipe,
@@ -443,6 +448,23 @@ def _mutation(
     )
 
 
+async def _resolved_line_quantity(
+    session: AsyncSession,
+    scheduled: ScheduledRecipe,
+    line: RecipeVersionIngredientLine,
+) -> Decimal:
+    if line.scaling_behavior == "fixed":
+        return line.base_quantity
+    base_scaling_amount = await session.scalar(
+        select(RecipeVersion.base_scaling_amount).where(
+            RecipeVersion.id == scheduled.recipe_version_id
+        )
+    )
+    if base_scaling_amount is None:
+        raise RuntimeError("Pinned recipe version disappeared while overriding")
+    return line.base_quantity * scheduled.selected_scale_amount / base_scaling_amount
+
+
 async def set_scheduled_ingredient_override(
     session_factory: async_sessionmaker[AsyncSession],
     context: ExecutionContext,
@@ -666,6 +688,15 @@ async def set_scheduled_ingredient_override(
                             (FieldViolation("override", "must_be_active_to_clear"),)
                         )
                     elif _clock_wins(clock, prepared):
+                        previous_quantity = (
+                            existing.quantity
+                            if is_active
+                            else (
+                                await _resolved_line_quantity(session, scheduled, line)
+                                if line is not None
+                                else Decimal(0)
+                            )
+                        )
                         now = datetime.now(UTC)
                         if prepared.operation == "clear":
                             assert existing is not None
@@ -744,8 +775,37 @@ async def set_scheduled_ingredient_override(
                         assert existing is not None
                         changed, outcome = existing, "partially_superseded"
                     if deferred is None:
+                        newly_nonzero = (
+                            outcome == "accepted"
+                            and previous_quantity <= 0
+                            and changed.retired_at is None
+                            and changed.quantity > 0
+                        )
+                        event = await session.scalar(
+                            select(Event)
+                            .where(
+                                Event.id == prepared.event_id,
+                                Event.organization_id == prepared.organization_id,
+                                Event.lifecycle == "active",
+                            )
+                            .with_for_update(of=Event)
+                        )
+                        if event is None:
+                            raise RuntimeError(
+                                "Validated active event disappeared while overriding"
+                            )
+                        initial_price_captures = await _prepare_initial_event_price_captures(
+                            session,
+                            organization_id=prepared.organization_id,
+                            event=event,
+                            ingredient_ids={changed.ingredient_id} if newly_nonzero else set(),
+                            actor_user_id=context.actor_user_id,
+                        )
                         first, last = await _reserve_change_range(
-                            session, prepared.organization_id, prepared.mutation_id, 1
+                            session,
+                            prepared.organization_id,
+                            prepared.mutation_id,
+                            1 + len(initial_price_captures) * 2,
                         )
                         result = _result(prepared, changed, first, last, False, outcome)
                         session.add(
@@ -770,6 +830,20 @@ async def set_scheduled_ingredient_override(
                                 first,
                                 last,
                             )
+                        )
+                        await session.flush()
+                        mutation = await session.get(Mutation, prepared.mutation_id)
+                        if mutation is None:
+                            raise RuntimeError("Override mutation was not persisted")
+                        await _emit_event_price_snapshots(
+                            session,
+                            captures=initial_price_captures,
+                            organization_id=prepared.organization_id,
+                            event=event,
+                            actor_user_id=context.actor_user_id,
+                            client_wall_time=prepared.client_wall_time,
+                            originating_mutation=mutation,
+                            first_change_sequence=first + 1,
                         )
             if deferred is not None:
                 session.add(

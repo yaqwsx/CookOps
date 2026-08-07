@@ -453,7 +453,7 @@ def test_member_schedules_pinned_version_with_derived_default_and_atomic_feed(
     assert result.selected_scale_amount == Decimal("2")
     assert result.scale_mode == "suggested"
     assert result.note == "  Prepare after lunch\n  "
-    assert (result.first_change_sequence, result.last_change_sequence) == (1, 1)
+    assert (result.first_change_sequence, result.last_change_sequence) == (1, 3)
     with service_database.sync_engine.connect() as connection:
         scheduled = connection.execute(
             select(
@@ -491,17 +491,25 @@ def test_member_schedules_pinned_version_with_derived_default_and_atomic_feed(
             )
         ).one()
         assert mutation == ("member", "accepted", 1)
-        change = connection.execute(
+        changes = connection.execute(
             select(
                 OrganizationChange.entity_kind,
                 OrganizationChange.entity_id,
                 OrganizationChange.payload,
-            ).where(OrganizationChange.mutation_id == command.mutation_id)
-        ).one()
-        assert change.entity_kind == "scheduled_recipe"
-        assert change.entity_id == command.scheduled_recipe_id
-        assert change.payload["record_schema_version"] == 1
-        assert change.payload["record"]["selected_scale_amount"] == "2"
+            )
+            .where(OrganizationChange.mutation_id == command.mutation_id)
+            .order_by(OrganizationChange.sequence)
+        ).all()
+        assert [change.entity_kind for change in changes] == [
+            "scheduled_recipe",
+            "event_ingredient_price_snapshot",
+            "event_ingredient_price",
+        ]
+        assert changes[0].entity_id == command.scheduled_recipe_id
+        assert changes[0].payload["record_schema_version"] == 1
+        assert changes[0].payload["record"]["selected_scale_amount"] == "2"
+        assert changes[1].payload["record_schema_version"] == 1
+        assert changes[2].payload["record_schema_version"] == 1
 
 
 def test_member_sets_replaces_and_clears_pinned_recipe_ingredient(
@@ -1089,7 +1097,7 @@ def test_same_scheduled_identity_concurrently_creates_once(
                 .select_from(OrganizationChange)
                 .where(OrganizationChange.mutation_id.in_((first.mutation_id, second.mutation_id)))
             )
-            == 1
+            == 3
         )
 
 
