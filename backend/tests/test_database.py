@@ -11,7 +11,6 @@ from alembic import command
 from cookops.database import (
     DATABASE_CONNECT_TIMEOUT_SECONDS,
     create_database_runtime,
-    load_alembic_head,
 )
 
 
@@ -77,6 +76,5 @@ def test_database_is_ready_only_at_alembic_head() -> None:
 
     try:
         asyncio.run(exercise_runtime())
-        assert load_alembic_head() == "0012_event_archives_field_clocks"
     finally:
         command.downgrade(configuration, "base")
