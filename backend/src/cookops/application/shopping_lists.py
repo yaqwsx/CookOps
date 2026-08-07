@@ -29,6 +29,8 @@ from cookops.application.organizations import (
 from cookops.persistence.models import (
     Event,
     EventDay,
+    EventIngredientPrice,
+    EventIngredientPriceSnapshot,
     EventMealRole,
     FieldClock,
     IngredientVersion,
@@ -810,6 +812,9 @@ async def create_shopping_list(
                 rows: dict[UUID, ShoppingIngredientRow] = {}
                 contributions: list[ShoppingContribution] = []
                 snapshots: list[ShoppingContributionSnapshot] = []
+                price_snapshots = await _event_price_snapshots(
+                    session, prepared.organization_id, prepared.event_id
+                )
                 shopping_list = ShoppingList(
                     id=prepared.shopping_list_id,
                     organization_id=prepared.organization_id,
@@ -885,6 +890,7 @@ async def create_shopping_list(
                                 ingredient_id=ingredient_id,
                                 active_in_revision=True,
                                 generated_quantity=quantity,
+                                **_captured_price(price_snapshots.get(ingredient_id)),
                                 ingredient_version_id=representative.ingredient_version_id,
                                 ingredient_name=representative.ingredient_name,
                                 source_details={
@@ -1270,12 +1276,62 @@ def _contribution_snapshot_record(
             "ingredient_id": str(snapshot.ingredient_id),
             "active_in_revision": snapshot.active_in_revision,
             "generated_quantity": _canonical_decimal(snapshot.generated_quantity),
+            "event_price_snapshot_id": str(snapshot.event_price_snapshot_id)
+            if snapshot.event_price_snapshot_id
+            else None,
+            "price_amount": _canonical_decimal(snapshot.price_amount)
+            if snapshot.price_amount is not None
+            else None,
+            "priced_quantity": _canonical_decimal(snapshot.priced_quantity)
+            if snapshot.priced_quantity is not None
+            else None,
+            "priced_unit_id": str(snapshot.priced_unit_id) if snapshot.priced_unit_id else None,
+            "currency": snapshot.currency,
             "ingredient_version_id": str(snapshot.ingredient_version_id),
             "ingredient_name": snapshot.ingredient_name,
             "source_details": snapshot.source_details,
             "immutable": True,
         },
     )
+
+
+async def _event_price_snapshots(
+    session: AsyncSession, organization_id: UUID, event_id: UUID
+) -> dict[UUID, EventIngredientPriceSnapshot]:
+    return {
+        snapshot.ingredient_id: snapshot
+        for snapshot in (
+            await session.scalars(
+                select(EventIngredientPriceSnapshot)
+                .join(
+                    EventIngredientPrice,
+                    EventIngredientPrice.current_snapshot_id == EventIngredientPriceSnapshot.id,
+                )
+                .where(
+                    EventIngredientPrice.organization_id == organization_id,
+                    EventIngredientPrice.event_id == event_id,
+                )
+            )
+        ).all()
+    }
+
+
+def _captured_price(snapshot: EventIngredientPriceSnapshot | None) -> dict[str, object]:
+    if snapshot is None or snapshot.state != "available":
+        return {
+            "event_price_snapshot_id": None,
+            "price_amount": None,
+            "priced_quantity": None,
+            "priced_unit_id": None,
+            "currency": None,
+        }
+    return {
+        "event_price_snapshot_id": snapshot.id,
+        "price_amount": snapshot.price_amount,
+        "priced_quantity": snapshot.priced_quantity,
+        "priced_unit_id": snapshot.priced_unit_id,
+        "currency": snapshot.currency,
+    }
 
 
 async def refresh_shopping_list(
@@ -1428,6 +1484,9 @@ async def refresh_shopping_list(
                 )
                 session.add(revision)
                 await session.flush()
+                price_snapshots = await _event_price_snapshots(
+                    session, prepared.organization_id, shopping_list.event_id
+                )
                 generated: dict[tuple[UUID, UUID], tuple[_Source, list[_ResolvedLine]]] = {}
                 revision_sources: list[ShoppingRevisionSource] = []
                 for source, lines in materialized:
@@ -1493,6 +1552,7 @@ async def refresh_shopping_list(
                             ingredient_id=ingredient_id,
                             active_in_revision=True,
                             generated_quantity=sum((item.quantity for item in items), Decimal(0)),
+                            **_captured_price(price_snapshots.get(ingredient_id)),
                             ingredient_version_id=representative.ingredient_version_id,
                             ingredient_name=representative.ingredient_name,
                             source_details={
@@ -1571,6 +1631,11 @@ async def refresh_shopping_list(
                             ingredient_id=contribution.ingredient_id,
                             active_in_revision=False,
                             generated_quantity=previous.generated_quantity,
+                            event_price_snapshot_id=previous.event_price_snapshot_id,
+                            price_amount=previous.price_amount,
+                            priced_quantity=previous.priced_quantity,
+                            priced_unit_id=previous.priced_unit_id,
+                            currency=previous.currency,
                             ingredient_version_id=previous.ingredient_version_id,
                             ingredient_name=previous.ingredient_name,
                             source_details=previous.source_details,

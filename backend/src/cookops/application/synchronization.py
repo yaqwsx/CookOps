@@ -34,7 +34,13 @@ from cookops.application.event_lifecycle import (
     SetEventLifecycleCommand,
     set_event_lifecycle,
 )
-from cookops.application.event_prices import _price_pointer_record, _snapshot_record
+from cookops.application.event_prices import (
+    UpdateEventPriceEstimatesCommand,
+    UpdateEventPriceEstimatesResult,
+    _price_pointer_record,
+    _snapshot_record,
+    update_event_price_estimates,
+)
 from cookops.application.events import (
     CreateEventCommand,
     CreateEventResult,
@@ -241,6 +247,7 @@ SyncCommand = (
     CreateEventCommand
     | UpdateEventBaseAttendanceCommand
     | SetEventLifecycleCommand
+    | UpdateEventPriceEstimatesCommand
     | CreateShoppingListCommand
     | CreateRecipeCommand
     | PublishRecipeVersionCommand
@@ -262,6 +269,7 @@ def _command_kind(
     command: (
         CreateEventCommand
         | UpdateEventBaseAttendanceCommand
+        | UpdateEventPriceEstimatesCommand
         | CreateShoppingListCommand
         | CreateRecipeCommand
         | PublishRecipeVersionCommand
@@ -283,6 +291,8 @@ def _command_kind(
         return "event.update_base_attendance"
     if isinstance(command, SetEventLifecycleCommand):
         return "event.lifecycle"
+    if isinstance(command, UpdateEventPriceEstimatesCommand):
+        return "event.update_price_estimates"
     if isinstance(command, CreateRecipeCommand):
         return "recipe.create"
     if isinstance(command, PublishRecipeVersionCommand):
@@ -601,6 +611,7 @@ class SynchronizationCommandService:
                 CreateEventResult
                 | UpdateEventBaseAttendanceResult
                 | EventLifecycleResult
+                | UpdateEventPriceEstimatesResult
                 | CreateShoppingListResult
                 | CreateRecipeResult
                 | CreateIngredientResult
@@ -615,6 +626,10 @@ class SynchronizationCommandService:
                 result = await update_event_base_attendance(self._session_factory, context, command)
             elif isinstance(command, SetEventLifecycleCommand):
                 result = await set_event_lifecycle(self._session_factory, context, command)
+            elif isinstance(command, UpdateEventPriceEstimatesCommand):
+                result = await update_event_price_estimates(
+                    self._session_factory, context, command
+                )
             elif isinstance(command, CreateRecipeCommand):
                 result = await create_recipe(self._session_factory, context, command)
             elif isinstance(command, PublishRecipeVersionCommand):
@@ -755,6 +770,7 @@ class SynchronizationCommandService:
             CreateEventResult
             | UpdateEventBaseAttendanceResult
             | EventLifecycleResult
+            | UpdateEventPriceEstimatesResult
             | CreateShoppingListResult
             | CreateRecipeResult
             | CreateIngredientResult
@@ -776,6 +792,8 @@ class SynchronizationCommandService:
                 if isinstance(result, UpdateEventBaseAttendanceResult)
                 else "event.lifecycle"
                 if isinstance(result, EventLifecycleResult)
+                else "event.update_price_estimates"
+                if isinstance(result, UpdateEventPriceEstimatesResult)
                 else "recipe.create"
                 if isinstance(result, CreateRecipeResult)
                 else "ingredient.create"

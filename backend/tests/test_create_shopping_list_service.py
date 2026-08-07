@@ -112,6 +112,8 @@ def test_create_shopping_list_materializes_snapshot_and_is_idempotent(
             select(
                 ShoppingContributionSnapshot.generated_quantity,
                 ShoppingContributionSnapshot.source_details,
+                ShoppingContributionSnapshot.event_price_snapshot_id,
+                ShoppingContributionSnapshot.price_amount,
             ).where(
                 ShoppingContributionSnapshot.generation_revision_id == result.generation_revision_id
             )
@@ -125,6 +127,8 @@ def test_create_shopping_list_materializes_snapshot_and_is_idempotent(
     assert source_ids == [scheduled.scheduled_recipe_id]
     assert len(snapshots) == 1 and snapshots[0].generated_quantity == Decimal("1500")
     assert snapshots[0].source_details["recipe_name"] == "Recipe"
+    assert snapshots[0].event_price_snapshot_id is None
+    assert snapshots[0].price_amount is None
     assert len(changes) == 6
 
 

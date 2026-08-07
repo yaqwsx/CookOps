@@ -1149,6 +1149,13 @@ class EventIngredientPriceSnapshot(Base):
         UniqueConstraint(
             "id", "event_ingredient_price_id", name="uq_event_ingredient_price_snapshots_id_price"
         ),
+        UniqueConstraint(
+            "id",
+            "event_id",
+            "organization_id",
+            "ingredient_id",
+            name="uq_event_ingredient_price_snapshots_scope",
+        ),
         Index(
             "uq_event_ingredient_price_snapshots_first",
             "event_ingredient_price_id",
@@ -1987,6 +1994,14 @@ class ShoppingContributionSnapshot(Base):
             "jsonb_typeof(source_details) = 'object'",
             name="ck_shopping_contribution_snapshots_source_details",
         ),
+        CheckConstraint(
+            "(event_price_snapshot_id IS NULL AND price_amount IS NULL "
+            "AND priced_quantity IS NULL AND priced_unit_id IS NULL AND currency IS NULL) OR "
+            "(event_price_snapshot_id IS NOT NULL AND price_amount IS NOT NULL "
+            "AND priced_quantity IS NOT NULL AND priced_unit_id IS NOT NULL "
+            "AND currency IS NOT NULL)",
+            name="ck_shopping_contribution_snapshots_price_shape",
+        ),
         ForeignKeyConstraint(
             ["generation_revision_id", "shopping_list_id", "organization_id", "event_id"],
             [
@@ -2022,6 +2037,17 @@ class ShoppingContributionSnapshot(Base):
             ondelete="RESTRICT",
             name="fk_shopping_contribution_snapshots_ingredient_version",
         ),
+        ForeignKeyConstraint(
+            ["event_price_snapshot_id", "event_id", "organization_id", "ingredient_id"],
+            [
+                "event_ingredient_price_snapshots.id",
+                "event_ingredient_price_snapshots.event_id",
+                "event_ingredient_price_snapshots.organization_id",
+                "event_ingredient_price_snapshots.ingredient_id",
+            ],
+            ondelete="RESTRICT",
+            name="fk_shopping_contribution_snapshots_event_price",
+        ),
         UniqueConstraint(
             "generation_revision_id",
             "shopping_contribution_id",
@@ -2040,6 +2066,11 @@ class ShoppingContributionSnapshot(Base):
     ingredient_id: Mapped[UUID] = mapped_column(Uuid)
     active_in_revision: Mapped[bool] = mapped_column(Boolean)
     generated_quantity: Mapped[Decimal] = mapped_column(Numeric)
+    event_price_snapshot_id: Mapped[UUID | None] = mapped_column(Uuid)
+    price_amount: Mapped[Decimal | None] = mapped_column(Numeric)
+    priced_quantity: Mapped[Decimal | None] = mapped_column(Numeric)
+    priced_unit_id: Mapped[UUID | None] = mapped_column(Uuid)
+    currency: Mapped[str | None] = mapped_column(String(3))
     ingredient_version_id: Mapped[UUID] = mapped_column(Uuid)
     ingredient_name: Mapped[str] = mapped_column(String(200))
     source_details: Mapped[dict[str, object]] = mapped_column(JSONB)

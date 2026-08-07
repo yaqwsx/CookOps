@@ -7,6 +7,14 @@ import {
   type EventPlannerProjection,
 } from "./planner-projections";
 import {
+  readEventCosts,
+  type EventCostsProjection,
+} from "./event-cost-projections";
+import {
+  eventPriceRefreshPending,
+  queueEventPriceRefresh,
+} from "./event-price-refresh";
+import {
   queueRecipeSchedule,
   queueScheduledRecipeMove,
 } from "./scheduled-recipe";
@@ -38,6 +46,135 @@ function EventSummary({ planner }: { planner: EventPlannerProjection }) {
         </div>
       </dl>
     </header>
+  );
+}
+
+function EventCosts({
+  planner,
+  eventId,
+  organizationId,
+  userId,
+}: {
+  planner: EventPlannerProjection;
+  eventId: string;
+  organizationId: string;
+  userId: string;
+}) {
+  const { t } = useTranslation();
+  const [costs, setCosts] = useState<EventCostsProjection>();
+  const [pending, setPending] = useState(false);
+  const [error, setError] = useState(false);
+  const refreshing = useRef(false);
+  useEffect(() => {
+    const subscription = liveQuery(async () => ({
+      costs: await readEventCosts(userId, organizationId, eventId),
+      pending: await eventPriceRefreshPending(userId, organizationId, eventId),
+    })).subscribe({
+      next: (next) => {
+        setCosts(next.costs);
+        setPending(next.pending);
+      },
+      error: () => setError(true),
+    });
+    return () => subscription.unsubscribe();
+  }, [eventId, organizationId, userId]);
+  async function refresh() {
+    if (refreshing.current) return;
+    refreshing.current = true;
+    try {
+      await queueEventPriceRefresh(userId, organizationId, eventId);
+      setError(false);
+    } catch {
+      setError(true);
+    } finally {
+      refreshing.current = false;
+    }
+  }
+  if (!costs) return null;
+  return (
+    <section className="event-costs" aria-labelledby="event-costs-heading">
+      <h2 id="event-costs-heading">{t("costs.heading")}</h2>
+      <dl>
+        <div>
+          <dt>{t("costs.budget")}</dt>
+          <dd>
+            {t("costs.amount", {
+              amount: costs.budget,
+              currency: costs.currency,
+            })}
+          </dd>
+        </div>
+        <div>
+          <dt>{t("costs.scheduled")}</dt>
+          <dd>
+            {t("costs.amount", {
+              amount: costs.total,
+              currency: costs.currency,
+            })}
+          </dd>
+        </div>
+        <div>
+          <dt>{t("costs.shopping")}</dt>
+          <dd>
+            {t("costs.amount", {
+              amount: costs.expectedShopping,
+              currency: costs.currency,
+            })}
+          </dd>
+        </div>
+        <div>
+          <dt>{t("costs.actual")}</dt>
+          <dd>
+            {t("costs.amount", {
+              amount: costs.actual,
+              currency: costs.currency,
+            })}
+          </dd>
+        </div>
+        <div>
+          <dt>{t("costs.remaining")}</dt>
+          <dd>
+            {t("costs.amount", {
+              amount: costs.remaining,
+              currency: costs.currency,
+            })}
+          </dd>
+        </div>
+      </dl>
+      {costs.missingIngredients.length ? (
+        <p role="status">
+          {t("costs.missing", {
+            ingredients: costs.missingIngredients.join(", "),
+          })}
+        </p>
+      ) : null}
+      {planner.lifecycle === "active" ? (
+        <button disabled={pending} onClick={() => void refresh()} type="button">
+          {t(pending ? "costs.refreshPending" : "costs.refresh")}
+        </button>
+      ) : null}
+      {error ? <p role="alert">{t("costs.error")}</p> : null}
+      {planner.scheduled.length ? (
+        <ul className="event-costs__recipes">
+          {planner.scheduled.map((item) => {
+            const cost = costs.scheduled.get(item.id);
+            return cost ? (
+              <li key={item.id}>
+                {item.name}:{" "}
+                {t("costs.amount", {
+                  amount: cost.total,
+                  currency: costs.currency,
+                })}
+                {cost.perDiner
+                  ? ` · ${t("costs.perDiner", { amount: cost.perDiner, currency: costs.currency })}`
+                  : ""}
+                {cost.missing ? ` · ${t("costs.partial")}` : ""}
+              </li>
+            ) : null;
+          })}
+        </ul>
+      ) : null}
+    </section>
   );
 }
 
@@ -323,6 +460,12 @@ export function EventPlanner({
           {t("planner.receipts")}
         </button>
       ) : null}
+      <EventCosts
+        eventId={eventId}
+        organizationId={organizationId}
+        planner={planner}
+        userId={userId}
+      />
       <AddRecipe
         eventId={eventId}
         organizationId={organizationId}

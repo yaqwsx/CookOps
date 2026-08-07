@@ -33,6 +33,13 @@ pytestmark = pytest.mark.skipif(
 )
 
 PRICE_TABLES = {"event_ingredient_prices", "event_ingredient_price_snapshots"}
+SHOPPING_PRICE_COLUMNS = {
+    "event_price_snapshot_id",
+    "price_amount",
+    "priced_quantity",
+    "priced_unit_id",
+    "currency",
+}
 
 
 @dataclass
@@ -262,6 +269,20 @@ def test_event_price_schema_parity_and_downgrade(migration_database: MigrationDa
     configuration, engine = migration_database.configuration, migration_database.engine
     command.upgrade(configuration, "head")
     assert set(inspect(engine).get_table_names()) >= PRICE_TABLES
+    shopping_columns = {
+        column["name"]
+        for column in inspect(engine).get_columns("shopping_contribution_snapshots")
+    }
+    checks = {
+        check["name"]
+        for check in inspect(engine).get_check_constraints("shopping_contribution_snapshots")
+    }
+    foreign_keys = {
+        key["name"] for key in inspect(engine).get_foreign_keys("shopping_contribution_snapshots")
+    }
+    assert shopping_columns >= SHOPPING_PRICE_COLUMNS
+    assert "ck_shopping_contribution_snapshots_price_shape" in checks
+    assert "fk_shopping_contribution_snapshots_event_price" in foreign_keys
     command.check(configuration)
     command.downgrade(configuration, "0014_receipts_media")
     assert PRICE_TABLES.isdisjoint(inspect(engine).get_table_names())

@@ -123,9 +123,18 @@ test("opens the cached planner and schedules a recipe offline", async ({
     `/organizations/${ids.organization}/events/${ids.event}/planner`,
   );
   await expect(page.getByRole("heading", { name: "Plán akce" })).toBeVisible();
+  await expect(
+    page.getByRole("heading", { name: "Odhad nákladů" }),
+  ).toBeVisible();
   await expect(page.getByText("Připravit zeleninu")).toBeVisible();
   await page.context().setOffline(true);
   await page.evaluate(() => window.dispatchEvent(new Event("offline")));
+  await page.getByRole("button", { name: "Aktualizovat odhady cen" }).click();
+  await expect(
+    page.getByRole("button", {
+      name: "Aktualizace odhadů čeká na synchronizaci",
+    }),
+  ).toBeDisabled();
   await page.getByRole("button", { name: "Přidat do plánu" }).click();
   await expect(page.getByText("Chili · Strávníci: 12")).toBeVisible();
   await expect(

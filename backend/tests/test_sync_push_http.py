@@ -247,6 +247,58 @@ def _receipt_command(
     return command
 
 
+def _event_price_refresh_command(*, mutation_id: UUID, event_id: UUID) -> dict[str, object]:
+    return {
+        "mutation_id": str(mutation_id),
+        "command_kind": "event.update_price_estimates",
+        "command_schema_version": 1,
+        "client_wall_time": datetime.now(UTC).isoformat(),
+        "payload": {"event_id": str(event_id)},
+    }
+
+
+def test_push_queues_typed_event_price_refresh_and_rejects_extra_payload(
+    sync_database: SyncDatabase,
+) -> None:
+    installation_id = _installation(sync_database)
+    event_id = uuid4()
+    with TestClient(create_app(_settings()), base_url="https://testserver") as client:
+        _sign_in(client, "dummy-member")
+        created = client.post(
+            "/api/v1/sync/push",
+            json=_body(
+                sync_database,
+                installation_id,
+                [_command(mutation_id=uuid4(), event_id=event_id)],
+            ),
+        )
+        assert created.json()["outcomes"][0]["status"] == "accepted"
+        refresh_command = _event_price_refresh_command(mutation_id=uuid4(), event_id=event_id)
+        refreshed = client.post(
+            "/api/v1/sync/push",
+            json=_body(
+                sync_database,
+                installation_id,
+                [refresh_command],
+            ),
+        )
+        assert refreshed.json()["outcomes"][0]["status"] == "accepted"
+        replayed = client.post(
+            "/api/v1/sync/push",
+            json=_body(sync_database, installation_id, [refresh_command]),
+        )
+        assert replayed.json()["outcomes"][0]["replayed"] is True
+        malformed = _event_price_refresh_command(mutation_id=uuid4(), event_id=event_id)
+        cast(dict[str, object], malformed["payload"])["catalog_price_id"] = str(uuid4())
+        rejected = client.post(
+            "/api/v1/sync/push",
+            json=_body(sync_database, installation_id, [malformed]),
+        )
+    outcome = rejected.json()["outcomes"][0]
+    assert outcome["status"] == "rejected"
+    assert outcome["error"]["code"] == "validation_failed"
+
+
 @pytest.mark.parametrize(
     ("kind", "payload"),
     [

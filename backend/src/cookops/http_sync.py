@@ -14,6 +14,7 @@ from pydantic import BaseModel, ConfigDict, Field, StrictBool, ValidationError, 
 
 from cookops.application.browser_sessions import BrowserSessionService
 from cookops.application.event_lifecycle import SetEventLifecycleCommand
+from cookops.application.event_prices import UpdateEventPriceEstimatesCommand
 from cookops.application.events import CreateEventCommand, UpdateEventBaseAttendanceCommand
 from cookops.application.ingredients import CreateIngredientCommand, InitialPrice
 from cookops.application.receipts import (
@@ -211,6 +212,13 @@ class EventLifecyclePayload(BaseModel):
 
     event_id: UUID
     operation: Literal["archive", "reactivate"]
+    logical_operation_id: UUID | None = None
+
+
+class UpdateEventPriceEstimatesPayload(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    event_id: UUID
     logical_operation_id: UUID | None = None
 
 
@@ -530,6 +538,15 @@ def _push_command(command: PushCommandRequest, organization_id: UUID) -> SyncCom
                 operation=event_lifecycle_payload.operation,
                 client_wall_time=command.client_wall_time,
                 logical_operation_id=event_lifecycle_payload.logical_operation_id,
+            )
+        if command.command_kind == "event.update_price_estimates":
+            price_payload = UpdateEventPriceEstimatesPayload.model_validate(command.payload)
+            return UpdateEventPriceEstimatesCommand(
+                mutation_id=command.mutation_id,
+                organization_id=organization_id,
+                event_id=price_payload.event_id,
+                client_wall_time=command.client_wall_time,
+                logical_operation_id=price_payload.logical_operation_id,
             )
         if command.command_kind == "shopping_list.create":
             shopping_payload = CreateShoppingListPayload.model_validate(command.payload)
