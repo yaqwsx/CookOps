@@ -4,10 +4,12 @@ from collections.abc import Iterator
 from dataclasses import dataclass
 from datetime import UTC, date, datetime, timedelta
 from decimal import Decimal
+from typing import cast
 from uuid import UUID, uuid4
 
 import pytest
 from alembic.config import Config
+from fastapi import FastAPI
 from fastapi.testclient import TestClient
 from pydantic import PostgresDsn
 from sqlalchemy import Engine, create_engine, insert
@@ -238,6 +240,6 @@ def test_event_http_exposes_a_read_only_typed_contract(
     path = f"/api/v1/organizations/{events_http_database.organization_id}/events"
     with TestClient(create_app(_settings()), base_url="https://testserver") as client:
         _sign_in(client, "event-admin")
-        schema = client.app.openapi()
+        schema = cast(FastAPI, client.app).openapi()
         contract_path = path.replace(str(events_http_database.organization_id), "{organization_id}")
         assert set(schema["paths"][contract_path]) == {"get"}
