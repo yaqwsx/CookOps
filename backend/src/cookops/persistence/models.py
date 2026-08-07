@@ -935,6 +935,7 @@ class Event(Base):
             name="ck_events_nonnegative_budget",
         ),
         CheckConstraint("currency ~ '^[A-Z]{3}$'", name="ck_events_currency"),
+        UniqueConstraint("id", "organization_id", name="uq_events_id_organization"),
     )
 
     id: Mapped[UUID] = mapped_column(
@@ -976,6 +977,7 @@ class EventDay(Base):
             unique=True,
             postgresql_where=text("retired_at IS NULL"),
         ),
+        UniqueConstraint("id", "event_id", name="uq_event_days_id_event"),
     )
 
     id: Mapped[UUID] = mapped_column(
@@ -1021,6 +1023,7 @@ class EventMealRole(Base):
         UniqueConstraint(
             "event_id", "normalized_custom_name", name="uq_event_meal_roles_custom_name"
         ),
+        UniqueConstraint("id", "event_id", name="uq_event_meal_roles_id_event"),
     )
 
     id: Mapped[UUID] = mapped_column(
@@ -1038,6 +1041,203 @@ class EventMealRole(Base):
         DateTime(timezone=True), server_default=text("CURRENT_TIMESTAMP")
     )
     created_by_user_id: Mapped[UUID] = mapped_column(ForeignKey("users.id", ondelete="RESTRICT"))
+    retired_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    retired_by_user_id: Mapped[UUID | None] = mapped_column(
+        ForeignKey("users.id", ondelete="RESTRICT")
+    )
+
+
+class ScheduledRecipe(Base):
+    __tablename__ = "scheduled_recipes"
+    __table_args__ = (
+        CheckConstraint("diner_count >= 0", name="ck_scheduled_recipes_nonnegative_diners"),
+        CheckConstraint(
+            "attendance_mode IN ('follows_event', 'manual')",
+            name="ck_scheduled_recipes_attendance_mode",
+        ),
+        CheckConstraint(
+            "consumption_percentage >= 0 "
+            "AND consumption_percentage::text NOT IN ('NaN', 'Infinity', '-Infinity')",
+            name="ck_scheduled_recipes_nonnegative_consumption_percentage",
+        ),
+        CheckConstraint(
+            "selected_scale_amount >= 0 "
+            "AND selected_scale_amount::text NOT IN ('NaN', 'Infinity', '-Infinity')",
+            name="ck_scheduled_recipes_nonnegative_selected_scale",
+        ),
+        CheckConstraint(
+            "scale_mode IN ('suggested', 'manual')", name="ck_scheduled_recipes_scale_mode"
+        ),
+        CheckConstraint(
+            "position_key ~ '^[0-9A-Za-z]+$'", name="ck_scheduled_recipes_position_key"
+        ),
+        CheckConstraint(
+            "(retired_at IS NULL AND retired_by_user_id IS NULL) OR "
+            "(retired_at IS NOT NULL AND retired_by_user_id IS NOT NULL)",
+            name="ck_scheduled_recipes_retirement_attribution",
+        ),
+        ForeignKeyConstraint(
+            ["event_id", "organization_id"],
+            ["events.id", "events.organization_id"],
+            ondelete="RESTRICT",
+            name="fk_scheduled_recipes_event_organization",
+        ),
+        ForeignKeyConstraint(
+            ["event_day_id", "event_id"],
+            ["event_days.id", "event_days.event_id"],
+            ondelete="RESTRICT",
+            name="fk_scheduled_recipes_day_event",
+        ),
+        ForeignKeyConstraint(
+            ["event_meal_role_id", "event_id"],
+            ["event_meal_roles.id", "event_meal_roles.event_id"],
+            ondelete="RESTRICT",
+            name="fk_scheduled_recipes_role_event",
+        ),
+        ForeignKeyConstraint(
+            ["recipe_id", "organization_id"],
+            ["recipes.id", "recipes.organization_id"],
+            ondelete="RESTRICT",
+            name="fk_scheduled_recipes_recipe_organization",
+        ),
+        ForeignKeyConstraint(
+            ["recipe_version_id", "organization_id"],
+            ["recipe_versions.id", "recipe_versions.organization_id"],
+            ondelete="RESTRICT",
+            name="fk_scheduled_recipes_recipe_version_organization",
+        ),
+        ForeignKeyConstraint(
+            ["recipe_version_id", "recipe_id"],
+            ["recipe_versions.id", "recipe_versions.recipe_id"],
+            ondelete="RESTRICT",
+            name="fk_scheduled_recipes_recipe_version_recipe",
+        ),
+        UniqueConstraint(
+            "id", "event_id", "organization_id", name="uq_scheduled_recipes_id_event_organization"
+        ),
+        Index(
+            "ix_scheduled_recipes_event_day_role_position",
+            "event_id",
+            "event_day_id",
+            "event_meal_role_id",
+            "position_key",
+        ),
+    )
+
+    id: Mapped[UUID] = mapped_column(
+        Uuid, primary_key=True, default=uuid4, server_default=text("gen_random_uuid()")
+    )
+    organization_id: Mapped[UUID] = mapped_column(Uuid)
+    event_id: Mapped[UUID] = mapped_column(Uuid)
+    event_day_id: Mapped[UUID] = mapped_column(Uuid)
+    event_meal_role_id: Mapped[UUID] = mapped_column(Uuid)
+    recipe_id: Mapped[UUID] = mapped_column(Uuid)
+    recipe_version_id: Mapped[UUID] = mapped_column(Uuid)
+    diner_count: Mapped[int] = mapped_column()
+    attendance_mode: Mapped[str] = mapped_column(String(16))
+    consumption_percentage: Mapped[Decimal] = mapped_column(Numeric)
+    selected_scale_amount: Mapped[Decimal] = mapped_column(Numeric)
+    scale_mode: Mapped[str] = mapped_column(String(16))
+    note: Mapped[str | None] = mapped_column(Text)
+    position_key: Mapped[str] = mapped_column(String(255, collation="C"))
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=text("CURRENT_TIMESTAMP")
+    )
+    created_by_user_id: Mapped[UUID] = mapped_column(ForeignKey("users.id", ondelete="RESTRICT"))
+    retired_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    retired_by_user_id: Mapped[UUID | None] = mapped_column(
+        ForeignKey("users.id", ondelete="RESTRICT")
+    )
+
+
+class ScheduledIngredientOverride(Base):
+    __tablename__ = "scheduled_ingredient_overrides"
+    __table_args__ = (
+        CheckConstraint("override_kind IN ('replace', 'add')", name="ck_scheduled_overrides_kind"),
+        CheckConstraint(
+            "quantity >= 0 AND quantity::text NOT IN ('NaN', 'Infinity', '-Infinity')",
+            name="ck_scheduled_overrides_nonnegative_quantity",
+        ),
+        CheckConstraint(
+            "(override_kind = 'replace' AND target_line_key IS NOT NULL "
+            "AND include_in_portion_weight IS NULL) OR "
+            "(override_kind = 'add' AND target_line_key IS NULL "
+            "AND include_in_portion_weight IS NOT NULL)",
+            name="ck_scheduled_overrides_shape",
+        ),
+        CheckConstraint(
+            "position_key IS NULL OR position_key ~ '^[0-9A-Za-z]+$'",
+            name="ck_scheduled_overrides_position_key",
+        ),
+        CheckConstraint(
+            "last_modified_at >= created_at", name="ck_scheduled_overrides_audit_order"
+        ),
+        CheckConstraint(
+            "(retired_at IS NULL AND retired_by_user_id IS NULL) OR "
+            "(retired_at IS NOT NULL AND retired_by_user_id IS NOT NULL)",
+            name="ck_scheduled_overrides_retirement_attribution",
+        ),
+        ForeignKeyConstraint(
+            ["scheduled_recipe_id", "event_id", "organization_id"],
+            [
+                "scheduled_recipes.id",
+                "scheduled_recipes.event_id",
+                "scheduled_recipes.organization_id",
+            ],
+            ondelete="RESTRICT",
+            name="fk_scheduled_overrides_scheduled_recipe",
+        ),
+        ForeignKeyConstraint(
+            ["ingredient_id", "organization_id"],
+            ["ingredients.id", "ingredients.organization_id"],
+            ondelete="RESTRICT",
+            name="fk_scheduled_overrides_ingredient_organization",
+        ),
+        ForeignKeyConstraint(
+            ["ingredient_version_id", "organization_id"],
+            ["ingredient_versions.id", "ingredient_versions.organization_id"],
+            ondelete="RESTRICT",
+            name="fk_scheduled_overrides_ingredient_version_organization",
+        ),
+        ForeignKeyConstraint(
+            ["ingredient_version_id", "ingredient_id"],
+            ["ingredient_versions.id", "ingredient_versions.ingredient_id"],
+            ondelete="RESTRICT",
+            name="fk_scheduled_overrides_ingredient_version_ingredient",
+        ),
+        Index(
+            "uq_scheduled_overrides_active_replacement",
+            "scheduled_recipe_id",
+            "target_line_key",
+            unique=True,
+            postgresql_where=text("override_kind = 'replace' AND retired_at IS NULL"),
+        ),
+    )
+
+    id: Mapped[UUID] = mapped_column(
+        Uuid, primary_key=True, default=uuid4, server_default=text("gen_random_uuid()")
+    )
+    organization_id: Mapped[UUID] = mapped_column(Uuid)
+    event_id: Mapped[UUID] = mapped_column(Uuid)
+    scheduled_recipe_id: Mapped[UUID] = mapped_column(Uuid)
+    override_kind: Mapped[str] = mapped_column(String(16))
+    target_line_key: Mapped[UUID | None] = mapped_column(Uuid)
+    ingredient_id: Mapped[UUID] = mapped_column(Uuid)
+    ingredient_version_id: Mapped[UUID] = mapped_column(Uuid)
+    quantity: Mapped[Decimal] = mapped_column(Numeric)
+    include_in_portion_weight: Mapped[bool | None] = mapped_column(Boolean)
+    note: Mapped[str | None] = mapped_column(Text)
+    position_key: Mapped[str | None] = mapped_column(String(255, collation="C"))
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=text("CURRENT_TIMESTAMP")
+    )
+    created_by_user_id: Mapped[UUID] = mapped_column(ForeignKey("users.id", ondelete="RESTRICT"))
+    last_modified_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=text("CURRENT_TIMESTAMP")
+    )
+    last_modified_by_user_id: Mapped[UUID] = mapped_column(
+        ForeignKey("users.id", ondelete="RESTRICT")
+    )
     retired_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     retired_by_user_id: Mapped[UUID | None] = mapped_column(
         ForeignKey("users.id", ondelete="RESTRICT")
