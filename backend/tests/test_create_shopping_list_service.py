@@ -15,6 +15,12 @@ from cookops.application.scheduled_recipes import (
     schedule_recipe,
 )
 from cookops.application.shopping_lists import CreateShoppingListCommand, create_shopping_list
+from cookops.application.synchronization import (
+    PullRequest,
+    SyncCursor,
+    SyncCursorCodec,
+    SynchronizationQueryService,
+)
 from cookops.persistence.models import (
     Mutation,
     OrganizationChange,
@@ -119,7 +125,73 @@ def test_create_shopping_list_materializes_snapshot_and_is_idempotent(
     assert source_ids == [scheduled.scheduled_recipe_id]
     assert len(snapshots) == 1 and snapshots[0].generated_quantity == Decimal("1500")
     assert snapshots[0].source_details["recipe_name"] == "Recipe"
-    assert len(changes) == 1
+    assert len(changes) == 6
+
+
+def test_create_pull_group_contains_complete_initial_canonical_graph(
+    service_database: ServiceDatabase,
+) -> None:
+    scheduled = asyncio.run(_scheduled(service_database))
+    result = asyncio.run(
+        create_shopping_list(
+            service_database.sessions,
+            _context(service_database),
+            _command(service_database, (scheduled.scheduled_recipe_id,)),
+        )
+    )
+    cursor_codec = SyncCursorCodec(encoded_hmac_key="MDEyMzQ1Njc4OWFiY2RlZjAxMjM0NTY3ODlhYmNkZWY")
+    pulled = asyncio.run(
+        SynchronizationQueryService(
+            service_database.sessions,
+            encoded_cursor_hmac_key="MDEyMzQ1Njc4OWFiY2RlZjAxMjM0NTY3ODlhYmNkZWY",
+        ).pull(
+            actor_user_id=service_database.actor_id,
+            request=PullRequest(
+                organization_id=service_database.organization_id,
+                cursor=cursor_codec.encode(
+                    SyncCursor(
+                        organization_id=service_database.organization_id,
+                        after_sequence=result.first_change_sequence - 1,
+                    )
+                ),
+            ),
+        )
+    )
+
+    group = next(
+        group for group in pulled.transaction_groups if group.mutation_id == result.mutation_id
+    )
+    kinds = [record.entity_kind for record in group.records]
+    assert (group.first_sequence, group.last_sequence) == (
+        result.first_change_sequence,
+        result.last_change_sequence,
+    )
+    assert kinds == [
+        "shopping_generation_revision",
+        "shopping_ingredient_row",
+        "shopping_contribution",
+        "shopping_revision_source",
+        "shopping_contribution_snapshot",
+        "shopping_list",
+    ]
+    records: list[dict[str, object]] = []
+    for record in group.records:
+        payload = record.payload["record"]
+        assert isinstance(payload, dict)
+        records.append(payload)
+    revision, row, contribution, source, snapshot, shopping_list = records
+    assert revision["id"] == str(result.generation_revision_id)
+    assert row["id"] in [str(item) for item in result.ingredient_row_ids]
+    assert contribution["id"] in [str(item) for item in result.contribution_ids]
+    assert source["generation_revision_id"] == revision["id"]
+    assert snapshot["shopping_contribution_id"] == contribution["id"]
+    assert snapshot["generation_revision_id"] == revision["id"]
+    assert shopping_list["current_generation_revision_id"] == revision["id"]
+    field_clocks = shopping_list["field_clocks"]
+    assert isinstance(field_clocks, dict)
+    current_revision_clock = field_clocks["current_generation_revision_id"]
+    assert isinstance(current_revision_clock, dict)
+    assert current_revision_clock["winning_mutation_id"] == str(result.mutation_id)
 
 
 def test_create_shopping_list_rejects_invalid_or_archived_sources_atomically(

@@ -1,4 +1,6 @@
-"""Materialize the first immutable revision of a shopping list."""
+"""Materialize immutable revisions and operate a shopping list."""
+
+from __future__ import annotations
 
 import hashlib
 import json
@@ -8,7 +10,7 @@ from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
 from typing import Literal
-from uuid import UUID, uuid4
+from uuid import UUID, uuid4, uuid5
 
 from sqlalchemy import func, select, text
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
@@ -47,6 +49,8 @@ from cookops.persistence.models import (
 COMMAND_KIND = "shopping_list.create"
 COMMAND_SCHEMA_VERSION = 1
 MAX_SERIALIZED_NAME_BYTES = 800
+REFRESH_COMMAND_KIND = "shopping_list.refresh"
+_REVISION_SOURCE_ID_NAMESPACE = UUID("df740018-c0d2-4790-a314-cf4180a1c2c9")
 
 
 @dataclass(frozen=True, slots=True)
@@ -342,11 +346,13 @@ def _retained_error(mutation: Mutation) -> ApplicationServiceError:
             "validation_failed",
             "archived_event",
             "client_time_too_far_ahead",
+            "stale_precondition",
         ):
             raise TypeError
         if violations is None and error.get("code") in (
             "archived_event",
             "client_time_too_far_ahead",
+            "stale_precondition",
         ):
             violations = []
         if not isinstance(violations, list):
@@ -364,13 +370,17 @@ def _retained_error(mutation: Mutation) -> ApplicationServiceError:
             return ApplicationServiceError("client_time_too_far_ahead", retry_same_identity=False)
         if error["code"] == "archived_event":
             return ApplicationServiceError("archived_event", retry_same_identity=False)
+        if error["code"] == "stale_precondition":
+            return ApplicationServiceError("stale_precondition", retry_same_identity=False)
         return _error(parsed)
     except (KeyError, TypeError) as exc:
         raise RuntimeError("Rejected shopping-list mutation has invalid outcome payload") from exc
 
 
 async def _resolve_source(
-    session: AsyncSession, prepared: _Prepared, source_id: UUID
+    session: AsyncSession,
+    prepared: _Prepared | _RefreshSourceScope,
+    source_id: UUID,
 ) -> tuple[_Source, list[_ResolvedLine]] | None:
     source = (
         await session.execute(
@@ -611,26 +621,26 @@ async def create_shopping_list(
                 )
                 session.add(shopping_list)
                 await session.flush()
-                session.add(
-                    ShoppingGenerationRevision(
-                        id=prepared.generation_revision_id,
+                revision = ShoppingGenerationRevision(
+                    id=prepared.generation_revision_id,
+                    organization_id=prepared.organization_id,
+                    event_id=prepared.event_id,
+                    shopping_list_id=prepared.shopping_list_id,
+                    generated_by_user_id=context.actor_user_id,
+                )
+                session.add(revision)
+                await session.flush()
+                revision_sources: list[ShoppingRevisionSource] = []
+                for source, lines in materialized:
+                    revision_source = ShoppingRevisionSource(
+                        generation_revision_id=prepared.generation_revision_id,
+                        shopping_list_id=prepared.shopping_list_id,
                         organization_id=prepared.organization_id,
                         event_id=prepared.event_id,
-                        shopping_list_id=prepared.shopping_list_id,
-                        generated_by_user_id=context.actor_user_id,
+                        scheduled_recipe_id=source.scheduled_recipe_id,
                     )
-                )
-                await session.flush()
-                for source, lines in materialized:
-                    session.add(
-                        ShoppingRevisionSource(
-                            generation_revision_id=prepared.generation_revision_id,
-                            shopping_list_id=prepared.shopping_list_id,
-                            organization_id=prepared.organization_id,
-                            event_id=prepared.event_id,
-                            scheduled_recipe_id=source.scheduled_recipe_id,
-                        )
-                    )
+                    revision_sources.append(revision_source)
+                    session.add(revision_source)
                     grouped: dict[UUID, list[_ResolvedLine]] = defaultdict(list)
                     for line in lines:
                         grouped[line.ingredient_id].append(line)
@@ -698,8 +708,38 @@ async def create_shopping_list(
                 for snapshot in snapshots:
                     session.add(snapshot)
                 shopping_list.current_generation_revision_id = prepared.generation_revision_id
+                session.add(
+                    FieldClock(
+                        organization_id=prepared.organization_id,
+                        entity_kind="shopping_list",
+                        entity_id=shopping_list.id,
+                        field_name="current_generation_revision_id",
+                        winning_client_wall_time=prepared.client_wall_time,
+                        winning_mutation_id=prepared.mutation_id,
+                    )
+                )
+                await session.flush()
+                records: list[tuple[str, UUID, dict[str, object]]] = [
+                    _generation_revision_record(revision)
+                ]
+                records.extend([await _row_record(session, row) for row in rows.values()])
+                records.extend(
+                    [
+                        await _contribution_record(session, contribution)
+                        for contribution in contributions
+                    ]
+                )
+                records.extend(_revision_source_record(source) for source in revision_sources)
+                records.extend(_contribution_snapshot_record(snapshot) for snapshot in snapshots)
+                records.append(
+                    (
+                        "shopping_list",
+                        shopping_list.id,
+                        await _shopping_list_record(session, shopping_list),
+                    )
+                )
                 first, last = await _reserve_change_range(
-                    session, prepared.organization_id, prepared.mutation_id, 1
+                    session, prepared.organization_id, prepared.mutation_id, len(records)
                 )
                 result = CreateShoppingListResult(
                     prepared.mutation_id,
@@ -716,16 +756,19 @@ async def create_shopping_list(
                     False,
                 )
                 payload = _payload(result)
-                session.add(
-                    OrganizationChange(
-                        organization_id=prepared.organization_id,
-                        sequence=first,
-                        mutation_id=prepared.mutation_id,
-                        entity_id=prepared.shopping_list_id,
-                        entity_kind="shopping_list",
-                        operation="upsert",
-                        payload={"record_schema_version": 1, "record": payload["shopping_list"]},
-                    )
+                session.add_all(
+                    [
+                        OrganizationChange(
+                            organization_id=prepared.organization_id,
+                            sequence=first + offset,
+                            mutation_id=prepared.mutation_id,
+                            entity_id=entity_id,
+                            entity_kind=entity_kind,
+                            operation="upsert",
+                            payload={"record_schema_version": 1, "record": record},
+                        )
+                        for offset, (entity_kind, entity_id, record) in enumerate(records)
+                    ]
                 )
                 session.add(
                     _mutation(
@@ -736,6 +779,713 @@ async def create_shopping_list(
         raise error
     if result is None:
         raise RuntimeError("Shopping-list creation produced no outcome")
+    return result
+
+
+@dataclass(frozen=True, slots=True)
+class RefreshShoppingListCommand:
+    """Replace the generated projection of one list without touching its operations."""
+
+    mutation_id: UUID
+    generation_revision_id: UUID
+    organization_id: UUID
+    shopping_list_id: UUID
+    parent_generation_revision_id: UUID
+    scheduled_recipe_ids: tuple[UUID, ...]
+    client_wall_time: datetime
+    logical_operation_id: UUID | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class RefreshShoppingListResult:
+    mutation_id: UUID
+    shopping_list_id: UUID
+    generation_revision_id: UUID
+    parent_generation_revision_id: UUID
+    scheduled_recipe_ids: tuple[UUID, ...]
+    ingredient_row_ids: tuple[UUID, ...]
+    contribution_ids: tuple[UUID, ...]
+    first_change_sequence: int
+    last_change_sequence: int
+    replayed: bool
+    outcome: Literal["accepted", "partially_superseded"] = "accepted"
+
+
+@dataclass(frozen=True, slots=True)
+class _PreparedRefresh:
+    mutation_id: UUID
+    generation_revision_id: UUID
+    organization_id: UUID
+    shopping_list_id: UUID
+    parent_generation_revision_id: UUID
+    scheduled_recipe_ids: tuple[UUID, ...]
+    client_wall_time: datetime
+    logical_operation_id: UUID | None
+    violations: tuple[FieldViolation, ...]
+
+
+@dataclass(frozen=True, slots=True)
+class _RefreshSourceScope:
+    organization_id: UUID
+    event_id: UUID
+
+
+def _refresh_hash(command: RefreshShoppingListCommand) -> bytes:
+    value = {
+        "command_kind": REFRESH_COMMAND_KIND,
+        "command_schema_version": COMMAND_SCHEMA_VERSION,
+        "mutation_id": _raw_uuid(command.mutation_id),
+        "generation_revision_id": _raw_uuid(command.generation_revision_id),
+        "organization_id": _raw_uuid(command.organization_id),
+        "shopping_list_id": _raw_uuid(command.shopping_list_id),
+        "parent_generation_revision_id": _raw_uuid(command.parent_generation_revision_id),
+        "scheduled_recipe_ids": _raw_source_ids(command.scheduled_recipe_ids),
+        "client_wall_time": _raw_time(command.client_wall_time),
+        "logical_operation_id": (
+            _raw_uuid(command.logical_operation_id)
+            if command.logical_operation_id is not None
+            else None
+        ),
+    }
+    return hashlib.sha256(
+        json.dumps(value, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode()
+    ).digest()
+
+
+def _prepare_refresh(command: RefreshShoppingListCommand) -> _PreparedRefresh:
+    violations: list[FieldViolation] = []
+    values = (
+        ("mutation_id", command.mutation_id),
+        ("generation_revision_id", command.generation_revision_id),
+        ("organization_id", command.organization_id),
+        ("shopping_list_id", command.shopping_list_id),
+        ("parent_generation_revision_id", command.parent_generation_revision_id),
+    )
+    for path, value in values:
+        if not isinstance(value, UUID):
+            violations.append(FieldViolation(path, "must_be_uuid"))
+    if not isinstance(command.scheduled_recipe_ids, tuple):
+        violations.append(FieldViolation("scheduled_recipe_ids", "must_be_uuid_tuple"))
+        source_ids: tuple[UUID, ...] = ()
+    else:
+        source_ids = tuple(item for item in command.scheduled_recipe_ids if isinstance(item, UUID))
+        if len(source_ids) != len(command.scheduled_recipe_ids):
+            violations.append(FieldViolation("scheduled_recipe_ids", "must_contain_only_uuids"))
+        if len(set(source_ids)) != len(source_ids):
+            violations.append(FieldViolation("scheduled_recipe_ids", "must_not_contain_duplicates"))
+    has_time = (
+        isinstance(command.client_wall_time, datetime)
+        and command.client_wall_time.tzinfo is not None
+        and command.client_wall_time.utcoffset() is not None
+    )
+    if not has_time:
+        violations.append(FieldViolation("client_wall_time", "must_include_timezone"))
+    if command.logical_operation_id is not None and not isinstance(
+        command.logical_operation_id, UUID
+    ):
+        violations.append(FieldViolation("logical_operation_id", "must_be_uuid_or_null"))
+    return _PreparedRefresh(
+        command.mutation_id if isinstance(command.mutation_id, UUID) else UUID(int=0),
+        command.generation_revision_id
+        if isinstance(command.generation_revision_id, UUID)
+        else UUID(int=0),
+        command.organization_id if isinstance(command.organization_id, UUID) else UUID(int=0),
+        command.shopping_list_id if isinstance(command.shopping_list_id, UUID) else UUID(int=0),
+        command.parent_generation_revision_id
+        if isinstance(command.parent_generation_revision_id, UUID)
+        else UUID(int=0),
+        source_ids,
+        command.client_wall_time.astimezone(UTC) if has_time else datetime(1970, 1, 1, tzinfo=UTC),
+        command.logical_operation_id if isinstance(command.logical_operation_id, UUID) else None,
+        tuple(violations),
+    )
+
+
+def _refresh_mutation(
+    prepared: _PreparedRefresh,
+    context: ExecutionContext,
+    role: Literal["member", "organization_admin", "system_admin"],
+    request_hash: bytes,
+    outcome: Literal["accepted", "partially_superseded", "rejected"],
+    payload: dict[str, object],
+    first: int | None = None,
+    last: int | None = None,
+) -> Mutation:
+    return Mutation(
+        id=prepared.mutation_id,
+        logical_operation_id=prepared.logical_operation_id,
+        organization_id=prepared.organization_id,
+        is_system_administration_scope=False,
+        actor_user_id=context.actor_user_id,
+        actor_role=role,
+        client_installation_id=context.client_installation_id,
+        oauth_client_id=context.oauth_client_id,
+        oauth_grant_id=context.oauth_grant_id,
+        client_wall_time=prepared.client_wall_time,
+        command_schema_version=COMMAND_SCHEMA_VERSION,
+        command_kind=REFRESH_COMMAND_KIND,
+        target_identities=[
+            {"entity_kind": "shopping_list", "entity_id": str(prepared.shopping_list_id)},
+            {
+                "entity_kind": "shopping_generation_revision",
+                "entity_id": str(prepared.generation_revision_id),
+            },
+        ],
+        request_hash=request_hash,
+        outcome=outcome,
+        outcome_payload=payload,
+        first_change_sequence=first,
+        last_change_sequence=last,
+    )
+
+
+def _refresh_payload(result: RefreshShoppingListResult) -> dict[str, object]:
+    return {
+        "shopping_refresh": {
+            "shopping_list_id": str(result.shopping_list_id),
+            "generation_revision_id": str(result.generation_revision_id),
+            "parent_generation_revision_id": str(result.parent_generation_revision_id),
+            "scheduled_recipe_ids": [str(item) for item in result.scheduled_recipe_ids],
+            "ingredient_row_ids": [str(item) for item in result.ingredient_row_ids],
+            "contribution_ids": [str(item) for item in result.contribution_ids],
+            "outcome": result.outcome,
+        }
+    }
+
+
+def _retained_refresh(mutation: Mutation) -> RefreshShoppingListResult:
+    try:
+        item = mutation.outcome_payload["shopping_refresh"] if mutation.outcome_payload else None
+        if (
+            not isinstance(item, dict)
+            or mutation.outcome not in ("accepted", "partially_superseded")
+            or item["outcome"] != mutation.outcome
+            or mutation.first_change_sequence is None
+            or mutation.last_change_sequence is None
+        ):
+            raise TypeError
+        return RefreshShoppingListResult(
+            mutation.id,
+            UUID(str(item["shopping_list_id"])),
+            UUID(str(item["generation_revision_id"])),
+            UUID(str(item["parent_generation_revision_id"])),
+            tuple(UUID(str(value)) for value in item["scheduled_recipe_ids"]),
+            tuple(UUID(str(value)) for value in item["ingredient_row_ids"]),
+            tuple(UUID(str(value)) for value in item["contribution_ids"]),
+            mutation.first_change_sequence,
+            mutation.last_change_sequence,
+            True,
+            item["outcome"],
+        )
+    except (KeyError, TypeError, ValueError) as exc:
+        raise RuntimeError("Retained shopping refresh has invalid outcome payload") from exc
+
+
+async def _shopping_list_record(
+    session: AsyncSession, shopping_list: ShoppingList
+) -> dict[str, object]:
+    clocks = await _field_clock_metadata(
+        session,
+        shopping_list.organization_id,
+        "shopping_list",
+        shopping_list.id,
+        ("current_generation_revision_id",),
+    )
+    return {
+        "id": str(shopping_list.id),
+        "organization_id": str(shopping_list.organization_id),
+        "event_id": str(shopping_list.event_id),
+        "name": shopping_list.name,
+        "current_generation_revision_id": str(shopping_list.current_generation_revision_id)
+        if shopping_list.current_generation_revision_id
+        else None,
+        "created_at": shopping_list.created_at.isoformat(),
+        "created_by_user_id": str(shopping_list.created_by_user_id),
+        "field_clocks": clocks,
+    }
+
+
+def _revision_source_entity_id(source: ShoppingRevisionSource) -> UUID:
+    """Give a composite immutable source a deterministic protocol identity."""
+
+    return uuid5(
+        _REVISION_SOURCE_ID_NAMESPACE,
+        f"{source.generation_revision_id}/{source.scheduled_recipe_id}",
+    )
+
+
+def _generation_revision_record(
+    revision: ShoppingGenerationRevision,
+) -> tuple[str, UUID, dict[str, object]]:
+    return (
+        "shopping_generation_revision",
+        revision.id,
+        {
+            "id": str(revision.id),
+            "organization_id": str(revision.organization_id),
+            "event_id": str(revision.event_id),
+            "shopping_list_id": str(revision.shopping_list_id),
+            "parent_revision_id": str(revision.parent_revision_id)
+            if revision.parent_revision_id
+            else None,
+            "generated_at": revision.generated_at.isoformat(),
+            "generated_by_user_id": str(revision.generated_by_user_id),
+            "immutable": True,
+        },
+    )
+
+
+def _revision_source_record(
+    source: ShoppingRevisionSource,
+) -> tuple[str, UUID, dict[str, object]]:
+    return (
+        "shopping_revision_source",
+        _revision_source_entity_id(source),
+        {
+            "id": str(_revision_source_entity_id(source)),
+            "generation_revision_id": str(source.generation_revision_id),
+            "shopping_list_id": str(source.shopping_list_id),
+            "organization_id": str(source.organization_id),
+            "event_id": str(source.event_id),
+            "scheduled_recipe_id": str(source.scheduled_recipe_id),
+            "immutable": True,
+        },
+    )
+
+
+def _contribution_snapshot_record(
+    snapshot: ShoppingContributionSnapshot,
+) -> tuple[str, UUID, dict[str, object]]:
+    return (
+        "shopping_contribution_snapshot",
+        snapshot.id,
+        {
+            "id": str(snapshot.id),
+            "organization_id": str(snapshot.organization_id),
+            "event_id": str(snapshot.event_id),
+            "shopping_list_id": str(snapshot.shopping_list_id),
+            "generation_revision_id": str(snapshot.generation_revision_id),
+            "shopping_contribution_id": str(snapshot.shopping_contribution_id),
+            "ingredient_id": str(snapshot.ingredient_id),
+            "active_in_revision": snapshot.active_in_revision,
+            "generated_quantity": _canonical_decimal(snapshot.generated_quantity),
+            "ingredient_version_id": str(snapshot.ingredient_version_id),
+            "ingredient_name": snapshot.ingredient_name,
+            "source_details": snapshot.source_details,
+            "immutable": True,
+        },
+    )
+
+
+async def refresh_shopping_list(
+    session_factory: async_sessionmaker[AsyncSession],
+    context: ExecutionContext,
+    command: RefreshShoppingListCommand,
+) -> RefreshShoppingListResult:
+    """Append an immutable shopping revision and LWW-select it when it wins."""
+
+    prepared, request_hash = _prepare_refresh(command), _refresh_hash(command)
+    error: ApplicationServiceError | None = None
+    result: RefreshShoppingListResult | None = None
+    async with session_factory() as session, session.begin():
+        role = await _authorize_member_and_lock_organization(
+            session, context, prepared.organization_id
+        )
+        await session.execute(
+            text("SELECT pg_advisory_xact_lock(:key)"),
+            {"key": _advisory_lock_key("mutation", prepared.mutation_id)},
+        )
+        retained = await session.get(Mutation, prepared.mutation_id)
+        if retained is not None:
+            if (
+                retained.actor_user_id != context.actor_user_id
+                or retained.command_kind != REFRESH_COMMAND_KIND
+                or retained.command_schema_version != COMMAND_SCHEMA_VERSION
+                or retained.request_hash != request_hash
+            ):
+                raise ApplicationServiceError("idempotency_mismatch", retry_same_identity=False)
+            if retained.outcome in ("accepted", "partially_superseded"):
+                return _retained_refresh(retained)
+            raise _retained_error(retained)
+        if prepared.violations:
+            error = _error(prepared.violations)
+        elif prepared.client_wall_time > datetime.now(UTC) + timedelta(hours=24):
+            error = ApplicationServiceError("client_time_too_far_ahead", retry_same_identity=False)
+        if error is not None:
+            session.add(
+                _refresh_mutation(
+                    prepared, context, role, request_hash, "rejected", _error_payload(error)
+                )
+            )
+        else:
+            await session.execute(
+                text("SELECT pg_advisory_xact_lock(:key)"),
+                {
+                    "key": _advisory_lock_key(
+                        "shopping_generation_revision", prepared.generation_revision_id
+                    )
+                },
+            )
+            shopping_list = await session.scalar(
+                select(ShoppingList)
+                .join(Event, Event.id == ShoppingList.event_id)
+                .where(
+                    ShoppingList.id == prepared.shopping_list_id,
+                    ShoppingList.organization_id == prepared.organization_id,
+                    Event.lifecycle == "active",
+                )
+                .with_for_update(of=(ShoppingList, Event))
+            )
+            if shopping_list is None:
+                existing = await session.scalar(
+                    select(ShoppingList.id).where(
+                        ShoppingList.id == prepared.shopping_list_id,
+                        ShoppingList.organization_id == prepared.organization_id,
+                    )
+                )
+                error = (
+                    ApplicationServiceError("archived_event", retry_same_identity=False)
+                    if existing is not None
+                    else _error((FieldViolation("shopping_list_id", "not_found"),))
+                )
+            else:
+                parent = await session.scalar(
+                    select(ShoppingGenerationRevision)
+                    .where(
+                        ShoppingGenerationRevision.id == prepared.parent_generation_revision_id,
+                        ShoppingGenerationRevision.shopping_list_id == shopping_list.id,
+                    )
+                    .with_for_update(of=ShoppingGenerationRevision)
+                )
+                collision = await session.scalar(
+                    select(ShoppingGenerationRevision.id).where(
+                        ShoppingGenerationRevision.id == prepared.generation_revision_id
+                    )
+                )
+                if parent is None:
+                    error = ApplicationServiceError("stale_precondition", retry_same_identity=False)
+                elif collision is not None:
+                    error = _error(
+                        (FieldViolation("generation_revision_id", "must_not_already_exist"),)
+                    )
+                else:
+                    materialized: list[tuple[_Source, list[_ResolvedLine]]] = []
+                    source_scope = _RefreshSourceScope(
+                        prepared.organization_id, shopping_list.event_id
+                    )
+                    for source_id in prepared.scheduled_recipe_ids:
+                        loaded = await _resolve_source(session, source_scope, source_id)
+                        if loaded is None:
+                            error = _error(
+                                (
+                                    FieldViolation(
+                                        "scheduled_recipe_ids",
+                                        "must_reference_active_recipes_from_event",
+                                    ),
+                                )
+                            )
+                            break
+                        materialized.append(loaded)
+            if error is not None:
+                session.add(
+                    _refresh_mutation(
+                        prepared, context, role, request_hash, "rejected", _error_payload(error)
+                    )
+                )
+            else:
+                assert shopping_list is not None
+                assert parent is not None
+                existing_rows = {
+                    row.ingredient_id: row
+                    for row in (
+                        await session.scalars(
+                            select(ShoppingIngredientRow)
+                            .where(ShoppingIngredientRow.shopping_list_id == shopping_list.id)
+                            .order_by(ShoppingIngredientRow.id)
+                            .with_for_update(of=ShoppingIngredientRow)
+                        )
+                    ).all()
+                }
+                existing_contributions = {
+                    (item.scheduled_recipe_id, item.ingredient_id): item
+                    for item in (
+                        await session.scalars(
+                            select(ShoppingContribution)
+                            .where(ShoppingContribution.shopping_list_id == shopping_list.id)
+                            .order_by(ShoppingContribution.id)
+                            .with_for_update(of=ShoppingContribution)
+                        )
+                    ).all()
+                }
+                revision = ShoppingGenerationRevision(
+                    id=prepared.generation_revision_id,
+                    organization_id=prepared.organization_id,
+                    event_id=shopping_list.event_id,
+                    shopping_list_id=shopping_list.id,
+                    parent_revision_id=parent.id,
+                    generated_by_user_id=context.actor_user_id,
+                )
+                session.add(revision)
+                await session.flush()
+                generated: dict[tuple[UUID, UUID], tuple[_Source, list[_ResolvedLine]]] = {}
+                revision_sources: list[ShoppingRevisionSource] = []
+                for source, lines in materialized:
+                    revision_source = ShoppingRevisionSource(
+                        generation_revision_id=prepared.generation_revision_id,
+                        shopping_list_id=shopping_list.id,
+                        organization_id=prepared.organization_id,
+                        event_id=shopping_list.event_id,
+                        scheduled_recipe_id=source.scheduled_recipe_id,
+                    )
+                    revision_sources.append(revision_source)
+                    session.add(revision_source)
+                    grouped: dict[UUID, list[_ResolvedLine]] = defaultdict(list)
+                    for line in lines:
+                        grouped[line.ingredient_id].append(line)
+                    for ingredient_id, items in grouped.items():
+                        generated[(source.scheduled_recipe_id, ingredient_id)] = (source, items)
+                contribution_ids: list[UUID] = []
+                snapshots: list[ShoppingContributionSnapshot] = []
+                for key, (source, items) in generated.items():
+                    scheduled_recipe_id, ingredient_id = key
+                    representative = items[-1]
+                    row = existing_rows.get(ingredient_id)
+                    if row is None:
+                        row = ShoppingIngredientRow(
+                            id=uuid4(),
+                            organization_id=prepared.organization_id,
+                            event_id=shopping_list.event_id,
+                            shopping_list_id=shopping_list.id,
+                            ingredient_id=ingredient_id,
+                            ingredient_name=representative.ingredient_name,
+                            calculation_unit_id=representative.calculation_unit_id,
+                            default_store_section_id=representative.default_store_section_id,
+                            default_store_section_name=representative.default_store_section_name,
+                            created_by_user_id=context.actor_user_id,
+                        )
+                        existing_rows[ingredient_id] = row
+                        session.add(row)
+                        await session.flush()
+                    contribution = existing_contributions.get(key)
+                    if contribution is None:
+                        contribution = ShoppingContribution(
+                            id=uuid4(),
+                            organization_id=prepared.organization_id,
+                            event_id=shopping_list.event_id,
+                            shopping_list_id=shopping_list.id,
+                            shopping_ingredient_row_id=row.id,
+                            ingredient_id=ingredient_id,
+                            scheduled_recipe_id=scheduled_recipe_id,
+                        )
+                        existing_contributions[key] = contribution
+                        session.add(contribution)
+                    contribution_ids.append(contribution.id)
+                    notes = [item.note for item in items if item.note]
+                    snapshots.append(
+                        ShoppingContributionSnapshot(
+                            id=uuid4(),
+                            organization_id=prepared.organization_id,
+                            event_id=shopping_list.event_id,
+                            shopping_list_id=shopping_list.id,
+                            generation_revision_id=prepared.generation_revision_id,
+                            shopping_contribution_id=contribution.id,
+                            ingredient_id=ingredient_id,
+                            active_in_revision=True,
+                            generated_quantity=sum((item.quantity for item in items), Decimal(0)),
+                            ingredient_version_id=representative.ingredient_version_id,
+                            ingredient_name=representative.ingredient_name,
+                            source_details={
+                                "recipe_name": source.recipe_name,
+                                "recipe_description": source.recipe_description,
+                                "day": source.calendar_date,
+                                "meal_role": source.meal_role,
+                                "selected_scale_amount": _canonical_decimal(
+                                    source.selected_scale_amount
+                                ),
+                                "recipe_base_scaling_amount": _canonical_decimal(
+                                    source.recipe_base_scaling_amount
+                                ),
+                                "line_notes": notes,
+                                "line_count": len(items),
+                            },
+                        )
+                    )
+                prior = {
+                    snapshot.shopping_contribution_id: snapshot
+                    for snapshot in (
+                        await session.scalars(
+                            select(ShoppingContributionSnapshot).where(
+                                ShoppingContributionSnapshot.generation_revision_id == parent.id
+                            )
+                        )
+                    ).all()
+                }
+                # A sibling offline refresh may have introduced a contribution that
+                # is absent from this command's parent branch.  It is nevertheless
+                # already a stable identity of this list and must receive an
+                # explanatory retired snapshot, rather than disappearing with its
+                # retained fulfilment credit.
+                missing_prior_ids = [
+                    contribution.id
+                    for contribution in existing_contributions.values()
+                    if contribution.id not in prior
+                ]
+                if missing_prior_ids:
+                    historical = (
+                        await session.execute(
+                            select(ShoppingContributionSnapshot, ShoppingGenerationRevision)
+                            .join(
+                                ShoppingGenerationRevision,
+                                ShoppingGenerationRevision.id
+                                == ShoppingContributionSnapshot.generation_revision_id,
+                            )
+                            .where(
+                                ShoppingContributionSnapshot.shopping_contribution_id.in_(
+                                    missing_prior_ids
+                                )
+                            )
+                            .order_by(
+                                ShoppingContributionSnapshot.shopping_contribution_id,
+                                ShoppingGenerationRevision.generated_at.desc(),
+                                ShoppingGenerationRevision.id.desc(),
+                            )
+                        )
+                    ).all()
+                    for snapshot, _revision in historical:
+                        prior.setdefault(snapshot.shopping_contribution_id, snapshot)
+                for contribution in existing_contributions.values():
+                    if contribution.id in contribution_ids:
+                        continue
+                    previous = prior.get(contribution.id)
+                    if previous is None:
+                        continue
+                    snapshots.append(
+                        ShoppingContributionSnapshot(
+                            id=uuid4(),
+                            organization_id=prepared.organization_id,
+                            event_id=shopping_list.event_id,
+                            shopping_list_id=shopping_list.id,
+                            generation_revision_id=prepared.generation_revision_id,
+                            shopping_contribution_id=contribution.id,
+                            ingredient_id=contribution.ingredient_id,
+                            active_in_revision=False,
+                            generated_quantity=previous.generated_quantity,
+                            ingredient_version_id=previous.ingredient_version_id,
+                            ingredient_name=previous.ingredient_name,
+                            source_details=previous.source_details,
+                        )
+                    )
+                session.add_all(snapshots)
+                pointer_clock = await session.scalar(
+                    select(FieldClock)
+                    .where(
+                        FieldClock.organization_id == prepared.organization_id,
+                        FieldClock.entity_kind == "shopping_list",
+                        FieldClock.entity_id == shopping_list.id,
+                        FieldClock.field_name == "current_generation_revision_id",
+                    )
+                    .with_for_update(of=FieldClock)
+                )
+                pointer_wins = pointer_clock is None or (
+                    prepared.client_wall_time,
+                    prepared.mutation_id,
+                ) > (pointer_clock.winning_client_wall_time, pointer_clock.winning_mutation_id)
+                outcome: Literal["accepted", "partially_superseded"] = "accepted"
+                if pointer_wins:
+                    shopping_list.current_generation_revision_id = prepared.generation_revision_id
+                    if pointer_clock is None:
+                        session.add(
+                            FieldClock(
+                                organization_id=prepared.organization_id,
+                                entity_kind="shopping_list",
+                                entity_id=shopping_list.id,
+                                field_name="current_generation_revision_id",
+                                winning_client_wall_time=prepared.client_wall_time,
+                                winning_mutation_id=prepared.mutation_id,
+                            )
+                        )
+                    else:
+                        pointer_clock.winning_client_wall_time = prepared.client_wall_time
+                        pointer_clock.winning_mutation_id = prepared.mutation_id
+                else:
+                    outcome = "partially_superseded"
+                await session.flush()
+                snapshot_contribution_ids = {
+                    snapshot.shopping_contribution_id for snapshot in snapshots
+                }
+                snapshot_contributions = [
+                    contribution
+                    for contribution in existing_contributions.values()
+                    if contribution.id in snapshot_contribution_ids
+                ]
+                rows_by_id = {row.id: row for row in existing_rows.values()}
+                snapshot_rows = list(
+                    {
+                        contribution.shopping_ingredient_row_id: rows_by_id[
+                            contribution.shopping_ingredient_row_id
+                        ]
+                        for contribution in snapshot_contributions
+                    }.values()
+                )
+                records: list[tuple[str, UUID, dict[str, object]]] = [
+                    _generation_revision_record(revision)
+                ]
+                records.extend([await _row_record(session, row) for row in snapshot_rows])
+                records.extend(
+                    [
+                        await _contribution_record(session, contribution)
+                        for contribution in snapshot_contributions
+                    ]
+                )
+                records.extend(_revision_source_record(source) for source in revision_sources)
+                records.extend(_contribution_snapshot_record(snapshot) for snapshot in snapshots)
+                records.append(
+                    (
+                        "shopping_list",
+                        shopping_list.id,
+                        await _shopping_list_record(session, shopping_list),
+                    )
+                )
+                first, last = await _reserve_change_range(
+                    session, prepared.organization_id, prepared.mutation_id, len(records)
+                )
+                result = RefreshShoppingListResult(
+                    prepared.mutation_id,
+                    shopping_list.id,
+                    prepared.generation_revision_id,
+                    parent.id,
+                    prepared.scheduled_recipe_ids,
+                    tuple(row.id for row in existing_rows.values()),
+                    tuple(contribution_ids),
+                    first,
+                    last,
+                    False,
+                    outcome,
+                )
+                payload = _refresh_payload(result)
+                session.add_all(
+                    [
+                        OrganizationChange(
+                            organization_id=prepared.organization_id,
+                            sequence=first + offset,
+                            mutation_id=prepared.mutation_id,
+                            entity_id=entity_id,
+                            entity_kind=entity_kind,
+                            operation="upsert",
+                            payload={"record_schema_version": 1, "record": record},
+                        )
+                        for offset, (entity_kind, entity_id, record) in enumerate(records)
+                    ]
+                )
+                session.add(
+                    _refresh_mutation(
+                        prepared, context, role, request_hash, outcome, payload, first, last
+                    )
+                )
+    if error is not None:
+        raise error
+    if result is None:
+        raise RuntimeError("Shopping-list refresh produced no outcome")
     return result
 
 
