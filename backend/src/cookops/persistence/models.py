@@ -89,6 +89,47 @@ class ExternalIdentity(Base):
     )
 
 
+class BrowserSession(Base):
+    __tablename__ = "browser_sessions"
+    __table_args__ = (
+        CheckConstraint(
+            "octet_length(secret_hmac) = 32",
+            name="ck_browser_sessions_secret_hmac",
+        ),
+        CheckConstraint(
+            "expires_at > created_at",
+            name="ck_browser_sessions_expiry",
+        ),
+        CheckConstraint(
+            "last_used_at IS NULL OR (last_used_at >= created_at AND last_used_at < expires_at)",
+            name="ck_browser_sessions_last_used_at",
+        ),
+        CheckConstraint(
+            "(revoked_at IS NULL AND revoked_by_user_id IS NULL) OR "
+            "(revoked_at IS NOT NULL AND revoked_by_user_id IS NOT NULL "
+            "AND revoked_at >= created_at "
+            "AND (last_used_at IS NULL OR last_used_at <= revoked_at))",
+            name="ck_browser_sessions_revocation_attribution",
+        ),
+        UniqueConstraint("secret_hmac", name="uq_browser_sessions_secret_hmac"),
+    )
+
+    id: Mapped[UUID] = mapped_column(
+        Uuid, primary_key=True, default=uuid4, server_default=text("gen_random_uuid()")
+    )
+    user_id: Mapped[UUID] = mapped_column(ForeignKey("users.id", ondelete="RESTRICT"))
+    secret_hmac: Mapped[bytes] = mapped_column(LargeBinary(32))
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=text("CURRENT_TIMESTAMP")
+    )
+    expires_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    last_used_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    revoked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    revoked_by_user_id: Mapped[UUID | None] = mapped_column(
+        ForeignKey("users.id", ondelete="RESTRICT")
+    )
+
+
 class Organization(Base):
     __tablename__ = "organizations"
     __table_args__ = (

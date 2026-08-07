@@ -77,6 +77,6 @@ def test_database_is_ready_only_at_alembic_head() -> None:
 
     try:
         asyncio.run(exercise_runtime())
-        assert load_alembic_head() == "0004_client_mutations"
+        assert load_alembic_head() == "0005_browser_sessions"
     finally:
         command.downgrade(configuration, "base")
