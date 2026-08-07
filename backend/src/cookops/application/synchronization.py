@@ -31,6 +31,11 @@ from cookops.application.events import (
     update_event_base_attendance,
 )
 from cookops.application.organizations import ApplicationServiceError, ExecutionContext
+from cookops.application.recipes import (
+    CreateRecipeCommand,
+    CreateRecipeResult,
+    create_recipe,
+)
 from cookops.application.shopping_lists import (
     CreateShoppingListCommand,
     CreateShoppingListResult,
@@ -127,17 +132,25 @@ SyncCommand = (
     CreateEventCommand
     | UpdateEventBaseAttendanceCommand
     | CreateShoppingListCommand
+    | CreateRecipeCommand
     | UnsupportedSyncCommand
 )
 
 
 def _command_kind(
-    command: CreateEventCommand | UpdateEventBaseAttendanceCommand | CreateShoppingListCommand,
+    command: (
+        CreateEventCommand
+        | UpdateEventBaseAttendanceCommand
+        | CreateShoppingListCommand
+        | CreateRecipeCommand
+    ),
 ) -> str:
     if isinstance(command, CreateEventCommand):
         return "event.create"
     if isinstance(command, UpdateEventBaseAttendanceCommand):
         return "event.update_base_attendance"
+    if isinstance(command, CreateRecipeCommand):
+        return "recipe.create"
     return "shopping_list.create"
 
 
@@ -428,11 +441,18 @@ class SynchronizationCommandService:
                 retry_same_identity=False,
             )
         try:
-            result: CreateEventResult | UpdateEventBaseAttendanceResult | CreateShoppingListResult
+            result: (
+                CreateEventResult
+                | UpdateEventBaseAttendanceResult
+                | CreateShoppingListResult
+                | CreateRecipeResult
+            )
             if isinstance(command, CreateEventCommand):
                 result = await create_event(self._session_factory, context, command)
             elif isinstance(command, UpdateEventBaseAttendanceCommand):
                 result = await update_event_base_attendance(self._session_factory, context, command)
+            elif isinstance(command, CreateRecipeCommand):
+                result = await create_recipe(self._session_factory, context, command)
             else:
                 result = await create_shopping_list(self._session_factory, context, command)
         except ApplicationServiceError as error:
@@ -535,7 +555,12 @@ class SynchronizationCommandService:
 
     @staticmethod
     def _result_outcome(
-        result: CreateEventResult | UpdateEventBaseAttendanceResult | CreateShoppingListResult,
+        result: (
+            CreateEventResult
+            | UpdateEventBaseAttendanceResult
+            | CreateShoppingListResult
+            | CreateRecipeResult
+        ),
     ) -> PushCommandOutcome:
         return PushCommandOutcome(
             mutation_id=result.mutation_id,
@@ -544,6 +569,8 @@ class SynchronizationCommandService:
                 if isinstance(result, CreateEventResult)
                 else "event.update_base_attendance"
                 if isinstance(result, UpdateEventBaseAttendanceResult)
+                else "recipe.create"
+                if isinstance(result, CreateRecipeResult)
                 else "shopping_list.create"
             ),
             status=result.outcome,

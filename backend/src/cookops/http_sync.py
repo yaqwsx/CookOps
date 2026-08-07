@@ -9,10 +9,11 @@ from typing import Literal
 from uuid import UUID
 
 from fastapi import APIRouter, HTTPException, Request, status
-from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_validator
+from pydantic import BaseModel, ConfigDict, Field, StrictBool, ValidationError, field_validator
 
 from cookops.application.browser_sessions import BrowserSessionService
 from cookops.application.events import CreateEventCommand, UpdateEventBaseAttendanceCommand
+from cookops.application.recipes import CreateRecipeCommand, RecipeIngredientLineInput
 from cookops.application.shopping_lists import CreateShoppingListCommand
 from cookops.application.synchronization import (
     MAX_COMMANDS_PER_PUSH,
@@ -155,6 +156,50 @@ class CreateShoppingListPayload(BaseModel):
     logical_operation_id: UUID | None = None
 
 
+class RecipeIngredientLinePayload(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    id: UUID
+    line_key: UUID
+    ingredient_version_id: UUID
+    base_quantity: Decimal
+    position_key: str
+    scaling_behavior: Literal["proportional", "fixed"] = "proportional"
+    include_in_portion_weight: StrictBool = True
+    preferred_display_unit_id: UUID | None = None
+    note: str | None = None
+
+    @field_validator("base_quantity", mode="before")
+    @classmethod
+    def base_quantity_must_be_decimal_string(cls, value: object) -> object:
+        if not isinstance(value, str):
+            raise ValueError("must be a decimal string")
+        return value
+
+
+class CreateRecipePayload(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    recipe_id: UUID
+    recipe_version_id: UUID
+    name: str
+    scaling_unit_id: UUID
+    base_scaling_amount: Decimal
+    ingredient_lines: tuple[RecipeIngredientLinePayload, ...]
+    description: str | None = None
+    recipe_tag_ids: tuple[UUID, ...] = ()
+    estimated_diners_per_scaling_unit: Decimal | None = None
+    round_suggestions_up: StrictBool = False
+    logical_operation_id: UUID | None = None
+
+    @field_validator("base_scaling_amount", "estimated_diners_per_scaling_unit", mode="before")
+    @classmethod
+    def decimal_values_must_be_decimal_strings(cls, value: object) -> object:
+        if value is not None and not isinstance(value, str):
+            raise ValueError("must be a decimal string or null")
+        return value
+
+
 class PushCommandErrorResponse(BaseModel):
     code: str
     field_violations: tuple[dict[str, str], ...]
@@ -263,6 +308,39 @@ def _push_command(command: PushCommandRequest, organization_id: UUID) -> SyncCom
                 scheduled_recipe_ids=shopping_payload.scheduled_recipe_ids,
                 client_wall_time=command.client_wall_time,
                 logical_operation_id=shopping_payload.logical_operation_id,
+            )
+        if command.command_kind == "recipe.create":
+            recipe_payload = CreateRecipePayload.model_validate(command.payload)
+            return CreateRecipeCommand(
+                mutation_id=command.mutation_id,
+                recipe_id=recipe_payload.recipe_id,
+                recipe_version_id=recipe_payload.recipe_version_id,
+                organization_id=organization_id,
+                name=recipe_payload.name,
+                scaling_unit_id=recipe_payload.scaling_unit_id,
+                base_scaling_amount=recipe_payload.base_scaling_amount,
+                client_wall_time=command.client_wall_time,
+                ingredient_lines=tuple(
+                    RecipeIngredientLineInput(
+                        id=line.id,
+                        line_key=line.line_key,
+                        ingredient_version_id=line.ingredient_version_id,
+                        base_quantity=line.base_quantity,
+                        position_key=line.position_key,
+                        scaling_behavior=line.scaling_behavior,
+                        include_in_portion_weight=line.include_in_portion_weight,
+                        preferred_display_unit_id=line.preferred_display_unit_id,
+                        note=line.note,
+                    )
+                    for line in recipe_payload.ingredient_lines
+                ),
+                description=recipe_payload.description,
+                recipe_tag_ids=recipe_payload.recipe_tag_ids,
+                estimated_diners_per_scaling_unit=(
+                    recipe_payload.estimated_diners_per_scaling_unit
+                ),
+                round_suggestions_up=recipe_payload.round_suggestions_up,
+                logical_operation_id=recipe_payload.logical_operation_id,
             )
     except ValidationError:
         return UnsupportedSyncCommand(
