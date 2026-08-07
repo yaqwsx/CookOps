@@ -15,6 +15,7 @@ dependencies = [
     "google-auth[requests]>=2.40,<3",
     "cachecontrol>=0.14,<1",
     "pillow>=11,<12",
+    "mcp>=1.24,<2",
 ]
 
 [build-system]

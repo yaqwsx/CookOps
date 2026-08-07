@@ -59,6 +59,20 @@ async def test_readiness_endpoint_is_safe_by_default() -> None:
     assert response.json() == {"detail": "application is not ready"}
 
 
+def test_mcp_is_unmounted_even_when_its_private_verifier_is_configured() -> None:
+    app = create_app(
+        Settings(
+            environment=Environment.TEST,
+            human_auth_provider=HumanAuthProvider.DUMMY,
+            oauth_issuer="https://cookops.example/oauth",
+            mcp_resource="https://cookops.example/mcp",
+            oauth_introspection_url="http://oauth-server:3000/oauth/introspect",
+            oauth_resource_server_secret="secret",
+        )
+    )
+    assert "/mcp" not in {getattr(route, "path", None) for route in app.routes}
+
+
 @pytest.mark.anyio
 async def test_database_runtime_is_created_and_closed_with_application_lifespan() -> None:
     class FakeRuntime:

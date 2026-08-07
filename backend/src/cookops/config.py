@@ -35,6 +35,10 @@ class Settings(BaseSettings):
     browser_session_cookie_samesite: Literal["lax", "strict"] = "lax"
     browser_session_lifetime_seconds: int = 7 * 24 * 60 * 60
     receipt_media_root: Path = Path("/var/lib/cookops/receipts")
+    oauth_issuer: str | None = None
+    mcp_resource: str | None = None
+    oauth_introspection_url: str | None = None
+    oauth_resource_server_secret: str | None = None
 
     @property
     def resolved_browser_session_hmac_key(self) -> str:
@@ -73,6 +77,17 @@ class Settings(BaseSettings):
             raise ValueError("browser session HMAC key must be configured in production")
         if self.environment is Environment.PRODUCTION and not self.browser_session_cookie_secure:
             raise ValueError("browser session cookie must be secure in production")
+
+        oauth_values = (
+            self.oauth_issuer,
+            self.mcp_resource,
+            self.oauth_introspection_url,
+            self.oauth_resource_server_secret,
+        )
+        if any(value is not None for value in oauth_values) and any(
+            not isinstance(value, str) or not value for value in oauth_values
+        ):
+            raise ValueError("MCP OAuth verification settings must be configured together")
 
         if self.browser_session_hmac_key is not None:
             # Parse configured keys at configuration time rather than leaving a
