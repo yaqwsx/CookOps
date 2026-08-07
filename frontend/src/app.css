@@ -27,6 +27,7 @@ a {
 }
 
 a:focus-visible,
+button:focus-visible,
 select:focus-visible {
   outline: 0.2rem solid #315b43;
   outline-offset: 0.2rem;
@@ -75,6 +76,40 @@ select:focus-visible {
   font-weight: 650;
 }
 
+.header-actions,
+.user-menu {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+}
+
+.user-menu {
+  padding-left: 0.75rem;
+  border-left: 1px solid #ddd2c2;
+}
+
+.identity-name {
+  font-size: 0.875rem;
+  font-weight: 700;
+}
+
+button {
+  min-height: 2.5rem;
+  padding: 0.45rem 0.75rem;
+  border: 1px solid #315b43;
+  border-radius: 0.5rem;
+  color: #fff;
+  background: #315b43;
+  cursor: pointer;
+  font: inherit;
+  font-weight: 700;
+}
+
+button:disabled {
+  cursor: wait;
+  opacity: 0.65;
+}
+
 .locale-picker select {
   min-height: 2.5rem;
   padding: 0.4rem 2rem 0.4rem 0.6rem;
@@ -89,6 +124,59 @@ select:focus-visible {
   width: min(72rem, 100%);
   margin: 0 auto;
   padding: clamp(2rem, 7vw, 5rem) clamp(1rem, 4vw, 3rem);
+}
+
+.login-main {
+  display: grid;
+  min-height: 100vh;
+  place-items: center;
+  padding: clamp(1rem, 5vw, 3rem);
+}
+
+.login-card {
+  width: min(34rem, 100%);
+  padding: clamp(1.5rem, 5vw, 3rem);
+  border: 1px solid #ddd2c2;
+  border-radius: 0.8rem;
+  background: #fffdf9;
+}
+
+.login-card > p {
+  line-height: 1.5;
+}
+
+.development-warning {
+  padding: 0.8rem 1rem;
+  border-left: 0.3rem solid #8a4b08;
+  color: #5b3307;
+  background: #fff0d7;
+}
+
+.identity-list {
+  display: grid;
+  gap: 0.75rem;
+  margin: 1.5rem 0 0;
+  padding: 0;
+  border: 0;
+}
+
+.identity-list legend {
+  margin-bottom: 0.75rem;
+  font-weight: 700;
+}
+
+.identity-button {
+  width: 100%;
+  text-align: left;
+}
+
+.login-locale-picker {
+  margin-top: 1.5rem;
+}
+
+.google-sign-in {
+  min-height: 2.75rem;
+  margin-top: 1.5rem;
 }
 
 .introduction {
@@ -145,6 +233,16 @@ h1 {
   .app-header {
     grid-template-columns: 1fr;
     gap: 0.75rem;
+  }
+
+  .header-actions {
+    align-items: flex-start;
+    flex-wrap: wrap;
+  }
+
+  .user-menu {
+    padding-left: 0;
+    border-left: 0;
   }
 
   .app-header nav {
