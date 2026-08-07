@@ -1,10 +1,12 @@
 import {
+  compareOutboxCommands,
   localDb,
   type BootstrapStagingRecord,
   type CanonicalRecord,
   type OutboxCommand,
 } from "./local-db";
 import { replayShoppingOperation } from "./shopping-operations";
+import { replayRecipeCreate } from "./recipe-create";
 
 const supportedEntityKinds = new Set([
   "organization",
@@ -126,11 +128,7 @@ function canonical(
 function pendingCommands(commands: OutboxCommand[]) {
   return commands
     .filter((command) => command.state === "pending")
-    .sort(
-      (left, right) =>
-        left.createdAt.localeCompare(right.createdAt) ||
-        left.id.localeCompare(right.id),
-    );
+    .sort(compareOutboxCommands);
 }
 
 /** Replay the current typed command set without changing durable command identities. */
@@ -229,20 +227,18 @@ async function replayOptimisticCommands(
         // A pending command targeting a now-archived or absent row stays recoverable.
       }
     }
+    if (command.commandType === "recipe.create") {
+      await replayRecipeCreate(userId, organizationId, command);
+    }
     const entityId =
       command.commandType === "shopping_list.create"
         ? command.payload.shopping_list_id
-        : command.commandType === "recipe.create"
-          ? command.payload.recipe_id
-          : undefined;
+        : undefined;
     if (typeof entityId === "string") {
       await localDb.optimisticOverlays.put({
         userId,
         organizationId,
-        entityType:
-          command.commandType === "shopping_list.create"
-            ? "shopping_list"
-            : "recipe",
+        entityType: "shopping_list",
         entityId,
         recordSchemaVersion: 1,
         lifecycle: "active",

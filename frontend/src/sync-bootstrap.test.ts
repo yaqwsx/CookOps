@@ -71,6 +71,92 @@ function organizationRecord() {
 describe("bootstrapOrganization", () => {
   beforeEach(clearDatabase);
 
+  it("replays a pending recipe create as both root and immutable initial version", async () => {
+    const recipeId = "3d8b2b21-c378-4574-9e46-9338c81305ef";
+    const versionId = "4d8b2b21-c378-4574-9e46-9338c81305ef";
+    const unitId = "5d8b2b21-c378-4574-9e46-9338c81305ef";
+    await localDb.outbox.add({
+      id: "recipe-create",
+      userId,
+      organizationId,
+      commandType: "recipe.create",
+      payload: {
+        recipe_id: recipeId,
+        recipe_version_id: versionId,
+        name: "Pending soup",
+        scaling_unit_id: unitId,
+        base_scaling_amount: "4",
+        ingredient_lines: [],
+      },
+      actionAt: "2026-08-07T11:00:00.000Z",
+      createdAt: "2026-08-07T11:00:00.000Z",
+      state: "pending",
+    });
+
+    await bootstrapOrganization(userId, organizationId, {
+      fetch: vi.fn<typeof fetch>(async () => response([organizationRecord()])),
+    });
+
+    await expect(
+      readVisibleCanonicalRecord(userId, organizationId, "recipe", recipeId),
+    ).resolves.toMatchObject({
+      fields: { current_version_id: versionId, name: "Pending soup" },
+    });
+    await expect(
+      readVisibleCanonicalRecord(
+        userId,
+        organizationId,
+        "recipe_version",
+        versionId,
+      ),
+    ).resolves.toMatchObject({
+      immutable: true,
+      fields: { recipe_id: recipeId, name: "Pending soup" },
+    });
+  });
+
+  it("replays same-millisecond dependent commands by durable sequence", async () => {
+    await localDb.outbox.bulkAdd([
+      {
+        id: "z-create",
+        userId,
+        organizationId,
+        commandType: "event.create",
+        payload: {
+          event_id: "event",
+          name: "Created first",
+          start_date: "2026-08-10",
+          end_date: "2026-08-10",
+          base_expected_attendance: 2,
+          budget_amount: "0",
+        },
+        actionAt: "2026-08-07T11:00:00.000Z",
+        createdAt: "2026-08-07T11:00:00.000Z",
+        sequence: 1,
+        state: "pending",
+      },
+      {
+        id: "a-update",
+        userId,
+        organizationId,
+        commandType: "event.update_base_attendance",
+        payload: { event_id: "event", base_expected_attendance: 9 },
+        actionAt: "2026-08-07T11:00:00.000Z",
+        createdAt: "2026-08-07T11:00:00.000Z",
+        sequence: 2,
+        state: "pending",
+      },
+    ]);
+
+    await bootstrapOrganization(userId, organizationId, {
+      fetch: vi.fn<typeof fetch>(async () => response([organizationRecord()])),
+    });
+
+    await expect(
+      readVisibleCanonicalRecord(userId, organizationId, "event", "event"),
+    ).resolves.toMatchObject({ fields: { base_expected_attendance: 9 } });
+  });
+
   it("keeps the prior cache, user-owned work, and cursor when staging is interrupted", async () => {
     await localDb.canonicalRecords.add({
       userId,

@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
-import { localDb } from "./local-db";
+import { appendOutboxCommand, localDb } from "./local-db";
 import { dispatchOutbox } from "./sync-dispatcher";
 
 const organizationId = "organization-a";
@@ -50,6 +50,54 @@ function response(outcomes: object[]) {
 
 describe("dispatchOutbox", () => {
   beforeEach(clearLocalDatabase);
+
+  it("keeps a same-millisecond recipe create before its dependent schedule", async () => {
+    const createdAt = "2026-08-07T10:00:00.000Z";
+    await appendOutboxCommand({
+      id: "z-create",
+      userId,
+      organizationId,
+      commandType: "recipe.create",
+      payload: {},
+      actionAt: createdAt,
+      createdAt,
+      state: "pending",
+    });
+    await appendOutboxCommand({
+      id: "a-schedule",
+      userId,
+      organizationId,
+      commandType: "scheduled_recipe.schedule",
+      payload: {},
+      actionAt: createdAt,
+      createdAt,
+      state: "pending",
+    });
+    const send = vi.fn<typeof fetch>(async (_input, init) => {
+      const commands = JSON.parse(String(init?.body)).commands;
+      return response(
+        commands.map(
+          (command: { mutation_id: string; command_kind: string }) => ({
+            mutation_id: command.mutation_id,
+            command_kind: command.command_kind,
+            status: "accepted",
+            error: null,
+          }),
+        ),
+      );
+    });
+
+    await dispatchOutbox(organizationId, {
+      userId,
+      clientInstallationId: installationId,
+      fetch: send,
+    });
+
+    expect(JSON.parse(String(send.mock.calls[0]?.[1]?.body)).commands).toEqual([
+      expect.objectContaining({ mutation_id: "z-create" }),
+      expect.objectContaining({ mutation_id: "a-schedule" }),
+    ]);
+  });
 
   it("sends ordered commands with the authenticated browser contract and removes accepted work", async () => {
     await addCommand("later", "2026-08-07T10:01:00.000Z");

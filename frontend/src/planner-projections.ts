@@ -1,4 +1,5 @@
-import { localDb, type CanonicalRecord } from "./local-db";
+import type { CanonicalRecord } from "./local-db";
+import { readVisibleRecords } from "./visible-records";
 
 export type PlannerRecipe = { id: string; versionId: string; name: string };
 export type PlannerDay = { id: string; date: string; note: string | null };
@@ -42,41 +43,6 @@ function belongsToOrganization(
   return owner === undefined || owner === organizationId;
 }
 
-function visible(
-  records: CanonicalRecord[],
-  overlays: CanonicalRecord[],
-  includeRetired = false,
-) {
-  const result = new Map(records.map((record) => [record.entityId, record]));
-  for (const record of overlays) {
-    if (result.get(record.entityId)?.lifecycle !== "retired")
-      result.set(record.entityId, record);
-  }
-  return [...result.values()].filter(
-    (record) => includeRetired || record.lifecycle === "active",
-  );
-}
-
-async function records(
-  userId: string,
-  organizationId: string,
-  entityType: string,
-  includeRetired = false,
-) {
-  const key = [userId, organizationId, entityType] as const;
-  return visible(
-    await localDb.canonicalRecords
-      .where("[userId+organizationId+entityType]")
-      .equals(key)
-      .toArray(),
-    await localDb.optimisticOverlays
-      .where("[userId+organizationId+entityType]")
-      .equals(key)
-      .toArray(),
-    includeRetired,
-  );
-}
-
 /** Read only valid cached records, keeping malformed remote data out of the UI and outbox. */
 export async function readEventPlanner(
   userId: string,
@@ -92,12 +58,12 @@ export async function readEventPlanner(
     versionRecords,
     scheduledRecords,
   ] = await Promise.all([
-    records(userId, organizationId, "event", true),
-    records(userId, organizationId, "event_day"),
-    records(userId, organizationId, "event_meal_role"),
-    records(userId, organizationId, "recipe"),
-    records(userId, organizationId, "recipe_version"),
-    records(userId, organizationId, "scheduled_recipe"),
+    readVisibleRecords(userId, organizationId, "event", true),
+    readVisibleRecords(userId, organizationId, "event_day"),
+    readVisibleRecords(userId, organizationId, "event_meal_role"),
+    readVisibleRecords(userId, organizationId, "recipe"),
+    readVisibleRecords(userId, organizationId, "recipe_version"),
+    readVisibleRecords(userId, organizationId, "scheduled_recipe"),
   ]);
   const event = eventRecords.find(
     (record) =>

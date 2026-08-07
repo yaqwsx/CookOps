@@ -76,6 +76,32 @@ const resources = {
           unavailable: "Účast se nepodařilo uložit místně. Zkuste to znovu.",
         },
       },
+      recipesCatalog: {
+        loading: "Načítáme recepty…",
+        scope: "Katalog čte uložené projekce receptů a čekající místní změny.",
+        offline: "Zobrazujeme uložené recepty bez připojení.",
+        error: "Recepty se nepodařilo načíst. Zkuste to znovu.",
+        retry: "Zkusit znovu",
+        empty: "V této organizaci zatím nejsou žádné recepty.",
+        createHeading: "Nový recept",
+        name: "Název",
+        description: "Popis",
+        scalingUnit: "Jednotka škálování",
+        baseScalingAmount: "Základní množství škálování",
+        noScalingUnits:
+          "Pro vytvoření receptu je potřeba uložená jednotka škálování.",
+        create: "Uložit recept",
+        saved: "Recept je uložen místně a bude synchronizován.",
+        scaling: "Základ: {{amount}}",
+        errors: {
+          name: "Zadejte název do 200 znaků.",
+          description: "Popis může mít nejvýše 20 000 znaků.",
+          scalingUnit: "Vyberte uloženou jednotku škálování.",
+          baseScalingAmount:
+            "Základní množství musí být kladné desetinné číslo.",
+          unavailable: "Recept se nepodařilo uložit místně. Zkuste to znovu.",
+        },
+      },
       planner: {
         heading: "Plán akce",
         loading: "Načítáme plán akce…",
@@ -250,6 +276,33 @@ const resources = {
           event: "The event cannot be edited locally.",
           unavailable:
             "Attendance could not be saved locally. Please try again.",
+        },
+      },
+      recipesCatalog: {
+        loading: "Loading recipes…",
+        scope:
+          "This catalog reads stored recipe projections and pending local changes.",
+        offline: "Showing stored recipes while offline.",
+        error: "Recipes could not be loaded. Please try again.",
+        retry: "Try again",
+        empty: "There are no recipes in this organization yet.",
+        createHeading: "New recipe",
+        name: "Name",
+        description: "Description",
+        scalingUnit: "Scaling unit",
+        baseScalingAmount: "Base scaling amount",
+        noScalingUnits: "A stored scaling unit is required to create a recipe.",
+        create: "Save recipe",
+        saved: "The recipe is saved locally and will synchronize.",
+        scaling: "Base: {{amount}}",
+        errors: {
+          name: "Enter a name of at most 200 characters.",
+          description: "The description can contain at most 20,000 characters.",
+          scalingUnit: "Select a stored scaling unit.",
+          baseScalingAmount:
+            "The base amount must be a positive decimal number.",
+          unavailable:
+            "The recipe could not be saved locally. Please try again.",
         },
       },
       planner: {

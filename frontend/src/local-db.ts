@@ -40,6 +40,8 @@ export interface OutboxCommand {
   payload: Record<string, unknown>;
   actionAt: string;
   createdAt: string;
+  /** Durable local intent order within one user's organization replica. */
+  sequence?: number;
   state: OutboxState;
   failureReason?: string;
 }
@@ -141,10 +143,65 @@ export class CookOpsDatabase extends Dexie {
       optimisticOverlays:
         "[userId+organizationId+entityType+entityId], [userId+organizationId]",
     });
+    this.version(7)
+      .stores({
+        outbox:
+          "id, userId, organizationId, [userId+state], [userId+organizationId+state], [userId+organizationId+sequence], createdAt",
+      })
+      .upgrade(async (transaction) => {
+        const outbox = transaction.table("outbox");
+        const commands = (await outbox.toArray()) as OutboxCommand[];
+        const sequences = new Map<string, number>();
+        for (const command of [...commands].sort(
+          (left, right) =>
+            left.createdAt.localeCompare(right.createdAt) ||
+            left.id.localeCompare(right.id),
+        )) {
+          const key = `${command.userId}:${command.organizationId}`;
+          const sequence = (sequences.get(key) ?? 0) + 1;
+          sequences.set(key, sequence);
+          await outbox.update(command.id, { sequence });
+        }
+      });
   }
 }
 
 export const localDb = new CookOpsDatabase();
+
+/** Append while holding the outbox transaction, preserving dependency order across equal timestamps. */
+export async function appendOutboxCommand(
+  command: Omit<OutboxCommand, "sequence">,
+): Promise<void> {
+  const existing = await localDb.outbox
+    .where("[userId+organizationId+sequence]")
+    .between(
+      [command.userId, command.organizationId, Dexie.minKey],
+      [command.userId, command.organizationId, Dexie.maxKey],
+    )
+    .toArray();
+  const sequence =
+    existing.reduce(
+      (latest, item) =>
+        typeof item.sequence === "number"
+          ? Math.max(latest, item.sequence)
+          : latest,
+      0,
+    ) + 1;
+  await localDb.outbox.add({ ...command, sequence });
+}
+
+/** Legacy records retain their pre-v7 timestamp order until Dexie upgrades them. */
+export function compareOutboxCommands(
+  left: OutboxCommand,
+  right: OutboxCommand,
+): number {
+  if (typeof left.sequence === "number" && typeof right.sequence === "number")
+    return left.sequence - right.sequence;
+  return (
+    left.createdAt.localeCompare(right.createdAt) ||
+    left.id.localeCompare(right.id)
+  );
+}
 
 /** Read the projection users see: authoritative records plus their pending overlay. */
 export async function readVisibleCanonicalRecord(

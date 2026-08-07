@@ -1,4 +1,4 @@
-import { localDb } from "./local-db";
+import { appendOutboxCommand, localDb } from "./local-db";
 import { readEventPlanner } from "./planner-projections";
 
 const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -75,7 +75,7 @@ export async function queueRecipeSchedule(
         immutable: false,
         updatedAt: actionAt,
       });
-      await localDb.outbox.add({
+      await appendOutboxCommand({
         id: mutationId,
         userId,
         organizationId,
@@ -178,7 +178,7 @@ export async function queueScheduledRecipeMove(
         },
         updatedAt: actionAt,
       });
-      await localDb.outbox.add({
+      await appendOutboxCommand({
         id: mutationId,
         userId,
         organizationId,

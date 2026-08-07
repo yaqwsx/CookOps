@@ -1,6 +1,8 @@
 import { beforeEach, describe, expect, it } from "vitest";
 
 import {
+  appendOutboxCommand,
+  compareOutboxCommands,
   localDb,
   readOrCreateBrowserInstallationId,
   readSynchronizationSummary,
@@ -44,6 +46,36 @@ describe("local synchronization database", () => {
       id: "user-a",
       installationId: first,
     });
+  });
+
+  it("assigns durable creation order per user and organization while preserving legacy fallback", async () => {
+    const command = {
+      userId: "user-a",
+      organizationId: "organization-a",
+      commandType: "recipe.create",
+      payload: {},
+      actionAt: "2026-08-07T10:00:00.000Z",
+      createdAt: "2026-08-07T10:00:00.000Z",
+      state: "pending" as const,
+    };
+    await appendOutboxCommand({ ...command, id: "z-first" });
+    await appendOutboxCommand({ ...command, id: "a-second" });
+    await appendOutboxCommand({
+      ...command,
+      id: "other-organization",
+      organizationId: "organization-b",
+    });
+    const commands = await localDb.outbox.toArray();
+    expect(commands.find((item) => item.id === "z-first")?.sequence).toBe(1);
+    expect(commands.find((item) => item.id === "a-second")?.sequence).toBe(2);
+    expect(
+      commands.find((item) => item.id === "other-organization")?.sequence,
+    ).toBe(1);
+    expect(
+      [...commands]
+        .filter((item) => item.organizationId === "organization-a")
+        .sort(compareOutboxCommands),
+    ).toMatchObject([{ id: "z-first" }, { id: "a-second" }]);
   });
 
   it("keeps command and photo upload state partitioned by organization", async () => {

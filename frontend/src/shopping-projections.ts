@@ -1,4 +1,5 @@
-import { localDb, type CanonicalRecord } from "./local-db";
+import type { CanonicalRecord } from "./local-db";
+import { readVisibleRecords } from "./visible-records";
 
 const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
@@ -80,41 +81,6 @@ export function print(value: Decimal): string {
     .replace(/(\.\d*?)0+$/, "$1");
 }
 
-function visible(
-  records: CanonicalRecord[],
-  overlays: CanonicalRecord[],
-  includeRetired = false,
-) {
-  const result = new Map(records.map((record) => [record.entityId, record]));
-  for (const record of overlays) {
-    if (result.get(record.entityId)?.lifecycle !== "retired")
-      result.set(record.entityId, record);
-  }
-  return [...result.values()].filter(
-    (record) => includeRetired || record.lifecycle === "active",
-  );
-}
-
-async function records(
-  userId: string,
-  organizationId: string,
-  entityType: string,
-  includeRetired = false,
-) {
-  const key = [userId, organizationId, entityType] as const;
-  return visible(
-    await localDb.canonicalRecords
-      .where("[userId+organizationId+entityType]")
-      .equals(key)
-      .toArray(),
-    await localDb.optimisticOverlays
-      .where("[userId+organizationId+entityType]")
-      .equals(key)
-      .toArray(),
-    includeRetired,
-  );
-}
-
 function listSummary(
   record: CanonicalRecord,
   organizationId: string,
@@ -154,8 +120,8 @@ export async function readShoppingLists(
 ): Promise<ShoppingListSummary[]> {
   if (!uuid.test(eventId)) return [];
   const [lists, sources] = await Promise.all([
-    records(userId, organizationId, "shopping_list"),
-    records(userId, organizationId, "shopping_revision_source"),
+    readVisibleRecords(userId, organizationId, "shopping_list"),
+    readVisibleRecords(userId, organizationId, "shopping_revision_source"),
   ]);
   const sourceCounts = new Map<string, number>();
   for (const source of sources) {
@@ -195,17 +161,21 @@ export async function readShoppingList(
   const [lists, rows, contributions, snapshots, sections, units] =
     await Promise.all([
       readShoppingLists(userId, organizationId, eventId),
-      records(userId, organizationId, "shopping_ingredient_row"),
-      records(userId, organizationId, "shopping_contribution", true),
-      records(userId, organizationId, "shopping_contribution_snapshot"),
-      records(userId, organizationId, "store_section"),
-      records(userId, organizationId, "unit_definition"),
+      readVisibleRecords(userId, organizationId, "shopping_ingredient_row"),
+      readVisibleRecords(userId, organizationId, "shopping_contribution", true),
+      readVisibleRecords(
+        userId,
+        organizationId,
+        "shopping_contribution_snapshot",
+      ),
+      readVisibleRecords(userId, organizationId, "store_section"),
+      readVisibleRecords(userId, organizationId, "unit_definition"),
     ]);
   const summary = lists.find((list) => list.id === shoppingListId);
   if (!summary) return undefined;
-  const list = (await records(userId, organizationId, "shopping_list")).find(
-    (record) => record.entityId === shoppingListId,
-  );
+  const list = (
+    await readVisibleRecords(userId, organizationId, "shopping_list")
+  ).find((record) => record.entityId === shoppingListId);
   const currentRevisionId =
     list && value(list, "current_generation_revision_id");
   if (!currentRevisionId || !uuid.test(currentRevisionId)) return undefined;

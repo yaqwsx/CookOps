@@ -1,4 +1,4 @@
-import { localDb } from "./local-db";
+import { appendOutboxCommand, localDb } from "./local-db";
 
 export type EventCreateInput = {
   name: string;
@@ -116,7 +116,7 @@ export async function queueEventCreate(
         immutable: false,
         updatedAt: now,
       });
-      await localDb.outbox.add({
+      await appendOutboxCommand({
         id: mutationId,
         userId,
         organizationId,

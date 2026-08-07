@@ -1,4 +1,5 @@
 import {
+  compareOutboxCommands,
   localDb,
   readOrCreateBrowserInstallationId,
   type OrganizationSyncMetadata,
@@ -73,11 +74,7 @@ function byteLength(value: unknown): number {
 }
 
 function orderedCommands(commands: OutboxCommand[]): OutboxCommand[] {
-  return [...commands].sort(
-    (left, right) =>
-      left.createdAt.localeCompare(right.createdAt) ||
-      left.id.localeCompare(right.id),
-  );
+  return [...commands].sort(compareOutboxCommands);
 }
 
 function batches(

@@ -1,5 +1,5 @@
 import { isNonnegativeSafeInteger } from "./event-create";
-import { localDb } from "./local-db";
+import { appendOutboxCommand, localDb } from "./local-db";
 
 export type EventAttendanceValidationError = "attendance" | "event";
 
@@ -54,7 +54,7 @@ export async function queueEventAttendanceUpdate(
         },
         updatedAt: actionAt,
       });
-      await localDb.outbox.add({
+      await appendOutboxCommand({
         id: mutationId,
         userId,
         organizationId,

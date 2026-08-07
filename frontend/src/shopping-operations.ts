@@ -1,5 +1,6 @@
-import { localDb, type CanonicalRecord, type OutboxCommand } from "./local-db";
+import { appendOutboxCommand, localDb, type OutboxCommand } from "./local-db";
 import { add, decimal, maxZeroSubtract, print } from "./shopping-projections";
+import { readVisibleRecords } from "./visible-records";
 
 const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const quantity = /^\d+(?:\.\d+)?$/;
@@ -18,28 +19,6 @@ async function nextActionAt(): Promise<string> {
   return new Date(lastActionMilliseconds).toISOString();
 }
 
-async function visibleRecords(
-  userId: string,
-  organizationId: string,
-  entityType: string,
-): Promise<CanonicalRecord[]> {
-  const key = [userId, organizationId, entityType] as const;
-  const [canonical, overlays] = await Promise.all([
-    localDb.canonicalRecords
-      .where("[userId+organizationId+entityType]")
-      .equals(key)
-      .toArray(),
-    localDb.optimisticOverlays
-      .where("[userId+organizationId+entityType]")
-      .equals(key)
-      .toArray(),
-  ]);
-  const result = new Map(canonical.map((record) => [record.entityId, record]));
-  for (const record of overlays)
-    if (result.get(record.entityId)?.lifecycle !== "retired")
-      result.set(record.entityId, record);
-  return [...result.values()];
-}
 function checkedInput(input: RowInput) {
   if (
     !uuid.test(input.shoppingListId) ||
@@ -53,8 +32,8 @@ async function activeRow(
   input: RowInput,
 ) {
   const [lists, rows] = await Promise.all([
-    visibleRecords(userId, organizationId, "shopping_list"),
-    visibleRecords(userId, organizationId, "shopping_ingredient_row"),
+    readVisibleRecords(userId, organizationId, "shopping_list", true),
+    readVisibleRecords(userId, organizationId, "shopping_ingredient_row", true),
   ]);
   const list = lists.find(
     (record) =>
@@ -118,7 +97,7 @@ async function queueRow(
         fieldClocks: { ...row.fieldClocks, [field]: { mutationId, actionAt } },
         updatedAt: actionAt,
       });
-      await localDb.outbox.add({
+      await appendOutboxCommand({
         id: mutationId,
         userId,
         organizationId,
@@ -175,8 +154,13 @@ async function applyContributionFulfilment(
   if (typeof revisionId !== "string" || !uuid.test(revisionId))
     throw new Error("shopping_operation");
   const [contributions, snapshots] = await Promise.all([
-    visibleRecords(userId, organizationId, "shopping_contribution"),
-    visibleRecords(userId, organizationId, "shopping_contribution_snapshot"),
+    readVisibleRecords(userId, organizationId, "shopping_contribution", true),
+    readVisibleRecords(
+      userId,
+      organizationId,
+      "shopping_contribution_snapshot",
+      true,
+    ),
   ]);
   const contribution = contributions.find(
     (record) =>
@@ -235,7 +219,7 @@ export async function queueShoppingContributionFulfilment(
         mutationId,
         actionAt,
       );
-      await localDb.outbox.add({
+      await appendOutboxCommand({
         id: mutationId,
         userId,
         organizationId,
@@ -274,11 +258,17 @@ export async function queueShoppingRowFulfilment(
       if (typeof revisionId !== "string" || !uuid.test(revisionId))
         throw new Error("shopping_operation");
       const [contributions, snapshots] = await Promise.all([
-        visibleRecords(userId, organizationId, "shopping_contribution"),
-        visibleRecords(
+        readVisibleRecords(
+          userId,
+          organizationId,
+          "shopping_contribution",
+          true,
+        ),
+        readVisibleRecords(
           userId,
           organizationId,
           "shopping_contribution_snapshot",
+          true,
         ),
       ]);
       const rowContributions = contributions.filter(
@@ -349,7 +339,7 @@ export async function queueShoppingRowFulfilment(
         },
         updatedAt: actionAt,
       });
-      await localDb.outbox.add({
+      await appendOutboxCommand({
         id: mutationId,
         userId,
         organizationId,
@@ -383,7 +373,12 @@ export async function replayShoppingOperation(
     typeof payload.fulfilled === "boolean"
   ) {
     const contribution = (
-      await visibleRecords(userId, organizationId, "shopping_contribution")
+      await readVisibleRecords(
+        userId,
+        organizationId,
+        "shopping_contribution",
+        true,
+      )
     ).find(
       (record) =>
         record.entityId === payload.shopping_contribution_id &&
@@ -437,8 +432,13 @@ export async function replayShoppingOperation(
     const revisionId = list.fields.current_generation_revision_id;
     if (typeof revisionId !== "string" || !uuid.test(revisionId)) return;
     const [contributions, snapshots] = await Promise.all([
-      visibleRecords(userId, organizationId, "shopping_contribution"),
-      visibleRecords(userId, organizationId, "shopping_contribution_snapshot"),
+      readVisibleRecords(userId, organizationId, "shopping_contribution", true),
+      readVisibleRecords(
+        userId,
+        organizationId,
+        "shopping_contribution_snapshot",
+        true,
+      ),
     ]);
     const entries = contributions.filter(
       (record) =>
