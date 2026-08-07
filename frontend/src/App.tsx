@@ -347,6 +347,7 @@ function AuthenticatedShell({
                 <EventOverview
                   onUnauthenticated={onUnauthenticated}
                   organizationId={organizationId}
+                  userId={identity.id}
                 />
               ) : (
                 <p>{t("shell.sectionPlaceholder")}</p>
@@ -369,7 +370,6 @@ export function App() {
     () => setAuthentication({ status: "loading" }),
     [],
   );
-
   useEffect(() => {
     document.documentElement.lang = locale;
   }, [locale]);

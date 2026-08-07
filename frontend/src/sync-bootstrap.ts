@@ -59,6 +59,12 @@ export type BootstrapOptions = {
   beforePublish?: () => Promise<void> | void;
 };
 
+export class SyncRequestError extends Error {
+  constructor(readonly status: number) {
+    super("Sync request failed.");
+  }
+}
+
 function object(value: unknown): value is Record<string, unknown> {
   return value !== null && typeof value === "object" && !Array.isArray(value);
 }
@@ -282,7 +288,7 @@ export async function bootstrapOrganization(
     headers: { "content-type": "application/json" },
     body: JSON.stringify({ organization_id: organizationId }),
   });
-  if (!response.ok) throw new Error("Sync bootstrap failed.");
+  if (!response.ok) throw new SyncRequestError(response.status);
   const body = parseBootstrap(await response.json(), organizationId);
   const attemptId = crypto.randomUUID();
   const staged: BootstrapStagingRecord[] = body.records.map((record) => ({
@@ -358,7 +364,7 @@ export async function pullOrganization(
       cursor: metadata.cursor,
     }),
   });
-  if (!response.ok) throw new Error("Sync pull failed.");
+  if (!response.ok) throw new SyncRequestError(response.status);
   const body = parsePull(await response.json(), organizationId);
   if (body.status === "bootstrap_required") {
     await bootstrapOrganization(userId, organizationId, { fetch: send });

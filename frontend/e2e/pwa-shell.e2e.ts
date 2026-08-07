@@ -39,7 +39,7 @@ test("registers the production service worker and keeps the synchronized status 
     .toBe(true);
 });
 
-test("shows a paginated event overview without mobile horizontal overflow", async ({
+test("shows a cached event projection without mobile horizontal overflow", async ({
   page,
 }) => {
   await page.addInitScript(() => {
@@ -59,29 +59,36 @@ test("shows a paginated event overview without mobile horizontal overflow", asyn
     }
     await route.fulfill({ status: 404 });
   });
-  await page.route("**/api/v1/organizations/*/events**", async (route) => {
-    const url = new URL(route.request().url());
-    const secondPage = url.searchParams.has("cursor");
+  await page.route("**/api/v1/sync/bootstrap", async (route) => {
     await route.fulfill({
       contentType: "application/json",
       body: JSON.stringify({
-        events: [
+        sync_schema_version: 1,
+        server_time: "2026-08-07T12:00:00.000Z",
+        cursor: "opaque-cursor",
+        records: [
           {
-            id: secondPage
-              ? "ff47ec98-a6c0-4873-bf73-929e55ef0035"
-              : "3d8b2b21-c378-4574-9e46-9338c81305ef",
             organization_id: organizationId,
-            name: secondPage ? "Archiv" : "Letní vaření",
-            start_date: "2026-08-10",
-            end_date: "2026-08-12",
-            base_expected_attendance: 24,
-            budget_amount: "1200.50",
-            currency: "CZK",
-            lifecycle: secondPage ? "archived" : "active",
-            archived_at: secondPage ? "2026-08-13T12:00:00Z" : null,
+            entity_id: "3d8b2b21-c378-4574-9e46-9338c81305ef",
+            entity_kind: "event",
+            operation: "upsert",
+            payload: {
+              record_schema_version: 1,
+              record: {
+                id: "3d8b2b21-c378-4574-9e46-9338c81305ef",
+                organization_id: organizationId,
+                name: "Letní vaření",
+                start_date: "2026-08-10",
+                end_date: "2026-08-12",
+                base_expected_attendance: 24,
+                budget_amount: "1200.50",
+                currency: "CZK",
+                lifecycle: "active",
+                archived_at: null,
+              },
+            },
           },
         ],
-        next_cursor: secondPage ? null : "next-page",
       }),
     });
   });
@@ -90,8 +97,11 @@ test("shows a paginated event overview without mobile horizontal overflow", asyn
   await expect(
     page.getByRole("heading", { name: "Letní vaření" }),
   ).toBeVisible();
-  await page.getByRole("button", { name: "Načíst další akce" }).press("Enter");
-  await expect(page.getByRole("heading", { name: "Archiv" })).toBeVisible();
+  await page.context().setOffline(true);
+  await page.evaluate(() => window.dispatchEvent(new Event("offline")));
+  await expect(
+    page.getByText("Zobrazujeme uložené akce bez připojení."),
+  ).toHaveText("Zobrazujeme uložené akce bez připojení.");
   await expect
     .poll(() =>
       page.evaluate(

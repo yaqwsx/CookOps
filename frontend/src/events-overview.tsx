@@ -1,16 +1,12 @@
+import { liveQuery } from "dexie";
 import { useCallback, useEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 
-import {
-  type EventSummary,
-  EventRequestError,
-  getEventPage,
-} from "./api/events";
+import type { EventSummary } from "./api/events";
+import { readVisibleEventSummaries } from "./event-projections";
+import { pullOrganization, SyncRequestError } from "./sync-bootstrap";
 
-type EventOverviewState =
-  | { status: "loading"; events: EventSummary[] }
-  | { status: "ready"; events: EventSummary[]; nextCursor: string | null }
-  | { status: "error"; events: EventSummary[] };
+type EventOverviewState = "loading" | "ready" | "offline" | "error";
 
 function formattedDate(value: string, locale: string): string {
   const date = new Date(`${value}T00:00:00Z`);
@@ -60,94 +56,81 @@ function EventCard({ event }: { event: EventSummary }) {
 
 export function EventOverview({
   organizationId,
+  userId,
   onUnauthenticated,
 }: {
   organizationId: string;
+  userId: string;
   onUnauthenticated: () => void;
 }) {
   const { t } = useTranslation();
-  const [reload, setReload] = useState(0);
-  const [state, setState] = useState<EventOverviewState>({
-    status: "loading",
-    events: [],
-  });
-  const requestGeneration = useRef(0);
-  const fetchPage = useCallback(
-    (cursor?: string) => getEventPage(organizationId, cursor, reload > 0),
-    [organizationId, reload],
-  );
+  const [state, setState] = useState<EventOverviewState>("loading");
+  const [events, setEvents] = useState<EventSummary[]>([]);
+  const generation = useRef(0);
+  const synchronize = useCallback(async () => {
+    const currentGeneration = generation.current;
+    if (!navigator.onLine) {
+      if (currentGeneration === generation.current) setState("offline");
+      return;
+    }
+    try {
+      await pullOrganization(userId, organizationId);
+      if (currentGeneration === generation.current) setState("ready");
+    } catch (error) {
+      if (error instanceof SyncRequestError && error.status === 401) {
+        if (currentGeneration === generation.current) onUnauthenticated();
+        return;
+      }
+      if (currentGeneration === generation.current) setState("error");
+    }
+  }, [onUnauthenticated, organizationId, userId]);
 
   useEffect(() => {
     let active = true;
-    const generation = requestGeneration.current + 1;
-    requestGeneration.current = generation;
-    setState({ status: "loading", events: [] });
-    void fetchPage()
-      .then((page) => {
-        if (active && generation === requestGeneration.current)
-          setState({
-            status: "ready",
-            events: page.events,
-            nextCursor: page.nextCursor,
-          });
-      })
-      .catch((error: unknown) => {
-        if (!active || generation !== requestGeneration.current) return;
-        if (error instanceof EventRequestError && error.status === 401) {
-          onUnauthenticated();
-          return;
-        }
-        setState({ status: "error", events: [] });
-      });
+    generation.current += 1;
+    const subscription = liveQuery(() =>
+      readVisibleEventSummaries(userId, organizationId),
+    ).subscribe({
+      next: (nextEvents) => {
+        if (active) setEvents(nextEvents);
+      },
+      error: () => {
+        if (active) setState("error");
+      },
+    });
+    function offline() {
+      if (active) setState("offline");
+    }
+    window.addEventListener("online", synchronize);
+    window.addEventListener("offline", offline);
+    void synchronize();
     return () => {
       active = false;
-      if (generation === requestGeneration.current)
-        requestGeneration.current += 1;
+      generation.current += 1;
+      subscription.unsubscribe();
+      window.removeEventListener("online", synchronize);
+      window.removeEventListener("offline", offline);
     };
-  }, [fetchPage, onUnauthenticated]);
+  }, [organizationId, synchronize, userId]);
 
-  async function loadMore() {
-    if (state.status !== "ready" || !state.nextCursor) return;
-    const cursor = state.nextCursor;
-    const generation = requestGeneration.current + 1;
-    requestGeneration.current = generation;
-    setState({ status: "loading", events: state.events });
-    try {
-      const page = await fetchPage(cursor);
-      if (generation !== requestGeneration.current) return;
-      setState({
-        status: "ready",
-        events: [...state.events, ...page.events],
-        nextCursor: page.nextCursor,
-      });
-    } catch (error) {
-      if (generation !== requestGeneration.current) return;
-      if (error instanceof EventRequestError && error.status === 401) {
-        onUnauthenticated();
-        return;
-      }
-      setState({ status: "error", events: state.events });
-    }
-  }
-
-  if (state.status === "loading" && state.events.length === 0) {
+  if (state === "loading" && events.length === 0) {
     return (
       <p aria-live="polite" role="status">
         {t("eventsOverview.loading")}
       </p>
     );
   }
-  if (state.status === "error" && state.events.length === 0) {
+  if (state === "error" && events.length === 0) {
     return (
       <div className="event-overview-error" role="alert">
         <p>{t("eventsOverview.error")}</p>
-        <button onClick={() => setReload((value) => value + 1)} type="button">
+        <button onClick={() => void synchronize()} type="button">
           {t("eventsOverview.retry")}
         </button>
       </div>
     );
   }
-  if (state.status === "ready" && state.events.length === 0) {
+  if (state === "ready" && events.length === 0) {
     return <p>{t("eventsOverview.empty")}</p>;
   }
   return (
@@ -155,28 +138,23 @@ export function EventOverview({
       <p className="event-overview__scope" role="note">
         {t("eventsOverview.scope")}
       </p>
+      {state === "offline" ? (
+        <p aria-live="polite" role="status">
+          {t("eventsOverview.offline")}
+        </p>
+      ) : null}
       <div className="event-list">
-        {state.events.map((event) => (
+        {events.map((event) => (
           <EventCard event={event} key={event.id} />
         ))}
       </div>
-      {state.status === "loading" ? (
-        <p aria-live="polite" role="status">
-          {t("eventsOverview.loadingMore")}
-        </p>
-      ) : null}
-      {state.status === "error" ? (
+      {state === "error" ? (
         <div className="event-overview-error" role="alert">
           <p>{t("eventsOverview.error")}</p>
-          <button onClick={() => setReload((value) => value + 1)} type="button">
+          <button onClick={() => void synchronize()} type="button">
             {t("eventsOverview.retry")}
           </button>
         </div>
-      ) : null}
-      {state.status === "ready" && state.nextCursor ? (
-        <button onClick={() => void loadMore()} type="button">
-          {t("eventsOverview.more")}
-        </button>
       ) : null}
     </div>
   );

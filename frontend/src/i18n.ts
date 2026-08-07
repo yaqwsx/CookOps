@@ -26,9 +26,8 @@ const resources = {
       },
       eventsOverview: {
         loading: "Načítáme akce…",
-        loadingMore: "Načítáme další akce…",
-        scope:
-          "Tento přehled je pouze pro čtení a načítá se online; nejde o offline projekci.",
+        scope: "Přehled čte uložené projekce akcí a čekající místní změny.",
+        offline: "Zobrazujeme uložené akce bez připojení.",
         error: "Akce se nepodařilo načíst. Zkuste to znovu.",
         retry: "Zkusit znovu",
         empty: "V této organizaci zatím nejsou žádné akce.",
@@ -95,9 +94,9 @@ const resources = {
       },
       eventsOverview: {
         loading: "Loading events…",
-        loadingMore: "Loading more events…",
         scope:
-          "This read-only overview is loaded online; it is not an offline projection.",
+          "This overview reads stored event projections and pending local changes.",
+        offline: "Showing stored events while offline.",
         error: "Events could not be loaded. Please try again.",
         retry: "Try again",
         empty: "There are no events in this organization yet.",
