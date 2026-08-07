@@ -66,11 +66,21 @@ function databaseUrl(value: string): string {
   return value;
 }
 
+function loopbackHost(value: string): string {
+  if (!["127.0.0.1", "::1"].includes(value)) {
+    throw new TypeError("The disposable OAuth spike must bind only to loopback");
+  }
+  return value;
+}
+
 export function runtimeConfigurationFromEnvironment(
   environment: NodeJS.ProcessEnv,
 ): OAuthRuntimeConfiguration {
-  if (environment.NODE_ENV === "production") {
-    throw new Error("The disposable OAuth spike must not run with NODE_ENV=production");
+  if (
+    environment.NODE_ENV === "production" ||
+    environment.COOKOPS_ENVIRONMENT === "production"
+  ) {
+    throw new Error("The disposable OAuth spike must not run in production");
   }
 
   const issuer = required(environment, "OAUTH_ISSUER");
@@ -87,7 +97,7 @@ export function runtimeConfigurationFromEnvironment(
     adapterSecret: decodeAdapterSecret(
       required(environment, "OAUTH_ADAPTER_SECRET_BASE64URL"),
     ),
-    host: environment.HOST ?? "127.0.0.1",
+    host: loopbackHost(environment.HOST ?? "127.0.0.1"),
     port: serverPort(issuer, environment.PORT),
   };
 }
@@ -132,12 +142,13 @@ async function createOAuthRuntime(
 export async function startOAuthServer(
   configuration: OAuthRuntimeConfiguration,
 ): Promise<RunningOAuthServer> {
+  const host = loopbackHost(configuration.host);
   const runtime = await createOAuthRuntime(configuration);
   const server = createServer(
     providerHttpHandler(runtime.provider, configuration.issuer),
   );
   try {
-    server.listen(configuration.port, configuration.host);
+    server.listen(configuration.port, host);
     await once(server, "listening");
   } catch (error) {
     await runtime.close();

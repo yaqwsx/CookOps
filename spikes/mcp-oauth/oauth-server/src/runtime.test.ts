@@ -50,7 +50,25 @@ test("runtime settings require explicit canonical base64url adapter key material
   );
   assert.throws(
     () => runtimeConfigurationFromEnvironment({ ...validEnvironment, NODE_ENV: "production" }),
-    /must not run.*production/,
+    /must not run in production/,
+  );
+  assert.throws(
+    () =>
+      runtimeConfigurationFromEnvironment({
+        ...validEnvironment,
+        COOKOPS_ENVIRONMENT: "production",
+      }),
+    /must not run in production/,
+  );
+  for (const host of ["0.0.0.0", "::", "localhost", "oauth.internal"]) {
+    assert.throws(
+      () => runtimeConfigurationFromEnvironment({ ...validEnvironment, HOST: host }),
+      /bind only to loopback/,
+    );
+  }
+  assert.equal(
+    runtimeConfigurationFromEnvironment({ ...validEnvironment, HOST: "::1" }).host,
+    "::1",
   );
   assert.throws(
     () =>
@@ -59,6 +77,24 @@ test("runtime settings require explicit canonical base64url adapter key material
         OAUTH_DATABASE_URL: "https://postgres.example/cookops",
       }),
     /PostgreSQL URL/,
+  );
+});
+
+test("runtime refuses a direct public bind before connecting to PostgreSQL", async () => {
+  await assert.rejects(
+    startOAuthServer({
+      issuer: "http://127.0.0.1:3000/oauth",
+      resource: "http://127.0.0.1:3000/mcp",
+      redirectUri: "http://127.0.0.1:9876/callback",
+      cookieKeys: COOKIE_KEYS,
+      resourceServerSecret: RESOURCE_SERVER_SECRET,
+      jwks: JWKS,
+      databaseUrl: "postgresql://unreachable:unreachable@127.0.0.1:1/unreachable",
+      adapterSecret: ADAPTER_SECRET,
+      host: "0.0.0.0",
+      port: 0,
+    }),
+    /bind only to loopback/,
   );
 });
 
