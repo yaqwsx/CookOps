@@ -5,6 +5,12 @@ Commands continue to use their existing application services; a generic push
 dispatcher is not useful until those commands have one common typed envelope.
 """
 
+# The explicit projection below reuses one loop variable across independently
+# typed query blocks; SQLAlchemy's precise model attributes remain runtime-safe.
+# mypy: disable-error-code=assignment
+# mypy: disable-error-code=attr-defined
+# mypy: disable-error-code=arg-type
+
 import base64
 import binascii
 import hashlib
@@ -14,42 +20,86 @@ import re
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
+from decimal import Decimal
 from typing import Literal, cast
 from uuid import UUID
 
-from sqlalchemy import func, select
+from sqlalchemy import func, select, text
 from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from cookops.application.browser_sessions import decode_browser_session_hmac_key
+from cookops.application.event_prices import _price_pointer_record, _snapshot_record
 from cookops.application.events import (
     CreateEventCommand,
     CreateEventResult,
     UpdateEventBaseAttendanceCommand,
     UpdateEventBaseAttendanceResult,
+    _event_change_record,
+    _scheduled_recipe_change_record,
     create_event,
     update_event_base_attendance,
 )
 from cookops.application.organizations import ApplicationServiceError, ExecutionContext
+from cookops.application.receipt_media import _record as _attachment_record
+from cookops.application.receipts import _record as _receipt_record
 from cookops.application.recipes import (
     CreateRecipeCommand,
     CreateRecipeResult,
     create_recipe,
+    recipe_version_tag_change_id,
 )
+from cookops.application.scheduled_recipe_overrides import _record as _override_record
 from cookops.application.shopping_lists import (
     CreateShoppingListCommand,
     CreateShoppingListResult,
+    _contribution_record,
+    _contribution_snapshot_record,
+    _generation_revision_record,
+    _revision_source_record,
+    _row_record,
+    _shopping_list_record,
     create_shopping_list,
 )
 from cookops.persistence.models import (
+    AdHocShoppingItem,
     ClientInstallation,
+    DietaryTag,
+    Event,
+    EventDay,
+    EventIngredientPrice,
+    EventIngredientPriceSnapshot,
+    EventMealRole,
+    FieldClock,
+    Ingredient,
+    IngredientPriceEstimate,
+    IngredientVersion,
+    IngredientVersionDietaryTag,
     Mutation,
     Organization,
     OrganizationChange,
     OrganizationChangeHead,
     OrganizationChangeTransaction,
+    OrganizationMealRolePreset,
     OrganizationMembership,
+    Receipt,
+    ReceiptAttachment,
+    Recipe,
+    RecipeTag,
+    RecipeVersion,
+    RecipeVersionIngredientLine,
+    RecipeVersionTag,
+    ScheduledIngredientOverride,
+    ScheduledRecipe,
+    ShoppingContribution,
+    ShoppingContributionSnapshot,
+    ShoppingGenerationRevision,
+    ShoppingIngredientRow,
+    ShoppingList,
+    ShoppingRevisionSource,
+    StoreSection,
     SystemRoleAssignment,
+    UnitDefinition,
     User,
 )
 
@@ -117,6 +167,14 @@ class PullResult:
     next_cursor: str | None
     transaction_groups: tuple[SyncTransactionGroup, ...]
     oldest_available_at: datetime | None
+
+
+@dataclass(frozen=True, slots=True)
+class BootstrapResult:
+    sync_schema_version: Literal[1]
+    server_time: datetime
+    cursor: str
+    records: tuple[SyncRecord, ...]
 
 
 @dataclass(frozen=True, slots=True)
@@ -709,6 +767,35 @@ class SynchronizationQueryService:
                 oldest_available_at=oldest_available_at,
             )
 
+    async def bootstrap(self, *, actor_user_id: UUID, organization_id: UUID) -> BootstrapResult:
+        """Read one complete, repeatable-read canonical organization projection.
+
+        This deliberately reads projection tables rather than the retained change
+        feed: a history gap is precisely when a bootstrap is needed.
+        """
+
+        now = _normalize_now(self._clock())
+        async with self._session_factory() as session, session.begin():
+            # PostgreSQL requires this to be the transaction's first statement.
+            await session.execute(text("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ"))
+            role = await self._authorize_read(session, actor_user_id, organization_id)
+            head = await session.scalar(
+                select(OrganizationChangeHead.next_sequence).where(
+                    OrganizationChangeHead.organization_id == organization_id
+                )
+            )
+            records = await _bootstrap_records(
+                session, organization_id=organization_id, actor_user_id=actor_user_id, role=role
+            )
+            return BootstrapResult(
+                sync_schema_version=SYNC_SCHEMA_VERSION,
+                server_time=now,
+                cursor=self._cursor_codec.encode(
+                    SyncCursor(organization_id=organization_id, after_sequence=(head or 1) - 1)
+                ),
+                records=records,
+            )
+
     def _decode_cursor(self, request: PullRequest) -> SyncCursor | None:
         if request.cursor is None:
             return None
@@ -720,7 +807,7 @@ class SynchronizationQueryService:
     @staticmethod
     async def _authorize_read(
         session: AsyncSession, actor_user_id: UUID, organization_id: UUID
-    ) -> None:
+    ) -> Literal["member", "organization_admin", "system_admin"]:
         actor = await session.scalar(
             select(User.id)
             .where(User.id == actor_user_id, User.disabled_at.is_(None))
@@ -743,9 +830,9 @@ class SynchronizationQueryService:
             .with_for_update(of=SystemRoleAssignment)
         )
         if system_admin is not None:
-            return
+            return "system_admin"
         membership = await session.scalar(
-            select(OrganizationMembership.id)
+            select(OrganizationMembership.role)
             .where(
                 OrganizationMembership.organization_id == organization_id,
                 OrganizationMembership.user_id == actor_user_id,
@@ -754,8 +841,9 @@ class SynchronizationQueryService:
             )
             .with_for_update(of=OrganizationMembership)
         )
-        if membership is None:
+        if membership not in ("member", "organization_admin"):
             raise SyncQueryDenied("organization access denied")
+        return cast(Literal["member", "organization_admin"], membership)
 
     async def _bootstrap_required(
         self, session: AsyncSession, organization_id: UUID, now: datetime
@@ -895,3 +983,633 @@ class SynchronizationQueryService:
             )
             for transaction in transactions
         )
+
+
+def _bootstrap_record(
+    kind: str, entity_id: UUID, record: dict[str, object], organization_id: UUID
+) -> SyncRecord:
+    return SyncRecord(
+        organization_id=organization_id,
+        sequence=0,
+        entity_id=entity_id,
+        entity_kind=kind,
+        operation="upsert",
+        payload={"record_schema_version": 1, "record": record},
+    )
+
+
+def _uuid(value: UUID | None) -> str | None:
+    return str(value) if value is not None else None
+
+
+def _time(value: datetime | None) -> str | None:
+    return value.isoformat() if value is not None else None
+
+
+def _decimal(value: Decimal | None) -> str | None:
+    return format(value.normalize(), "f") if value is not None else None
+
+
+async def _bootstrap_records(
+    session: AsyncSession,
+    *,
+    organization_id: UUID,
+    actor_user_id: UUID,
+    role: Literal["member", "organization_admin", "system_admin"],
+) -> tuple[SyncRecord, ...]:
+    """Project the protocol's explicitly supported records from current tables.
+
+    Keeping these record shapes next to their source tables is intentional: it
+    prevents a new persisted field from being silently exported by reflection.
+    """
+
+    records: list[SyncRecord] = []
+
+    def append(kind: str, entity_id: UUID, record: dict[str, object]) -> None:
+        records.append(_bootstrap_record(kind, entity_id, record, organization_id))
+
+    organization = await session.get(Organization, organization_id)
+    if organization is None:  # authorization already established this invariant.
+        raise RuntimeError("Authorized organization disappeared")
+    append(
+        "organization",
+        organization.id,
+        {
+            "id": str(organization.id),
+            "name": organization.name,
+            "description": organization.description,
+            "default_currency": organization.default_currency,
+            "created_at": organization.created_at.isoformat(),
+            "created_by_user_id": str(organization.created_by_user_id),
+            "retired_at": _time(organization.retired_at),
+            "retired_by_user_id": _uuid(organization.retired_by_user_id),
+        },
+    )
+    append(
+        "organization_capabilities",
+        organization.id,
+        {
+            "organization_id": str(organization.id),
+            "actor_user_id": str(actor_user_id),
+            "role": role,
+            "can_manage_organization": role in ("organization_admin", "system_admin"),
+        },
+    )
+
+    for item in (
+        await session.execute(
+            select(StoreSection)
+            .where(StoreSection.organization_id == organization_id)
+            .order_by(StoreSection.id)
+        )
+    ).scalars():
+        append(
+            "store_section",
+            item.id,
+            {
+                "id": str(item.id),
+                "organization_id": str(item.organization_id),
+                "name": item.name,
+                "normalized_name": item.normalized_name,
+                "position_key": item.position_key,
+                "created_at": item.created_at.isoformat(),
+                "created_by_user_id": str(item.created_by_user_id),
+                "retired_at": _time(item.retired_at),
+                "retired_by_user_id": _uuid(item.retired_by_user_id),
+            },
+        )
+    for item in (
+        await session.execute(
+            select(OrganizationMealRolePreset)
+            .where(OrganizationMealRolePreset.organization_id == organization_id)
+            .order_by(OrganizationMealRolePreset.id)
+        )
+    ).scalars():
+        append(
+            "organization_meal_role_preset",
+            item.id,
+            {
+                "id": str(item.id),
+                "organization_id": str(item.organization_id),
+                "built_in_translation_key": item.built_in_translation_key,
+                "custom_name": item.custom_name,
+                "normalized_custom_name": item.normalized_custom_name,
+                "position_key": item.position_key,
+                "created_at": item.created_at.isoformat(),
+                "created_by_user_id": str(item.created_by_user_id),
+                "retired_at": _time(item.retired_at),
+                "retired_by_user_id": _uuid(item.retired_by_user_id),
+            },
+        )
+    for item in (
+        await session.execute(
+            select(RecipeTag)
+            .where(RecipeTag.organization_id == organization_id)
+            .order_by(RecipeTag.id)
+        )
+    ).scalars():
+        append(
+            "recipe_tag",
+            item.id,
+            {
+                "id": str(item.id),
+                "organization_id": str(item.organization_id),
+                "name": item.name,
+                "normalized_name": item.normalized_name,
+                "color": item.color,
+                "created_at": item.created_at.isoformat(),
+                "created_by_user_id": str(item.created_by_user_id),
+                "retired_at": _time(item.retired_at),
+                "retired_by_user_id": _uuid(item.retired_by_user_id),
+            },
+        )
+    for item in (
+        await session.execute(
+            select(DietaryTag)
+            .where(DietaryTag.organization_id == organization_id)
+            .order_by(DietaryTag.id)
+        )
+    ).scalars():
+        append(
+            "dietary_tag",
+            item.id,
+            {
+                "id": str(item.id),
+                "organization_id": str(item.organization_id),
+                "seed_key": item.seed_key,
+                "name": item.name,
+                "normalized_name": item.normalized_name,
+                "color": item.color,
+                "created_at": item.created_at.isoformat(),
+                "created_by_user_id": str(item.created_by_user_id),
+                "retired_at": _time(item.retired_at),
+                "retired_by_user_id": _uuid(item.retired_by_user_id),
+            },
+        )
+    for item in (
+        await session.execute(
+            select(UnitDefinition)
+            .where(
+                (UnitDefinition.organization_id == organization_id)
+                | UnitDefinition.organization_id.is_(None)
+            )
+            .order_by(UnitDefinition.id)
+        )
+    ).scalars():
+        append(
+            "unit_definition",
+            item.id,
+            {
+                "id": str(item.id),
+                "organization_id": _uuid(item.organization_id),
+                "code": item.code,
+                "custom_name": item.custom_name,
+                "normalized_custom_name": item.normalized_custom_name,
+                "dimension": item.dimension,
+                "base_unit_factor": _decimal(item.base_unit_factor),
+                "rounds_up_to_whole_unit": item.rounds_up_to_whole_unit,
+                "allows_ingredient_quantity": item.allows_ingredient_quantity,
+                "allows_recipe_scaling": item.allows_recipe_scaling,
+                "created_at": item.created_at.isoformat(),
+                "created_by_user_id": _uuid(item.created_by_user_id),
+                "retired_at": _time(item.retired_at),
+                "retired_by_user_id": _uuid(item.retired_by_user_id),
+            },
+        )
+
+    ingredient_tags: dict[UUID, list[str]] = {}
+    for version_id, tag_id in (
+        await session.execute(
+            select(
+                IngredientVersionDietaryTag.ingredient_version_id,
+                IngredientVersionDietaryTag.dietary_tag_id,
+            ).where(IngredientVersionDietaryTag.organization_id == organization_id)
+        )
+    ).all():
+        ingredient_tags.setdefault(version_id, []).append(str(tag_id))
+    for item in (
+        await session.execute(
+            select(Ingredient)
+            .where(Ingredient.organization_id == organization_id)
+            .order_by(Ingredient.id)
+        )
+    ).scalars():
+        append(
+            "ingredient",
+            item.id,
+            {
+                "id": str(item.id),
+                "organization_id": str(item.organization_id),
+                "current_version_id": _uuid(item.current_version_id),
+                "current_price_estimate_id": _uuid(item.current_price_estimate_id),
+                "created_at": item.created_at.isoformat(),
+                "created_by_user_id": str(item.created_by_user_id),
+                "retired_at": _time(item.retired_at),
+                "retired_by_user_id": _uuid(item.retired_by_user_id),
+            },
+        )
+    for item in (
+        await session.execute(
+            select(IngredientVersion)
+            .where(IngredientVersion.organization_id == organization_id)
+            .order_by(IngredientVersion.id)
+        )
+    ).scalars():
+        append(
+            "ingredient_version",
+            item.id,
+            {
+                "id": str(item.id),
+                "organization_id": str(item.organization_id),
+                "ingredient_id": str(item.ingredient_id),
+                "based_on_version_id": _uuid(item.based_on_version_id),
+                "name": item.name,
+                "normalized_name": item.normalized_name,
+                "canonical_unit_id": str(item.canonical_unit_id),
+                "mass_per_canonical_quantity": _decimal(item.mass_per_canonical_quantity),
+                "default_store_section_id": _uuid(item.default_store_section_id),
+                "dietary_tag_ids": sorted(ingredient_tags.get(item.id, [])),
+                "published_at": item.published_at.isoformat(),
+                "published_by_user_id": str(item.published_by_user_id),
+                "immutable": True,
+            },
+        )
+    for item in (
+        await session.execute(
+            select(IngredientPriceEstimate)
+            .where(IngredientPriceEstimate.organization_id == organization_id)
+            .order_by(IngredientPriceEstimate.id)
+        )
+    ).scalars():
+        append(
+            "ingredient_price_estimate",
+            item.id,
+            {
+                "id": str(item.id),
+                "organization_id": str(item.organization_id),
+                "ingredient_id": str(item.ingredient_id),
+                "based_on_estimate_id": _uuid(item.based_on_estimate_id),
+                "state": item.state,
+                "price_amount": _decimal(item.price_amount),
+                "priced_quantity": _decimal(item.priced_quantity),
+                "priced_unit_id": _uuid(item.priced_unit_id),
+                "currency": item.currency,
+                "published_at": item.published_at.isoformat(),
+                "published_by_user_id": str(item.published_by_user_id),
+                "immutable": True,
+            },
+        )
+
+    version_tags: dict[UUID, list[str]] = {}
+    for version_id, tag_id in (
+        await session.execute(
+            select(RecipeVersionTag.recipe_version_id, RecipeVersionTag.recipe_tag_id).where(
+                RecipeVersionTag.organization_id == organization_id
+            )
+        )
+    ).all():
+        version_tags.setdefault(version_id, []).append(str(tag_id))
+    for item in (
+        await session.execute(
+            select(Recipe).where(Recipe.organization_id == organization_id).order_by(Recipe.id)
+        )
+    ).scalars():
+        append(
+            "recipe",
+            item.id,
+            {
+                "id": str(item.id),
+                "organization_id": str(item.organization_id),
+                "current_version_id": _uuid(item.current_version_id),
+                "created_at": item.created_at.isoformat(),
+                "created_by_user_id": str(item.created_by_user_id),
+                "retired_at": _time(item.retired_at),
+                "retired_by_user_id": _uuid(item.retired_by_user_id),
+            },
+        )
+    for item in (
+        await session.execute(
+            select(RecipeVersion)
+            .where(RecipeVersion.organization_id == organization_id)
+            .order_by(RecipeVersion.id)
+        )
+    ).scalars():
+        append(
+            "recipe_version",
+            item.id,
+            {
+                "id": str(item.id),
+                "organization_id": str(item.organization_id),
+                "recipe_id": str(item.recipe_id),
+                "based_on_version_id": _uuid(item.based_on_version_id),
+                "name": item.name,
+                "description": item.description,
+                "scaling_model": item.scaling_model,
+                "scaling_unit_id": str(item.scaling_unit_id),
+                "base_scaling_amount": _decimal(item.base_scaling_amount),
+                "estimated_diners_per_scaling_unit": _decimal(
+                    item.estimated_diners_per_scaling_unit
+                ),
+                "round_suggestions_up": item.round_suggestions_up,
+                "published_at": item.published_at.isoformat(),
+                "published_by_user_id": str(item.published_by_user_id),
+                "immutable": True,
+            },
+        )
+    for version_id, tag_ids in version_tags.items():
+        for tag_id in tag_ids:
+            association_id = recipe_version_tag_change_id(version_id, UUID(tag_id))
+            append(
+                "recipe_version_tag",
+                association_id,
+                {
+                    "id": str(association_id),
+                    "recipe_version_id": str(version_id),
+                    "recipe_tag_id": tag_id,
+                    "organization_id": str(organization_id),
+                },
+            )
+    for item in (
+        await session.execute(
+            select(RecipeVersionIngredientLine)
+            .where(RecipeVersionIngredientLine.organization_id == organization_id)
+            .order_by(RecipeVersionIngredientLine.id)
+        )
+    ).scalars():
+        append(
+            "recipe_ingredient_line",
+            item.id,
+            {
+                "id": str(item.id),
+                "organization_id": str(item.organization_id),
+                "recipe_id": str(item.recipe_id),
+                "recipe_version_id": str(item.recipe_version_id),
+                "line_key": str(item.line_key),
+                "ingredient_version_id": str(item.ingredient_version_id),
+                "base_quantity": _decimal(item.base_quantity),
+                "preferred_display_unit_id": _uuid(item.preferred_display_unit_id),
+                "note": item.note,
+                "position_key": item.position_key,
+                "scaling_behavior": item.scaling_behavior,
+                "include_in_portion_weight": item.include_in_portion_weight,
+                "immutable": True,
+            },
+        )
+
+    events = (
+        (
+            await session.execute(
+                select(Event).where(Event.organization_id == organization_id).order_by(Event.id)
+            )
+        )
+        .scalars()
+        .all()
+    )
+    active_ids = tuple(event.id for event in events if event.lifecycle == "active")
+    clocks = {
+        (clock.entity_kind, clock.entity_id, clock.field_name): clock
+        for clock in (
+            await session.execute(
+                select(FieldClock).where(FieldClock.organization_id == organization_id)
+            )
+        ).scalars()
+    }
+    for item in events:
+        append(
+            *_event_change_record(item, clocks.get(("event", item.id, "base_expected_attendance")))
+        )
+    if not active_ids:
+        return tuple(records)
+
+    for item in (
+        await session.execute(
+            select(EventDay).where(EventDay.event_id.in_(active_ids)).order_by(EventDay.id)
+        )
+    ).scalars():
+        append(
+            "event_day",
+            item.id,
+            {
+                "id": str(item.id),
+                "event_id": str(item.event_id),
+                "calendar_date": item.calendar_date.isoformat(),
+                "note": item.note,
+                "is_visible": item.is_visible,
+                "provenance": item.provenance,
+                "created_at": item.created_at.isoformat(),
+                "created_by_user_id": str(item.created_by_user_id),
+                "retired_at": _time(item.retired_at),
+                "retired_by_user_id": _uuid(item.retired_by_user_id),
+            },
+        )
+    for item in (
+        await session.execute(
+            select(EventMealRole)
+            .where(EventMealRole.event_id.in_(active_ids))
+            .order_by(EventMealRole.id)
+        )
+    ).scalars():
+        append(
+            "event_meal_role",
+            item.id,
+            {
+                "id": str(item.id),
+                "event_id": str(item.event_id),
+                "source_preset_id": _uuid(item.source_preset_id),
+                "built_in_translation_key": item.built_in_translation_key,
+                "custom_name": item.custom_name,
+                "normalized_custom_name": item.normalized_custom_name,
+                "position_key": item.position_key,
+                "created_at": item.created_at.isoformat(),
+                "created_by_user_id": str(item.created_by_user_id),
+                "retired_at": _time(item.retired_at),
+                "retired_by_user_id": _uuid(item.retired_by_user_id),
+            },
+        )
+    for item in (
+        await session.execute(
+            select(ScheduledRecipe)
+            .where(
+                ScheduledRecipe.organization_id == organization_id,
+                ScheduledRecipe.event_id.in_(active_ids),
+            )
+            .order_by(ScheduledRecipe.id)
+        )
+    ).scalars():
+        append(*_scheduled_recipe_change_record(item))
+    for item in (
+        await session.execute(
+            select(ScheduledIngredientOverride)
+            .where(
+                ScheduledIngredientOverride.organization_id == organization_id,
+                ScheduledIngredientOverride.event_id.in_(active_ids),
+            )
+            .order_by(ScheduledIngredientOverride.id)
+        )
+    ).scalars():
+        record = _override_record(item)
+        record["field_clocks"] = _clock_fields(clocks, "scheduled_ingredient_override", item.id)
+        append("scheduled_ingredient_override", item.id, record)
+    for item in (
+        await session.execute(
+            select(EventIngredientPrice)
+            .where(
+                EventIngredientPrice.organization_id == organization_id,
+                EventIngredientPrice.event_id.in_(active_ids),
+            )
+            .order_by(EventIngredientPrice.id)
+        )
+    ).scalars():
+        if item.current_snapshot_id is not None:
+            append("event_ingredient_price", item.id, _price_pointer_record(item))
+    for item in (
+        await session.execute(
+            select(EventIngredientPriceSnapshot)
+            .where(
+                EventIngredientPriceSnapshot.organization_id == organization_id,
+                EventIngredientPriceSnapshot.event_id.in_(active_ids),
+            )
+            .order_by(EventIngredientPriceSnapshot.id)
+        )
+    ).scalars():
+        append("event_ingredient_price_snapshot", item.id, _snapshot_record(item))
+    for item in (
+        await session.execute(
+            select(ShoppingList)
+            .where(
+                ShoppingList.organization_id == organization_id,
+                ShoppingList.event_id.in_(active_ids),
+            )
+            .order_by(ShoppingList.id)
+        )
+    ).scalars():
+        append("shopping_list", item.id, await _shopping_list_record(session, item, clocks))
+    for item in (
+        await session.execute(
+            select(ShoppingGenerationRevision)
+            .where(
+                ShoppingGenerationRevision.organization_id == organization_id,
+                ShoppingGenerationRevision.event_id.in_(active_ids),
+            )
+            .order_by(ShoppingGenerationRevision.id)
+        )
+    ).scalars():
+        append(*_generation_revision_record(item))
+    for item in (
+        await session.execute(
+            select(ShoppingRevisionSource)
+            .where(
+                ShoppingRevisionSource.organization_id == organization_id,
+                ShoppingRevisionSource.event_id.in_(active_ids),
+            )
+            .order_by(
+                ShoppingRevisionSource.generation_revision_id,
+                ShoppingRevisionSource.scheduled_recipe_id,
+            )
+        )
+    ).scalars():
+        append(*_revision_source_record(item))
+    for item in (
+        await session.execute(
+            select(ShoppingIngredientRow)
+            .where(
+                ShoppingIngredientRow.organization_id == organization_id,
+                ShoppingIngredientRow.event_id.in_(active_ids),
+            )
+            .order_by(ShoppingIngredientRow.id)
+        )
+    ).scalars():
+        append(*await _row_record(session, item, clocks))
+    for item in (
+        await session.execute(
+            select(ShoppingContribution)
+            .where(
+                ShoppingContribution.organization_id == organization_id,
+                ShoppingContribution.event_id.in_(active_ids),
+            )
+            .order_by(ShoppingContribution.id)
+        )
+    ).scalars():
+        append(*await _contribution_record(session, item, clocks))
+    for item in (
+        await session.execute(
+            select(ShoppingContributionSnapshot)
+            .where(
+                ShoppingContributionSnapshot.organization_id == organization_id,
+                ShoppingContributionSnapshot.event_id.in_(active_ids),
+            )
+            .order_by(ShoppingContributionSnapshot.id)
+        )
+    ).scalars():
+        append(*_contribution_snapshot_record(item))
+    for item in (
+        await session.execute(
+            select(AdHocShoppingItem)
+            .where(
+                AdHocShoppingItem.organization_id == organization_id,
+                AdHocShoppingItem.event_id.in_(active_ids),
+            )
+            .order_by(AdHocShoppingItem.id)
+        )
+    ).scalars():
+        append(
+            "ad_hoc_shopping_item",
+            item.id,
+            {
+                "id": str(item.id),
+                "organization_id": str(item.organization_id),
+                "event_id": str(item.event_id),
+                "shopping_list_id": str(item.shopping_list_id),
+                "name": item.name,
+                "target_amount": _decimal(item.target_amount),
+                "unit_id": str(item.unit_id),
+                "store_section_id": str(item.store_section_id),
+                "note": item.note,
+                "fulfilment_credit": _decimal(item.fulfilment_credit),
+                "fulfilment_updated_at": _time(item.fulfilment_updated_at),
+                "fulfilment_updated_by_user_id": _uuid(item.fulfilment_updated_by_user_id),
+                "fulfilment_updated_by_installation_id": _uuid(
+                    item.fulfilment_updated_by_installation_id
+                ),
+                "created_at": item.created_at.isoformat(),
+                "created_by_user_id": str(item.created_by_user_id),
+                "retired_at": _time(item.retired_at),
+                "retired_by_user_id": _uuid(item.retired_by_user_id),
+            },
+        )
+    for item in (
+        await session.execute(
+            select(Receipt)
+            .where(Receipt.organization_id == organization_id, Receipt.event_id.in_(active_ids))
+            .order_by(Receipt.id)
+        )
+    ).scalars():
+        record = _receipt_record(item)
+        record["field_clocks"] = _clock_fields(clocks, "receipt", item.id)
+        append("receipt", item.id, record)
+    for item in (
+        await session.execute(
+            select(ReceiptAttachment)
+            .join(Receipt, Receipt.id == ReceiptAttachment.receipt_id)
+            .where(
+                ReceiptAttachment.organization_id == organization_id,
+                Receipt.event_id.in_(active_ids),
+            )
+            .order_by(ReceiptAttachment.id)
+        )
+    ).scalars():
+        append("receipt_attachment", item.id, _attachment_record(item))
+    return tuple(records)
+
+
+def _clock_fields(
+    clocks: dict[tuple[str, UUID, str], FieldClock], entity_kind: str, entity_id: UUID
+) -> dict[str, dict[str, str]]:
+    return {
+        field_name: {
+            "winning_client_wall_time": clock.winning_client_wall_time.isoformat(),
+            "winning_mutation_id": str(clock.winning_mutation_id),
+        }
+        for (kind, clock_entity_id, field_name), clock in clocks.items()
+        if kind == entity_kind and clock_entity_id == entity_id
+    }

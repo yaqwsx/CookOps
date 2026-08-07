@@ -18,6 +18,7 @@ from cookops.application.shopping_lists import CreateShoppingListCommand
 from cookops.application.synchronization import (
     MAX_COMMANDS_PER_PUSH,
     MAX_TRANSACTION_GROUPS_PER_PULL,
+    BootstrapResult,
     InvalidSyncCursor,
     PullRequest,
     PullResult,
@@ -55,6 +56,12 @@ class PullChangesRequest(BaseModel):
     )
 
 
+class BootstrapRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    organization_id: UUID
+
+
 class SyncRecordResponse(BaseModel):
     organization_id: UUID
     sequence: int
@@ -78,6 +85,21 @@ class PullChangesResponse(BaseModel):
     next_cursor: str | None
     transaction_groups: tuple[SyncTransactionGroupResponse, ...]
     oldest_available_at: datetime | None
+
+
+class BootstrapRecordResponse(BaseModel):
+    organization_id: UUID
+    entity_id: UUID
+    entity_kind: str
+    operation: Literal["upsert"]
+    payload: dict[str, object]
+
+
+class BootstrapResponse(BaseModel):
+    sync_schema_version: Literal[1]
+    server_time: datetime
+    cursor: str
+    records: tuple[BootstrapRecordResponse, ...]
 
 
 class PushCommandRequest(BaseModel):
@@ -268,6 +290,24 @@ def _result_response(result: PullResult) -> PullChangesResponse:
     )
 
 
+def _bootstrap_response(result: BootstrapResult) -> BootstrapResponse:
+    return BootstrapResponse(
+        sync_schema_version=result.sync_schema_version,
+        server_time=result.server_time,
+        cursor=result.cursor,
+        records=tuple(
+            BootstrapRecordResponse(
+                organization_id=record.organization_id,
+                entity_id=record.entity_id,
+                entity_kind=record.entity_kind,
+                operation="upsert",
+                payload=record.payload,
+            )
+            for record in result.records
+        ),
+    )
+
+
 def _push_command(command: PushCommandRequest, organization_id: UUID) -> SyncCommand:
     try:
         if command.command_kind == "event.create":
@@ -413,6 +453,30 @@ async def _push_body(request: Request) -> PushChangesRequest:
 
 def create_sync_router(settings: Settings) -> APIRouter:
     router = APIRouter(prefix="/api/v1/sync", tags=["synchronization"])
+
+    @router.post("/bootstrap", response_model=BootstrapResponse)
+    async def bootstrap(request: Request, body: BootstrapRequest) -> BootstrapResponse:
+        services = _services(request)
+        secret = request.cookies.get(settings.browser_session_cookie_name)
+        if secret is None:
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED, detail="not authenticated"
+            )
+        authenticated = await services.browser_sessions.authenticate(secret)
+        if authenticated is None:
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED, detail="not authenticated"
+            )
+        try:
+            return _bootstrap_response(
+                await services.synchronization.bootstrap(
+                    actor_user_id=authenticated.user_id, organization_id=body.organization_id
+                )
+            )
+        except SyncQueryDenied as error:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN, detail="organization access denied"
+            ) from error
 
     @router.post(
         "/push",

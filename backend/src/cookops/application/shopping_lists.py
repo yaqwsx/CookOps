@@ -1180,7 +1180,9 @@ def _retained_refresh(mutation: Mutation) -> RefreshShoppingListResult:
 
 
 async def _shopping_list_record(
-    session: AsyncSession, shopping_list: ShoppingList
+    session: AsyncSession,
+    shopping_list: ShoppingList,
+    preloaded_clocks: dict[tuple[str, UUID, str], FieldClock] | None = None,
 ) -> dict[str, object]:
     clocks = await _field_clock_metadata(
         session,
@@ -1188,6 +1190,7 @@ async def _shopping_list_record(
         "shopping_list",
         shopping_list.id,
         ("current_generation_revision_id",),
+        preloaded_clocks,
     )
     return {
         "id": str(shopping_list.id),
@@ -1948,20 +1951,28 @@ async def _field_clock_metadata(
     entity_kind: str,
     entity_id: UUID,
     field_names: tuple[str, ...],
+    preloaded_clocks: dict[tuple[str, UUID, str], FieldClock] | None = None,
 ) -> dict[str, object]:
-    clocks = {
-        clock.field_name: clock
-        for clock in (
-            await session.scalars(
-                select(FieldClock).where(
-                    FieldClock.organization_id == organization_id,
-                    FieldClock.entity_kind == entity_kind,
-                    FieldClock.entity_id == entity_id,
-                    FieldClock.field_name.in_(field_names),
+    if preloaded_clocks is None:
+        clocks = {
+            clock.field_name: clock
+            for clock in (
+                await session.scalars(
+                    select(FieldClock).where(
+                        FieldClock.organization_id == organization_id,
+                        FieldClock.entity_kind == entity_kind,
+                        FieldClock.entity_id == entity_id,
+                        FieldClock.field_name.in_(field_names),
+                    )
                 )
-            )
-        ).all()
-    }
+            ).all()
+        }
+    else:
+        clocks = {
+            field_name: clock
+            for field_name in field_names
+            if (clock := preloaded_clocks.get((entity_kind, entity_id, field_name))) is not None
+        }
     return {
         field_name: (
             {
@@ -1976,7 +1987,9 @@ async def _field_clock_metadata(
 
 
 async def _row_record(
-    session: AsyncSession, row: ShoppingIngredientRow
+    session: AsyncSession,
+    row: ShoppingIngredientRow,
+    preloaded_clocks: dict[tuple[str, UUID, str], FieldClock] | None = None,
 ) -> tuple[str, UUID, dict[str, object]]:
     return (
         "shopping_ingredient_row",
@@ -2027,13 +2040,16 @@ async def _row_record(
                 "shopping_ingredient_row",
                 row.id,
                 _ROW_SYNCHRONIZABLE_FIELDS,
+                preloaded_clocks,
             ),
         },
     )
 
 
 async def _contribution_record(
-    session: AsyncSession, contribution: ShoppingContribution
+    session: AsyncSession,
+    contribution: ShoppingContribution,
+    preloaded_clocks: dict[tuple[str, UUID, str], FieldClock] | None = None,
 ) -> tuple[str, UUID, dict[str, object]]:
     return (
         "shopping_contribution",
@@ -2064,6 +2080,7 @@ async def _contribution_record(
                 "shopping_contribution",
                 contribution.id,
                 _CONTRIBUTION_SYNCHRONIZABLE_FIELDS,
+                preloaded_clocks,
             ),
         },
     )

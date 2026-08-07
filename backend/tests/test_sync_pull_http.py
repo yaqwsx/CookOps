@@ -11,7 +11,7 @@ import pytest
 from alembic.config import Config
 from fastapi.testclient import TestClient
 from pydantic import PostgresDsn
-from sqlalchemy import Engine, create_engine, insert, text
+from sqlalchemy import Engine, create_engine, insert, select, text
 
 from alembic import command as alembic_command
 from cookops.application.synchronization import SyncCursor, SyncCursorCodec
@@ -19,6 +19,7 @@ from cookops.config import Environment, HumanAuthProvider, Settings
 from cookops.main import create_app
 from cookops.persistence.models import (
     ClientInstallation,
+    Event,
     ExternalIdentity,
     Mutation,
     Organization,
@@ -279,6 +280,77 @@ def test_pull_requires_current_cookie_and_current_organization_membership(
         )
     assert response.status_code == 403
     assert response.json() == {"detail": "organization access denied"}
+
+
+def test_bootstrap_projects_current_state_without_retained_feed_history(
+    sync_database: SyncDatabase,
+) -> None:
+    event_id = uuid4()
+    _, head = _publish_changes(sync_database, count=1)
+    with sync_database.engine.begin() as connection:
+        creator_id = connection.execute(select(User.id).limit(1)).scalar_one()
+        connection.execute(
+            insert(Event).values(
+                id=event_id,
+                organization_id=sync_database.organization_id,
+                name="Projection only",
+                start_date=datetime(2026, 1, 1, tzinfo=UTC).date(),
+                end_date=datetime(2026, 1, 1, tzinfo=UTC).date(),
+                base_expected_attendance=0,
+                budget_amount=0,
+                currency="CZK",
+                created_by_user_id=creator_id,
+            )
+        )
+        assert connection.execute(select(OrganizationChange.sequence)).scalars().all() == [head]
+
+    with TestClient(create_app(_settings()), base_url="https://testserver") as client:
+        _sign_in(client, "dummy-member")
+        response = client.post(
+            "/api/v1/sync/bootstrap",
+            json={"organization_id": str(sync_database.organization_id)},
+        )
+        assert response.status_code == 200
+        payload = response.json()
+        assert payload["sync_schema_version"] == 1
+        assert SyncCursorCodec(encoded_hmac_key=KEY).decode(payload["cursor"]) == SyncCursor(
+            organization_id=sync_database.organization_id, after_sequence=head
+        )
+        event_records = [
+            record
+            for record in payload["records"]
+            if record["entity_kind"] == "event" and record["entity_id"] == str(event_id)
+        ]
+        assert event_records == [
+            {
+                "organization_id": str(sync_database.organization_id),
+                "entity_id": str(event_id),
+                "entity_kind": "event",
+                "operation": "upsert",
+                "payload": {
+                    "record_schema_version": 1,
+                    "record": {
+                        "id": str(event_id),
+                        "organization_id": str(sync_database.organization_id),
+                        "name": "Projection only",
+                        "lifecycle": "active",
+                        "field_clocks": {"base_expected_attendance": None},
+                        "base_expected_attendance": 0,
+                        "budget_amount": "0",
+                        "currency": "CZK",
+                        "location": None,
+                        "general_note": None,
+                        "current_archive_snapshot_id": None,
+                        "archived_at": None,
+                        "archived_by_user_id": None,
+                        "start_date": "2026-01-01",
+                        "end_date": "2026-01-01",
+                        "created_at": event_records[0]["payload"]["record"]["created_at"],
+                        "created_by_user_id": str(creator_id),
+                    },
+                },
+            }
+        ]
 
 
 def test_pull_pages_complete_transaction_groups_and_uses_signed_organization_cursor(
