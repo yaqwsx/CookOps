@@ -31,6 +31,11 @@ from cookops.application.events import (
     update_event_base_attendance,
 )
 from cookops.application.organizations import ApplicationServiceError, ExecutionContext
+from cookops.application.shopping_lists import (
+    CreateShoppingListCommand,
+    CreateShoppingListResult,
+    create_shopping_list,
+)
 from cookops.persistence.models import (
     ClientInstallation,
     Mutation,
@@ -118,7 +123,22 @@ class UnsupportedSyncCommand:
     rejection_code: str = "unsupported_command_kind"
 
 
-SyncCommand = CreateEventCommand | UpdateEventBaseAttendanceCommand | UnsupportedSyncCommand
+SyncCommand = (
+    CreateEventCommand
+    | UpdateEventBaseAttendanceCommand
+    | CreateShoppingListCommand
+    | UnsupportedSyncCommand
+)
+
+
+def _command_kind(
+    command: CreateEventCommand | UpdateEventBaseAttendanceCommand | CreateShoppingListCommand,
+) -> str:
+    if isinstance(command, CreateEventCommand):
+        return "event.create"
+    if isinstance(command, UpdateEventBaseAttendanceCommand):
+        return "event.update_base_attendance"
+    return "shopping_list.create"
 
 
 @dataclass(frozen=True, slots=True)
@@ -398,11 +418,7 @@ class SynchronizationCommandService:
         if command.organization_id != organization_id:
             return PushCommandOutcome(
                 mutation_id=command.mutation_id,
-                command_kind=(
-                    "event.create"
-                    if isinstance(command, CreateEventCommand)
-                    else "event.update_base_attendance"
-                ),
+                command_kind=_command_kind(command),
                 status="rejected",
                 replayed=False,
                 first_change_sequence=None,
@@ -412,19 +428,17 @@ class SynchronizationCommandService:
                 retry_same_identity=False,
             )
         try:
-            result = await (
-                create_event(self._session_factory, context, command)
-                if isinstance(command, CreateEventCommand)
-                else update_event_base_attendance(self._session_factory, context, command)
-            )
+            result: CreateEventResult | UpdateEventBaseAttendanceResult | CreateShoppingListResult
+            if isinstance(command, CreateEventCommand):
+                result = await create_event(self._session_factory, context, command)
+            elif isinstance(command, UpdateEventBaseAttendanceCommand):
+                result = await update_event_base_attendance(self._session_factory, context, command)
+            else:
+                result = await create_shopping_list(self._session_factory, context, command)
         except ApplicationServiceError as error:
             return PushCommandOutcome(
                 mutation_id=command.mutation_id,
-                command_kind=(
-                    "event.create"
-                    if isinstance(command, CreateEventCommand)
-                    else "event.update_base_attendance"
-                ),
+                command_kind=_command_kind(command),
                 status="rejected",
                 replayed=False,
                 first_change_sequence=None,
@@ -521,7 +535,7 @@ class SynchronizationCommandService:
 
     @staticmethod
     def _result_outcome(
-        result: CreateEventResult | UpdateEventBaseAttendanceResult,
+        result: CreateEventResult | UpdateEventBaseAttendanceResult | CreateShoppingListResult,
     ) -> PushCommandOutcome:
         return PushCommandOutcome(
             mutation_id=result.mutation_id,
@@ -529,6 +543,8 @@ class SynchronizationCommandService:
                 "event.create"
                 if isinstance(result, CreateEventResult)
                 else "event.update_base_attendance"
+                if isinstance(result, UpdateEventBaseAttendanceResult)
+                else "shopping_list.create"
             ),
             status=result.outcome,
             replayed=result.replayed,

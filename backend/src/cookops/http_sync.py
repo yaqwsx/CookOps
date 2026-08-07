@@ -13,6 +13,7 @@ from pydantic import BaseModel, ConfigDict, Field, ValidationError, field_valida
 
 from cookops.application.browser_sessions import BrowserSessionService
 from cookops.application.events import CreateEventCommand, UpdateEventBaseAttendanceCommand
+from cookops.application.shopping_lists import CreateShoppingListCommand
 from cookops.application.synchronization import (
     MAX_COMMANDS_PER_PUSH,
     MAX_TRANSACTION_GROUPS_PER_PULL,
@@ -143,6 +144,17 @@ class UpdateEventBaseAttendancePayload(BaseModel):
     logical_operation_id: UUID | None = None
 
 
+class CreateShoppingListPayload(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    shopping_list_id: UUID
+    generation_revision_id: UUID
+    event_id: UUID
+    name: str
+    scheduled_recipe_ids: tuple[UUID, ...]
+    logical_operation_id: UUID | None = None
+
+
 class PushCommandErrorResponse(BaseModel):
     code: str
     field_violations: tuple[dict[str, str], ...]
@@ -238,6 +250,19 @@ def _push_command(command: PushCommandRequest, organization_id: UUID) -> SyncCom
                 base_expected_attendance=attendance_payload.base_expected_attendance,
                 client_wall_time=command.client_wall_time,
                 logical_operation_id=attendance_payload.logical_operation_id,
+            )
+        if command.command_kind == "shopping_list.create":
+            shopping_payload = CreateShoppingListPayload.model_validate(command.payload)
+            return CreateShoppingListCommand(
+                mutation_id=command.mutation_id,
+                shopping_list_id=shopping_payload.shopping_list_id,
+                generation_revision_id=shopping_payload.generation_revision_id,
+                organization_id=organization_id,
+                event_id=shopping_payload.event_id,
+                name=shopping_payload.name,
+                scheduled_recipe_ids=shopping_payload.scheduled_recipe_ids,
+                client_wall_time=command.client_wall_time,
+                logical_operation_id=shopping_payload.logical_operation_id,
             )
     except ValidationError:
         return UnsupportedSyncCommand(

@@ -8,7 +8,7 @@ from sqlalchemy import insert, select, update
 from test_sync_pull_http import SyncDatabase, _settings, _sign_in
 
 from cookops.main import create_app
-from cookops.persistence.models import ClientInstallation, OrganizationMembership
+from cookops.persistence.models import ClientInstallation, OrganizationMembership, ShoppingList
 
 pytest_plugins = ("test_sync_pull_http",)
 
@@ -53,6 +53,15 @@ def _command(
         }
     elif kind == "event.update_base_attendance":
         payload = {"event_id": str(event_id), **payload}
+    elif kind == "shopping_list.create":
+        payload = {
+            "shopping_list_id": str(uuid4()),
+            "generation_revision_id": str(uuid4()),
+            "event_id": str(event_id),
+            "name": "Push shopping",
+            "scheduled_recipe_ids": [],
+            **payload,
+        }
     return {
         "mutation_id": str(mutation_id),
         "command_kind": kind,
@@ -104,6 +113,75 @@ def test_push_applies_ordered_commands_and_replays_a_retained_outcome(
         assert replay.status_code == 200
         assert [outcome["replayed"] for outcome in replay.json()["outcomes"]] == [True, True]
         assert replay.json()["change_cursor"] == response.json()["change_cursor"]
+
+
+def test_push_creates_a_shopping_list_through_the_typed_shared_command(
+    sync_database: SyncDatabase,
+) -> None:
+    installation_id = _installation(sync_database)
+    event_id, shopping_list_id, generation_revision_id, mutation_id = (
+        uuid4(),
+        uuid4(),
+        uuid4(),
+        uuid4(),
+    )
+    commands = [
+        _command(mutation_id=uuid4(), event_id=event_id),
+        _command(
+            mutation_id=mutation_id,
+            event_id=event_id,
+            kind="shopping_list.create",
+            shopping_list_id=str(shopping_list_id),
+            generation_revision_id=str(generation_revision_id),
+            name="  Push shopping  ",
+        ),
+    ]
+    body = _body(sync_database, installation_id, commands)
+    with TestClient(create_app(_settings()), base_url="https://testserver") as client:
+        _sign_in(client, "dummy-member")
+        response = client.post("/api/v1/sync/push", json=body)
+        assert response.status_code == 200
+        outcome = response.json()["outcomes"][1]
+        assert outcome["command_kind"] == "shopping_list.create"
+        assert outcome["status"] == "accepted"
+        assert outcome["replayed"] is False
+        assert outcome["first_change_sequence"] is not None
+        assert client.post("/api/v1/sync/push", json=body).json()["outcomes"][1]["replayed"] is True
+        changed = _body(
+            sync_database,
+            installation_id,
+            [
+                commands[0],
+                _command(
+                    mutation_id=mutation_id,
+                    event_id=event_id,
+                    kind="shopping_list.create",
+                    shopping_list_id=str(shopping_list_id),
+                    generation_revision_id=str(generation_revision_id),
+                    name="Other",
+                ),
+            ],
+        )
+        mismatch = client.post("/api/v1/sync/push", json=changed).json()["outcomes"][1]
+        assert mismatch["error"]["code"] == "idempotency_mismatch"
+        invalid = _body(
+            sync_database,
+            installation_id,
+            [
+                _command(
+                    mutation_id=uuid4(),
+                    event_id=event_id,
+                    kind="shopping_list.create",
+                    unexpected="value",
+                )
+            ],
+        )
+        rejected = client.post("/api/v1/sync/push", json=invalid).json()["outcomes"][0]
+        assert rejected["error"]["code"] == "validation_failed"
+    with sync_database.engine.connect() as connection:
+        assert connection.scalar(
+            select(ShoppingList.name).where(ShoppingList.id == shopping_list_id)
+        ) == ("Push shopping")
 
 
 def test_push_rejects_unknown_commands_and_untrusted_batch_shapes(
