@@ -1308,6 +1308,480 @@ class ScheduledIngredientOverride(Base):
     )
 
 
+class ShoppingList(Base):
+    __tablename__ = "shopping_lists"
+    __table_args__ = (
+        CheckConstraint("btrim(name) <> ''", name="ck_shopping_lists_name_not_empty"),
+        ForeignKeyConstraint(
+            ["event_id", "organization_id"],
+            ["events.id", "events.organization_id"],
+            ondelete="RESTRICT",
+            name="fk_shopping_lists_event_organization",
+        ),
+        ForeignKeyConstraint(
+            ["current_generation_revision_id", "id"],
+            ["shopping_generation_revisions.id", "shopping_generation_revisions.shopping_list_id"],
+            ondelete="RESTRICT",
+            name="fk_shopping_lists_current_generation_revision",
+            deferrable=True,
+            initially="DEFERRED",
+            use_alter=True,
+        ),
+        UniqueConstraint(
+            "id", "organization_id", "event_id", name="uq_shopping_lists_id_org_event"
+        ),
+    )
+
+    id: Mapped[UUID] = mapped_column(
+        Uuid, primary_key=True, default=uuid4, server_default=text("gen_random_uuid()")
+    )
+    organization_id: Mapped[UUID] = mapped_column(Uuid)
+    event_id: Mapped[UUID] = mapped_column(Uuid)
+    name: Mapped[str] = mapped_column(String(200))
+    current_generation_revision_id: Mapped[UUID | None] = mapped_column(Uuid)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=text("CURRENT_TIMESTAMP")
+    )
+    created_by_user_id: Mapped[UUID] = mapped_column(ForeignKey("users.id", ondelete="RESTRICT"))
+
+
+class ShoppingGenerationRevision(Base):
+    __tablename__ = "shopping_generation_revisions"
+    __table_args__ = (
+        ForeignKeyConstraint(
+            ["shopping_list_id", "organization_id", "event_id"],
+            [
+                "shopping_lists.id",
+                "shopping_lists.organization_id",
+                "shopping_lists.event_id",
+            ],
+            ondelete="RESTRICT",
+            name="fk_shopping_generation_revisions_list_scope",
+        ),
+        ForeignKeyConstraint(
+            ["parent_revision_id", "shopping_list_id"],
+            [
+                "shopping_generation_revisions.id",
+                "shopping_generation_revisions.shopping_list_id",
+            ],
+            ondelete="RESTRICT",
+            name="fk_shopping_generation_revisions_parent_same_list",
+            deferrable=True,
+            initially="DEFERRED",
+        ),
+        CheckConstraint(
+            "parent_revision_id IS NULL OR parent_revision_id <> id",
+            name="ck_shopping_generation_revisions_nonrecursive_parent",
+        ),
+        UniqueConstraint("id", "shopping_list_id", name="uq_shopping_generation_revisions_id_list"),
+        UniqueConstraint(
+            "id",
+            "shopping_list_id",
+            "organization_id",
+            "event_id",
+            name="uq_shopping_generation_revisions_id_scope",
+        ),
+    )
+
+    id: Mapped[UUID] = mapped_column(
+        Uuid, primary_key=True, default=uuid4, server_default=text("gen_random_uuid()")
+    )
+    organization_id: Mapped[UUID] = mapped_column(Uuid)
+    event_id: Mapped[UUID] = mapped_column(Uuid)
+    shopping_list_id: Mapped[UUID] = mapped_column(Uuid)
+    parent_revision_id: Mapped[UUID | None] = mapped_column(Uuid)
+    generated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=text("CURRENT_TIMESTAMP")
+    )
+    generated_by_user_id: Mapped[UUID] = mapped_column(ForeignKey("users.id", ondelete="RESTRICT"))
+
+
+class ShoppingRevisionSource(Base):
+    __tablename__ = "shopping_revision_sources"
+    __table_args__ = (
+        ForeignKeyConstraint(
+            ["generation_revision_id", "shopping_list_id", "organization_id", "event_id"],
+            [
+                "shopping_generation_revisions.id",
+                "shopping_generation_revisions.shopping_list_id",
+                "shopping_generation_revisions.organization_id",
+                "shopping_generation_revisions.event_id",
+            ],
+            ondelete="RESTRICT",
+            name="fk_shopping_revision_sources_generation_scope",
+        ),
+        ForeignKeyConstraint(
+            ["scheduled_recipe_id", "event_id", "organization_id"],
+            [
+                "scheduled_recipes.id",
+                "scheduled_recipes.event_id",
+                "scheduled_recipes.organization_id",
+            ],
+            ondelete="RESTRICT",
+            name="fk_shopping_revision_sources_scheduled_recipe_scope",
+        ),
+    )
+
+    generation_revision_id: Mapped[UUID] = mapped_column(Uuid, primary_key=True)
+    shopping_list_id: Mapped[UUID] = mapped_column(Uuid)
+    organization_id: Mapped[UUID] = mapped_column(Uuid)
+    event_id: Mapped[UUID] = mapped_column(Uuid)
+    scheduled_recipe_id: Mapped[UUID] = mapped_column(Uuid, primary_key=True)
+
+
+class ShoppingIngredientRow(Base):
+    __tablename__ = "shopping_ingredient_rows"
+    __table_args__ = (
+        CheckConstraint("btrim(ingredient_name) <> ''", name="ck_shopping_rows_ingredient_name"),
+        CheckConstraint(
+            "available_supply_quantity >= 0 "
+            "AND available_supply_quantity::text NOT IN ('NaN', 'Infinity', '-Infinity')",
+            name="ck_shopping_rows_nonnegative_available_supply",
+        ),
+        CheckConstraint(
+            "manual_purchase_target IS NULL OR (manual_purchase_target >= 0 "
+            "AND manual_purchase_target::text NOT IN ('NaN', 'Infinity', '-Infinity'))",
+            name="ck_shopping_rows_nonnegative_manual_target",
+        ),
+        CheckConstraint(
+            "manual_target_automatic_value IS NULL OR (manual_target_automatic_value >= 0 "
+            "AND manual_target_automatic_value::text NOT IN ('NaN', 'Infinity', '-Infinity'))",
+            name="ck_shopping_rows_nonnegative_manual_auto_value",
+        ),
+        CheckConstraint(
+            "aggregate_fulfilment_credit >= 0 "
+            "AND aggregate_fulfilment_credit::text NOT IN ('NaN', 'Infinity', '-Infinity')",
+            name="ck_shopping_rows_nonnegative_aggregate_credit",
+        ),
+        CheckConstraint(
+            "(manual_purchase_target IS NULL AND manual_target_automatic_value IS NULL "
+            "AND manual_target_generation_revision_id IS NULL) OR "
+            "(manual_purchase_target IS NOT NULL AND manual_target_automatic_value IS NOT NULL "
+            "AND manual_target_generation_revision_id IS NOT NULL)",
+            name="ck_shopping_rows_manual_target_basis",
+        ),
+        CheckConstraint(
+            "(default_store_section_id IS NULL AND default_store_section_name IS NULL) OR "
+            "(default_store_section_id IS NOT NULL AND btrim(default_store_section_name) <> '')",
+            name="ck_shopping_rows_default_section_snapshot",
+        ),
+        CheckConstraint(
+            "(aggregate_credit_updated_at IS NULL AND aggregate_credit_updated_by_user_id IS NULL "
+            "AND aggregate_credit_updated_by_installation_id IS NULL) OR "
+            "(aggregate_credit_updated_at IS NOT NULL "
+            "AND aggregate_credit_updated_by_user_id IS NOT NULL "
+            "AND aggregate_credit_updated_by_installation_id IS NOT NULL)",
+            name="ck_shopping_rows_aggregate_credit_attribution",
+        ),
+        ForeignKeyConstraint(
+            ["shopping_list_id", "organization_id", "event_id"],
+            ["shopping_lists.id", "shopping_lists.organization_id", "shopping_lists.event_id"],
+            ondelete="RESTRICT",
+            name="fk_shopping_rows_list_scope",
+        ),
+        ForeignKeyConstraint(
+            ["ingredient_id", "organization_id"],
+            ["ingredients.id", "ingredients.organization_id"],
+            ondelete="RESTRICT",
+            name="fk_shopping_rows_ingredient_organization",
+        ),
+        ForeignKeyConstraint(
+            ["manual_target_generation_revision_id", "shopping_list_id"],
+            [
+                "shopping_generation_revisions.id",
+                "shopping_generation_revisions.shopping_list_id",
+            ],
+            ondelete="RESTRICT",
+            name="fk_shopping_rows_manual_target_generation",
+        ),
+        ForeignKeyConstraint(
+            ["default_store_section_id", "organization_id"],
+            ["store_sections.id", "store_sections.organization_id"],
+            ondelete="RESTRICT",
+            name="fk_shopping_rows_default_section_organization",
+        ),
+        ForeignKeyConstraint(
+            ["store_section_override_id", "organization_id"],
+            ["store_sections.id", "store_sections.organization_id"],
+            ondelete="RESTRICT",
+            name="fk_shopping_rows_override_section_organization",
+        ),
+        ForeignKeyConstraint(
+            ["aggregate_credit_updated_by_installation_id", "aggregate_credit_updated_by_user_id"],
+            ["client_installations.id", "client_installations.user_id"],
+            ondelete="RESTRICT",
+            name="fk_shopping_rows_aggregate_credit_actor",
+        ),
+        UniqueConstraint(
+            "id",
+            "shopping_list_id",
+            "ingredient_id",
+            "organization_id",
+            "event_id",
+            name="uq_shopping_rows_id_list_ingredient_scope",
+        ),
+        UniqueConstraint(
+            "shopping_list_id", "ingredient_id", name="uq_shopping_rows_list_ingredient"
+        ),
+    )
+
+    id: Mapped[UUID] = mapped_column(
+        Uuid, primary_key=True, default=uuid4, server_default=text("gen_random_uuid()")
+    )
+    organization_id: Mapped[UUID] = mapped_column(Uuid)
+    event_id: Mapped[UUID] = mapped_column(Uuid)
+    shopping_list_id: Mapped[UUID] = mapped_column(Uuid)
+    ingredient_id: Mapped[UUID] = mapped_column(Uuid)
+    ingredient_name: Mapped[str] = mapped_column(String(200))
+    calculation_unit_id: Mapped[UUID] = mapped_column(
+        ForeignKey("unit_definitions.id", ondelete="RESTRICT")
+    )
+    available_supply_quantity: Mapped[Decimal] = mapped_column(
+        Numeric, default=Decimal("0"), server_default=text("0")
+    )
+    manual_purchase_target: Mapped[Decimal | None] = mapped_column(Numeric)
+    manual_target_automatic_value: Mapped[Decimal | None] = mapped_column(Numeric)
+    manual_target_generation_revision_id: Mapped[UUID | None] = mapped_column(Uuid)
+    default_store_section_id: Mapped[UUID | None] = mapped_column(Uuid)
+    default_store_section_name: Mapped[str | None] = mapped_column(String(200))
+    store_section_override_id: Mapped[UUID | None] = mapped_column(Uuid)
+    note: Mapped[str | None] = mapped_column(Text)
+    aggregate_fulfilment_credit: Mapped[Decimal] = mapped_column(
+        Numeric, default=Decimal("0"), server_default=text("0")
+    )
+    aggregate_credit_updated_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    aggregate_credit_updated_by_user_id: Mapped[UUID | None] = mapped_column(Uuid)
+    aggregate_credit_updated_by_installation_id: Mapped[UUID | None] = mapped_column(Uuid)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=text("CURRENT_TIMESTAMP")
+    )
+    created_by_user_id: Mapped[UUID] = mapped_column(ForeignKey("users.id", ondelete="RESTRICT"))
+
+
+class ShoppingContribution(Base):
+    __tablename__ = "shopping_contributions"
+    __table_args__ = (
+        CheckConstraint(
+            "fulfilment_credit >= 0 "
+            "AND fulfilment_credit::text NOT IN ('NaN', 'Infinity', '-Infinity')",
+            name="ck_shopping_contributions_nonnegative_credit",
+        ),
+        CheckConstraint(
+            "(fulfilment_updated_at IS NULL AND fulfilment_updated_by_user_id IS NULL "
+            "AND fulfilment_updated_by_installation_id IS NULL) OR "
+            "(fulfilment_updated_at IS NOT NULL AND fulfilment_updated_by_user_id IS NOT NULL "
+            "AND fulfilment_updated_by_installation_id IS NOT NULL)",
+            name="ck_shopping_contributions_fulfilment_attribution",
+        ),
+        ForeignKeyConstraint(
+            [
+                "shopping_ingredient_row_id",
+                "shopping_list_id",
+                "ingredient_id",
+                "organization_id",
+                "event_id",
+            ],
+            [
+                "shopping_ingredient_rows.id",
+                "shopping_ingredient_rows.shopping_list_id",
+                "shopping_ingredient_rows.ingredient_id",
+                "shopping_ingredient_rows.organization_id",
+                "shopping_ingredient_rows.event_id",
+            ],
+            ondelete="RESTRICT",
+            name="fk_shopping_contributions_row_list_ingredient",
+        ),
+        ForeignKeyConstraint(
+            ["scheduled_recipe_id", "event_id", "organization_id"],
+            [
+                "scheduled_recipes.id",
+                "scheduled_recipes.event_id",
+                "scheduled_recipes.organization_id",
+            ],
+            ondelete="RESTRICT",
+            name="fk_shopping_contributions_scheduled_recipe_scope",
+        ),
+        ForeignKeyConstraint(
+            ["fulfilment_updated_by_installation_id", "fulfilment_updated_by_user_id"],
+            ["client_installations.id", "client_installations.user_id"],
+            ondelete="RESTRICT",
+            name="fk_shopping_contributions_fulfilment_actor",
+        ),
+        UniqueConstraint(
+            "shopping_list_id",
+            "scheduled_recipe_id",
+            "ingredient_id",
+            name="uq_shopping_contributions_list_source_ingredient",
+        ),
+        UniqueConstraint(
+            "id",
+            "shopping_list_id",
+            "ingredient_id",
+            "organization_id",
+            "event_id",
+            name="uq_shopping_contributions_id_list_ingredient_scope",
+        ),
+    )
+
+    id: Mapped[UUID] = mapped_column(
+        Uuid, primary_key=True, default=uuid4, server_default=text("gen_random_uuid()")
+    )
+    organization_id: Mapped[UUID] = mapped_column(Uuid)
+    event_id: Mapped[UUID] = mapped_column(Uuid)
+    shopping_list_id: Mapped[UUID] = mapped_column(Uuid)
+    shopping_ingredient_row_id: Mapped[UUID] = mapped_column(Uuid)
+    ingredient_id: Mapped[UUID] = mapped_column(Uuid)
+    scheduled_recipe_id: Mapped[UUID] = mapped_column(Uuid)
+    fulfilment_credit: Mapped[Decimal] = mapped_column(
+        Numeric, default=Decimal("0"), server_default=text("0")
+    )
+    fulfilment_updated_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    fulfilment_updated_by_user_id: Mapped[UUID | None] = mapped_column(Uuid)
+    fulfilment_updated_by_installation_id: Mapped[UUID | None] = mapped_column(Uuid)
+
+
+class ShoppingContributionSnapshot(Base):
+    __tablename__ = "shopping_contribution_snapshots"
+    __table_args__ = (
+        CheckConstraint(
+            "generated_quantity >= 0 "
+            "AND generated_quantity::text NOT IN ('NaN', 'Infinity', '-Infinity')",
+            name="ck_shopping_contribution_snapshots_nonnegative_quantity",
+        ),
+        CheckConstraint(
+            "jsonb_typeof(source_details) = 'object'",
+            name="ck_shopping_contribution_snapshots_source_details",
+        ),
+        ForeignKeyConstraint(
+            ["generation_revision_id", "shopping_list_id", "organization_id", "event_id"],
+            [
+                "shopping_generation_revisions.id",
+                "shopping_generation_revisions.shopping_list_id",
+                "shopping_generation_revisions.organization_id",
+                "shopping_generation_revisions.event_id",
+            ],
+            ondelete="RESTRICT",
+            name="fk_shopping_contribution_snapshots_generation_scope",
+        ),
+        ForeignKeyConstraint(
+            [
+                "shopping_contribution_id",
+                "shopping_list_id",
+                "ingredient_id",
+                "organization_id",
+                "event_id",
+            ],
+            [
+                "shopping_contributions.id",
+                "shopping_contributions.shopping_list_id",
+                "shopping_contributions.ingredient_id",
+                "shopping_contributions.organization_id",
+                "shopping_contributions.event_id",
+            ],
+            ondelete="RESTRICT",
+            name="fk_shopping_contribution_snapshots_contribution_scope",
+        ),
+        ForeignKeyConstraint(
+            ["ingredient_version_id", "ingredient_id"],
+            ["ingredient_versions.id", "ingredient_versions.ingredient_id"],
+            ondelete="RESTRICT",
+            name="fk_shopping_contribution_snapshots_ingredient_version",
+        ),
+        UniqueConstraint(
+            "generation_revision_id",
+            "shopping_contribution_id",
+            name="uq_shopping_contribution_snapshots_generation_contribution",
+        ),
+    )
+
+    id: Mapped[UUID] = mapped_column(
+        Uuid, primary_key=True, default=uuid4, server_default=text("gen_random_uuid()")
+    )
+    organization_id: Mapped[UUID] = mapped_column(Uuid)
+    event_id: Mapped[UUID] = mapped_column(Uuid)
+    shopping_list_id: Mapped[UUID] = mapped_column(Uuid)
+    generation_revision_id: Mapped[UUID] = mapped_column(Uuid)
+    shopping_contribution_id: Mapped[UUID] = mapped_column(Uuid)
+    ingredient_id: Mapped[UUID] = mapped_column(Uuid)
+    active_in_revision: Mapped[bool] = mapped_column(Boolean)
+    generated_quantity: Mapped[Decimal] = mapped_column(Numeric)
+    ingredient_version_id: Mapped[UUID] = mapped_column(Uuid)
+    ingredient_name: Mapped[str] = mapped_column(String(200))
+    source_details: Mapped[dict[str, object]] = mapped_column(JSONB)
+
+
+class AdHocShoppingItem(Base):
+    __tablename__ = "ad_hoc_shopping_items"
+    __table_args__ = (
+        CheckConstraint("btrim(name) <> ''", name="ck_ad_hoc_shopping_items_name_not_empty"),
+        CheckConstraint(
+            "target_amount >= 0 AND target_amount::text NOT IN ('NaN', 'Infinity', '-Infinity')",
+            name="ck_ad_hoc_shopping_items_nonnegative_target",
+        ),
+        CheckConstraint(
+            "fulfilment_credit >= 0 "
+            "AND fulfilment_credit::text NOT IN ('NaN', 'Infinity', '-Infinity')",
+            name="ck_ad_hoc_shopping_items_nonnegative_credit",
+        ),
+        CheckConstraint(
+            "(retired_at IS NULL AND retired_by_user_id IS NULL) OR "
+            "(retired_at IS NOT NULL AND retired_by_user_id IS NOT NULL)",
+            name="ck_ad_hoc_shopping_items_retirement_attribution",
+        ),
+        CheckConstraint(
+            "(fulfilment_updated_at IS NULL AND fulfilment_updated_by_user_id IS NULL "
+            "AND fulfilment_updated_by_installation_id IS NULL) OR "
+            "(fulfilment_updated_at IS NOT NULL AND fulfilment_updated_by_user_id IS NOT NULL "
+            "AND fulfilment_updated_by_installation_id IS NOT NULL)",
+            name="ck_ad_hoc_shopping_items_fulfilment_attribution",
+        ),
+        ForeignKeyConstraint(
+            ["shopping_list_id", "organization_id", "event_id"],
+            ["shopping_lists.id", "shopping_lists.organization_id", "shopping_lists.event_id"],
+            ondelete="RESTRICT",
+            name="fk_ad_hoc_shopping_items_list_scope",
+        ),
+        ForeignKeyConstraint(
+            ["store_section_id", "organization_id"],
+            ["store_sections.id", "store_sections.organization_id"],
+            ondelete="RESTRICT",
+            name="fk_ad_hoc_shopping_items_section_organization",
+        ),
+        ForeignKeyConstraint(
+            ["fulfilment_updated_by_installation_id", "fulfilment_updated_by_user_id"],
+            ["client_installations.id", "client_installations.user_id"],
+            ondelete="RESTRICT",
+            name="fk_ad_hoc_shopping_items_fulfilment_actor",
+        ),
+    )
+
+    id: Mapped[UUID] = mapped_column(
+        Uuid, primary_key=True, default=uuid4, server_default=text("gen_random_uuid()")
+    )
+    organization_id: Mapped[UUID] = mapped_column(Uuid)
+    event_id: Mapped[UUID] = mapped_column(Uuid)
+    shopping_list_id: Mapped[UUID] = mapped_column(Uuid)
+    name: Mapped[str] = mapped_column(String(200))
+    target_amount: Mapped[Decimal] = mapped_column(Numeric)
+    unit_id: Mapped[UUID] = mapped_column(ForeignKey("unit_definitions.id", ondelete="RESTRICT"))
+    store_section_id: Mapped[UUID] = mapped_column(Uuid)
+    note: Mapped[str | None] = mapped_column(Text)
+    fulfilment_credit: Mapped[Decimal] = mapped_column(
+        Numeric, default=Decimal("0"), server_default=text("0")
+    )
+    fulfilment_updated_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    fulfilment_updated_by_user_id: Mapped[UUID | None] = mapped_column(Uuid)
+    fulfilment_updated_by_installation_id: Mapped[UUID | None] = mapped_column(Uuid)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=text("CURRENT_TIMESTAMP")
+    )
+    created_by_user_id: Mapped[UUID] = mapped_column(ForeignKey("users.id", ondelete="RESTRICT"))
+    retired_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    retired_by_user_id: Mapped[UUID | None] = mapped_column(
+        ForeignKey("users.id", ondelete="RESTRICT")
+    )
+
+
 class ClientInstallation(Base):
     __tablename__ = "client_installations"
     __table_args__ = (
