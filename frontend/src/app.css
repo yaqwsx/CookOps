@@ -263,6 +263,93 @@ h1 {
   line-height: 1.5;
 }
 
+.event-overview {
+  display: grid;
+  gap: 1rem;
+  margin-top: 1rem;
+}
+
+.event-overview__scope {
+  margin: 0;
+  color: #62584c;
+  font-size: 0.875rem;
+  line-height: 1.5;
+}
+
+.event-list {
+  display: grid;
+  gap: 0.75rem;
+}
+
+.event-card {
+  display: grid;
+  grid-template-areas:
+    "summary lifecycle"
+    "details details";
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 1rem;
+  padding: 1rem;
+  border: 1px solid #ddd2c2;
+  border-radius: 0.6rem;
+  background: #fff;
+}
+
+.event-card > div:first-child {
+  grid-area: summary;
+}
+
+.event-card h3,
+.event-card__dates {
+  margin: 0;
+}
+
+.event-card__dates,
+.event-card__details dt {
+  color: #62584c;
+  font-size: 0.875rem;
+}
+
+.event-card__details {
+  grid-area: details;
+  display: flex;
+  gap: 1rem;
+  margin: 0;
+}
+
+.event-card__details div {
+  display: grid;
+  gap: 0.2rem;
+}
+
+.event-card__details dd {
+  margin: 0;
+  font-weight: 700;
+}
+
+.event-card__lifecycle {
+  grid-area: lifecycle;
+  padding: 0.3rem 0.55rem;
+  border-radius: 999px;
+  font-size: 0.8rem;
+  font-weight: 700;
+  white-space: nowrap;
+}
+
+.event-card__lifecycle--active {
+  color: #24583b;
+  background: #e9f7ed;
+}
+
+.event-card__lifecycle--archived {
+  color: #62584c;
+  background: #eee8de;
+}
+
+.event-overview-error {
+  margin-top: 1rem;
+}
+
 @media (max-width: 46rem) {
   .app-header {
     grid-template-columns: 1fr;
@@ -294,6 +381,15 @@ h1 {
 
   .section-grid {
     grid-template-columns: 1fr;
+  }
+
+  .event-card {
+    grid-template-areas:
+      "summary"
+      "lifecycle"
+      "details";
+    grid-template-columns: 1fr;
+    gap: 0.75rem;
   }
 }
 

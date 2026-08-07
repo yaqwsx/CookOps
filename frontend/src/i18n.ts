@@ -24,6 +24,20 @@ const resources = {
         logout: "Odhlásit se",
         logoutError: "Odhlášení se nepodařilo. Zkuste to znovu.",
       },
+      eventsOverview: {
+        loading: "Načítáme akce…",
+        loadingMore: "Načítáme další akce…",
+        scope:
+          "Tento přehled je pouze pro čtení a načítá se online; nejde o offline projekci.",
+        error: "Akce se nepodařilo načíst. Zkuste to znovu.",
+        retry: "Zkusit znovu",
+        empty: "V této organizaci zatím nejsou žádné akce.",
+        more: "Načíst další akce",
+        dateRange: "{{start}} až {{end}}",
+        attendance: "Očekávaná účast",
+        budget: "Rozpočet",
+        lifecycle: { active: "Aktivní", archived: "Archivovaná" },
+      },
       synchronization: {
         caughtUp: "Synchronizováno",
         offline: "Bez připojení",
@@ -78,6 +92,20 @@ const resources = {
         userMenu: "User menu",
         logout: "Log out",
         logoutError: "Log out failed. Please try again.",
+      },
+      eventsOverview: {
+        loading: "Loading events…",
+        loadingMore: "Loading more events…",
+        scope:
+          "This read-only overview is loaded online; it is not an offline projection.",
+        error: "Events could not be loaded. Please try again.",
+        retry: "Try again",
+        empty: "There are no events in this organization yet.",
+        more: "Load more events",
+        dateRange: "{{start}} to {{end}}",
+        attendance: "Expected attendance",
+        budget: "Budget",
+        lifecycle: { active: "Active", archived: "Archived" },
       },
       synchronization: {
         caughtUp: "Synchronized",

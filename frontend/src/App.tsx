@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 
 import {
@@ -11,6 +11,7 @@ import {
   logout,
 } from "./api/auth";
 import { loadGoogleIdentityServices } from "./google-identity-services";
+import { EventOverview } from "./events-overview";
 import type { SupportedLocale } from "./i18n";
 import { runtimeAuthentication } from "./runtime-config";
 import { SynchronizationStatus } from "./synchronization-status";
@@ -18,6 +19,13 @@ import { useOutboxSynchronization } from "./sync-lifecycle";
 import "./app.css";
 
 const sections = ["events", "recipes", "ingredients", "settings"] as const;
+
+const eventOverviewPath =
+  /^\/organizations\/([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})\/events\/?$/i;
+
+function organizationIdFromEventOverviewPath() {
+  return window.location.pathname.match(eventOverviewPath)?.[1];
+}
 
 type AuthenticationState =
   | { status: "loading" }
@@ -270,12 +278,15 @@ function AuthenticationStatus({
 function AuthenticatedShell({
   identity,
   onLogout,
+  onUnauthenticated,
 }: {
   identity: CurrentIdentity;
   onLogout: () => Promise<void>;
+  onUnauthenticated: () => void;
 }) {
   const { t } = useTranslation();
   const [logoutError, setLogoutError] = useState(false);
+  const organizationId = organizationIdFromEventOverviewPath();
   useOutboxSynchronization(identity.id);
 
   async function signOut() {
@@ -329,8 +340,17 @@ function AuthenticatedShell({
         <div className="section-grid">
           {sections.map((section) => (
             <section id={section} className="section-card" key={section}>
-              <h2>{t(`shell.${section}`)}</h2>
-              <p>{t("shell.sectionPlaceholder")}</p>
+              <h2 id={section === "events" ? "events-heading" : undefined}>
+                {t(`shell.${section}`)}
+              </h2>
+              {section === "events" && organizationId ? (
+                <EventOverview
+                  onUnauthenticated={onUnauthenticated}
+                  organizationId={organizationId}
+                />
+              ) : (
+                <p>{t("shell.sectionPlaceholder")}</p>
+              )}
             </section>
           ))}
         </div>
@@ -345,6 +365,10 @@ export function App() {
   const [authentication, setAuthentication] = useState<AuthenticationState>({
     status: "loading",
   });
+  const retryAuthentication = useCallback(
+    () => setAuthentication({ status: "loading" }),
+    [],
+  );
 
   useEffect(() => {
     document.documentElement.lang = locale;
@@ -442,6 +466,7 @@ export function App() {
   return (
     <AuthenticatedShell
       identity={authentication.identity}
+      onUnauthenticated={retryAuthentication}
       onLogout={async () => {
         await logout();
         setAuthentication({ status: "loading" });
