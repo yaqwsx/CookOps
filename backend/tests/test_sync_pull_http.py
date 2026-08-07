@@ -481,6 +481,34 @@ def test_pull_pages_complete_transaction_groups_and_uses_signed_organization_cur
         assert wrong_organization.status_code == 400
 
 
+def test_pull_fuzzes_corrupt_cursors_without_publishing_changes(
+    sync_database: SyncDatabase,
+) -> None:
+    """The signed cursor is an untrusted protocol boundary, not a parser oracle."""
+    fuzzed = [
+        "v1",
+        "." * 3,
+        "v1..",
+        "v1.\x00.signature",
+        "v1.é.signature",
+        "v1." + "A" * 513 + ".signature",
+        *(f"v{index % 3}.{chr(index)}{index:02x}.not-a-signature" for index in range(1, 128)),
+    ]
+    with sync_database.engine.connect() as connection:
+        before = connection.scalar(select(text("count(*)")).select_from(OrganizationChange))
+    with TestClient(create_app(_settings()), base_url="https://testserver") as client:
+        _sign_in(client, "dummy-member")
+        for cursor in fuzzed:
+            response = client.post(
+                "/api/v1/sync/pull",
+                json={"organization_id": str(sync_database.organization_id), "cursor": cursor},
+            )
+            assert response.status_code in (400, 422)
+    with sync_database.engine.connect() as connection:
+        after = connection.scalar(select(text("count(*)")).select_from(OrganizationChange))
+    assert after == before
+
+
 def test_pull_keeps_old_published_records_until_a_commit_time_safe_cleanup_exists(
     sync_database: SyncDatabase,
 ) -> None:
