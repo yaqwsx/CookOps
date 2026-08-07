@@ -66,6 +66,12 @@ test("creates and immediately reads an ingredient from the cached catalog offlin
             allows_ingredient_quantity: true,
             retired_at: null,
           }),
+          record("7ce17d2f-8365-4b1f-a80b-34d10425d51c", "dietary_tag", {
+            id: "7ce17d2f-8365-4b1f-a80b-34d10425d51c",
+            organization_id: ids.organization,
+            name: "Vegan",
+            retired_at: null,
+          }),
         ],
       }),
     });
@@ -90,6 +96,7 @@ test("creates and immediately reads an ingredient from the cached catalog offlin
   await page.context().setOffline(true);
   await page.evaluate(() => window.dispatchEvent(new Event("offline")));
   await page.getByLabel("Název").fill("Rajčata");
+  await page.getByLabel("Vegan").check();
   await page.getByRole("button", { name: "Uložit surovinu" }).click();
   await expect(page.getByRole("heading", { name: "Rajčata" })).toBeVisible();
   await expect(

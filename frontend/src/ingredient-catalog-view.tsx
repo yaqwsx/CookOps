@@ -22,8 +22,9 @@ const initialInput: IngredientCreateInput = {
   name: "",
   canonicalUnitId: "",
   massPerCanonicalQuantity: "1",
+  dietaryTagIds: [],
 };
-const errors = new Set(["name", "unit", "mass"]);
+const errors = new Set(["name", "unit", "mass", "tag"]);
 
 function IngredientCreateForm({
   catalog,
@@ -139,6 +140,28 @@ function IngredientCreateForm({
           />
         </label>
       </div>
+      {catalog.dietaryTags.length ? (
+        <fieldset>
+          <legend>{t("ingredientsCatalog.dietaryTags")}</legend>
+          {catalog.dietaryTags.map((tag) => (
+            <label key={tag.id}>
+              <input
+                checked={input.dietaryTagIds.includes(tag.id)}
+                onChange={(event) =>
+                  setInput((current) => ({
+                    ...current,
+                    dietaryTagIds: event.target.checked
+                      ? [...current.dietaryTagIds, tag.id]
+                      : current.dietaryTagIds.filter((id) => id !== tag.id),
+                  }))
+                }
+                type="checkbox"
+              />
+              {tag.name}
+            </label>
+          ))}
+        </fieldset>
+      ) : null}
       {selected?.dimension !== "mass" ? (
         <p>{t("ingredientsCatalog.massHint")}</p>
       ) : null}

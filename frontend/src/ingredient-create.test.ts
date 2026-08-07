@@ -3,6 +3,7 @@ import { beforeEach, describe, expect, it } from "vitest";
 import { readIngredientCatalog } from "./ingredient-catalog";
 import {
   queueIngredientCreate,
+  replayIngredientCreate,
   validateIngredientCreate,
 } from "./ingredient-create";
 import { localDb } from "./local-db";
@@ -10,10 +11,12 @@ import { localDb } from "./local-db";
 const userId = "a6a58bd6-214e-49af-8fae-e5f974bf8e08";
 const organizationId = "5ce17d2f-8365-4b1f-a80b-34d10425d51c";
 const unitId = "6ce17d2f-8365-4b1f-a80b-34d10425d51c";
+const tagId = "7ce17d2f-8365-4b1f-a80b-34d10425d51c";
 const input = {
   name: "  Rajčata  ",
   canonicalUnitId: unitId,
   massPerCanonicalQuantity: "1",
+  dietaryTagIds: [],
 };
 
 async function clearDatabase() {
@@ -40,6 +43,21 @@ async function addUnit(allowsIngredientQuantity = true) {
       base_unit_factor: "1",
       allows_ingredient_quantity: allowsIngredientQuantity,
     },
+    fieldClocks: {},
+    immutable: false,
+    updatedAt: "2026-08-07T12:00:00.000Z",
+  });
+}
+
+async function addTag(lifecycle: "active" | "retired" = "active") {
+  await localDb.canonicalRecords.add({
+    userId,
+    organizationId,
+    entityType: "dietary_tag",
+    entityId: tagId,
+    recordSchemaVersion: 1,
+    lifecycle,
+    fields: { id: tagId, organization_id: organizationId, name: "Vegan" },
     fieldClocks: {},
     immutable: false,
     updatedAt: "2026-08-07T12:00:00.000Z",
@@ -93,6 +111,7 @@ describe("offline ingredient creation", () => {
           name: "Rajčata",
           canonical_unit_id: unitId,
           mass_per_canonical_quantity: "1",
+          dietary_tag_ids: [],
         }),
       }),
     );
@@ -102,6 +121,7 @@ describe("offline ingredient creation", () => {
       units: [
         { id: unitId, name: "g", dimension: "mass", baseUnitFactor: "1" },
       ],
+      dietaryTags: [],
       ingredients: [
         {
           id: ingredientId,
@@ -124,6 +144,59 @@ describe("offline ingredient creation", () => {
     ).rejects.toThrow("unit");
     await expect(localDb.optimisticOverlays.count()).resolves.toBe(0);
     await expect(localDb.outbox.count()).resolves.toBe(0);
+  });
+
+  it("queues only active locally available dietary tags", async () => {
+    await addUnit();
+    await expect(
+      queueIngredientCreate(userId, organizationId, {
+        ...input,
+        dietaryTagIds: [tagId],
+      }),
+    ).rejects.toThrow("tag");
+    await addTag("retired");
+    await expect(
+      queueIngredientCreate(userId, organizationId, {
+        ...input,
+        dietaryTagIds: [tagId],
+      }),
+    ).rejects.toThrow("tag");
+    await localDb.canonicalRecords.delete([
+      userId,
+      organizationId,
+      "dietary_tag",
+      tagId,
+    ]);
+    await addTag();
+    await queueIngredientCreate(userId, organizationId, {
+      ...input,
+      dietaryTagIds: [tagId],
+    });
+    await expect(localDb.outbox.toArray()).resolves.toEqual([
+      expect.objectContaining({
+        payload: expect.objectContaining({ dietary_tag_ids: [tagId] }),
+      }),
+    ]);
+  });
+
+  it("does not replay malformed, missing, or retired dietary-tag intent", async () => {
+    const command = (dietary_tag_ids: unknown) => ({
+      id: "8ce17d2f-8365-4b1f-a80b-34d10425d51c",
+      actionAt: "2026-08-08T00:00:00Z",
+      payload: {
+        ingredient_id: "9ce17d2f-8365-4b1f-a80b-34d10425d51c",
+        ingredient_version_id: "ace17d2f-8365-4b1f-a80b-34d10425d51c",
+        name: "Tomatoes",
+        canonical_unit_id: unitId,
+        mass_per_canonical_quantity: "1",
+        dietary_tag_ids,
+      },
+    });
+    await replayIngredientCreate(userId, organizationId, command("not-an-array"));
+    await replayIngredientCreate(userId, organizationId, command([tagId]));
+    await addTag("retired");
+    await replayIngredientCreate(userId, organizationId, command([tagId]));
+    await expect(localDb.optimisticOverlays.count()).resolves.toBe(0);
   });
 
   it("does not optimistically publish an impossible mass-unit conversion", async () => {

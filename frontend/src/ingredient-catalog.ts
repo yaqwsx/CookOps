@@ -17,6 +17,7 @@ export type IngredientUnit = {
 export type IngredientCatalogProjection = {
   ingredients: CatalogIngredient[];
   units: IngredientUnit[];
+  dietaryTags: { id: string; name: string }[];
 };
 
 const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -33,11 +34,12 @@ export async function readIngredientCatalog(
   organizationId: string,
 ): Promise<IngredientCatalogProjection> {
   if (!uuid.test(userId) || !uuid.test(organizationId))
-    return { ingredients: [], units: [] };
-  const [roots, versions, records] = await Promise.all([
+    return { ingredients: [], units: [], dietaryTags: [] };
+  const [roots, versions, records, tags] = await Promise.all([
     readVisibleRecords(userId, organizationId, "ingredient"),
     readVisibleRecords(userId, organizationId, "ingredient_version"),
     readVisibleRecords(userId, organizationId, "unit_definition"),
+    readVisibleRecords(userId, organizationId, "dietary_tag"),
   ]);
   const units = records
     .filter((record) => {
@@ -128,5 +130,14 @@ export async function readIngredientCatalog(
       (left, right) =>
         left.name.localeCompare(right.name) || left.id.localeCompare(right.id),
     );
-  return { ingredients, units };
+  const dietaryTags = tags
+    .filter(
+      (record) =>
+        uuid.test(record.entityId) &&
+        text(record, "id") === record.entityId &&
+        text(record, "organization_id") === organizationId,
+    )
+    .map((record) => ({ id: record.entityId, name: text(record, "name") }))
+    .filter((tag): tag is { id: string; name: string } => Boolean(tag.name));
+  return { ingredients, units, dietaryTags };
 }

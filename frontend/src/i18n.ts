@@ -168,6 +168,7 @@ const resources = {
         canonicalUnit: "Základní jednotka",
         mass: "Hmotnost na základní jednotku (g)",
         massHint: "Zadejte hmotnost odpovídající jedné základní jednotce.",
+        dietaryTags: "Dietní štítky",
         noUnits: "Pro vytvoření suroviny je potřeba uložená jednotka.",
         create: "Uložit surovinu",
         saved: "Surovina je uložena místně a bude synchronizována.",
@@ -175,6 +176,7 @@ const resources = {
         errors: {
           name: "Zadejte název do 200 znaků.",
           unit: "Vyberte uloženou jednotku.",
+          tag: "Vyberte dostupný dietní štítek.",
           mass: "Hmotnost musí být kladné desetinné číslo.",
           unavailable: "Surovinu se nepodařilo uložit místně. Zkuste to znovu.",
         },
@@ -501,6 +503,7 @@ const resources = {
         canonicalUnit: "Canonical unit",
         mass: "Mass per canonical unit (g)",
         massHint: "Enter the mass represented by one canonical unit.",
+        dietaryTags: "Dietary tags",
         noUnits: "A stored unit is required to create an ingredient.",
         create: "Save ingredient",
         saved: "The ingredient is saved locally and will synchronize.",
@@ -508,6 +511,7 @@ const resources = {
         errors: {
           name: "Enter a name of at most 200 characters.",
           unit: "Select a stored unit.",
+          tag: "Select an available dietary tag.",
           mass: "Mass must be a positive decimal number.",
           unavailable:
             "The ingredient could not be saved locally. Please try again.",

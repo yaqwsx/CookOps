@@ -12,8 +12,9 @@ export type IngredientCreateInput = {
   name: string;
   canonicalUnitId: string;
   massPerCanonicalQuantity: string;
+  dietaryTagIds: string[];
 };
-export type IngredientCreateValidationError = "name" | "unit" | "mass";
+export type IngredientCreateValidationError = "name" | "unit" | "mass" | "tag";
 
 export function validateIngredientCreate(
   input: IngredientCreateInput,
@@ -22,6 +23,11 @@ export function validateIngredientCreate(
   if (!name || name.length > 200) return "name";
   if (!uuid.test(input.canonicalUnitId)) return "unit";
   if (!positiveDecimal(input.massPerCanonicalQuantity)) return "mass";
+  if (
+    new Set(input.dietaryTagIds).size !== input.dietaryTagIds.length ||
+    !input.dietaryTagIds.every((id) => uuid.test(id))
+  )
+    return "tag";
 }
 
 function overlays(
@@ -90,6 +96,27 @@ function availableUnit(
   return true;
 }
 
+async function availableDietaryTags(
+  userId: string,
+  organizationId: string,
+  tagIds: string[],
+): Promise<boolean> {
+  if (
+    new Set(tagIds).size !== tagIds.length ||
+    !tagIds.every((id) => uuid.test(id))
+  )
+    return false;
+  const tags = await Promise.all(
+    tagIds.map((id) =>
+      localDb.canonicalRecords.get([userId, organizationId, "dietary_tag", id]),
+    ),
+  );
+  return tags.every(
+    (tag) =>
+      tag?.lifecycle === "active" && tag.fields.organization_id === organizationId,
+  );
+}
+
 export async function queueIngredientCreate(
   userId: string,
   organizationId: string,
@@ -108,6 +135,7 @@ export async function queueIngredientCreate(
     name: input.name.normalize("NFC").trim(),
     canonical_unit_id: input.canonicalUnitId,
     mass_per_canonical_quantity: input.massPerCanonicalQuantity,
+    dietary_tag_ids: input.dietaryTagIds,
   };
   await localDb.transaction(
     "rw",
@@ -122,6 +150,8 @@ export async function queueIngredientCreate(
         input.canonicalUnitId,
       ]);
       if (!availableUnit(unit, organizationId)) throw new Error("unit");
+      if (!(await availableDietaryTags(userId, organizationId, input.dietaryTagIds)))
+        throw new Error("tag");
       if (
         unit?.fields.dimension === "mass" &&
         unit.fields.base_unit_factor !== input.massPerCanonicalQuantity
@@ -152,6 +182,7 @@ export async function replayIngredientCreate(
   command: { id: string; actionAt: string; payload: Record<string, unknown> },
 ) {
   const payload = command.payload;
+  const dietaryTagIds = payload.dietary_tag_ids;
   if (
     typeof payload.ingredient_id !== "string" ||
     typeof payload.ingredient_version_id !== "string" ||
@@ -163,9 +194,12 @@ export async function replayIngredientCreate(
       payload.ingredient_version_id,
       payload.canonical_unit_id,
     ].every((id) => uuid.test(id)) ||
+    !Array.isArray(dietaryTagIds) ||
+    !dietaryTagIds.every((id) => typeof id === "string") ||
     !positiveDecimal(payload.mass_per_canonical_quantity)
   )
     return;
+  if (!(await availableDietaryTags(userId, organizationId, dietaryTagIds))) return;
   await localDb.optimisticOverlays.bulkPut(
     overlays(userId, organizationId, command.id, command.actionAt, payload),
   );
