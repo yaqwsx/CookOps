@@ -2,16 +2,22 @@ from datetime import datetime
 from uuid import UUID, uuid4
 
 from sqlalchemy import (
+    BigInteger,
+    Boolean,
     CheckConstraint,
     DateTime,
     ForeignKey,
+    ForeignKeyConstraint,
     Index,
+    LargeBinary,
+    SmallInteger,
     String,
     Text,
     UniqueConstraint,
     Uuid,
     text,
 )
+from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 
 
@@ -410,3 +416,134 @@ class DietaryTag(Base):
     retired_by_user_id: Mapped[UUID | None] = mapped_column(
         ForeignKey("users.id", ondelete="RESTRICT")
     )
+
+
+class ClientInstallation(Base):
+    __tablename__ = "client_installations"
+    __table_args__ = (
+        CheckConstraint(
+            "installation_kind IN ('browser', 'agent')",
+            name="ck_client_installations_kind",
+        ),
+        CheckConstraint(
+            "(disabled_at IS NULL AND disabled_by_user_id IS NULL) OR "
+            "(disabled_at IS NOT NULL AND disabled_by_user_id IS NOT NULL "
+            "AND disabled_at >= created_at)",
+            name="ck_client_installations_disabled_lifecycle",
+        ),
+        UniqueConstraint("id", "user_id", name="uq_client_installations_id_user"),
+    )
+
+    id: Mapped[UUID] = mapped_column(Uuid, primary_key=True, default=uuid4)
+    user_id: Mapped[UUID] = mapped_column(ForeignKey("users.id", ondelete="RESTRICT"))
+    installation_kind: Mapped[str] = mapped_column(String(16))
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=text("CURRENT_TIMESTAMP")
+    )
+    disabled_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    disabled_by_user_id: Mapped[UUID | None] = mapped_column(
+        ForeignKey("users.id", ondelete="RESTRICT")
+    )
+
+
+class Mutation(Base):
+    __tablename__ = "mutations"
+    __table_args__ = (
+        CheckConstraint(
+            "(organization_id IS NOT NULL AND NOT is_system_administration_scope) OR "
+            "(organization_id IS NULL AND is_system_administration_scope)",
+            name="ck_mutations_scope",
+        ),
+        CheckConstraint(
+            "actor_role IN ('member', 'organization_admin', 'system_admin')",
+            name="ck_mutations_actor_role",
+        ),
+        CheckConstraint(
+            "NOT is_system_administration_scope OR actor_role = 'system_admin'",
+            name="ck_mutations_system_authority",
+        ),
+        CheckConstraint(
+            "command_schema_version > 0",
+            name="ck_mutations_command_schema_version",
+        ),
+        CheckConstraint(
+            "command_kind ~ '^[a-z][a-z0-9_.-]*$'",
+            name="ck_mutations_command_kind",
+        ),
+        CheckConstraint(
+            "jsonb_typeof(target_identities) = 'array' "
+            "AND jsonb_array_length(target_identities) > 0 "
+            "AND NOT jsonb_path_exists(target_identities, "
+            '\'$[*] ? (@.type() != "object" '
+            '|| !exists(@.entity_kind) || @.entity_kind.type() != "string" '
+            '|| !(@.entity_kind like_regex "^[a-z][a-z0-9_.-]{0,99}$") '
+            '|| !exists(@.entity_id) || @.entity_id.type() != "string" '
+            "|| !(@.entity_id like_regex "
+            '"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$"))\') '
+            "AND NOT jsonb_path_exists(target_identities, "
+            '\'$[*].keyvalue() ? (@.key != "entity_kind" && @.key != "entity_id")\')',
+            name="ck_mutations_target_identities",
+        ),
+        CheckConstraint(
+            "octet_length(request_hash) = 32",
+            name="ck_mutations_request_hash",
+        ),
+        CheckConstraint(
+            "(oauth_client_id IS NULL AND oauth_grant_id IS NULL) OR "
+            "(oauth_client_id IS NOT NULL AND btrim(oauth_client_id) <> '' "
+            "AND oauth_client_id = btrim(oauth_client_id) "
+            "AND oauth_grant_id IS NOT NULL AND btrim(oauth_grant_id) <> '' "
+            "AND oauth_grant_id = btrim(oauth_grant_id))",
+            name="ck_mutations_oauth_attribution",
+        ),
+        CheckConstraint(
+            "outcome IN ('accepted', 'partially_superseded', 'rejected', 'failed')",
+            name="ck_mutations_outcome",
+        ),
+        CheckConstraint(
+            "outcome_payload IS NULL OR jsonb_typeof(outcome_payload) = 'object'",
+            name="ck_mutations_outcome_payload",
+        ),
+        CheckConstraint(
+            "(first_change_sequence IS NULL AND last_change_sequence IS NULL "
+            "AND (is_system_administration_scope OR outcome IN ('rejected', 'failed'))) OR "
+            "(first_change_sequence > 0 AND last_change_sequence >= first_change_sequence "
+            "AND organization_id IS NOT NULL "
+            "AND outcome IN ('accepted', 'partially_superseded'))",
+            name="ck_mutations_change_sequence",
+        ),
+        CheckConstraint(
+            "NOT is_system_administration_scope OR outcome <> 'partially_superseded'",
+            name="ck_mutations_system_outcome",
+        ),
+        ForeignKeyConstraint(
+            ["client_installation_id", "actor_user_id"],
+            ["client_installations.id", "client_installations.user_id"],
+            ondelete="RESTRICT",
+            name="fk_mutations_client_actor",
+        ),
+    )
+
+    id: Mapped[UUID] = mapped_column(Uuid, primary_key=True)
+    logical_operation_id: Mapped[UUID | None] = mapped_column(Uuid)
+    organization_id: Mapped[UUID | None] = mapped_column(
+        ForeignKey("organizations.id", ondelete="RESTRICT")
+    )
+    is_system_administration_scope: Mapped[bool] = mapped_column(Boolean)
+    actor_user_id: Mapped[UUID] = mapped_column(Uuid)
+    actor_role: Mapped[str] = mapped_column(String(32))
+    client_installation_id: Mapped[UUID] = mapped_column(Uuid)
+    oauth_client_id: Mapped[str | None] = mapped_column(String(255))
+    oauth_grant_id: Mapped[str | None] = mapped_column(String(255))
+    client_wall_time: Mapped[datetime] = mapped_column(DateTime(timezone=True))
+    server_received_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=text("CURRENT_TIMESTAMP")
+    )
+    command_schema_version: Mapped[int] = mapped_column(SmallInteger)
+    command_kind: Mapped[str] = mapped_column(String(100))
+    target_identities: Mapped[list[dict[str, str]]] = mapped_column(JSONB)
+    request_hash: Mapped[bytes] = mapped_column(LargeBinary(32))
+    outcome: Mapped[str] = mapped_column(String(32))
+    outcome_payload: Mapped[dict[str, object] | None] = mapped_column(JSONB)
+    first_change_sequence: Mapped[int | None] = mapped_column(BigInteger)
+    last_change_sequence: Mapped[int | None] = mapped_column(BigInteger)
