@@ -83,6 +83,15 @@ class CompletedHumanAuthentication:
     browser_session: IssuedBrowserSession
 
 
+@dataclass(frozen=True, slots=True)
+class CurrentHumanIdentity:
+    """An enabled user whose current CookOps access gate still passes."""
+
+    user_id: UUID
+    display_name: str
+    verified_email: str
+
+
 def _utc_now() -> datetime:
     return datetime.now(UTC)
 
@@ -159,6 +168,30 @@ class HumanAuthenticationService:
                 expires_at=now + self._session_lifetime,
             )
         return CompletedHumanAuthentication(user_id=user_id, browser_session=browser_session)
+
+    async def current_identity(self, user_id: UUID) -> CurrentHumanIdentity | None:
+        """Re-evaluate access for a previously authenticated browser session.
+
+        A session proves who presented an opaque secret, not an eternal right to
+        use CookOps.  Membership and system-role changes therefore take effect on
+        the next HTTP operation that requests a current identity.
+        """
+
+        async with self._session_factory() as session, session.begin():
+            user = await session.scalar(
+                select(User)
+                .where(User.id == user_id, User.disabled_at.is_(None))
+                .with_for_update(of=User)
+            )
+            if user is None or not await self._has_current_access(
+                session, user.id, user.normalized_email
+            ):
+                return None
+            return CurrentHumanIdentity(
+                user_id=user.id,
+                display_name=user.display_name,
+                verified_email=user.verified_email,
+            )
 
     @staticmethod
     async def _has_current_access(

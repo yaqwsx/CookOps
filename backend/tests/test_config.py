@@ -58,6 +58,36 @@ def test_production_accepts_exactly_the_key_parsed_by_session_service(
     )
 
 
+def test_production_rejects_an_insecure_browser_session_cookie(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("COOKOPS_ENVIRONMENT", "production")
+    monkeypatch.setenv("COOKOPS_HUMAN_AUTH_PROVIDER", "google")
+    monkeypatch.setenv(
+        "COOKOPS_BROWSER_SESSION_HMAC_KEY",
+        "MDEyMzQ1Njc4OWFiY2RlZjAxMjM0NTY3ODlhYmNkZWY",
+    )
+    monkeypatch.setenv("COOKOPS_BROWSER_SESSION_COOKIE_SECURE", "false")
+
+    with pytest.raises(ValidationError, match="browser session cookie must be secure"):
+        Settings()
+
+
+def test_development_has_a_deterministic_nonproduction_session_key() -> None:
+    settings = Settings(
+        environment=Environment.DEVELOPMENT, human_auth_provider=HumanAuthProvider.DUMMY
+    )
+
+    assert decode_browser_session_hmac_key(settings.resolved_browser_session_hmac_key) == (
+        b"0123456789abcdef0123456789abcdef"
+    )
+    unvalidated_production_copy = settings.model_copy(
+        update={"environment": Environment.PRODUCTION}
+    )
+    with pytest.raises(RuntimeError, match="must be configured in production"):
+        _ = unvalidated_production_copy.resolved_browser_session_hmac_key
+
+
 @pytest.mark.parametrize(
     "database_url",
     [

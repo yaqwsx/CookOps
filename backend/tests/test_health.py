@@ -1,7 +1,10 @@
+from unittest.mock import MagicMock
+
 import httpx
 import pytest
 
 from cookops.config import Environment, HumanAuthProvider, Settings
+from cookops.http_auth import BrowserAuthenticationServices
 from cookops.main import create_app
 
 
@@ -74,9 +77,15 @@ async def test_database_runtime_is_created_and_closed_with_application_lifespan(
         received_urls.append(database_url)
         return runtime
 
+    def create_browser_authentication(
+        _settings: Settings, _session_factory: object
+    ) -> BrowserAuthenticationServices:
+        return MagicMock(spec=BrowserAuthenticationServices)
+
     app = create_app(
         Settings(environment=Environment.TEST, human_auth_provider=HumanAuthProvider.DUMMY),
         database_runtime_factory=create_runtime,
+        browser_authentication_factory=create_browser_authentication,
     )
     assert received_urls == []
 

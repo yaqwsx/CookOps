@@ -1,8 +1,10 @@
 from enum import StrEnum
-from typing import Self
+from typing import Literal, Self
 
 from pydantic import PostgresDsn, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+_DEVELOPMENT_BROWSER_SESSION_HMAC_KEY = "MDEyMzQ1Njc4OWFiY2RlZjAxMjM0NTY3ODlhYmNkZWY"
 
 
 class Environment(StrEnum):
@@ -25,6 +27,25 @@ class Settings(BaseSettings):
         "postgresql+psycopg://cookops:cookops@localhost:5432/cookops"
     )
     browser_session_hmac_key: str | None = None
+    browser_session_cookie_name: str = "cookops_session"
+    browser_session_cookie_secure: bool = True
+    browser_session_cookie_samesite: Literal["lax", "strict"] = "lax"
+    browser_session_lifetime_seconds: int = 7 * 24 * 60 * 60
+
+    @property
+    def resolved_browser_session_hmac_key(self) -> str:
+        """Return a valid key for the configured trusted deployment mode.
+
+        Local development and tests use a non-secret deterministic key so a clean
+        checkout can exercise the dummy provider. Production never falls back to
+        it and requires an explicit deployment secret.
+        """
+
+        if self.browser_session_hmac_key is not None:
+            return self.browser_session_hmac_key
+        if self.environment in (Environment.DEVELOPMENT, Environment.TEST):
+            return _DEVELOPMENT_BROWSER_SESSION_HMAC_KEY
+        raise RuntimeError("browser session HMAC key must be configured in production")
 
     @model_validator(mode="after")
     def validate_deployment_boundaries(self) -> Self:
@@ -35,13 +56,21 @@ class Settings(BaseSettings):
             raise ValueError("dummy authentication cannot be enabled in production")
         if self.database_url.scheme != "postgresql+psycopg":
             raise ValueError("database URL must use the postgresql+psycopg scheme")
-        if self.environment is Environment.PRODUCTION:
-            if self.browser_session_hmac_key is None:
-                raise ValueError("browser session HMAC key must be configured in production")
-            # Import lazily to keep settings usable by Alembic without creating a
-            # database runtime, while applying the exact same strict key parser as
-            # the session issuer.
+        if self.environment is Environment.PRODUCTION and self.browser_session_hmac_key is None:
+            raise ValueError("browser session HMAC key must be configured in production")
+        if self.environment is Environment.PRODUCTION and not self.browser_session_cookie_secure:
+            raise ValueError("browser session cookie must be secure in production")
+
+        if self.browser_session_hmac_key is not None:
+            # Parse configured keys at configuration time rather than leaving a
+            # malformed secret to fail only after the ASGI lifespan begins.
             from cookops.application.browser_sessions import decode_browser_session_hmac_key
 
             decode_browser_session_hmac_key(self.browser_session_hmac_key)
+        if not self.browser_session_cookie_name or self.browser_session_cookie_name.strip() != (
+            self.browser_session_cookie_name
+        ):
+            raise ValueError("browser session cookie name must be nonblank and trimmed")
+        if self.browser_session_lifetime_seconds <= 0:
+            raise ValueError("browser session lifetime must be positive")
         return self

@@ -1,12 +1,17 @@
 from collections.abc import AsyncIterator, Awaitable, Callable
 from contextlib import asynccontextmanager
+from datetime import timedelta
 from typing import Literal, Protocol
 
 from fastapi import APIRouter, FastAPI, HTTPException, Request, status
 from pydantic import BaseModel
 
+from cookops.application.browser_sessions import BrowserSessionService
+from cookops.application.dummy_identities import DummyIdentityProvider
+from cookops.application.human_authentication import HumanAuthenticationService
 from cookops.config import Settings
 from cookops.database import create_database_runtime
+from cookops.http_auth import BrowserAuthenticationServices, create_auth_router
 
 ReadinessProbe = Callable[[], Awaitable[bool]]
 
@@ -18,6 +23,7 @@ class ManagedDatabaseRuntime(Protocol):
 
 
 DatabaseRuntimeFactory = Callable[[str], ManagedDatabaseRuntime]
+BrowserAuthenticationFactory = Callable[[Settings, object], BrowserAuthenticationServices]
 
 
 class HealthResponse(BaseModel):
@@ -46,10 +52,41 @@ async def not_ready() -> bool:
     return False
 
 
+def create_browser_authentication_services(
+    settings: Settings, session_factory: object
+) -> BrowserAuthenticationServices:
+    """Wire provider-independent sessions to the configured trusted adapter.
+
+    The erased session-factory type keeps the application factory's test seam
+    narrow; concrete services validate their actual SQLAlchemy dependency.
+    """
+
+    from sqlalchemy.ext.asyncio import async_sessionmaker
+
+    if not isinstance(session_factory, async_sessionmaker):
+        raise TypeError("database runtime must expose an async SQLAlchemy session factory")
+    browser_sessions = BrowserSessionService(
+        session_factory,
+        encoded_hmac_key=settings.resolved_browser_session_hmac_key,
+    )
+    return BrowserAuthenticationServices(
+        browser_sessions=browser_sessions,
+        human_authentication=HumanAuthenticationService(
+            session_factory,
+            browser_sessions,
+            session_lifetime=timedelta(seconds=settings.browser_session_lifetime_seconds),
+        ),
+        dummy_identities=DummyIdentityProvider(session_factory),
+    )
+
+
 def create_app(
     settings: Settings | None = None,
     readiness_probe: ReadinessProbe | None = None,
     database_runtime_factory: DatabaseRuntimeFactory = create_database_runtime,
+    browser_authentication_factory: BrowserAuthenticationFactory = (
+        create_browser_authentication_services
+    ),
 ) -> FastAPI:
     app_settings = settings or Settings()
 
@@ -61,6 +98,10 @@ def create_app(
 
         runtime = database_runtime_factory(str(app_settings.database_url))
         application.state.database = runtime
+        session_factory = getattr(runtime, "session_factory", None)
+        application.state.browser_authentication = browser_authentication_factory(
+            app_settings, session_factory
+        )
         application.state.readiness_probe = runtime.is_ready
         try:
             yield
@@ -71,6 +112,7 @@ def create_app(
     application.state.settings = app_settings
     application.state.readiness_probe = readiness_probe or not_ready
     application.include_router(health_router)
+    application.include_router(create_auth_router(app_settings))
     return application
 
 

@@ -244,6 +244,14 @@ def test_system_administrator_needs_no_organization_membership(
     )
 
     assert completed.user_id == authentication_database.users["system_admin"]
+    current = asyncio.run(
+        service(authentication_database).current_identity(
+            authentication_database.users["system_admin"]
+        )
+    )
+    assert current is not None
+    assert current.user_id == authentication_database.users["system_admin"]
+    assert current.verified_email == "system_admin@example.test"
 
 
 @pytest.mark.parametrize(
