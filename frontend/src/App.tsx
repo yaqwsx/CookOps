@@ -23,6 +23,7 @@ import { RecipeCatalog } from "./recipe-catalog-view";
 import { IngredientCatalog } from "./ingredient-catalog-view";
 import { EventReceipts } from "./event-receipts";
 import { OrganizationMemberships } from "./organization-membership";
+import { CatalogAdministration } from "./catalog-administration";
 import type { SupportedLocale } from "./i18n";
 import { runtimeAuthentication } from "./runtime-config";
 import { SynchronizationStatus } from "./synchronization-status";
@@ -305,7 +306,7 @@ function AuthenticatedShell({
   onLogout: () => Promise<void>;
   onUnauthenticated: () => void;
 }) {
-  const { t } = useTranslation();
+  const { i18n, t } = useTranslation();
   const [logoutError, setLogoutError] = useState(false);
   const [organizations, setOrganizations] = useState<OrganizationState>({
     status: "loading",
@@ -577,11 +578,20 @@ function AuthenticatedShell({
                   />
                 )
               ) : section === "settings" && organizationId && settingsOpen ? (
-                <OrganizationMemberships
-                  onUnauthenticated={onUnauthenticated}
-                  organizationId={organizationId}
-                  userId={identity.id}
-                />
+                <>
+                  <CatalogAdministration
+                    locale={
+                      (i18n.resolvedLanguage ?? "cs") === "en" ? "en" : "cs"
+                    }
+                    organizationId={organizationId}
+                    userId={identity.id}
+                  />
+                  <OrganizationMemberships
+                    onUnauthenticated={onUnauthenticated}
+                    organizationId={organizationId}
+                    userId={identity.id}
+                  />
+                </>
               ) : (
                 <p>{t("shell.sectionPlaceholder")}</p>
               )}

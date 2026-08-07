@@ -2,6 +2,7 @@ import json
 from collections.abc import Callable, Iterator
 from datetime import UTC, date, datetime, timedelta
 from decimal import Decimal
+from pathlib import Path
 from typing import cast
 from uuid import UUID, uuid4
 
@@ -16,8 +17,10 @@ from cookops.persistence.models import (
     ClientInstallation,
     EventDay,
     EventMealRole,
+    FieldClock,
     Ingredient,
     IngredientVersion,
+    Mutation,
     OrganizationMembership,
     RecipeVersion,
     RecipeVersionIngredientLine,
@@ -255,6 +258,82 @@ def _event_price_refresh_command(*, mutation_id: UUID, event_id: UUID) -> dict[s
         "client_wall_time": datetime.now(UTC).isoformat(),
         "payload": {"event_id": str(event_id)},
     }
+
+
+def test_push_replicates_catalog_configuration_and_replays_identity(
+    sync_database: SyncDatabase, tmp_path: Path
+) -> None:
+    installation_id = _installation(sync_database)
+    mutation_id, tag_id = uuid4(), uuid4()
+    command = {
+        "mutation_id": str(mutation_id),
+        "command_kind": "catalog_configuration.mutate",
+        "command_schema_version": 1,
+        "client_wall_time": datetime.now(UTC).isoformat(),
+        "payload": {
+            "entity_id": str(tag_id),
+            "entity_kind": "recipe_tag",
+            "operation": "create",
+            "name": "  Soup  ",
+            "color": "#123456",
+        },
+    }
+    settings = _settings().model_copy(update={"receipt_media_root": tmp_path / "media"})
+    with TestClient(create_app(settings), base_url="https://testserver") as client:
+        _sign_in(client, "dummy-member")
+        body = _body(sync_database, installation_id, [command])
+        accepted = client.post("/api/v1/sync/push", json=body).json()["outcomes"][0]
+        assert accepted["status"] == "accepted"
+        assert client.post("/api/v1/sync/push", json=body).json()["outcomes"][0]["replayed"]
+        bootstrap = client.post(
+            "/api/v1/sync/bootstrap",
+            json={"organization_id": str(sync_database.organization_id)},
+        ).json()
+        record = next(
+            item["payload"]["record"]
+            for item in bootstrap["records"]
+            if item["entity_kind"] == "recipe_tag" and item["entity_id"] == str(tag_id)
+        )
+        assert set(record["field_clocks"]) == {"name", "color", "lifecycle"}
+    with sync_database.engine.connect() as connection:
+        assert set(
+            connection.scalars(
+                select(FieldClock.field_name).where(
+                    FieldClock.organization_id == sync_database.organization_id,
+                    FieldClock.entity_kind == "recipe_tag",
+                    FieldClock.entity_id == tag_id,
+                )
+            )
+        ) == {"name", "color", "lifecycle"}
+
+
+def test_catalog_configuration_future_time_is_retained(
+    sync_database: SyncDatabase, tmp_path: Path
+) -> None:
+    installation_id = _installation(sync_database)
+    command = {
+        "mutation_id": str(uuid4()), "command_kind": "catalog_configuration.mutate",
+        "command_schema_version": 1,
+        "client_wall_time": (datetime.now(UTC) + timedelta(hours=25)).isoformat(),
+        "payload": {
+            "entity_id": str(uuid4()),
+            "entity_kind": "recipe_tag",
+            "operation": "create",
+            "name": "Future",
+            "color": "#123456",
+        },
+    }
+    settings = _settings().model_copy(update={"receipt_media_root": tmp_path / "media"})
+    with TestClient(create_app(settings), base_url="https://testserver") as client:
+        _sign_in(client, "dummy-member")
+        body = _body(sync_database, installation_id, [command])
+        first = client.post("/api/v1/sync/push", json=body).json()["outcomes"][0]
+        second = client.post("/api/v1/sync/push", json=body).json()["outcomes"][0]
+    assert first["error"]["code"] == second["error"]["code"] == "client_time_too_far_ahead"
+    with sync_database.engine.connect() as connection:
+        assert connection.scalar(
+            select(Mutation.outcome).where(Mutation.id == UUID(command["mutation_id"]))
+        ) == "rejected"
 
 
 def test_push_queues_typed_event_price_refresh_and_rejects_extra_payload(

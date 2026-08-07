@@ -10,6 +10,7 @@ import { replayRecipeCreate } from "./recipe-create";
 import { replayRecipeVersionPublish } from "./recipe-publish";
 import { replayIngredientCreate } from "./ingredient-create";
 import { replayReceiptCommand } from "./receipt-metadata";
+import { replayCatalogConfiguration } from "./catalog-configuration";
 
 const supportedEntityKinds = new Set([
   "organization",
@@ -241,6 +242,9 @@ async function replayOptimisticCommands(
     }
     if (command.commandType.startsWith("receipt.")) {
       await replayReceiptCommand(userId, organizationId, command);
+    }
+    if (command.commandType === "catalog_configuration.mutate") {
+      await replayCatalogConfiguration(userId, organizationId, command);
     }
     const entityId =
       command.commandType === "shopping_list.create"

@@ -13,6 +13,7 @@ from fastapi import APIRouter, HTTPException, Request, WebSocket, WebSocketDisco
 from pydantic import BaseModel, ConfigDict, Field, StrictBool, ValidationError, field_validator
 
 from cookops.application.browser_sessions import BrowserSessionService
+from cookops.application.catalog_configuration import CatalogConfigurationCommand
 from cookops.application.event_duplication import DuplicateEventCommand
 from cookops.application.event_lifecycle import SetEventLifecycleCommand
 from cookops.application.event_prices import UpdateEventPriceEstimatesCommand
@@ -426,6 +427,20 @@ class ReceiptLifecyclePayload(BaseModel):
     logical_operation_id: UUID | None = None
 
 
+class CatalogConfigurationPayload(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    entity_id: UUID
+    entity_kind: Literal["store_section", "recipe_tag", "dietary_tag", "unit_definition"]
+    operation: Literal["create", "update", "retire", "restore"]
+    name: str | None = None
+    color: str | None = None
+    position_key: str | None = None
+    allows_ingredient_quantity: StrictBool | None = None
+    allows_recipe_scaling: StrictBool | None = None
+    logical_operation_id: UUID | None = None
+
+
 class PushCommandErrorResponse(BaseModel):
     code: str
     field_violations: tuple[dict[str, str], ...]
@@ -781,6 +796,22 @@ def _push_command(command: PushCommandRequest, organization_id: UUID) -> SyncCom
                 operation=lifecycle_payload.operation,
                 client_wall_time=command.client_wall_time,
                 logical_operation_id=lifecycle_payload.logical_operation_id,
+            )
+        if command.command_kind == "catalog_configuration.mutate":
+            catalog_payload = CatalogConfigurationPayload.model_validate(command.payload)
+            return CatalogConfigurationCommand(
+                mutation_id=command.mutation_id,
+                organization_id=organization_id,
+                entity_id=catalog_payload.entity_id,
+                entity_kind=catalog_payload.entity_kind,
+                operation=catalog_payload.operation,
+                client_wall_time=command.client_wall_time,
+                name=catalog_payload.name,
+                color=catalog_payload.color,
+                position_key=catalog_payload.position_key,
+                allows_ingredient_quantity=catalog_payload.allows_ingredient_quantity,
+                allows_recipe_scaling=catalog_payload.allows_recipe_scaling,
+                logical_operation_id=catalog_payload.logical_operation_id,
             )
     except ValidationError:
         return UnsupportedSyncCommand(

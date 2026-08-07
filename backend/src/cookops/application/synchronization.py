@@ -29,6 +29,11 @@ from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from cookops.application.browser_sessions import decode_browser_session_hmac_key
+from cookops.application.catalog_configuration import (
+    CatalogConfigurationCommand,
+    CatalogConfigurationResult,
+    mutate_catalog_configuration,
+)
 from cookops.application.event_duplication import (
     DuplicateEventCommand,
     DuplicateEventResult,
@@ -267,6 +272,7 @@ SyncCommand = (
     | CreateReceiptCommand
     | UpdateReceiptCommand
     | SetReceiptLifecycleCommand
+    | CatalogConfigurationCommand
     | UnsupportedSyncCommand
 )
 
@@ -291,6 +297,7 @@ def _command_kind(
         | CreateReceiptCommand
         | UpdateReceiptCommand
         | SetReceiptLifecycleCommand
+        | CatalogConfigurationCommand
     ),
 ) -> str:
     if isinstance(command, CreateEventCommand):
@@ -327,6 +334,8 @@ def _command_kind(
         return "receipt.update"
     if isinstance(command, SetReceiptLifecycleCommand):
         return "receipt.lifecycle"
+    if isinstance(command, CatalogConfigurationCommand):
+        return "catalog_configuration.mutate"
     return "shopping_list.create"
 
 
@@ -630,6 +639,7 @@ class SynchronizationCommandService:
                 | MoveScheduledRecipeResult
                 | ShoppingOperationResult
                 | ReceiptResult
+                | CatalogConfigurationResult
             )
             if isinstance(command, CreateEventCommand):
                 result = await create_event(self._session_factory, context, command)
@@ -674,6 +684,10 @@ class SynchronizationCommandService:
                     await retire_receipt(self._session_factory, context, command)
                     if command.operation == "retire"
                     else await restore_receipt(self._session_factory, context, command)
+                )
+            elif isinstance(command, CatalogConfigurationCommand):
+                result = await mutate_catalog_configuration(
+                    self._session_factory, context, command
                 )
             else:
                 result = await create_shopping_list(self._session_factory, context, command)
@@ -790,6 +804,7 @@ class SynchronizationCommandService:
             | MoveScheduledRecipeResult
             | ShoppingOperationResult
             | ReceiptResult
+            | CatalogConfigurationResult
         ),
         *,
         command_kind: str | None = None,
@@ -818,6 +833,8 @@ class SynchronizationCommandService:
                 if isinstance(result, MoveScheduledRecipeResult)
                 else "receipt.create"
                 if isinstance(result, ReceiptResult)
+                else "catalog_configuration.mutate"
+                if isinstance(result, CatalogConfigurationResult)
                 else "shopping_list.create"
             ),
             status=result.outcome,
@@ -1252,6 +1269,38 @@ async def _bootstrap_records(
     def append(kind: str, entity_id: UUID, record: dict[str, object]) -> None:
         records.append(_bootstrap_record(kind, entity_id, record, organization_id))
 
+    configuration_clocks = {
+        (clock.entity_kind, clock.entity_id, clock.field_name): clock
+        for clock in (
+            await session.scalars(
+                select(FieldClock).where(
+                    FieldClock.organization_id == organization_id,
+                    FieldClock.entity_kind.in_(
+                        ("store_section", "recipe_tag", "dietary_tag", "unit_definition")
+                    ),
+                )
+            )
+        ).all()
+    }
+
+    def configuration_clock_record(kind: str, entity_id: UUID) -> dict[str, object]:
+        return {
+            name: (
+                {
+                    "winning_client_wall_time": clock.winning_client_wall_time.isoformat(),
+                    "winning_mutation_id": str(clock.winning_mutation_id),
+                }
+                if (clock := configuration_clocks.get((kind, entity_id, name)))
+                else None
+            )
+            for name in {
+                "store_section": ("name", "position_key", "lifecycle"),
+                "recipe_tag": ("name", "color", "lifecycle"),
+                "dietary_tag": ("name", "color", "lifecycle"),
+                "unit_definition": ("custom_name", "lifecycle"),
+            }[kind]
+        }
+
     organization = await session.get(Organization, organization_id)
     if organization is None:  # authorization already established this invariant.
         raise RuntimeError("Authorized organization disappeared")
@@ -1300,6 +1349,7 @@ async def _bootstrap_records(
                 "created_by_user_id": str(item.created_by_user_id),
                 "retired_at": _time(item.retired_at),
                 "retired_by_user_id": _uuid(item.retired_by_user_id),
+                "field_clocks": configuration_clock_record("store_section", item.id),
             },
         )
     for item in (
@@ -1323,6 +1373,7 @@ async def _bootstrap_records(
                 "created_by_user_id": str(item.created_by_user_id),
                 "retired_at": _time(item.retired_at),
                 "retired_by_user_id": _uuid(item.retired_by_user_id),
+                "field_clocks": configuration_clock_record("recipe_tag", item.id),
             },
         )
     for item in (
@@ -1345,6 +1396,7 @@ async def _bootstrap_records(
                 "created_by_user_id": str(item.created_by_user_id),
                 "retired_at": _time(item.retired_at),
                 "retired_by_user_id": _uuid(item.retired_by_user_id),
+                "field_clocks": configuration_clock_record("dietary_tag", item.id),
             },
         )
     for item in (
@@ -1368,6 +1420,7 @@ async def _bootstrap_records(
                 "created_by_user_id": str(item.created_by_user_id),
                 "retired_at": _time(item.retired_at),
                 "retired_by_user_id": _uuid(item.retired_by_user_id),
+                "field_clocks": configuration_clock_record("unit_definition", item.id),
             },
         )
     for item in (
