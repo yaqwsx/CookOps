@@ -1,4 +1,5 @@
 from datetime import datetime
+from decimal import Decimal
 from uuid import UUID, uuid4
 
 from sqlalchemy import (
@@ -10,6 +11,7 @@ from sqlalchemy import (
     ForeignKeyConstraint,
     Index,
     LargeBinary,
+    Numeric,
     SmallInteger,
     String,
     Text,
@@ -292,6 +294,7 @@ class StoreSection(Base):
             "normalized_name",
             name="uq_store_sections_organization_name",
         ),
+        UniqueConstraint("id", "organization_id", name="uq_store_sections_id_organization"),
     )
 
     id: Mapped[UUID] = mapped_column(
@@ -437,6 +440,7 @@ class DietaryTag(Base):
             "normalized_name",
             name="uq_dietary_tags_organization_name",
         ),
+        UniqueConstraint("id", "organization_id", name="uq_dietary_tags_id_organization"),
     )
 
     id: Mapped[UUID] = mapped_column(
@@ -457,6 +461,271 @@ class DietaryTag(Base):
     retired_by_user_id: Mapped[UUID | None] = mapped_column(
         ForeignKey("users.id", ondelete="RESTRICT")
     )
+
+
+class UnitDefinition(Base):
+    __tablename__ = "unit_definitions"
+    __table_args__ = (
+        CheckConstraint(
+            "(organization_id IS NULL AND custom_name IS NULL "
+            "AND normalized_custom_name IS NULL AND created_by_user_id IS NULL "
+            "AND retired_at IS NULL AND retired_by_user_id IS NULL) OR "
+            "(organization_id IS NOT NULL AND custom_name IS NOT NULL "
+            "AND btrim(custom_name) <> '' AND normalized_custom_name IS NOT NULL "
+            "AND normalized_custom_name = lower(btrim(custom_name)) "
+            "AND created_by_user_id IS NOT NULL)",
+            name="ck_unit_definitions_scope_and_display",
+        ),
+        CheckConstraint("code ~ '^[a-z][a-z0-9_.-]{0,99}$'", name="ck_unit_definitions_code"),
+        CheckConstraint(
+            "dimension IN ('mass', 'volume', 'count', 'custom')",
+            name="ck_unit_definitions_dimension",
+        ),
+        CheckConstraint(
+            "(dimension IN ('mass', 'volume') "
+            "AND base_unit_factor IS NOT NULL AND base_unit_factor > 0 "
+            "AND base_unit_factor::text NOT IN ('NaN', 'Infinity', '-Infinity')) OR "
+            "(dimension IN ('count', 'custom') AND base_unit_factor IS NULL)",
+            name="ck_unit_definitions_base_factor",
+        ),
+        CheckConstraint(
+            "allows_ingredient_quantity OR allows_recipe_scaling",
+            name="ck_unit_definitions_permitted_context",
+        ),
+        CheckConstraint(
+            "(retired_at IS NULL AND retired_by_user_id IS NULL) OR "
+            "(retired_at IS NOT NULL AND retired_by_user_id IS NOT NULL)",
+            name="ck_unit_definitions_retirement_attribution",
+        ),
+        UniqueConstraint("id", "organization_id", name="uq_unit_definitions_id_organization"),
+        Index(
+            "uq_unit_definitions_system_code",
+            "code",
+            unique=True,
+            postgresql_where=text("organization_id IS NULL"),
+        ),
+        Index(
+            "uq_unit_definitions_organization_code",
+            "organization_id",
+            "code",
+            unique=True,
+            postgresql_where=text("organization_id IS NOT NULL"),
+        ),
+        Index(
+            "uq_unit_definitions_organization_name",
+            "organization_id",
+            "normalized_custom_name",
+            unique=True,
+            postgresql_where=text("organization_id IS NOT NULL"),
+        ),
+    )
+
+    id: Mapped[UUID] = mapped_column(
+        Uuid, primary_key=True, default=uuid4, server_default=text("gen_random_uuid()")
+    )
+    organization_id: Mapped[UUID | None] = mapped_column(
+        ForeignKey("organizations.id", ondelete="RESTRICT")
+    )
+    code: Mapped[str] = mapped_column(String(100))
+    custom_name: Mapped[str | None] = mapped_column(String(200))
+    normalized_custom_name: Mapped[str | None] = mapped_column(String(200))
+    dimension: Mapped[str] = mapped_column(String(16))
+    base_unit_factor: Mapped[Decimal | None] = mapped_column(Numeric)
+    rounds_up_to_whole_unit: Mapped[bool] = mapped_column(Boolean)
+    allows_ingredient_quantity: Mapped[bool] = mapped_column(Boolean)
+    allows_recipe_scaling: Mapped[bool] = mapped_column(Boolean)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=text("CURRENT_TIMESTAMP")
+    )
+    created_by_user_id: Mapped[UUID | None] = mapped_column(
+        ForeignKey("users.id", ondelete="RESTRICT")
+    )
+    retired_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    retired_by_user_id: Mapped[UUID | None] = mapped_column(
+        ForeignKey("users.id", ondelete="RESTRICT")
+    )
+
+
+class Ingredient(Base):
+    __tablename__ = "ingredients"
+    __table_args__ = (
+        CheckConstraint(
+            "(retired_at IS NULL AND retired_by_user_id IS NULL) OR "
+            "(retired_at IS NOT NULL AND retired_by_user_id IS NOT NULL)",
+            name="ck_ingredients_retirement_attribution",
+        ),
+        ForeignKeyConstraint(
+            ["current_version_id", "id"],
+            ["ingredient_versions.id", "ingredient_versions.ingredient_id"],
+            ondelete="RESTRICT",
+            name="fk_ingredients_current_version",
+            deferrable=True,
+            initially="DEFERRED",
+            use_alter=True,
+        ),
+        ForeignKeyConstraint(
+            ["current_price_estimate_id", "id"],
+            ["ingredient_price_estimates.id", "ingredient_price_estimates.ingredient_id"],
+            ondelete="RESTRICT",
+            name="fk_ingredients_current_price_estimate",
+            deferrable=True,
+            initially="DEFERRED",
+            use_alter=True,
+        ),
+        UniqueConstraint("id", "organization_id", name="uq_ingredients_id_organization"),
+    )
+
+    id: Mapped[UUID] = mapped_column(
+        Uuid, primary_key=True, default=uuid4, server_default=text("gen_random_uuid()")
+    )
+    organization_id: Mapped[UUID] = mapped_column(
+        ForeignKey("organizations.id", ondelete="RESTRICT")
+    )
+    current_version_id: Mapped[UUID | None] = mapped_column(Uuid)
+    current_price_estimate_id: Mapped[UUID | None] = mapped_column(Uuid)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=text("CURRENT_TIMESTAMP")
+    )
+    created_by_user_id: Mapped[UUID] = mapped_column(ForeignKey("users.id", ondelete="RESTRICT"))
+    retired_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    retired_by_user_id: Mapped[UUID | None] = mapped_column(
+        ForeignKey("users.id", ondelete="RESTRICT")
+    )
+
+
+class IngredientVersion(Base):
+    __tablename__ = "ingredient_versions"
+    __table_args__ = (
+        CheckConstraint(
+            "btrim(name) <> '' AND normalized_name = lower(btrim(name))",
+            name="ck_ingredient_versions_normalized_name",
+        ),
+        CheckConstraint(
+            "mass_per_canonical_quantity > 0 "
+            "AND mass_per_canonical_quantity::text NOT IN ('NaN', 'Infinity', '-Infinity')",
+            name="ck_ingredient_versions_positive_mass_conversion",
+        ),
+        CheckConstraint(
+            "based_on_version_id IS NULL OR based_on_version_id <> id",
+            name="ck_ingredient_versions_nonrecursive_base",
+        ),
+        ForeignKeyConstraint(
+            ["ingredient_id", "organization_id"],
+            ["ingredients.id", "ingredients.organization_id"],
+            ondelete="RESTRICT",
+            name="fk_ingredient_versions_ingredient_organization",
+        ),
+        ForeignKeyConstraint(
+            ["based_on_version_id", "ingredient_id"],
+            ["ingredient_versions.id", "ingredient_versions.ingredient_id"],
+            ondelete="RESTRICT",
+            name="fk_ingredient_versions_based_on_same_ingredient",
+        ),
+        ForeignKeyConstraint(
+            ["default_store_section_id", "organization_id"],
+            ["store_sections.id", "store_sections.organization_id"],
+            ondelete="RESTRICT",
+            name="fk_ingredient_versions_store_section_organization",
+        ),
+        UniqueConstraint("id", "organization_id", name="uq_ingredient_versions_id_organization"),
+        UniqueConstraint("id", "ingredient_id", name="uq_ingredient_versions_id_ingredient"),
+        Index("ix_ingredient_versions_ingredient_id", "ingredient_id"),
+    )
+
+    id: Mapped[UUID] = mapped_column(Uuid, primary_key=True)
+    organization_id: Mapped[UUID] = mapped_column(Uuid)
+    ingredient_id: Mapped[UUID] = mapped_column(Uuid)
+    based_on_version_id: Mapped[UUID | None] = mapped_column(Uuid)
+    name: Mapped[str] = mapped_column(String(200))
+    normalized_name: Mapped[str] = mapped_column(String(200))
+    canonical_unit_id: Mapped[UUID] = mapped_column(
+        ForeignKey("unit_definitions.id", ondelete="RESTRICT")
+    )
+    mass_per_canonical_quantity: Mapped[Decimal] = mapped_column(Numeric)
+    default_store_section_id: Mapped[UUID | None] = mapped_column(Uuid)
+    published_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=text("CURRENT_TIMESTAMP")
+    )
+    published_by_user_id: Mapped[UUID] = mapped_column(ForeignKey("users.id", ondelete="RESTRICT"))
+
+
+class IngredientVersionDietaryTag(Base):
+    __tablename__ = "ingredient_version_dietary_tags"
+    __table_args__ = (
+        ForeignKeyConstraint(
+            ["ingredient_version_id", "organization_id"],
+            ["ingredient_versions.id", "ingredient_versions.organization_id"],
+            ondelete="RESTRICT",
+            name="fk_ingredient_version_tags_version_organization",
+            deferrable=True,
+            initially="DEFERRED",
+        ),
+        ForeignKeyConstraint(
+            ["dietary_tag_id", "organization_id"],
+            ["dietary_tags.id", "dietary_tags.organization_id"],
+            ondelete="RESTRICT",
+            name="fk_ingredient_version_tags_tag_organization",
+        ),
+    )
+
+    ingredient_version_id: Mapped[UUID] = mapped_column(Uuid, primary_key=True)
+    dietary_tag_id: Mapped[UUID] = mapped_column(Uuid, primary_key=True)
+    organization_id: Mapped[UUID] = mapped_column(Uuid)
+
+
+class IngredientPriceEstimate(Base):
+    __tablename__ = "ingredient_price_estimates"
+    __table_args__ = (
+        CheckConstraint(
+            "state IN ('available', 'unavailable')",
+            name="ck_ingredient_price_estimates_state",
+        ),
+        CheckConstraint(
+            "(state = 'available' AND price_amount IS NOT NULL "
+            "AND price_amount >= 0 "
+            "AND price_amount::text NOT IN ('NaN', 'Infinity', '-Infinity') "
+            "AND priced_quantity IS NOT NULL AND priced_quantity > 0 "
+            "AND priced_quantity::text NOT IN ('NaN', 'Infinity', '-Infinity') "
+            "AND priced_unit_id IS NOT NULL "
+            "AND currency IS NOT NULL AND currency ~ '^[A-Z]{3}$') OR "
+            "(state = 'unavailable' AND price_amount IS NULL "
+            "AND priced_quantity IS NULL AND priced_unit_id IS NULL AND currency IS NULL)",
+            name="ck_ingredient_price_estimates_value_shape",
+        ),
+        CheckConstraint(
+            "based_on_estimate_id IS NULL OR based_on_estimate_id <> id",
+            name="ck_ingredient_price_estimates_nonrecursive_base",
+        ),
+        ForeignKeyConstraint(
+            ["ingredient_id", "organization_id"],
+            ["ingredients.id", "ingredients.organization_id"],
+            ondelete="RESTRICT",
+            name="fk_ingredient_price_estimates_ingredient_organization",
+        ),
+        ForeignKeyConstraint(
+            ["based_on_estimate_id", "ingredient_id"],
+            ["ingredient_price_estimates.id", "ingredient_price_estimates.ingredient_id"],
+            ondelete="RESTRICT",
+            name="fk_ingredient_price_estimates_based_on_same_ingredient",
+        ),
+        UniqueConstraint("id", "ingredient_id", name="uq_ingredient_price_estimates_id_ingredient"),
+    )
+
+    id: Mapped[UUID] = mapped_column(Uuid, primary_key=True)
+    organization_id: Mapped[UUID] = mapped_column(Uuid)
+    ingredient_id: Mapped[UUID] = mapped_column(Uuid)
+    based_on_estimate_id: Mapped[UUID | None] = mapped_column(Uuid)
+    state: Mapped[str] = mapped_column(String(16))
+    price_amount: Mapped[Decimal | None] = mapped_column(Numeric)
+    priced_quantity: Mapped[Decimal | None] = mapped_column(Numeric)
+    priced_unit_id: Mapped[UUID | None] = mapped_column(
+        ForeignKey("unit_definitions.id", ondelete="RESTRICT")
+    )
+    currency: Mapped[str | None] = mapped_column(String(3))
+    published_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=text("CURRENT_TIMESTAMP")
+    )
+    published_by_user_id: Mapped[UUID] = mapped_column(ForeignKey("users.id", ondelete="RESTRICT"))
 
 
 class ClientInstallation(Base):
