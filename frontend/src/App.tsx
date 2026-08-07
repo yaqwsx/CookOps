@@ -22,6 +22,7 @@ import { EventShopping } from "./event-shopping";
 import { RecipeCatalog } from "./recipe-catalog-view";
 import { IngredientCatalog } from "./ingredient-catalog-view";
 import { EventReceipts } from "./event-receipts";
+import { OrganizationMemberships } from "./organization-membership";
 import type { SupportedLocale } from "./i18n";
 import { runtimeAuthentication } from "./runtime-config";
 import { SynchronizationStatus } from "./synchronization-status";
@@ -36,6 +37,7 @@ const eventSectionPath =
   /^\/organizations\/([0-9a-f-]{36})\/events\/([0-9a-f-]{36})\/(planner|shopping|receipts)(?:\/([0-9a-f-]{36}))?$/i;
 const recipeCatalogPath = /^\/organizations\/[0-9a-f-]{36}\/recipes$/i;
 const ingredientCatalogPath = /^\/organizations\/[0-9a-f-]{36}\/ingredients$/i;
+const settingsPath = /^\/organizations\/[0-9a-f-]{36}\/settings$/i;
 
 function eventOverviewPathFor(organizationId: string) {
   return `/organizations/${organizationId}/events`;
@@ -389,12 +391,21 @@ function AuthenticatedShell({
     setPathname(nextPath);
   }
 
+  function openSettings(event: React.MouseEvent<HTMLAnchorElement>) {
+    if (!organizationId) return;
+    event.preventDefault();
+    const nextPath = `/organizations/${organizationId}/settings`;
+    window.history.pushState(null, "", nextPath);
+    setPathname(nextPath);
+  }
+
   const eventSection = pathname.match(eventSectionPath);
   const eventId = eventSection?.[2]?.toLowerCase();
   const eventSectionName = eventSection?.[3]?.toLowerCase();
   const shoppingListId = eventSection?.[4]?.toLowerCase();
   const recipeCatalogOpen = recipeCatalogPath.test(pathname);
   const ingredientCatalogOpen = ingredientCatalogPath.test(pathname);
+  const settingsOpen = settingsPath.test(pathname);
 
   function openShopping(eventId: string, listId?: string) {
     const nextPath = `/organizations/${organizationId}/events/${eventId}/shopping${listId ? `/${listId}` : ""}`;
@@ -430,7 +441,9 @@ function AuthenticatedShell({
               <li key={section}>
                 <a
                   href={
-                    (section === "recipes" || section === "ingredients") &&
+                    (section === "recipes" ||
+                      section === "ingredients" ||
+                      section === "settings") &&
                     organizationId
                       ? `/organizations/${organizationId}/${section}`
                       : `#${section}`
@@ -440,7 +453,9 @@ function AuthenticatedShell({
                       ? openRecipes
                       : section === "ingredients"
                         ? openIngredients
-                        : undefined
+                        : section === "settings"
+                          ? openSettings
+                          : undefined
                   }
                 >
                   {t(`shell.${section}`)}
@@ -561,6 +576,12 @@ function AuthenticatedShell({
                     userId={identity.id}
                   />
                 )
+              ) : section === "settings" && organizationId && settingsOpen ? (
+                <OrganizationMemberships
+                  onUnauthenticated={onUnauthenticated}
+                  organizationId={organizationId}
+                  userId={identity.id}
+                />
               ) : (
                 <p>{t("shell.sectionPlaceholder")}</p>
               )}

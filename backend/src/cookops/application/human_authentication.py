@@ -9,7 +9,7 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from typing import Literal
-from uuid import UUID
+from uuid import UUID, uuid4
 
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
@@ -113,11 +113,7 @@ def _normalized_now(clock: Callable[[], datetime]) -> datetime:
 
 
 class HumanAuthenticationService:
-    """Resolve an existing trusted identity, gate it, then issue a browser session.
-
-    It never creates users, external identities, memberships, or role assignments.
-    An invitation/role claim flow is intentionally a separate explicit command.
-    """
+    """Resolve a trusted identity, claim a matching invitation, and issue a session."""
 
     def __init__(
         self,
@@ -157,8 +153,66 @@ class HumanAuthenticationService:
                 )
             ).one_or_none()
             if resolved_identity is None:
-                raise HumanAuthenticationDenied("authentication denied")
-            user, identity = resolved_identity
+                invitations = (
+                    (
+                        await session.execute(
+                            select(OrganizationMembership)
+                            .where(
+                                OrganizationMembership.invited_email
+                                == assertion.normalized_verified_email,
+                                OrganizationMembership.state == "invited",
+                                OrganizationMembership.user_id.is_(None),
+                            )
+                            .with_for_update(of=OrganizationMembership)
+                        )
+                    )
+                    .scalars()
+                    .all()
+                )
+                if not invitations:
+                    raise HumanAuthenticationDenied("authentication denied")
+                user = User(
+                    id=uuid4(),
+                    display_name=assertion.verified_email,
+                    verified_email=assertion.verified_email,
+                    normalized_email=assertion.normalized_verified_email,
+                )
+                identity = ExternalIdentity(
+                    user_id=user.id,
+                    provider=assertion.provider,
+                    provider_subject=assertion.provider_subject,
+                    verified_email=assertion.verified_email,
+                    normalized_verified_email=assertion.normalized_verified_email,
+                )
+                session.add(user)
+                await session.flush()
+                session.add(identity)
+                for invitation in invitations:
+                    invitation.user_id = user.id
+                    invitation.state = "active"
+                    invitation.claimed_at = now
+            else:
+                user, identity = resolved_identity
+                invitations = (
+                    (
+                        await session.execute(
+                            select(OrganizationMembership)
+                            .where(
+                                OrganizationMembership.invited_email
+                                == assertion.normalized_verified_email,
+                                OrganizationMembership.state == "invited",
+                                OrganizationMembership.user_id.is_(None),
+                            )
+                            .with_for_update(of=OrganizationMembership)
+                        )
+                    )
+                    .scalars()
+                    .all()
+                )
+                for invitation in invitations:
+                    invitation.user_id = user.id
+                    invitation.state = "active"
+                    invitation.claimed_at = now
             if not await self._has_current_access(
                 session,
                 user.id,
