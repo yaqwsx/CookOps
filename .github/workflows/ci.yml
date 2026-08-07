@@ -95,6 +95,18 @@ jobs:
       - name: Test production application end to end
         run: npm run test:e2e
 
+  container-images:
+    name: Container images
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Build and smoke-test production images
+        run: deploy/test-images.sh
+
   oauth-provider-profile:
     name: OAuth provider and persistence
     runs-on: ubuntu-24.04
