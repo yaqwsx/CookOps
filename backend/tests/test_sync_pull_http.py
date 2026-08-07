@@ -541,3 +541,63 @@ def test_pull_requires_bootstrap_when_the_change_head_is_missing(
         )
     assert response.status_code == 200
     assert response.json()["status"] == "bootstrap_required"
+
+
+def test_pull_requires_bootstrap_for_a_cursor_after_a_complete_feed_rollback(
+    sync_database: SyncDatabase,
+) -> None:
+    _publish_changes(sync_database, count=1)
+    _, old_cursor_sequence = _publish_changes(sync_database, count=1)
+    with sync_database.engine.begin() as connection:
+        connection.execute(text("ALTER TABLE organization_changes DISABLE TRIGGER ALL"))
+        connection.execute(text("ALTER TABLE organization_change_transactions DISABLE TRIGGER ALL"))
+        connection.execute(text("ALTER TABLE organization_change_heads DISABLE TRIGGER ALL"))
+        try:
+            connection.execute(
+                text(
+                    "DELETE FROM organization_changes "
+                    "WHERE organization_id = :organization_id AND sequence = :sequence"
+                ),
+                {
+                    "organization_id": sync_database.organization_id,
+                    "sequence": old_cursor_sequence,
+                },
+            )
+            connection.execute(
+                text(
+                    "DELETE FROM organization_change_transactions "
+                    "WHERE organization_id = :organization_id AND last_change_sequence = :sequence"
+                ),
+                {
+                    "organization_id": sync_database.organization_id,
+                    "sequence": old_cursor_sequence,
+                },
+            )
+            connection.execute(
+                text(
+                    "UPDATE organization_change_heads SET next_sequence = :next_sequence "
+                    "WHERE organization_id = :organization_id"
+                ),
+                {
+                    "next_sequence": old_cursor_sequence,
+                    "organization_id": sync_database.organization_id,
+                },
+            )
+        finally:
+            connection.execute(text("ALTER TABLE organization_changes ENABLE TRIGGER ALL"))
+            connection.execute(
+                text("ALTER TABLE organization_change_transactions ENABLE TRIGGER ALL")
+            )
+            connection.execute(text("ALTER TABLE organization_change_heads ENABLE TRIGGER ALL"))
+
+    with TestClient(create_app(_settings()), base_url="https://testserver") as client:
+        _sign_in(client, "dummy-member")
+        response = client.post(
+            "/api/v1/sync/pull",
+            json={
+                "organization_id": str(sync_database.organization_id),
+                "cursor": _cursor(sync_database.organization_id, old_cursor_sequence),
+            },
+        )
+    assert response.status_code == 200
+    assert response.json()["status"] == "bootstrap_required"

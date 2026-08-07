@@ -220,16 +220,18 @@ class SynchronizationQueryService:
             if cursor is None:
                 return await self._bootstrap_required(session, request.organization_id, now)
 
-            head = await session.scalar(
-                select(OrganizationChangeHead.next_sequence).where(
-                    OrganizationChangeHead.organization_id == request.organization_id
+            head, physical_head = (
+                await session.execute(
+                    select(
+                        select(OrganizationChangeHead.next_sequence)
+                        .where(OrganizationChangeHead.organization_id == request.organization_id)
+                        .scalar_subquery(),
+                        select(func.max(OrganizationChange.sequence))
+                        .where(OrganizationChange.organization_id == request.organization_id)
+                        .scalar_subquery(),
+                    )
                 )
-            )
-            physical_head = await session.scalar(
-                select(func.max(OrganizationChange.sequence)).where(
-                    OrganizationChange.organization_id == request.organization_id
-                )
-            )
+            ).one()
             if head is None:
                 if physical_head is not None:
                     return await self._bootstrap_required(session, request.organization_id, now)
@@ -239,7 +241,7 @@ class SynchronizationQueryService:
                 if physical_head != current_sequence:
                     return await self._bootstrap_required(session, request.organization_id, now)
             if cursor.after_sequence > current_sequence:
-                raise InvalidSyncCursor("invalid cursor")
+                return await self._bootstrap_required(session, request.organization_id, now)
             if not await self._is_transaction_boundary(
                 session, request.organization_id, cursor.after_sequence
             ):
