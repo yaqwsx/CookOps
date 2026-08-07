@@ -83,6 +83,40 @@ select:focus-visible {
   gap: 0.75rem;
 }
 
+.synchronization-status {
+  display: inline-flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.35rem;
+  max-width: 18rem;
+  padding: 0.35rem 0.55rem;
+  border: 1px solid currentcolor;
+  border-radius: 999px;
+  font-size: 0.8rem;
+  font-weight: 700;
+  line-height: 1.25;
+}
+
+.synchronization-status--caught-up {
+  color: #24583b;
+  background: #e9f7ed;
+}
+
+.synchronization-status--offline,
+.synchronization-status--pending {
+  color: #7a4a09;
+  background: #fff0d7;
+}
+
+.synchronization-status--failed {
+  color: #862d2d;
+  background: #ffebeb;
+}
+
+.synchronization-status__detail {
+  font-weight: 500;
+}
+
 .user-menu {
   padding-left: 0.75rem;
   border-left: 1px solid #ddd2c2;

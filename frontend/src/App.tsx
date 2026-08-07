@@ -13,6 +13,7 @@ import {
 import { loadGoogleIdentityServices } from "./google-identity-services";
 import type { SupportedLocale } from "./i18n";
 import { runtimeAuthentication } from "./runtime-config";
+import { SynchronizationStatus } from "./synchronization-status";
 import "./app.css";
 
 const sections = ["events", "recipes", "ingredients", "settings"] as const;
@@ -302,6 +303,7 @@ function AuthenticatedShell({
         </nav>
 
         <div className="header-actions">
+          <SynchronizationStatus />
           <LocalePicker />
           <div className="user-menu">
             <span className="identity-name">{identity.display_name}</span>
