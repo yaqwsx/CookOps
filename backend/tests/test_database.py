@@ -77,6 +77,6 @@ def test_database_is_ready_only_at_alembic_head() -> None:
 
     try:
         asyncio.run(exercise_runtime())
-        assert load_alembic_head() == "0009_organization_change_feed"
+        assert load_alembic_head() == "0010_recipe_catalog"
     finally:
         command.downgrade(configuration, "base")
