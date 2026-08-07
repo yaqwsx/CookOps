@@ -10,11 +10,13 @@ from cookops.application.browser_sessions import BrowserSessionService
 from cookops.application.dummy_identities import DummyIdentityProvider
 from cookops.application.google_identities import GoogleIdentityProvider, GoogleIdTokenVerifier
 from cookops.application.human_authentication import HumanAuthenticationService
+from cookops.application.shopping_lists import ShoppingListQueryService
 from cookops.application.synchronization import SynchronizationQueryService
 from cookops.config import HumanAuthProvider, Settings
 from cookops.database import create_database_runtime
 from cookops.http_auth import BrowserAuthenticationServices, create_auth_router
 from cookops.http_events import EventHttpServices, create_events_router
+from cookops.http_shopping import ShoppingHttpServices, create_shopping_router
 from cookops.http_sync import SynchronizationHttpServices, create_sync_router
 
 ReadinessProbe = Callable[[], Awaitable[bool]]
@@ -139,6 +141,10 @@ def create_app(
             browser_sessions=application.state.browser_authentication.browser_sessions,
             session_factory=session_factory,
         )
+        application.state.shopping = ShoppingHttpServices(
+            browser_sessions=application.state.browser_authentication.browser_sessions,
+            queries=ShoppingListQueryService(session_factory),
+        )
         application.state.readiness_probe = runtime.is_ready
         try:
             yield
@@ -151,6 +157,7 @@ def create_app(
     application.include_router(health_router)
     application.include_router(create_auth_router(app_settings))
     application.include_router(create_events_router(app_settings))
+    application.include_router(create_shopping_router(app_settings))
     application.include_router(create_sync_router(app_settings))
     return application
 

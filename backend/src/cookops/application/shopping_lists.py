@@ -9,10 +9,11 @@ from collections import defaultdict
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from decimal import Decimal
-from typing import Literal
+from typing import Literal, cast
 from uuid import UUID, uuid4, uuid5
 
-from sqlalchemy import func, select, text
+from sqlalchemy import Select, func, or_, select, text
+from sqlalchemy.engine import RowMapping
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from cookops.application.events import (
@@ -32,7 +33,9 @@ from cookops.persistence.models import (
     FieldClock,
     IngredientVersion,
     Mutation,
+    Organization,
     OrganizationChange,
+    OrganizationMembership,
     RecipeVersion,
     RecipeVersionIngredientLine,
     ScheduledIngredientOverride,
@@ -44,6 +47,8 @@ from cookops.persistence.models import (
     ShoppingList,
     ShoppingRevisionSource,
     StoreSection,
+    SystemRoleAssignment,
+    User,
 )
 
 COMMAND_KIND = "shopping_list.create"
@@ -51,6 +56,199 @@ COMMAND_SCHEMA_VERSION = 1
 MAX_SERIALIZED_NAME_BYTES = 800
 REFRESH_COMMAND_KIND = "shopping_list.refresh"
 _REVISION_SOURCE_ID_NAMESPACE = UUID("df740018-c0d2-4790-a314-cf4180a1c2c9")
+
+
+class ShoppingListQueryDenied(PermissionError):
+    """The current actor may not inspect the requested shopping-list scope."""
+
+
+class ShoppingListQueryNotFound(LookupError):
+    """A shopping-list resource is absent or outside its declared scope."""
+
+
+@dataclass(frozen=True, slots=True)
+class ShoppingListSummary:
+    """Compact, materialized-shopping metadata safe for an event list screen."""
+
+    id: UUID
+    organization_id: UUID
+    event_id: UUID
+    name: str
+    current_generation_revision_id: UUID | None
+    generated_at: datetime | None
+    source_scheduled_recipe_count: int
+    ingredient_row_count: int
+    created_at: datetime
+
+
+@dataclass(frozen=True, slots=True)
+class ShoppingListSummaryPage:
+    summaries: tuple[ShoppingListSummary, ...]
+    has_more: bool
+
+
+class ShoppingListQueryService:
+    """Read materialized shopping-list summaries without exposing ORM records."""
+
+    def __init__(self, session_factory: async_sessionmaker[AsyncSession]) -> None:
+        self._session_factory = session_factory
+
+    async def list_summaries(
+        self,
+        *,
+        actor_user_id: UUID,
+        organization_id: UUID,
+        event_id: UUID,
+        limit: int,
+        before_created_at: datetime | None = None,
+        before_id: UUID | None = None,
+    ) -> ShoppingListSummaryPage:
+        if not 1 <= limit <= 100:
+            raise ValueError("limit must be between 1 and 100")
+        if (before_created_at is None) != (before_id is None):
+            raise ValueError("cursor fields must be supplied together")
+        async with self._session_factory() as session:
+            await self._authorize_read(session, actor_user_id, organization_id)
+            event_exists = await session.scalar(
+                select(Event.id).where(
+                    Event.id == event_id,
+                    Event.organization_id == organization_id,
+                )
+            )
+            if event_exists is None:
+                raise ShoppingListQueryNotFound
+            statement = self._summary_statement().where(
+                ShoppingList.organization_id == organization_id,
+                ShoppingList.event_id == event_id,
+            )
+            if before_created_at is not None and before_id is not None:
+                statement = statement.where(
+                    or_(
+                        ShoppingList.created_at < before_created_at,
+                        (ShoppingList.created_at == before_created_at)
+                        & (ShoppingList.id < before_id),
+                    )
+                )
+            rows = (await session.execute(statement.limit(limit + 1))).mappings().all()
+        return ShoppingListSummaryPage(
+            summaries=tuple(self._summary_from_row(row) for row in rows[:limit]),
+            has_more=len(rows) > limit,
+        )
+
+    async def get_summary(
+        self,
+        *,
+        actor_user_id: UUID,
+        organization_id: UUID,
+        event_id: UUID,
+        shopping_list_id: UUID,
+    ) -> ShoppingListSummary:
+        async with self._session_factory() as session:
+            await self._authorize_read(session, actor_user_id, organization_id)
+            row = (
+                (
+                    await session.execute(
+                        self._summary_statement().where(
+                            ShoppingList.id == shopping_list_id,
+                            ShoppingList.organization_id == organization_id,
+                            ShoppingList.event_id == event_id,
+                        )
+                    )
+                )
+                .mappings()
+                .one_or_none()
+            )
+        if row is None:
+            raise ShoppingListQueryNotFound
+        return self._summary_from_row(row)
+
+    @staticmethod
+    def _summary_statement() -> Select[
+        tuple[UUID, UUID, UUID, str, UUID | None, datetime | None, int, int, datetime]
+    ]:
+        source_count = (
+            select(func.count())
+            .select_from(ShoppingRevisionSource)
+            .where(
+                ShoppingRevisionSource.generation_revision_id
+                == ShoppingList.current_generation_revision_id
+            )
+            .scalar_subquery()
+        )
+        row_count = (
+            select(func.count())
+            .select_from(ShoppingIngredientRow)
+            .where(ShoppingIngredientRow.shopping_list_id == ShoppingList.id)
+            .scalar_subquery()
+        )
+        return (
+            select(
+                ShoppingList.id,
+                ShoppingList.organization_id,
+                ShoppingList.event_id,
+                ShoppingList.name,
+                ShoppingList.current_generation_revision_id,
+                ShoppingGenerationRevision.generated_at,
+                source_count.label("source_scheduled_recipe_count"),
+                row_count.label("ingredient_row_count"),
+                ShoppingList.created_at,
+            )
+            .outerjoin(
+                ShoppingGenerationRevision,
+                ShoppingGenerationRevision.id == ShoppingList.current_generation_revision_id,
+            )
+            .order_by(ShoppingList.created_at.desc(), ShoppingList.id.desc())
+        )
+
+    @staticmethod
+    def _summary_from_row(values: RowMapping) -> ShoppingListSummary:
+        return ShoppingListSummary(
+            id=cast(UUID, values["id"]),
+            organization_id=cast(UUID, values["organization_id"]),
+            event_id=cast(UUID, values["event_id"]),
+            name=cast(str, values["name"]),
+            current_generation_revision_id=cast(
+                UUID | None, values["current_generation_revision_id"]
+            ),
+            generated_at=cast(datetime | None, values["generated_at"]),
+            source_scheduled_recipe_count=cast(int, values["source_scheduled_recipe_count"]),
+            ingredient_row_count=cast(int, values["ingredient_row_count"]),
+            created_at=cast(datetime, values["created_at"]),
+        )
+
+    @staticmethod
+    async def _authorize_read(
+        session: AsyncSession, actor_user_id: UUID, organization_id: UUID
+    ) -> None:
+        actor = await session.scalar(
+            select(User.id).where(User.id == actor_user_id, User.disabled_at.is_(None))
+        )
+        organization = await session.scalar(
+            select(Organization.id).where(
+                Organization.id == organization_id, Organization.retired_at.is_(None)
+            )
+        )
+        if actor is None or organization is None:
+            raise ShoppingListQueryDenied
+        system_admin = await session.scalar(
+            select(SystemRoleAssignment.id).where(
+                SystemRoleAssignment.user_id == actor_user_id,
+                SystemRoleAssignment.role == "system_admin",
+                SystemRoleAssignment.revoked_at.is_(None),
+            )
+        )
+        if system_admin is not None:
+            return
+        membership = await session.scalar(
+            select(OrganizationMembership.id).where(
+                OrganizationMembership.organization_id == organization_id,
+                OrganizationMembership.user_id == actor_user_id,
+                OrganizationMembership.state == "active",
+                OrganizationMembership.role.in_(("member", "organization_admin")),
+            )
+        )
+        if membership is None:
+            raise ShoppingListQueryDenied
 
 
 @dataclass(frozen=True, slots=True)
