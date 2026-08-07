@@ -2,14 +2,18 @@ import asyncio
 import os
 from datetime import UTC, datetime
 from decimal import Decimal
-from uuid import uuid4
+from uuid import UUID, uuid4
 
 import pytest
 from sqlalchemy import select, update
 from test_schedule_recipe_service import ServiceDatabase
 
 from cookops.application.organizations import ApplicationServiceError, ExecutionContext
-from cookops.application.scheduled_recipes import ScheduleRecipeCommand, schedule_recipe
+from cookops.application.scheduled_recipes import (
+    ScheduleRecipeCommand,
+    ScheduleRecipeResult,
+    schedule_recipe,
+)
 from cookops.application.shopping_lists import CreateShoppingListCommand, create_shopping_list
 from cookops.persistence.models import (
     Mutation,
@@ -32,7 +36,7 @@ def _context(database: ServiceDatabase) -> ExecutionContext:
     return ExecutionContext(database.actor_id, database.installation_id)
 
 
-async def _scheduled(database: ServiceDatabase):
+async def _scheduled(database: ServiceDatabase) -> ScheduleRecipeResult:
     return await schedule_recipe(
         database.sessions,
         _context(database),
@@ -51,7 +55,9 @@ async def _scheduled(database: ServiceDatabase):
     )
 
 
-def _command(database: ServiceDatabase, source_ids: tuple = ()) -> CreateShoppingListCommand:
+def _command(
+    database: ServiceDatabase, source_ids: tuple[UUID, ...] = ()
+) -> CreateShoppingListCommand:
     return CreateShoppingListCommand(
         mutation_id=uuid4(),
         shopping_list_id=uuid4(),
