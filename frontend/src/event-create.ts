@@ -23,6 +23,10 @@ const decimal = /^(?:0|[1-9]\d*)(?:\.\d+)?$/;
 const integer = /^(?:0|[1-9]\d*)$/;
 const calendarDate = /^\d{4}-\d{2}-\d{2}$/;
 
+export function isNonnegativeSafeInteger(value: string): boolean {
+  return integer.test(value) && Number.isSafeInteger(Number(value));
+}
+
 function dateMilliseconds(value: string): number | undefined {
   if (!calendarDate.test(value)) return undefined;
   const [year, month, day] = value.split("-").map(Number);
@@ -45,10 +49,7 @@ export function validateEventCreate(
   if (end === undefined) return "endDate";
   if (end < start || end - start >= 366 * 24 * 60 * 60 * 1000)
     return "dateRange";
-  if (
-    !integer.test(input.baseExpectedAttendance) ||
-    !Number.isSafeInteger(Number(input.baseExpectedAttendance))
-  )
+  if (!isNonnegativeSafeInteger(input.baseExpectedAttendance))
     return "attendance";
   if (!decimal.test(input.budgetAmount)) return "budget";
   if (input.location.trim().length > 300) return "location";

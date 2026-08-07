@@ -61,6 +61,16 @@ const resources = {
           unavailable: "Akci se nepodařilo uložit místně. Zkuste to znovu.",
         },
       },
+      eventsEdit: {
+        attendance: "Očekávaná účast",
+        submit: "Uložit účast",
+        saved: "Účast je uložena místně a bude synchronizována.",
+        errors: {
+          attendance: "Účast musí být nezáporné celé číslo.",
+          event: "Akci nelze místně upravit.",
+          unavailable: "Účast se nepodařilo uložit místně. Zkuste to znovu.",
+        },
+      },
       synchronization: {
         caughtUp: "Synchronizováno",
         offline: "Bez připojení",
@@ -153,6 +163,17 @@ const resources = {
           organizationCurrency: "Load the organization currency first.",
           unavailable:
             "The event could not be saved locally. Please try again.",
+        },
+      },
+      eventsEdit: {
+        attendance: "Expected attendance",
+        submit: "Save attendance",
+        saved: "Attendance is saved locally and will synchronize.",
+        errors: {
+          attendance: "Attendance must be a non-negative whole number.",
+          event: "The event cannot be edited locally.",
+          unavailable:
+            "Attendance could not be saved locally. Please try again.",
         },
       },
       synchronization: {

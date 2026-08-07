@@ -1,4 +1,4 @@
-import { render, screen, waitFor } from "@testing-library/react";
+import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -29,6 +29,7 @@ async function clearDatabase() {
     localDb.canonicalRecords.clear(),
     localDb.optimisticOverlays.clear(),
     localDb.syncMetadata.clear(),
+    localDb.outbox.clear(),
   ]);
 }
 
@@ -133,6 +134,36 @@ describe("EventOverview", () => {
       "Zobrazujeme uložené akce bez připojení.",
     );
     expect(pullOrganization).not.toHaveBeenCalled();
+  });
+
+  it("edits cached active attendance through the offline outbox", async () => {
+    await addEvent({});
+    setOnline(false);
+    const user = userEvent.setup();
+    render(
+      <EventOverview
+        onUnauthenticated={vi.fn()}
+        organizationId={organizationId}
+        userId={userId}
+      />,
+    );
+
+    const card = await screen.findByRole("article");
+    await user.clear(within(card).getByLabelText("Očekávaná účast"));
+    await user.type(within(card).getByLabelText("Očekávaná účast"), "9");
+    await user.click(
+      within(card).getByRole("button", { name: "Uložit účast" }),
+    );
+
+    expect(await within(card).findByRole("status")).toHaveTextContent(
+      "Účast je uložena místně a bude synchronizována.",
+    );
+    await expect(localDb.outbox.toArray()).resolves.toContainEqual(
+      expect.objectContaining({
+        commandType: "event.update_base_attendance",
+        payload: { event_id: eventId, base_expected_attendance: 9 },
+      }),
+    );
   });
 
   it("creates a valid event locally while offline and exposes it as pending work", async () => {

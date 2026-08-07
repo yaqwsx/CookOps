@@ -3,6 +3,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 
 import type { EventSummary } from "./api/events";
+import { EventAttendance } from "./event-attendance-form";
 import { EventCreate } from "./event-create-form";
 import { readVisibleEventSummaries } from "./event-projections";
 import { pullOrganization, SyncRequestError } from "./sync-bootstrap";
@@ -20,7 +21,15 @@ function formattedDate(value: string, locale: string): string {
   }).format(date);
 }
 
-function EventCard({ event }: { event: EventSummary }) {
+function EventCard({
+  event,
+  organizationId,
+  userId,
+}: {
+  event: EventSummary;
+  organizationId: string;
+  userId: string;
+}) {
   const { i18n, t } = useTranslation();
   const dateRange =
     event.startDate === event.endDate
@@ -51,6 +60,14 @@ function EventCard({ event }: { event: EventSummary }) {
       >
         {t(`eventsOverview.lifecycle.${event.lifecycle}`)}
       </span>
+      {event.lifecycle === "active" ? (
+        <EventAttendance
+          attendance={event.baseExpectedAttendance}
+          eventId={event.id}
+          organizationId={organizationId}
+          userId={userId}
+        />
+      ) : null}
     </article>
   );
 }
@@ -155,7 +172,12 @@ export function EventOverview({
       ) : null}
       <div className="event-list">
         {events.map((event) => (
-          <EventCard event={event} key={event.id} />
+          <EventCard
+            event={event}
+            key={event.id}
+            organizationId={organizationId}
+            userId={userId}
+          />
         ))}
       </div>
       {state === "error" ? (

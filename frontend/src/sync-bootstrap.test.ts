@@ -272,6 +272,46 @@ describe("bootstrapOrganization", () => {
     ).resolves.toMatchObject({ fields: { base_expected_attendance: 9 } });
   });
 
+  it("does not replay attendance over a canonical archived event", async () => {
+    await localDb.outbox.add({
+      id: "attendance",
+      userId,
+      organizationId,
+      commandType: "event.update_base_attendance",
+      payload: { event_id: "event", base_expected_attendance: 9 },
+      actionAt: "2026-08-07T11:00:00.000Z",
+      createdAt: "2026-08-07T11:00:00.000Z",
+      state: "pending",
+    });
+
+    await bootstrapOrganization(userId, organizationId, {
+      fetch: vi.fn<typeof fetch>(async () =>
+        response([
+          {
+            ...record("event"),
+            payload: {
+              record_schema_version: 1,
+              record: {
+                id: "event",
+                lifecycle: "archived",
+                archived_at: "2026-08-07T12:00:00.000Z",
+                base_expected_attendance: 3,
+              },
+            },
+          },
+        ]),
+      ),
+    });
+
+    await expect(
+      readVisibleCanonicalRecord(userId, organizationId, "event", "event"),
+    ).resolves.toMatchObject({
+      lifecycle: "retired",
+      fields: { lifecycle: "archived", base_expected_attendance: 3 },
+    });
+    await expect(localDb.optimisticOverlays.count()).resolves.toBe(0);
+  });
+
   it("replays a dependent event update after its pending creator", async () => {
     await localDb.outbox.bulkAdd([
       {

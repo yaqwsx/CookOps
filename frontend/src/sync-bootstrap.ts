@@ -190,6 +190,13 @@ async function replayOptimisticCommands(
       typeof eventId === "string" &&
       typeof command.payload.base_expected_attendance === "number"
     ) {
+      const canonicalEvent = await localDb.canonicalRecords.get([
+        userId,
+        organizationId,
+        "event",
+        eventId,
+      ]);
+      if (canonicalEvent?.lifecycle === "retired") continue;
       const existing = await current("event", eventId);
       if (!existing) continue;
       await localDb.optimisticOverlays.put({
