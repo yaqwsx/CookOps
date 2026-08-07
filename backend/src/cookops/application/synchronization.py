@@ -40,6 +40,11 @@ from cookops.application.events import (
     create_event,
     update_event_base_attendance,
 )
+from cookops.application.ingredients import (
+    CreateIngredientCommand,
+    CreateIngredientResult,
+    create_ingredient,
+)
 from cookops.application.organizations import ApplicationServiceError, ExecutionContext
 from cookops.application.receipt_media import _record as _attachment_record
 from cookops.application.receipts import _record as _receipt_record
@@ -210,6 +215,7 @@ SyncCommand = (
     | UpdateEventBaseAttendanceCommand
     | CreateShoppingListCommand
     | CreateRecipeCommand
+    | CreateIngredientCommand
     | ScheduleRecipeCommand
     | MoveScheduledRecipeCommand
     | SetShoppingAvailableSupplyCommand
@@ -226,6 +232,7 @@ def _command_kind(
         | UpdateEventBaseAttendanceCommand
         | CreateShoppingListCommand
         | CreateRecipeCommand
+        | CreateIngredientCommand
         | ScheduleRecipeCommand
         | MoveScheduledRecipeCommand
         | SetShoppingAvailableSupplyCommand
@@ -240,6 +247,8 @@ def _command_kind(
         return "event.update_base_attendance"
     if isinstance(command, CreateRecipeCommand):
         return "recipe.create"
+    if isinstance(command, CreateIngredientCommand):
+        return "ingredient.create"
     if isinstance(command, ScheduleRecipeCommand):
         return "scheduled_recipe.schedule"
     if isinstance(command, MoveScheduledRecipeCommand):
@@ -547,6 +556,7 @@ class SynchronizationCommandService:
                 | UpdateEventBaseAttendanceResult
                 | CreateShoppingListResult
                 | CreateRecipeResult
+                | CreateIngredientResult
                 | ScheduleRecipeResult
                 | MoveScheduledRecipeResult
                 | ShoppingOperationResult
@@ -557,6 +567,8 @@ class SynchronizationCommandService:
                 result = await update_event_base_attendance(self._session_factory, context, command)
             elif isinstance(command, CreateRecipeCommand):
                 result = await create_recipe(self._session_factory, context, command)
+            elif isinstance(command, CreateIngredientCommand):
+                result = await create_ingredient(self._session_factory, context, command)
             elif isinstance(command, ScheduleRecipeCommand):
                 result = await schedule_recipe(self._session_factory, context, command)
             elif isinstance(command, MoveScheduledRecipeCommand):
@@ -682,6 +694,7 @@ class SynchronizationCommandService:
             | UpdateEventBaseAttendanceResult
             | CreateShoppingListResult
             | CreateRecipeResult
+            | CreateIngredientResult
             | ScheduleRecipeResult
             | MoveScheduledRecipeResult
             | ShoppingOperationResult
@@ -699,6 +712,8 @@ class SynchronizationCommandService:
                 if isinstance(result, UpdateEventBaseAttendanceResult)
                 else "recipe.create"
                 if isinstance(result, CreateRecipeResult)
+                else "ingredient.create"
+                if isinstance(result, CreateIngredientResult)
                 else "scheduled_recipe.schedule"
                 if isinstance(result, ScheduleRecipeResult)
                 else "scheduled_recipe.move"

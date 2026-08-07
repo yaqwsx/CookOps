@@ -7,6 +7,7 @@ import {
 } from "./local-db";
 import { replayShoppingOperation } from "./shopping-operations";
 import { replayRecipeCreate } from "./recipe-create";
+import { replayIngredientCreate } from "./ingredient-create";
 
 const supportedEntityKinds = new Set([
   "organization",
@@ -229,6 +230,9 @@ async function replayOptimisticCommands(
     }
     if (command.commandType === "recipe.create") {
       await replayRecipeCreate(userId, organizationId, command);
+    }
+    if (command.commandType === "ingredient.create") {
+      await replayIngredientCreate(userId, organizationId, command);
     }
     const entityId =
       command.commandType === "shopping_list.create"

@@ -115,6 +115,73 @@ describe("bootstrapOrganization", () => {
     });
   });
 
+  it("replays a pending ingredient create as both root and immutable initial version", async () => {
+    const ingredientId = "3d8b2b21-c378-4574-9e46-9338c81305ef";
+    const versionId = "4d8b2b21-c378-4574-9e46-9338c81305ef";
+    const unitId = "5d8b2b21-c378-4574-9e46-9338c81305ef";
+    await localDb.outbox.add({
+      id: "ingredient-create",
+      userId,
+      organizationId,
+      commandType: "ingredient.create",
+      payload: {
+        ingredient_id: ingredientId,
+        ingredient_version_id: versionId,
+        name: "Pending tomatoes",
+        canonical_unit_id: unitId,
+        mass_per_canonical_quantity: "1",
+      },
+      actionAt: "2026-08-07T11:00:00.000Z",
+      createdAt: "2026-08-07T11:00:00.000Z",
+      state: "pending",
+    });
+    await bootstrapOrganization(userId, organizationId, {
+      fetch: vi.fn<typeof fetch>(async () => response([organizationRecord()])),
+    });
+    await expect(
+      readVisibleCanonicalRecord(
+        userId,
+        organizationId,
+        "ingredient",
+        ingredientId,
+      ),
+    ).resolves.toMatchObject({ fields: { current_version_id: versionId } });
+    await expect(
+      readVisibleCanonicalRecord(
+        userId,
+        organizationId,
+        "ingredient_version",
+        versionId,
+      ),
+    ).resolves.toMatchObject({
+      immutable: true,
+      fields: { ingredient_id: ingredientId, name: "Pending tomatoes" },
+    });
+  });
+
+  it("does not replay an invalid ingredient mass as a false optimistic projection", async () => {
+    await localDb.outbox.add({
+      id: "invalid-ingredient",
+      userId,
+      organizationId,
+      commandType: "ingredient.create",
+      payload: {
+        ingredient_id: "3d8b2b21-c378-4574-9e46-9338c81305ef",
+        ingredient_version_id: "4d8b2b21-c378-4574-9e46-9338c81305ef",
+        name: "Invalid",
+        canonical_unit_id: "5d8b2b21-c378-4574-9e46-9338c81305ef",
+        mass_per_canonical_quantity: "0",
+      },
+      actionAt: "2026-08-07T11:00:00.000Z",
+      createdAt: "2026-08-07T11:00:00.000Z",
+      state: "pending",
+    });
+    await bootstrapOrganization(userId, organizationId, {
+      fetch: vi.fn<typeof fetch>(async () => response([])),
+    });
+    await expect(localDb.optimisticOverlays.count()).resolves.toBe(0);
+  });
+
   it("replays same-millisecond dependent commands by durable sequence", async () => {
     await localDb.outbox.bulkAdd([
       {

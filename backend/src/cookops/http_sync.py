@@ -13,6 +13,7 @@ from pydantic import BaseModel, ConfigDict, Field, StrictBool, ValidationError, 
 
 from cookops.application.browser_sessions import BrowserSessionService
 from cookops.application.events import CreateEventCommand, UpdateEventBaseAttendanceCommand
+from cookops.application.ingredients import CreateIngredientCommand, InitialPrice
 from cookops.application.recipes import CreateRecipeCommand, RecipeIngredientLineInput
 from cookops.application.scheduled_recipe_moves import MoveScheduledRecipeCommand
 from cookops.application.scheduled_recipes import ScheduleRecipeCommand
@@ -265,6 +266,44 @@ class CreateRecipePayload(BaseModel):
         return value
 
 
+class InitialIngredientPricePayload(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    id: UUID
+    amount: Decimal
+    quantity: Decimal
+    unit_id: UUID
+    currency: str
+
+    @field_validator("amount", "quantity", mode="before")
+    @classmethod
+    def decimal_values_must_be_decimal_strings(cls, value: object) -> object:
+        if not isinstance(value, str):
+            raise ValueError("must be a decimal string")
+        return value
+
+
+class CreateIngredientPayload(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    ingredient_id: UUID
+    ingredient_version_id: UUID
+    name: str
+    canonical_unit_id: UUID
+    mass_per_canonical_quantity: Decimal
+    dietary_tag_ids: tuple[UUID, ...] = ()
+    default_store_section_id: UUID | None = None
+    initial_price: InitialIngredientPricePayload | None = None
+    logical_operation_id: UUID | None = None
+
+    @field_validator("mass_per_canonical_quantity", mode="before")
+    @classmethod
+    def mass_must_be_decimal_string(cls, value: object) -> object:
+        if not isinstance(value, str):
+            raise ValueError("must be a decimal string")
+        return value
+
+
 class ScheduleRecipePayload(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -503,6 +542,33 @@ def _push_command(command: PushCommandRequest, organization_id: UUID) -> SyncCom
                 ),
                 round_suggestions_up=recipe_payload.round_suggestions_up,
                 logical_operation_id=recipe_payload.logical_operation_id,
+            )
+        if command.command_kind == "ingredient.create":
+            ingredient_payload = CreateIngredientPayload.model_validate(command.payload)
+            price = ingredient_payload.initial_price
+            return CreateIngredientCommand(
+                mutation_id=command.mutation_id,
+                ingredient_id=ingredient_payload.ingredient_id,
+                ingredient_version_id=ingredient_payload.ingredient_version_id,
+                organization_id=organization_id,
+                name=ingredient_payload.name,
+                canonical_unit_id=ingredient_payload.canonical_unit_id,
+                mass_per_canonical_quantity=ingredient_payload.mass_per_canonical_quantity,
+                client_wall_time=command.client_wall_time,
+                dietary_tag_ids=ingredient_payload.dietary_tag_ids,
+                default_store_section_id=ingredient_payload.default_store_section_id,
+                initial_price=(
+                    InitialPrice(
+                        price.id,
+                        price.amount,
+                        price.quantity,
+                        price.unit_id,
+                        price.currency,
+                    )
+                    if price
+                    else None
+                ),
+                logical_operation_id=ingredient_payload.logical_operation_id,
             )
         if command.command_kind == "scheduled_recipe.schedule":
             scheduled_recipe_payload = ScheduleRecipePayload.model_validate(command.payload)
