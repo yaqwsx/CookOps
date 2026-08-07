@@ -288,16 +288,20 @@ h1 {
 .event-card {
   display: grid;
   grid-template-areas:
-    "summary lifecycle"
-    "details details"
-    "attendance attendance";
-  grid-template-columns: minmax(0, 1fr) auto;
+    "summary open lifecycle"
+    "details details details"
+    "attendance attendance attendance";
+  grid-template-columns: minmax(0, 1fr) auto auto;
   align-items: center;
   gap: 1rem;
   padding: 1rem;
   border: 1px solid #ddd2c2;
   border-radius: 0.6rem;
   background: #fff;
+}
+
+.event-card__open {
+  grid-area: open;
 }
 
 .event-card > div:first-child {
@@ -438,6 +442,108 @@ h1 {
   grid-column: 1 / -1;
 }
 
+.event-workspace,
+.planner-days,
+.planner-day,
+.planner-add {
+  display: grid;
+  gap: 1rem;
+}
+
+.event-workspace__summary,
+.planner-add {
+  padding: 1rem;
+  border: 1px solid #ddd2c2;
+  border-radius: 0.6rem;
+  background: #fff;
+}
+
+.event-workspace__summary {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  gap: 1rem;
+}
+
+.event-workspace__summary h2,
+.event-workspace__summary p,
+.event-workspace__summary dl,
+.planner-add h3,
+.planner-add p,
+.planner-day h3,
+.planner-day > p,
+.planner-role h4,
+.planner-role p,
+.planner-role ul {
+  margin: 0;
+}
+
+.event-workspace__summary dl {
+  display: flex;
+  gap: 1rem;
+}
+
+.event-workspace__summary dt,
+.planner-day > p,
+.planner-role p {
+  color: #62584c;
+}
+
+.event-workspace__summary dd {
+  margin: 0.2rem 0 0;
+  font-weight: 700;
+}
+
+.planner-add {
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  align-items: end;
+}
+
+.planner-add h3,
+.planner-add p {
+  grid-column: 1 / -1;
+}
+
+.planner-add label {
+  display: grid;
+  gap: 0.35rem;
+  min-width: 0;
+  font-weight: 700;
+}
+
+.planner-add select {
+  min-width: 0;
+  min-height: 2.5rem;
+  padding: 0.45rem 0.6rem;
+  border: 1px solid #9d9283;
+  border-radius: 0.5rem;
+  color: inherit;
+  background: white;
+  font: inherit;
+}
+
+.planner-day {
+  padding: 1rem;
+  border: 1px solid #ddd2c2;
+  border-radius: 0.6rem;
+  background: #fff;
+}
+
+.planner-role {
+  padding-top: 0.75rem;
+  border-top: 1px solid #eee8de;
+}
+
+.planner-role ul {
+  padding-left: 1.2rem;
+}
+
+.planner-archived {
+  padding: 0.75rem 1rem;
+  border-left: 0.3rem solid #62584c;
+  background: #eee8de;
+}
+
 @media (max-width: 46rem) {
   .app-header {
     grid-template-columns: 1fr;
@@ -476,13 +582,23 @@ h1 {
   .event-card {
     grid-template-areas:
       "summary"
+      "open"
       "lifecycle"
-      "details";
+      "details"
+      "attendance";
     grid-template-columns: 1fr;
     gap: 0.75rem;
   }
 
+  .event-card__open {
+    justify-self: start;
+  }
+
   .event-create__fields {
+    grid-template-columns: 1fr;
+  }
+
+  .planner-add {
     grid-template-columns: 1fr;
   }
 }

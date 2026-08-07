@@ -37,6 +37,7 @@ const supportedEntityKinds = new Set([
   "receipt",
   "receipt_attachment",
 ]);
+const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 type BootstrapWireRecord = {
   organization_id: string;
@@ -233,6 +234,63 @@ async function replayOptimisticCommands(
         recordSchemaVersion: 1,
         lifecycle: "active",
         fields: { ...command.payload, id: entityId, lifecycle: "active" },
+        fieldClocks: {
+          optimistic: { mutationId: command.id, actionAt: command.actionAt },
+        },
+        immutable: false,
+        updatedAt: command.actionAt,
+      });
+    }
+    if (
+      command.commandType === "scheduled_recipe.schedule" &&
+      typeof command.payload.scheduled_recipe_id === "string" &&
+      typeof command.payload.event_id === "string" &&
+      typeof command.payload.event_day_id === "string" &&
+      typeof command.payload.event_meal_role_id === "string" &&
+      typeof command.payload.recipe_id === "string" &&
+      typeof command.payload.recipe_version_id === "string" &&
+      [
+        command.payload.scheduled_recipe_id,
+        command.payload.event_id,
+        command.payload.event_day_id,
+        command.payload.event_meal_role_id,
+        command.payload.recipe_id,
+        command.payload.recipe_version_id,
+      ].every((id) => uuid.test(id))
+    ) {
+      const canonicalEvent = await localDb.canonicalRecords.get([
+        userId,
+        organizationId,
+        "event",
+        command.payload.event_id,
+      ]);
+      if (canonicalEvent?.lifecycle === "retired") continue;
+      const event =
+        (await localDb.optimisticOverlays.get([
+          userId,
+          organizationId,
+          "event",
+          command.payload.event_id,
+        ])) ?? canonicalEvent;
+      if (event?.fields.lifecycle !== "active") continue;
+      await localDb.optimisticOverlays.put({
+        userId,
+        organizationId,
+        entityType: "scheduled_recipe",
+        entityId: command.payload.scheduled_recipe_id,
+        recordSchemaVersion: 1,
+        lifecycle: "active",
+        fields: {
+          ...command.payload,
+          id: command.payload.scheduled_recipe_id,
+          organization_id: organizationId,
+          diner_count: event.fields.base_expected_attendance,
+          attendance_mode: "follows_event",
+          selected_scale_amount: "0",
+          scale_mode: "suggested",
+          note: null,
+          retired_at: null,
+        },
         fieldClocks: {
           optimistic: { mutationId: command.id, actionAt: command.actionAt },
         },

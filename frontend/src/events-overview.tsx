@@ -26,10 +26,12 @@ function formattedDate(value: string, locale: string): string {
 
 function EventCard({
   event,
+  onOpen,
   organizationId,
   userId,
 }: {
   event: EventSummary;
+  onOpen: (eventId: string) => void;
   organizationId: string;
   userId: string;
 }) {
@@ -48,6 +50,13 @@ function EventCard({
         <h3>{event.name}</h3>
         <p className="event-card__dates">{dateRange}</p>
       </div>
+      <button
+        className="event-card__open"
+        onClick={() => onOpen(event.id)}
+        type="button"
+      >
+        {t("eventsOverview.open")}
+      </button>
       <dl className="event-card__details">
         <div>
           <dt>{t("eventsOverview.attendance")}</dt>
@@ -76,10 +85,12 @@ function EventCard({
 }
 
 export function EventOverview({
+  onOpen = () => undefined,
   organizationId,
   userId,
   onUnauthenticated,
 }: {
+  onOpen?: (eventId: string) => void;
   organizationId: string;
   userId: string;
   onUnauthenticated: () => void;
@@ -189,6 +200,7 @@ export function EventOverview({
           <EventCard
             event={event}
             key={event.id}
+            onOpen={onOpen}
             organizationId={organizationId}
             userId={userId}
           />

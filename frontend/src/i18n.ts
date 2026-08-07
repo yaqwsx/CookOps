@@ -39,6 +39,7 @@ const resources = {
         dateRange: "{{start}} až {{end}}",
         attendance: "Očekávaná účast",
         budget: "Rozpočet",
+        open: "Otevřít plán",
         lifecycle: { active: "Aktivní", archived: "Archivovaná" },
       },
       eventsCreate: {
@@ -73,6 +74,30 @@ const resources = {
           attendance: "Účast musí být nezáporné celé číslo.",
           event: "Akci nelze místně upravit.",
           unavailable: "Účast se nepodařilo uložit místně. Zkuste to znovu.",
+        },
+      },
+      planner: {
+        heading: "Plán akce",
+        loading: "Načítáme plán akce…",
+        unavailable: "Plán akce není uložený v tomto zařízení.",
+        error: "Plán se nepodařilo načíst. Zkuste to znovu.",
+        offline: "Zobrazujeme uložený plán bez připojení.",
+        archived: "Tato akce je archivovaná a plán je jen pro čtení.",
+        dateRange: "{{start}} až {{end}}",
+        attendance: "Očekávaná účast",
+        lifecycle: "Stav",
+        addHeading: "Přidat recept",
+        day: "Den",
+        role: "Chod",
+        recipe: "Recept",
+        add: "Přidat do plánu",
+        saved: "Recept je uložen místně a bude synchronizován.",
+        noAddOptions:
+          "Pro přidání receptu je potřeba uložený den, chod a recept.",
+        emptyRole: "Pro tento chod zatím není naplánovaný recept.",
+        diners: "Strávníci: {{count}}",
+        errors: {
+          unavailable: "Recept se nepodařilo uložit místně. Zkuste to znovu.",
         },
       },
       synchronization: {
@@ -147,6 +172,7 @@ const resources = {
         dateRange: "{{start}} to {{end}}",
         attendance: "Expected attendance",
         budget: "Budget",
+        open: "Open planner",
         lifecycle: { active: "Active", archived: "Archived" },
       },
       eventsCreate: {
@@ -183,6 +209,31 @@ const resources = {
           event: "The event cannot be edited locally.",
           unavailable:
             "Attendance could not be saved locally. Please try again.",
+        },
+      },
+      planner: {
+        heading: "Event planner",
+        loading: "Loading the event planner…",
+        unavailable: "This event planner is not stored on this device.",
+        error: "The planner could not be loaded. Please try again.",
+        offline: "Showing the stored planner while offline.",
+        archived: "This event is archived and the planner is read-only.",
+        dateRange: "{{start}} to {{end}}",
+        attendance: "Expected attendance",
+        lifecycle: "Lifecycle",
+        addHeading: "Add recipe",
+        day: "Day",
+        role: "Meal role",
+        recipe: "Recipe",
+        add: "Add to planner",
+        saved: "The recipe is saved locally and will synchronize.",
+        noAddOptions:
+          "A stored day, meal role, and recipe are required to add a recipe.",
+        emptyRole: "No recipe is scheduled for this meal role yet.",
+        diners: "Diners: {{count}}",
+        errors: {
+          unavailable:
+            "The recipe could not be saved locally. Please try again.",
         },
       },
       synchronization: {

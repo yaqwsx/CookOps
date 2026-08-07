@@ -312,6 +312,146 @@ describe("bootstrapOrganization", () => {
     await expect(localDb.optimisticOverlays.count()).resolves.toBe(0);
   });
 
+  it("does not replay a schedule through a stale event overlay after archival", async () => {
+    const ids = {
+      event: "3d8b2b21-c378-4574-9e46-9338c81305ef",
+      day: "4d8b2b21-c378-4574-9e46-9338c81305ef",
+      role: "5d8b2b21-c378-4574-9e46-9338c81305ef",
+      recipe: "6d8b2b21-c378-4574-9e46-9338c81305ef",
+      version: "7d8b2b21-c378-4574-9e46-9338c81305ef",
+      scheduled: "8d8b2b21-c378-4574-9e46-9338c81305ef",
+    };
+    await localDb.optimisticOverlays.add({
+      userId,
+      organizationId,
+      entityType: "event",
+      entityId: ids.event,
+      recordSchemaVersion: 1,
+      lifecycle: "active",
+      fields: {
+        id: ids.event,
+        lifecycle: "active",
+        base_expected_attendance: 9,
+      },
+      fieldClocks: {},
+      immutable: false,
+      updatedAt: "2026-08-07T11:00:00.000Z",
+    });
+    await localDb.outbox.add({
+      id: "schedule",
+      userId,
+      organizationId,
+      commandType: "scheduled_recipe.schedule",
+      payload: {
+        scheduled_recipe_id: ids.scheduled,
+        event_id: ids.event,
+        event_day_id: ids.day,
+        event_meal_role_id: ids.role,
+        recipe_id: ids.recipe,
+        recipe_version_id: ids.version,
+      },
+      actionAt: "2026-08-07T11:00:00.000Z",
+      createdAt: "2026-08-07T11:00:00.000Z",
+      state: "pending",
+    });
+    await bootstrapOrganization(userId, organizationId, {
+      fetch: vi.fn<typeof fetch>(async () =>
+        response([
+          {
+            organization_id: organizationId,
+            entity_id: ids.event,
+            entity_kind: "event",
+            operation: "upsert",
+            payload: {
+              record_schema_version: 1,
+              record: {
+                id: ids.event,
+                lifecycle: "archived",
+                archived_at: "now",
+              },
+            },
+          },
+        ]),
+      ),
+    });
+    await expect(
+      localDb.optimisticOverlays.get([
+        userId,
+        organizationId,
+        "scheduled_recipe",
+        ids.scheduled,
+      ]),
+    ).resolves.toBeUndefined();
+  });
+
+  it("replays a schedule after its pending attendance update", async () => {
+    const ids = {
+      event: "3d8b2b21-c378-4574-9e46-9338c81305ef",
+      day: "4d8b2b21-c378-4574-9e46-9338c81305ef",
+      role: "5d8b2b21-c378-4574-9e46-9338c81305ef",
+      recipe: "6d8b2b21-c378-4574-9e46-9338c81305ef",
+      version: "7d8b2b21-c378-4574-9e46-9338c81305ef",
+      scheduled: "8d8b2b21-c378-4574-9e46-9338c81305ef",
+    };
+    await localDb.outbox.bulkAdd([
+      {
+        id: "attendance",
+        userId,
+        organizationId,
+        commandType: "event.update_base_attendance",
+        payload: { event_id: ids.event, base_expected_attendance: 20 },
+        actionAt: "2026-08-07T10:00:00.000Z",
+        createdAt: "2026-08-07T10:00:00.000Z",
+        state: "pending",
+      },
+      {
+        id: "schedule",
+        userId,
+        organizationId,
+        commandType: "scheduled_recipe.schedule",
+        payload: {
+          scheduled_recipe_id: ids.scheduled,
+          event_id: ids.event,
+          event_day_id: ids.day,
+          event_meal_role_id: ids.role,
+          recipe_id: ids.recipe,
+          recipe_version_id: ids.version,
+        },
+        actionAt: "2026-08-07T10:01:00.000Z",
+        createdAt: "2026-08-07T10:01:00.000Z",
+        state: "pending",
+      },
+    ]);
+    await bootstrapOrganization(userId, organizationId, {
+      fetch: vi.fn<typeof fetch>(async () =>
+        response([
+          {
+            organization_id: organizationId,
+            entity_id: ids.event,
+            entity_kind: "event",
+            operation: "upsert",
+            payload: {
+              record_schema_version: 1,
+              record: {
+                id: ids.event,
+                lifecycle: "active",
+                base_expected_attendance: 12,
+              },
+            },
+          },
+        ]),
+      ),
+    });
+    await expect(
+      localDb.optimisticOverlays.get([
+        userId,
+        organizationId,
+        "scheduled_recipe",
+        ids.scheduled,
+      ]),
+    ).resolves.toMatchObject({ fields: { diner_count: 20 } });
+  });
+
   it("replays a dependent event update after its pending creator", async () => {
     await localDb.outbox.bulkAdd([
       {

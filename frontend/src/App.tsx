@@ -17,6 +17,7 @@ import {
 } from "./api/organizations";
 import { loadGoogleIdentityServices } from "./google-identity-services";
 import { EventOverview } from "./events-overview";
+import { EventPlanner } from "./event-planner";
 import type { SupportedLocale } from "./i18n";
 import { runtimeAuthentication } from "./runtime-config";
 import { SynchronizationStatus } from "./synchronization-status";
@@ -27,6 +28,8 @@ const sections = ["events", "recipes", "ingredients", "settings"] as const;
 
 const organizationPath =
   /^\/organizations\/([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})(?:\/|$)/i;
+const plannerPath =
+  /^\/organizations\/([0-9a-f-]{36})\/events\/([0-9a-f-]{36})\/planner$/i;
 
 function eventOverviewPathFor(organizationId: string) {
   return `/organizations/${organizationId}/events`;
@@ -358,6 +361,14 @@ function AuthenticatedShell({
     setPathname(nextPath);
   }
 
+  function openEvent(eventId: string) {
+    const nextPath = `/organizations/${organizationId}/events/${eventId}/planner`;
+    window.history.pushState(null, "", nextPath);
+    setPathname(nextPath);
+  }
+
+  const plannerEventId = pathname.match(plannerPath)?.[2]?.toLowerCase();
+
   async function signOut() {
     setLogoutError(false);
     try {
@@ -445,11 +456,21 @@ function AuthenticatedShell({
                 {t(`shell.${section}`)}
               </h2>
               {section === "events" && organizationId ? (
-                <EventOverview
-                  onUnauthenticated={onUnauthenticated}
-                  organizationId={organizationId}
-                  userId={identity.id}
-                />
+                plannerEventId ? (
+                  <EventPlanner
+                    eventId={plannerEventId}
+                    onUnauthenticated={onUnauthenticated}
+                    organizationId={organizationId}
+                    userId={identity.id}
+                  />
+                ) : (
+                  <EventOverview
+                    onOpen={openEvent}
+                    onUnauthenticated={onUnauthenticated}
+                    organizationId={organizationId}
+                    userId={identity.id}
+                  />
+                )
               ) : (
                 <p>{t("shell.sectionPlaceholder")}</p>
               )}
