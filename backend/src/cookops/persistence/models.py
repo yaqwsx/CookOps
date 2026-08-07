@@ -1,4 +1,4 @@
-from datetime import datetime
+from datetime import date, datetime
 from decimal import Decimal
 from uuid import UUID, uuid4
 
@@ -726,6 +726,125 @@ class IngredientPriceEstimate(Base):
         DateTime(timezone=True), server_default=text("CURRENT_TIMESTAMP")
     )
     published_by_user_id: Mapped[UUID] = mapped_column(ForeignKey("users.id", ondelete="RESTRICT"))
+
+
+class Event(Base):
+    __tablename__ = "events"
+    __table_args__ = (
+        CheckConstraint("btrim(name) <> ''", name="ck_events_name_not_empty"),
+        CheckConstraint("end_date >= start_date", name="ck_events_date_range"),
+        CheckConstraint(
+            "base_expected_attendance >= 0", name="ck_events_nonnegative_base_attendance"
+        ),
+        CheckConstraint(
+            "budget_amount >= 0 AND budget_amount::text NOT IN ('NaN', 'Infinity', '-Infinity')",
+            name="ck_events_nonnegative_budget",
+        ),
+        CheckConstraint("currency ~ '^[A-Z]{3}$'", name="ck_events_currency"),
+    )
+
+    id: Mapped[UUID] = mapped_column(
+        Uuid, primary_key=True, default=uuid4, server_default=text("gen_random_uuid()")
+    )
+    organization_id: Mapped[UUID] = mapped_column(
+        ForeignKey("organizations.id", ondelete="RESTRICT")
+    )
+    name: Mapped[str] = mapped_column(String(200))
+    start_date: Mapped[date] = mapped_column()
+    end_date: Mapped[date] = mapped_column()
+    location: Mapped[str | None] = mapped_column(String(300))
+    general_note: Mapped[str | None] = mapped_column(Text)
+    base_expected_attendance: Mapped[int] = mapped_column()
+    budget_amount: Mapped[Decimal] = mapped_column(Numeric)
+    currency: Mapped[str] = mapped_column(String(3))
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=text("CURRENT_TIMESTAMP")
+    )
+    created_by_user_id: Mapped[UUID] = mapped_column(ForeignKey("users.id", ondelete="RESTRICT"))
+
+
+class EventDay(Base):
+    __tablename__ = "event_days"
+    __table_args__ = (
+        CheckConstraint(
+            "provenance IN ('range_generated', 'manually_added')",
+            name="ck_event_days_provenance",
+        ),
+        CheckConstraint(
+            "(retired_at IS NULL AND retired_by_user_id IS NULL) OR "
+            "(retired_at IS NOT NULL AND retired_by_user_id IS NOT NULL)",
+            name="ck_event_days_retirement_attribution",
+        ),
+        Index(
+            "uq_event_days_active_event_date",
+            "event_id",
+            "calendar_date",
+            unique=True,
+            postgresql_where=text("retired_at IS NULL"),
+        ),
+    )
+
+    id: Mapped[UUID] = mapped_column(
+        Uuid, primary_key=True, default=uuid4, server_default=text("gen_random_uuid()")
+    )
+    event_id: Mapped[UUID] = mapped_column(ForeignKey("events.id", ondelete="RESTRICT"))
+    calendar_date: Mapped[date] = mapped_column()
+    note: Mapped[str | None] = mapped_column(Text)
+    is_visible: Mapped[bool] = mapped_column(Boolean, default=True, server_default=text("true"))
+    provenance: Mapped[str] = mapped_column(String(32))
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=text("CURRENT_TIMESTAMP")
+    )
+    created_by_user_id: Mapped[UUID] = mapped_column(ForeignKey("users.id", ondelete="RESTRICT"))
+    retired_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    retired_by_user_id: Mapped[UUID | None] = mapped_column(
+        ForeignKey("users.id", ondelete="RESTRICT")
+    )
+
+
+class EventMealRole(Base):
+    __tablename__ = "event_meal_roles"
+    __table_args__ = (
+        CheckConstraint(
+            "(built_in_translation_key IS NOT NULL "
+            "AND built_in_translation_key ~ '^[a-z][a-z0-9_.-]*$' "
+            "AND custom_name IS NULL AND normalized_custom_name IS NULL) OR "
+            "(built_in_translation_key IS NULL AND custom_name IS NOT NULL "
+            "AND btrim(custom_name) <> '' "
+            "AND normalized_custom_name IS NOT NULL "
+            "AND normalized_custom_name = lower(btrim(custom_name)))",
+            name="ck_event_meal_roles_display_identity",
+        ),
+        CheckConstraint("position_key ~ '^[0-9A-Za-z]+$'", name="ck_event_meal_roles_position_key"),
+        CheckConstraint(
+            "(retired_at IS NULL AND retired_by_user_id IS NULL) OR "
+            "(retired_at IS NOT NULL AND retired_by_user_id IS NOT NULL)",
+            name="ck_event_meal_roles_retirement_attribution",
+        ),
+        UniqueConstraint(
+            "event_id", "built_in_translation_key", name="uq_event_meal_roles_builtin_key"
+        ),
+        UniqueConstraint(
+            "event_id", "normalized_custom_name", name="uq_event_meal_roles_custom_name"
+        ),
+    )
+
+    id: Mapped[UUID] = mapped_column(
+        Uuid, primary_key=True, default=uuid4, server_default=text("gen_random_uuid()")
+    )
+    event_id: Mapped[UUID] = mapped_column(ForeignKey("events.id", ondelete="RESTRICT"))
+    built_in_translation_key: Mapped[str | None] = mapped_column(String(100))
+    custom_name: Mapped[str | None] = mapped_column(String(200))
+    normalized_custom_name: Mapped[str | None] = mapped_column(String(200))
+    position_key: Mapped[str] = mapped_column(String(255, collation="C"))
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=text("CURRENT_TIMESTAMP")
+    )
+    created_by_user_id: Mapped[UUID] = mapped_column(ForeignKey("users.id", ondelete="RESTRICT"))
+    retired_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    retired_by_user_id: Mapped[UUID | None] = mapped_column(
+        ForeignKey("users.id", ondelete="RESTRICT")
+    )
 
 
 class ClientInstallation(Base):
