@@ -2,9 +2,10 @@ from sqlalchemy import create_engine, pool
 
 from alembic import context
 from cookops.config import Settings
+from cookops.persistence.models import Base
 
 configuration = context.config
-target_metadata = None
+target_metadata = Base.metadata
 
 
 def database_url() -> str:
