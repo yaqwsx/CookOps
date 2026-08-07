@@ -1,18 +1,26 @@
 import { beforeEach, describe, expect, it } from "vitest";
 
-import { localDb, readSynchronizationSummary } from "./local-db";
+import {
+  localDb,
+  readOrCreateBrowserInstallationId,
+  readSynchronizationSummary,
+} from "./local-db";
 
 async function clearLocalDatabase() {
   await localDb.transaction(
     "rw",
-    localDb.organizations,
-    localDb.canonicalRecords,
-    localDb.outbox,
-    localDb.pendingUploads,
-    localDb.syncMetadata,
+    [
+      localDb.browserInstallation,
+      localDb.organizations,
+      localDb.canonicalRecords,
+      localDb.outbox,
+      localDb.pendingUploads,
+      localDb.syncMetadata,
+    ],
     async () => {
       await Promise.all([
         localDb.organizations.clear(),
+        localDb.browserInstallation.clear(),
         localDb.canonicalRecords.clear(),
         localDb.outbox.clear(),
         localDb.pendingUploads.clear(),
@@ -24,6 +32,19 @@ async function clearLocalDatabase() {
 
 describe("local synchronization database", () => {
   beforeEach(clearLocalDatabase);
+
+  it("persists separate browser installation identities for each user", async () => {
+    const first = await readOrCreateBrowserInstallationId("user-a");
+
+    await expect(readOrCreateBrowserInstallationId("user-a")).resolves.toBe(
+      first,
+    );
+    expect(await readOrCreateBrowserInstallationId("user-b")).not.toBe(first);
+    await expect(localDb.browserInstallation.get("user-a")).resolves.toEqual({
+      id: "user-a",
+      installationId: first,
+    });
+  });
 
   it("keeps command and photo upload state partitioned by organization", async () => {
     await localDb.outbox.bulkAdd([

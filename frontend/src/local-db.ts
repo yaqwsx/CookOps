@@ -14,6 +14,11 @@ export interface CachedOrganization {
   lastAuthorizedAt: string;
 }
 
+export interface BrowserInstallation {
+  id: string;
+  installationId: string;
+}
+
 export interface CanonicalRecord {
   organizationId: string;
   entityType: string;
@@ -50,6 +55,7 @@ export interface PendingUpload {
 export interface OrganizationSyncMetadata {
   organizationId: string;
   cursor?: string;
+  changeCursorHint?: string;
   activity: SynchronizationActivity;
   lastSuccessfulServerContact?: string;
   clockSkewWarning?: {
@@ -59,6 +65,7 @@ export interface OrganizationSyncMetadata {
 }
 
 export class CookOpsDatabase extends Dexie {
+  readonly browserInstallation!: EntityTable<BrowserInstallation, "id">;
   readonly organizations!: EntityTable<CachedOrganization, "id">;
   readonly canonicalRecords!: Table<CanonicalRecord, [string, string, string]>;
   readonly outbox!: EntityTable<OutboxCommand, "id">;
@@ -78,10 +85,27 @@ export class CookOpsDatabase extends Dexie {
       pendingUploads: "id, organizationId, [organizationId+state], createdAt",
       syncMetadata: "organizationId",
     });
+    this.version(2).stores({ browserInstallation: "id" });
   }
 }
 
 export const localDb = new CookOpsDatabase();
+
+export async function readOrCreateBrowserInstallationId(
+  userId: string,
+): Promise<string> {
+  const current = await localDb.browserInstallation.get(userId);
+  if (current) return current.installationId;
+  const installationId = crypto.randomUUID();
+  try {
+    await localDb.browserInstallation.add({ id: userId, installationId });
+    return installationId;
+  } catch {
+    const concurrent = await localDb.browserInstallation.get(userId);
+    if (concurrent) return concurrent.installationId;
+    throw new Error("Unable to persist browser installation.");
+  }
+}
 
 export interface SynchronizationSummary {
   activity: SynchronizationActivity;
