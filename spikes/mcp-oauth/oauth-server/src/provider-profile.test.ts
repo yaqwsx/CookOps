@@ -4,6 +4,12 @@ import { createServer } from "node:http";
 import { once } from "node:events";
 import test from "node:test";
 
+import type {
+  Adapter,
+  AdapterFactory,
+  AdapterPayload,
+} from "oidc-provider";
+
 import {
   createProvider,
   MCP_SCOPE,
@@ -19,6 +25,45 @@ const privateJwk = generateKeyPairSync("rsa", { modulusLength: 2048 }).privateKe
   format: "jwk",
 });
 const JWKS = { keys: [{ ...privateJwk, alg: "RS256", kid: "spike-test", use: "sig" }] };
+
+function createTestAdapter(): AdapterFactory {
+  return (_model: string): Adapter => {
+    const records = new Map<string, AdapterPayload>();
+    return {
+      async upsert(id, payload) {
+        records.set(id, structuredClone(payload));
+      },
+      async find(id) {
+        const payload = records.get(id);
+        return payload && structuredClone(payload);
+      },
+      async findByUserCode(userCode) {
+        const payload = [...records.values()].find(
+          (payload) => payload.userCode === userCode,
+        );
+        return payload && structuredClone(payload);
+      },
+      async findByUid(uid) {
+        const payload = [...records.values()].find(
+          (payload) => payload.uid === uid,
+        );
+        return payload && structuredClone(payload);
+      },
+      async consume(id) {
+        const payload = records.get(id);
+        if (payload) payload.consumed = Math.floor(Date.now() / 1_000);
+      },
+      async destroy(id) {
+        records.delete(id);
+      },
+      async revokeByGrantId(grantId) {
+        for (const [id, payload] of records) {
+          if (payload.grantId === grantId) records.delete(id);
+        }
+      },
+    };
+  };
+}
 
 async function runningProvider(
   check: (baseUrl: string) => Promise<void>,
@@ -42,6 +87,7 @@ async function runningProvider(
     cookieKeys: COOKIE_KEYS,
     resourceServerSecret: RESOURCE_SERVER_SECRET,
     jwks: JWKS,
+    adapter: createTestAdapter(),
   });
   handler = providerHttpHandler(provider, issuer);
   try {
@@ -96,6 +142,7 @@ test("registers separate public and resource-server clients", async () => {
     cookieKeys: COOKIE_KEYS,
     resourceServerSecret: RESOURCE_SERVER_SECRET,
     jwks: JWKS,
+    adapter: createTestAdapter(),
   });
 
   assert(await provider.Client.find(PUBLIC_CLIENT_ID));
@@ -133,6 +180,7 @@ test("rejects unsafe profile endpoints and weak secrets", () => {
     cookieKeys: COOKIE_KEYS,
     resourceServerSecret: RESOURCE_SERVER_SECRET,
     jwks: JWKS,
+    adapter: createTestAdapter(),
   };
 
   assert.throws(() => createProvider({ ...valid, issuer: "http://cookops.example/oauth" }), /HTTPS/);

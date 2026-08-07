@@ -1,4 +1,9 @@
-import { errors, Provider, type Configuration } from "oidc-provider";
+import {
+  errors,
+  Provider,
+  type AdapterFactory,
+  type Configuration,
+} from "oidc-provider";
 import type { IncomingMessage, ServerResponse } from "node:http";
 
 export const MCP_SCOPE = "cookops:mcp";
@@ -12,6 +17,7 @@ export interface ProviderProfile {
   cookieKeys: string[];
   resourceServerSecret: string;
   jwks: NonNullable<Configuration["jwks"]>;
+  adapter: AdapterFactory;
 }
 
 function endpoint(name: string, value: string): URL {
@@ -47,6 +53,7 @@ export function createProvider(profile: ProviderProfile): Provider {
   }
 
   const configuration: Configuration = {
+    adapter: profile.adapter,
     clients: [
       {
         client_id: PUBLIC_CLIENT_ID,
