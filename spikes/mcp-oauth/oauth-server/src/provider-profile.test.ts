@@ -67,6 +67,7 @@ function createTestAdapter(): AdapterFactory {
 
 async function runningProvider(
   check: (baseUrl: string) => Promise<void>,
+  metadataFetch?: typeof fetch,
 ): Promise<void> {
   let handler: ReturnType<typeof providerHttpHandler> = (_request, response) => {
     response.writeHead(503).end();
@@ -88,6 +89,7 @@ async function runningProvider(
     resourceServerSecret: RESOURCE_SERVER_SECRET,
     jwks: JWKS,
     adapter: createTestAdapter(),
+    ...(metadataFetch ? { fetch: metadataFetch } : {}),
   });
   handler = providerHttpHandler(provider, issuer);
   try {
@@ -95,6 +97,23 @@ async function runningProvider(
   } finally {
     await server[Symbol.asyncDispose]();
   }
+}
+
+function authorizationParameters(
+  baseUrl: string,
+  clientId: string,
+  redirectUri: string,
+): URLSearchParams {
+  return new URLSearchParams({
+    client_id: clientId,
+    code_challenge: "x".repeat(43),
+    code_challenge_method: "S256",
+    redirect_uri: redirectUri,
+    resource: `${baseUrl}/mcp`,
+    response_type: "code",
+    scope: MCP_SCOPE,
+    state: "test-state",
+  });
 }
 
 test("publishes the constrained MCP OAuth profile at a path issuer", async () => {
@@ -170,6 +189,164 @@ test("rejects authorization without the mandatory MCP resource", async () => {
     assert.equal(redirect.searchParams.get("error"), "invalid_target");
     assert.equal(redirect.searchParams.get("state"), "test-state");
   });
+});
+
+test("CIMD rejects private targets, redirects, malformed documents, and secrets", async () => {
+  const requests: string[] = [];
+  const secret = "must-never-appear-in-an-oauth-error";
+  const metadataFetch: typeof fetch = async (input) => {
+    const url = String(input);
+    requests.push(url);
+    if (url.endsWith("/redirect")) {
+      return new Response(null, {
+        headers: { location: "https://127.0.0.1/metadata" },
+        status: 302,
+      });
+    }
+    if (url.endsWith("/oversized")) {
+      return new Response("x".repeat(5 * 1024 + 1), {
+        headers: { "content-length": String(5 * 1024 + 1) },
+      });
+    }
+    if (url.endsWith("/malformed")) return new Response("not JSON");
+    return new Response(JSON.stringify({ client_id: url, client_secret: secret }));
+  };
+
+  await runningProvider(async (baseUrl) => {
+    const response = await fetch(
+      `${baseUrl}/oauth/authorize?${authorizationParameters(
+        baseUrl,
+        "https://127.0.0.1/metadata",
+        `${baseUrl}/callback`,
+      )}`,
+      { redirect: "manual" },
+    );
+    assert.equal(response.status, 400);
+  });
+
+  await runningProvider(async (baseUrl) => {
+    for (const clientId of [
+      "https://metadata.example/redirect",
+      "https://metadata.example/oversized",
+      "https://metadata.example/malformed",
+      "https://metadata.example/forbidden-secret",
+    ]) {
+      const response = await fetch(
+        `${baseUrl}/oauth/authorize?${authorizationParameters(
+          baseUrl,
+          clientId,
+          `${baseUrl}/callback`,
+        )}`,
+        { redirect: "manual" },
+      );
+      assert.equal(response.status, 400);
+      const body = await response.text();
+      assert.equal(body.includes(secret), false);
+    }
+  }, metadataFetch);
+
+  assert.equal(requests.some((url) => url.includes("127.0.0.1")), false);
+  assert.deepEqual(
+    new Set(requests),
+    new Set([
+      "https://metadata.example/redirect",
+      "https://metadata.example/oversized",
+      "https://metadata.example/malformed",
+      "https://metadata.example/forbidden-secret",
+    ]),
+  );
+});
+
+test("DCR keeps a public client secretless and enforces its exact redirect URI", async () => {
+  await runningProvider(async (baseUrl) => {
+    const redirectUri = `${baseUrl}/dcr-callback`;
+    const registered = await fetch(`${baseUrl}/oauth/register`, {
+      body: JSON.stringify({
+        application_type: "native",
+        client_name: "DCR fixture",
+        grant_types: ["authorization_code", "refresh_token"],
+        redirect_uris: [redirectUri],
+        response_types: ["code"],
+        token_endpoint_auth_method: "none",
+      }),
+      headers: { "content-type": "application/json" },
+      method: "POST",
+    });
+    assert.equal(registered.status, 201);
+    const client = (await registered.json()) as Record<string, string>;
+    assert.ok(client.client_id);
+    assert.equal("client_secret" in client, false);
+
+    const exact = await fetch(
+      `${baseUrl}/oauth/authorize?${authorizationParameters(
+        baseUrl,
+        client.client_id,
+        redirectUri,
+      )}`,
+      { redirect: "manual" },
+    );
+    assert.equal(exact.status, 303);
+    assert.match(exact.headers.get("location") ?? "", /\/interaction\//);
+
+    const altered = await fetch(
+      `${baseUrl}/oauth/authorize?${authorizationParameters(
+        baseUrl,
+        client.client_id,
+        `${redirectUri}?unexpected=1`,
+      )}`,
+      { redirect: "manual" },
+    );
+    assert.equal(altered.status, 400);
+  });
+});
+
+test("DCR does not follow a registered JWKS redirect to a private address", async () => {
+  const requests: string[] = [];
+  const metadataFetch: typeof fetch = async (input) => {
+    requests.push(String(input));
+    return new Response(null, {
+      headers: { location: "https://127.0.0.1/jwks" },
+      status: 302,
+    });
+  };
+  await runningProvider(async (baseUrl) => {
+    const registered = await fetch(`${baseUrl}/oauth/register`, {
+      body: JSON.stringify({
+        grant_types: ["authorization_code"],
+        jwks_uri: "https://metadata.example/jwks",
+        redirect_uris: [`${baseUrl}/dcr-callback`],
+        response_types: ["code"],
+        token_endpoint_auth_method: "private_key_jwt",
+      }),
+      headers: { "content-type": "application/json" },
+      method: "POST",
+    });
+    assert.equal(registered.status, 201);
+    const client = (await registered.json()) as { client_id: string };
+    const encode = (value: object) => Buffer.from(JSON.stringify(value)).toString("base64url");
+    const assertion = [
+      encode({ alg: "RS256", typ: "JWT" }),
+      encode({
+        aud: `${baseUrl}/oauth/token`,
+        exp: Math.floor(Date.now() / 1_000) + 60,
+        iss: client.client_id,
+        jti: "dcr-private-jwks-test",
+        sub: client.client_id,
+      }),
+      "signature-is-never-verified-after-the-fetch-is-rejected",
+    ].join(".");
+    const response = await fetch(`${baseUrl}/oauth/token`, {
+      body: new URLSearchParams({
+        client_assertion: assertion,
+        client_assertion_type: "urn:ietf:params:oauth:client-assertion-type:jwt-bearer",
+        grant_type: "authorization_code",
+      }),
+      headers: { "content-type": "application/x-www-form-urlencoded" },
+      method: "POST",
+    });
+    assert.equal(response.status, 401);
+  }, metadataFetch);
+  assert.deepEqual(requests, ["https://metadata.example/jwks"]);
 });
 
 test("rejects unsafe profile endpoints and weak secrets", () => {

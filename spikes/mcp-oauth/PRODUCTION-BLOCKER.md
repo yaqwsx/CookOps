@@ -14,10 +14,13 @@ OAuth server or a source for a production FastAPI MCP mount.
   resource settings, or private interaction-approval credential.
 - The only OAuth package is under `spikes/`; there is no production
   `oauth-server/` package, Compose service, migration, or private API boundary.
-- The required spike gates remain incomplete: CIMD/DCR SSRF and redirect tests,
-  two independent clients/conformance coverage, Google and dummy traversal of
-  the same interaction bridge, and PostgreSQL-backed end-to-end coverage.  The
-  current Node suite skips its PostgreSQL flows without `TEST_DATABASE_URL`.
+- The OAuth tests now exercise CIMD private-IP rejection, redirect refusal,
+  malformed and oversized metadata, DCR exact redirects, DCR JWKS redirects,
+  public-client secret suppression, and encrypted PostgreSQL-backed OAuth flow
+  storage. The required spike gates still lack two independent
+  clients/conformance coverage and Google and dummy traversal of the same
+  interaction bridge. The PostgreSQL tests require `TEST_DATABASE_URL` (the
+  disposable Compose test service supplies it).
 
 ## Required production boundary
 

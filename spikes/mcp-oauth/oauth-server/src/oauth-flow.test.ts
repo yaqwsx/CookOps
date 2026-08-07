@@ -420,6 +420,18 @@ test(
       assert.equal(tokens.access_token.includes("."), false);
       assert.ok(tokens.refresh_token);
 
+      const persistedPayloads = await administrator.query<{ payload: string }>(
+        `SELECT payload::text AS payload FROM ${schema}.oidc_provider_records`,
+      );
+      const databaseContents = persistedPayloads.rows.map(({ payload }) => payload).join("\n");
+      for (const credential of [
+        validCode.code,
+        tokens.access_token,
+        tokens.refresh_token,
+      ]) {
+        assert.equal(databaseContents.includes(credential), false);
+      }
+
       assertActiveIntrospection(
         await introspect(proxy.origin, tokens.access_token),
         proxy.origin,

@@ -18,6 +18,8 @@ export interface ProviderProfile {
   resourceServerSecret: string;
   jwks: NonNullable<Configuration["jwks"]>;
   adapter: AdapterFactory;
+  /** Test-only seam for deterministic CIMD boundary checks. */
+  fetch?: typeof fetch;
 }
 
 function endpoint(name: string, value: string): URL {
@@ -54,6 +56,8 @@ export function createProvider(profile: ProviderProfile): Provider {
 
   const configuration: Configuration = {
     adapter: profile.adapter,
+    ...(profile.fetch ? { fetch: profile.fetch } : {}),
+    fetchResponseBodyLimits: { "client_id metadata document": 5 * 1024 },
     clients: [
       {
         client_id: PUBLIC_CLIENT_ID,
@@ -75,8 +79,11 @@ export function createProvider(profile: ProviderProfile): Provider {
     ],
     cookies: { keys: profile.cookieKeys },
     features: {
-      // Spike follow-up: add edge rate limits before testing CIMD or DCR beyond loopback.
-      clientIdMetadataDocument: { enabled: true, ack: "draft-02" },
+      clientIdMetadataDocument: {
+        enabled: true,
+        ack: "draft-02",
+        cacheDuration: { min: 30, max: 300 },
+      },
       devInteractions: { enabled: false },
       introspection: {
         enabled: true,
