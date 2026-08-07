@@ -127,3 +127,5 @@ jobs:
         run: npm run check
       - name: Test provider profile
         run: npm test
+      - name: Prove OAuth state survives a PostgreSQL restart
+        run: ../test-postgres-restart.sh
