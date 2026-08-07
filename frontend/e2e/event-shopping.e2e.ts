@@ -9,6 +9,12 @@ const ids = {
   recipe: "6d8b2b21-c378-4574-9e46-9338c81305ef",
   version: "7d8b2b21-c378-4574-9e46-9338c81305ef",
   scheduled: "8d8b2b21-c378-4574-9e46-9338c81305ef",
+  list: "9d8b2b21-c378-4574-9e46-9338c81305ef",
+  revision: "0e8b2b21-c378-4574-9e46-9338c81305ef",
+  row: "1e8b2b21-c378-4574-9e46-9338c81305ef",
+  contribution: "2e8b2b21-c378-4574-9e46-9338c81305ef",
+  snapshot: "3e8b2b21-c378-4574-9e46-9338c81305ef",
+  unit: "4e8b2b21-c378-4574-9e46-9338c81305ef",
 };
 
 function record(entity_id: string, entity_kind: string, value: object) {
@@ -112,6 +118,49 @@ test("creates a cached shopping list from selected plan sources while offline", 
             position_key: "a",
             retired_at: null,
           }),
+          record(ids.list, "shopping_list", {
+            id: ids.list,
+            organization_id: ids.organization,
+            event_id: ids.event,
+            name: "Pátek",
+            current_generation_revision_id: ids.revision,
+            created_at: "2026-08-07T12:00:00.000Z",
+            retired_at: null,
+          }),
+          record(ids.row, "shopping_ingredient_row", {
+            id: ids.row,
+            organization_id: ids.organization,
+            event_id: ids.event,
+            shopping_list_id: ids.list,
+            ingredient_name: "Rajčata",
+            calculation_unit_id: ids.unit,
+            available_supply_quantity: "0",
+            manual_purchase_target: null,
+            aggregate_fulfilment_credit: "0",
+            default_store_section_name: "Zelenina",
+            retired_at: null,
+          }),
+          record(ids.contribution, "shopping_contribution", {
+            id: ids.contribution,
+            organization_id: ids.organization,
+            event_id: ids.event,
+            shopping_list_id: ids.list,
+            shopping_ingredient_row_id: ids.row,
+            fulfilment_credit: "0",
+            retired_at: null,
+          }),
+          record(ids.snapshot, "shopping_contribution_snapshot", {
+            id: ids.snapshot,
+            organization_id: ids.organization,
+            event_id: ids.event,
+            shopping_list_id: ids.list,
+            generation_revision_id: ids.revision,
+            shopping_contribution_id: ids.contribution,
+            active_in_revision: true,
+            generated_quantity: "2",
+            source_details: { recipe_name: "Chili" },
+          }),
+          record(ids.unit, "unit_definition", { id: ids.unit, code: "kg" }),
         ],
       }),
     });
@@ -142,6 +191,16 @@ test("creates a cached shopping list from selected plan sources while offline", 
   await expect(
     page.getByText("Nákupní seznam je uložen místně a bude synchronizován."),
   ).toBeVisible();
+  await page
+    .getByRole("listitem")
+    .filter({ hasText: "Pátek" })
+    .getByRole("button", { name: "Otevřít seznam" })
+    .click();
+  await expect(page.getByRole("heading", { name: "Pátek" })).toBeVisible();
+  await page.getByLabel("Nakoupeno").click();
+  await expect(page.getByText("0 kg", { exact: true })).toBeVisible();
+  await page.getByText("Příspěvky receptů").click();
+  await page.getByLabel("Chili · 2 kg").click();
   await expect
     .poll(() =>
       page.evaluate(

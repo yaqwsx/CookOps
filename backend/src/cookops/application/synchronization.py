@@ -63,6 +63,11 @@ from cookops.application.scheduled_recipes import (
 from cookops.application.shopping_lists import (
     CreateShoppingListCommand,
     CreateShoppingListResult,
+    SetShoppingAvailableSupplyCommand,
+    SetShoppingContributionFulfilmentCommand,
+    SetShoppingManualPurchaseTargetCommand,
+    SetShoppingRowFulfilmentCommand,
+    ShoppingOperationResult,
     _contribution_record,
     _contribution_snapshot_record,
     _generation_revision_record,
@@ -70,6 +75,10 @@ from cookops.application.shopping_lists import (
     _row_record,
     _shopping_list_record,
     create_shopping_list,
+    set_shopping_available_supply,
+    set_shopping_contribution_fulfilment,
+    set_shopping_manual_purchase_target,
+    set_shopping_row_fulfilment,
 )
 from cookops.persistence.models import (
     AdHocShoppingItem,
@@ -203,6 +212,10 @@ SyncCommand = (
     | CreateRecipeCommand
     | ScheduleRecipeCommand
     | MoveScheduledRecipeCommand
+    | SetShoppingAvailableSupplyCommand
+    | SetShoppingManualPurchaseTargetCommand
+    | SetShoppingContributionFulfilmentCommand
+    | SetShoppingRowFulfilmentCommand
     | UnsupportedSyncCommand
 )
 
@@ -215,6 +228,10 @@ def _command_kind(
         | CreateRecipeCommand
         | ScheduleRecipeCommand
         | MoveScheduledRecipeCommand
+        | SetShoppingAvailableSupplyCommand
+        | SetShoppingManualPurchaseTargetCommand
+        | SetShoppingContributionFulfilmentCommand
+        | SetShoppingRowFulfilmentCommand
     ),
 ) -> str:
     if isinstance(command, CreateEventCommand):
@@ -227,6 +244,14 @@ def _command_kind(
         return "scheduled_recipe.schedule"
     if isinstance(command, MoveScheduledRecipeCommand):
         return "scheduled_recipe.move"
+    if isinstance(command, SetShoppingAvailableSupplyCommand):
+        return "shopping_list.set_available_supply"
+    if isinstance(command, SetShoppingManualPurchaseTargetCommand):
+        return "shopping_list.set_manual_purchase_target"
+    if isinstance(command, SetShoppingContributionFulfilmentCommand):
+        return "shopping_list.set_contribution_fulfilment"
+    if isinstance(command, SetShoppingRowFulfilmentCommand):
+        return "shopping_list.set_row_fulfilment"
     return "shopping_list.create"
 
 
@@ -524,6 +549,7 @@ class SynchronizationCommandService:
                 | CreateRecipeResult
                 | ScheduleRecipeResult
                 | MoveScheduledRecipeResult
+                | ShoppingOperationResult
             )
             if isinstance(command, CreateEventCommand):
                 result = await create_event(self._session_factory, context, command)
@@ -535,6 +561,20 @@ class SynchronizationCommandService:
                 result = await schedule_recipe(self._session_factory, context, command)
             elif isinstance(command, MoveScheduledRecipeCommand):
                 result = await move_scheduled_recipe(self._session_factory, context, command)
+            elif isinstance(command, SetShoppingAvailableSupplyCommand):
+                result = await set_shopping_available_supply(
+                    self._session_factory, context, command
+                )
+            elif isinstance(command, SetShoppingManualPurchaseTargetCommand):
+                result = await set_shopping_manual_purchase_target(
+                    self._session_factory, context, command
+                )
+            elif isinstance(command, SetShoppingContributionFulfilmentCommand):
+                result = await set_shopping_contribution_fulfilment(
+                    self._session_factory, context, command
+                )
+            elif isinstance(command, SetShoppingRowFulfilmentCommand):
+                result = await set_shopping_row_fulfilment(self._session_factory, context, command)
             else:
                 result = await create_shopping_list(self._session_factory, context, command)
         except ApplicationServiceError as error:
@@ -551,7 +591,7 @@ class SynchronizationCommandService:
                 ),
                 retry_same_identity=error.retry_same_identity,
             )
-        return self._result_outcome(result)
+        return self._result_outcome(result, command_kind=_command_kind(command))
 
     async def _retain_adapter_rejection(
         self,
@@ -644,11 +684,15 @@ class SynchronizationCommandService:
             | CreateRecipeResult
             | ScheduleRecipeResult
             | MoveScheduledRecipeResult
+            | ShoppingOperationResult
         ),
+        *,
+        command_kind: str | None = None,
     ) -> PushCommandOutcome:
         return PushCommandOutcome(
             mutation_id=result.mutation_id,
-            command_kind=(
+            command_kind=command_kind
+            or (
                 "event.create"
                 if isinstance(result, CreateEventResult)
                 else "event.update_base_attendance"

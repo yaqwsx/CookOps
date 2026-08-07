@@ -2,6 +2,13 @@ import { beforeEach, describe, expect, it } from "vitest";
 
 import { localDb } from "./local-db";
 import { queueShoppingList } from "./shopping-list";
+import {
+  queueShoppingAvailableSupply,
+  queueShoppingContributionFulfilment,
+  queueShoppingManualPurchaseTarget,
+  queueShoppingRowFulfilment,
+  replayShoppingOperation,
+} from "./shopping-operations";
 import { readShoppingList, readShoppingLists } from "./shopping-projections";
 
 const ids = {
@@ -247,15 +254,162 @@ describe("offline shopping-list creation", () => {
     ).resolves.toEqual(
       expect.objectContaining({
         rows: [
-          {
+          expect.objectContaining({
             id: ids.row,
             ingredientName: "Tomatoes",
             sectionName: "Cold storage",
+            availableSupply: "2",
+            target: "8",
             remaining: "1",
             unit: "kg",
-          },
+          }),
         ],
       }),
     );
+  });
+
+  it("queues scoped supply, target, and whole-row fulfilment atomically without float coercion", async () => {
+    const record = (
+      entityType: string,
+      entityId: string,
+      fields: Record<string, unknown>,
+    ) => ({
+      userId: ids.user,
+      organizationId: ids.organization,
+      entityType,
+      entityId,
+      recordSchemaVersion: 1,
+      lifecycle: "active" as const,
+      fields,
+      fieldClocks: {},
+      immutable: false,
+      updatedAt: "2026-08-07T12:00:00.000Z",
+    });
+    await localDb.canonicalRecords.bulkAdd([
+      record("event", ids.event, { id: ids.event, lifecycle: "active" }),
+      record("shopping_list", ids.list, {
+        id: ids.list,
+        organization_id: ids.organization,
+        event_id: ids.event,
+        current_generation_revision_id: ids.revision,
+      }),
+      record("shopping_ingredient_row", ids.row, {
+        id: ids.row,
+        organization_id: ids.organization,
+        shopping_list_id: ids.list,
+        available_supply_quantity: "0",
+        manual_purchase_target: null,
+        aggregate_fulfilment_credit: "0",
+      }),
+      record("shopping_contribution", ids.contribution, {
+        id: ids.contribution,
+        organization_id: ids.organization,
+        shopping_list_id: ids.list,
+        shopping_ingredient_row_id: ids.row,
+        fulfilment_credit: "0",
+      }),
+      record("shopping_contribution_snapshot", ids.snapshot, {
+        id: ids.snapshot,
+        shopping_list_id: ids.list,
+        generation_revision_id: ids.revision,
+        shopping_contribution_id: ids.contribution,
+        active_in_revision: true,
+        generated_quantity: "1.25",
+      }),
+    ]);
+    const input = {
+      shoppingListId: ids.list,
+      shoppingIngredientRowId: ids.row,
+    };
+    await queueShoppingAvailableSupply(ids.user, ids.organization, {
+      ...input,
+      quantity: "0.25",
+    });
+    await queueShoppingManualPurchaseTarget(ids.user, ids.organization, {
+      ...input,
+      quantity: "2",
+    });
+    await queueShoppingRowFulfilment(ids.user, ids.organization, {
+      ...input,
+      fulfilled: true,
+    });
+    await queueShoppingContributionFulfilment(ids.user, ids.organization, {
+      ...input,
+      shoppingContributionId: ids.contribution,
+      fulfilled: true,
+    });
+    const row = await localDb.optimisticOverlays.get([
+      ids.user,
+      ids.organization,
+      "shopping_ingredient_row",
+      ids.row,
+    ]);
+    expect(row?.fields).toMatchObject({
+      available_supply_quantity: "0.25",
+      manual_purchase_target: "2",
+      aggregate_fulfilment_credit: "0.75",
+    });
+    await expect(localDb.outbox.toArray()).resolves.toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          commandType: "shopping_list.set_available_supply",
+          payload: expect.objectContaining({ quantity: "0.25" }),
+        }),
+        expect.objectContaining({
+          commandType: "shopping_list.set_manual_purchase_target",
+          payload: expect.objectContaining({ quantity: "2" }),
+        }),
+        expect.objectContaining({
+          commandType: "shopping_list.set_row_fulfilment",
+          payload: expect.objectContaining({ fulfilled: true }),
+        }),
+        expect.objectContaining({
+          commandType: "shopping_list.set_contribution_fulfilment",
+          payload: expect.objectContaining({
+            shopping_contribution_id: ids.contribution,
+            fulfilled: true,
+          }),
+        }),
+      ]),
+    );
+    const pending = (await localDb.outbox.toArray()).sort(
+      (left, right) =>
+        left.createdAt.localeCompare(right.createdAt) ||
+        left.id.localeCompare(right.id),
+    );
+    await localDb.optimisticOverlays.clear();
+    for (const command of pending)
+      await replayShoppingOperation(ids.user, ids.organization, command);
+    await expect(
+      localDb.optimisticOverlays.get([
+        ids.user,
+        ids.organization,
+        "shopping_ingredient_row",
+        ids.row,
+      ]),
+    ).resolves.toMatchObject({
+      fields: {
+        available_supply_quantity: "0.25",
+        manual_purchase_target: "2",
+        aggregate_fulfilment_credit: "0.75",
+      },
+    });
+    await expect(
+      localDb.optimisticOverlays.get([
+        ids.user,
+        ids.organization,
+        "shopping_contribution",
+        ids.contribution,
+      ]),
+    ).resolves.toMatchObject({ fields: { fulfilment_credit: "1.25" } });
+    const before = await localDb.outbox.count();
+    for (const invalid of ["-1", "1e3", "NaN", "", "x".repeat(101)])
+      await expect(
+        queueShoppingAvailableSupply(ids.user, ids.organization, {
+          ...input,
+          quantity: invalid,
+        }),
+      ).rejects.toThrow("shopping_operation");
+    await expect(localDb.outbox.count()).resolves.toBe(before);
   });
 });

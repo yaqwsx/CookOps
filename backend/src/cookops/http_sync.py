@@ -16,7 +16,13 @@ from cookops.application.events import CreateEventCommand, UpdateEventBaseAttend
 from cookops.application.recipes import CreateRecipeCommand, RecipeIngredientLineInput
 from cookops.application.scheduled_recipe_moves import MoveScheduledRecipeCommand
 from cookops.application.scheduled_recipes import ScheduleRecipeCommand
-from cookops.application.shopping_lists import CreateShoppingListCommand
+from cookops.application.shopping_lists import (
+    CreateShoppingListCommand,
+    SetShoppingAvailableSupplyCommand,
+    SetShoppingContributionFulfilmentCommand,
+    SetShoppingManualPurchaseTargetCommand,
+    SetShoppingRowFulfilmentCommand,
+)
 from cookops.application.synchronization import (
     MAX_COMMANDS_PER_PUSH,
     MAX_TRANSACTION_GROUPS_PER_PULL,
@@ -177,6 +183,41 @@ class CreateShoppingListPayload(BaseModel):
     event_id: UUID
     name: str
     scheduled_recipe_ids: tuple[UUID, ...]
+    logical_operation_id: UUID | None = None
+
+
+class SetShoppingQuantityPayload(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    shopping_list_id: UUID
+    shopping_ingredient_row_id: UUID
+    quantity: Decimal | None
+    logical_operation_id: UUID | None = None
+
+    @field_validator("quantity", mode="before")
+    @classmethod
+    def quantity_must_be_decimal_string_or_null(cls, value: object) -> object:
+        if value is not None and not isinstance(value, str):
+            raise ValueError("must be a decimal string or null")
+        return value
+
+
+class SetShoppingSupplyPayload(SetShoppingQuantityPayload):
+    quantity: Decimal
+
+
+class SetShoppingContributionFulfilmentPayload(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    shopping_list_id: UUID
+    shopping_contribution_id: UUID
+    fulfilled: StrictBool
+    logical_operation_id: UUID | None = None
+
+
+class SetShoppingRowFulfilmentPayload(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    shopping_list_id: UUID
+    shopping_ingredient_row_id: UUID
+    fulfilled: StrictBool
     logical_operation_id: UUID | None = None
 
 
@@ -383,6 +424,52 @@ def _push_command(command: PushCommandRequest, organization_id: UUID) -> SyncCom
                 scheduled_recipe_ids=shopping_payload.scheduled_recipe_ids,
                 client_wall_time=command.client_wall_time,
                 logical_operation_id=shopping_payload.logical_operation_id,
+            )
+        if command.command_kind == "shopping_list.set_available_supply":
+            supply_payload = SetShoppingSupplyPayload.model_validate(command.payload)
+            return SetShoppingAvailableSupplyCommand(
+                command.mutation_id,
+                organization_id,
+                supply_payload.shopping_list_id,
+                supply_payload.shopping_ingredient_row_id,
+                supply_payload.quantity,
+                command.client_wall_time,
+                supply_payload.logical_operation_id,
+            )
+        if command.command_kind == "shopping_list.set_manual_purchase_target":
+            target_payload = SetShoppingQuantityPayload.model_validate(command.payload)
+            return SetShoppingManualPurchaseTargetCommand(
+                command.mutation_id,
+                organization_id,
+                target_payload.shopping_list_id,
+                target_payload.shopping_ingredient_row_id,
+                target_payload.quantity,
+                command.client_wall_time,
+                target_payload.logical_operation_id,
+            )
+        if command.command_kind == "shopping_list.set_contribution_fulfilment":
+            fulfilment_payload = SetShoppingContributionFulfilmentPayload.model_validate(
+                command.payload
+            )
+            return SetShoppingContributionFulfilmentCommand(
+                command.mutation_id,
+                organization_id,
+                fulfilment_payload.shopping_list_id,
+                fulfilment_payload.shopping_contribution_id,
+                fulfilment_payload.fulfilled,
+                command.client_wall_time,
+                fulfilment_payload.logical_operation_id,
+            )
+        if command.command_kind == "shopping_list.set_row_fulfilment":
+            row_fulfilment_payload = SetShoppingRowFulfilmentPayload.model_validate(command.payload)
+            return SetShoppingRowFulfilmentCommand(
+                command.mutation_id,
+                organization_id,
+                row_fulfilment_payload.shopping_list_id,
+                row_fulfilment_payload.shopping_ingredient_row_id,
+                row_fulfilment_payload.fulfilled,
+                command.client_wall_time,
+                row_fulfilment_payload.logical_operation_id,
             )
         if command.command_kind == "recipe.create":
             recipe_payload = CreateRecipePayload.model_validate(command.payload)

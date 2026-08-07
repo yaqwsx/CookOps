@@ -1,0 +1,519 @@
+import { localDb, type CanonicalRecord, type OutboxCommand } from "./local-db";
+import { add, decimal, maxZeroSubtract, print } from "./shopping-projections";
+
+const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+const quantity = /^\d+(?:\.\d+)?$/;
+type RowInput = { shoppingListId: string; shoppingIngredientRowId: string };
+type ContributionInput = RowInput & { shoppingContributionId: string };
+let lastActionMilliseconds = 0;
+
+async function nextActionAt(): Promise<string> {
+  const previous = await localDb.outbox.orderBy("createdAt").last();
+  const priorMilliseconds = previous ? Date.parse(previous.createdAt) : 0;
+  lastActionMilliseconds = Math.max(
+    Date.now(),
+    priorMilliseconds + 1,
+    lastActionMilliseconds + 1,
+  );
+  return new Date(lastActionMilliseconds).toISOString();
+}
+
+async function visibleRecords(
+  userId: string,
+  organizationId: string,
+  entityType: string,
+): Promise<CanonicalRecord[]> {
+  const key = [userId, organizationId, entityType] as const;
+  const [canonical, overlays] = await Promise.all([
+    localDb.canonicalRecords
+      .where("[userId+organizationId+entityType]")
+      .equals(key)
+      .toArray(),
+    localDb.optimisticOverlays
+      .where("[userId+organizationId+entityType]")
+      .equals(key)
+      .toArray(),
+  ]);
+  const result = new Map(canonical.map((record) => [record.entityId, record]));
+  for (const record of overlays)
+    if (result.get(record.entityId)?.lifecycle !== "retired")
+      result.set(record.entityId, record);
+  return [...result.values()];
+}
+function checkedInput(input: RowInput) {
+  if (
+    !uuid.test(input.shoppingListId) ||
+    !uuid.test(input.shoppingIngredientRowId)
+  )
+    throw new Error("shopping_operation");
+}
+async function activeRow(
+  userId: string,
+  organizationId: string,
+  input: RowInput,
+) {
+  const [lists, rows] = await Promise.all([
+    visibleRecords(userId, organizationId, "shopping_list"),
+    visibleRecords(userId, organizationId, "shopping_ingredient_row"),
+  ]);
+  const list = lists.find(
+    (record) =>
+      record.entityId === input.shoppingListId &&
+      record.lifecycle === "active" &&
+      record.fields.organization_id === organizationId &&
+      typeof record.fields.event_id === "string",
+  );
+  const row = rows.find(
+    (record) =>
+      record.entityId === input.shoppingIngredientRowId &&
+      record.lifecycle === "active" &&
+      record.fields.organization_id === organizationId &&
+      record.fields.shopping_list_id === input.shoppingListId,
+  );
+  const event =
+    typeof list?.fields.event_id === "string"
+      ? await localDb.canonicalRecords.get([
+          userId,
+          organizationId,
+          "event",
+          list.fields.event_id,
+        ])
+      : undefined;
+  if (!list || !row || event?.lifecycle !== "active")
+    throw new Error("shopping_operation");
+  return { row, list };
+}
+async function queueRow(
+  userId: string,
+  organizationId: string,
+  input: RowInput,
+  commandType:
+    | "shopping_list.set_available_supply"
+    | "shopping_list.set_manual_purchase_target",
+  quantityValue: string | null,
+) {
+  checkedInput(input);
+  if (
+    quantityValue !== null &&
+    (!quantity.test(quantityValue) || quantityValue.length > 100)
+  )
+    throw new Error("shopping_operation");
+  let actionAt = "";
+  const mutationId = crypto.randomUUID();
+  await localDb.transaction(
+    "rw",
+    localDb.canonicalRecords,
+    localDb.optimisticOverlays,
+    localDb.outbox,
+    async () => {
+      actionAt = await nextActionAt();
+      const { row } = await activeRow(userId, organizationId, input);
+      const field =
+        commandType === "shopping_list.set_available_supply"
+          ? "available_supply_quantity"
+          : "manual_purchase_target";
+      await localDb.optimisticOverlays.put({
+        ...row,
+        fields: { ...row.fields, [field]: quantityValue },
+        fieldClocks: { ...row.fieldClocks, [field]: { mutationId, actionAt } },
+        updatedAt: actionAt,
+      });
+      await localDb.outbox.add({
+        id: mutationId,
+        userId,
+        organizationId,
+        commandType,
+        payload: {
+          shopping_list_id: input.shoppingListId,
+          shopping_ingredient_row_id: input.shoppingIngredientRowId,
+          quantity: quantityValue,
+        },
+        actionAt,
+        createdAt: actionAt,
+        state: "pending",
+      });
+    },
+  );
+}
+export function queueShoppingAvailableSupply(
+  userId: string,
+  organizationId: string,
+  input: RowInput & { quantity: string },
+) {
+  return queueRow(
+    userId,
+    organizationId,
+    input,
+    "shopping_list.set_available_supply",
+    input.quantity,
+  );
+}
+export function queueShoppingManualPurchaseTarget(
+  userId: string,
+  organizationId: string,
+  input: RowInput & { quantity: string | null },
+) {
+  return queueRow(
+    userId,
+    organizationId,
+    input,
+    "shopping_list.set_manual_purchase_target",
+    input.quantity,
+  );
+}
+
+async function applyContributionFulfilment(
+  userId: string,
+  organizationId: string,
+  input: ContributionInput,
+  fulfilled: boolean,
+  mutationId: string,
+  actionAt: string,
+) {
+  const { list } = await activeRow(userId, organizationId, input);
+  const revisionId = list.fields.current_generation_revision_id;
+  if (typeof revisionId !== "string" || !uuid.test(revisionId))
+    throw new Error("shopping_operation");
+  const [contributions, snapshots] = await Promise.all([
+    visibleRecords(userId, organizationId, "shopping_contribution"),
+    visibleRecords(userId, organizationId, "shopping_contribution_snapshot"),
+  ]);
+  const contribution = contributions.find(
+    (record) =>
+      record.entityId === input.shoppingContributionId &&
+      record.fields.shopping_list_id === input.shoppingListId &&
+      record.fields.shopping_ingredient_row_id ===
+        input.shoppingIngredientRowId &&
+      record.lifecycle !== "tombstone",
+  );
+  if (!contribution) throw new Error("shopping_operation");
+  const snapshot = snapshots.find(
+    (record) =>
+      record.fields.generation_revision_id === revisionId &&
+      record.fields.shopping_contribution_id === input.shoppingContributionId,
+  );
+  const generated = decimal(snapshot?.fields.generated_quantity) ?? add([]);
+  await localDb.optimisticOverlays.put({
+    ...contribution,
+    fields: {
+      ...contribution.fields,
+      fulfilment_credit: fulfilled ? print(generated) : "0",
+    },
+    fieldClocks: {
+      ...contribution.fieldClocks,
+      fulfilment_credit: { mutationId, actionAt },
+    },
+    updatedAt: actionAt,
+  });
+}
+
+export async function queueShoppingContributionFulfilment(
+  userId: string,
+  organizationId: string,
+  input: ContributionInput & { fulfilled: boolean },
+) {
+  checkedInput(input);
+  if (
+    !uuid.test(input.shoppingContributionId) ||
+    typeof input.fulfilled !== "boolean"
+  )
+    throw new Error("shopping_operation");
+  let actionAt = "";
+  const mutationId = crypto.randomUUID();
+  await localDb.transaction(
+    "rw",
+    localDb.canonicalRecords,
+    localDb.optimisticOverlays,
+    localDb.outbox,
+    async () => {
+      actionAt = await nextActionAt();
+      await applyContributionFulfilment(
+        userId,
+        organizationId,
+        input,
+        input.fulfilled,
+        mutationId,
+        actionAt,
+      );
+      await localDb.outbox.add({
+        id: mutationId,
+        userId,
+        organizationId,
+        commandType: "shopping_list.set_contribution_fulfilment",
+        payload: {
+          shopping_list_id: input.shoppingListId,
+          shopping_contribution_id: input.shoppingContributionId,
+          fulfilled: input.fulfilled,
+        },
+        actionAt,
+        createdAt: actionAt,
+        state: "pending",
+      });
+    },
+  );
+}
+export async function queueShoppingRowFulfilment(
+  userId: string,
+  organizationId: string,
+  input: RowInput & { fulfilled: boolean },
+) {
+  checkedInput(input);
+  if (typeof input.fulfilled !== "boolean")
+    throw new Error("shopping_operation");
+  let actionAt = "";
+  const mutationId = crypto.randomUUID();
+  await localDb.transaction(
+    "rw",
+    localDb.canonicalRecords,
+    localDb.optimisticOverlays,
+    localDb.outbox,
+    async () => {
+      actionAt = await nextActionAt();
+      const { row, list } = await activeRow(userId, organizationId, input);
+      const revisionId = list.fields.current_generation_revision_id;
+      if (typeof revisionId !== "string" || !uuid.test(revisionId))
+        throw new Error("shopping_operation");
+      const [contributions, snapshots] = await Promise.all([
+        visibleRecords(userId, organizationId, "shopping_contribution"),
+        visibleRecords(
+          userId,
+          organizationId,
+          "shopping_contribution_snapshot",
+        ),
+      ]);
+      const rowContributions = contributions.filter(
+        (record) =>
+          record.fields.shopping_list_id === input.shoppingListId &&
+          record.fields.shopping_ingredient_row_id ===
+            input.shoppingIngredientRowId &&
+          record.lifecycle !== "tombstone",
+      );
+      const activeGenerated = new Map(
+        snapshots
+          .filter(
+            (record) =>
+              record.fields.shopping_list_id === input.shoppingListId &&
+              record.fields.generation_revision_id === revisionId &&
+              record.fields.active_in_revision === true &&
+              typeof record.fields.shopping_contribution_id === "string",
+          )
+          .map((record) => [
+            record.fields.shopping_contribution_id as string,
+            decimal(record.fields.generated_quantity) ?? add([]),
+          ]),
+      );
+      for (const contribution of rowContributions) {
+        const generated = activeGenerated.get(contribution.entityId);
+        const credit = input.fulfilled
+          ? generated
+            ? print(generated)
+            : contribution.fields.fulfilment_credit
+          : "0";
+        await localDb.optimisticOverlays.put({
+          ...contribution,
+          fields: { ...contribution.fields, fulfilment_credit: credit },
+          fieldClocks: {
+            ...contribution.fieldClocks,
+            fulfilment_credit: { mutationId, actionAt },
+          },
+          updatedAt: actionAt,
+        });
+      }
+      const credits = add(
+        rowContributions.map((contribution) => {
+          const generated = activeGenerated.get(contribution.entityId);
+          return input.fulfilled && generated
+            ? generated
+            : input.fulfilled
+              ? (decimal(contribution.fields.fulfilment_credit) ?? add([]))
+              : add([]);
+        }),
+      );
+      const target =
+        decimal(row.fields.manual_purchase_target) ??
+        maxZeroSubtract(
+          add([...activeGenerated.values()]),
+          decimal(row.fields.available_supply_quantity) ?? add([]),
+        );
+      await localDb.optimisticOverlays.put({
+        ...row,
+        fields: {
+          ...row.fields,
+          aggregate_fulfilment_credit: input.fulfilled
+            ? print(maxZeroSubtract(target, credits))
+            : "0",
+        },
+        fieldClocks: {
+          ...row.fieldClocks,
+          aggregate_fulfilment_credit: { mutationId, actionAt },
+        },
+        updatedAt: actionAt,
+      });
+      await localDb.outbox.add({
+        id: mutationId,
+        userId,
+        organizationId,
+        commandType: "shopping_list.set_row_fulfilment",
+        payload: {
+          shopping_list_id: input.shoppingListId,
+          shopping_ingredient_row_id: input.shoppingIngredientRowId,
+          fulfilled: input.fulfilled,
+        },
+        actionAt,
+        createdAt: actionAt,
+        state: "pending",
+      });
+    },
+  );
+}
+
+/** Reapply pending shopping intent after canonical replacement without creating a new command. */
+export async function replayShoppingOperation(
+  userId: string,
+  organizationId: string,
+  command: OutboxCommand,
+): Promise<void> {
+  const payload = command.payload;
+  const listId = payload.shopping_list_id;
+  const rowId = payload.shopping_ingredient_row_id;
+  if (typeof listId !== "string") return;
+  if (
+    command.commandType === "shopping_list.set_contribution_fulfilment" &&
+    typeof payload.shopping_contribution_id === "string" &&
+    typeof payload.fulfilled === "boolean"
+  ) {
+    const contribution = (
+      await visibleRecords(userId, organizationId, "shopping_contribution")
+    ).find(
+      (record) =>
+        record.entityId === payload.shopping_contribution_id &&
+        record.fields.shopping_list_id === listId &&
+        typeof record.fields.shopping_ingredient_row_id === "string",
+    );
+    if (!contribution) return;
+    await applyContributionFulfilment(
+      userId,
+      organizationId,
+      {
+        shoppingListId: listId,
+        shoppingIngredientRowId: contribution.fields
+          .shopping_ingredient_row_id as string,
+        shoppingContributionId: payload.shopping_contribution_id,
+      },
+      payload.fulfilled,
+      command.id,
+      command.actionAt,
+    );
+    return;
+  }
+  if (typeof rowId !== "string") return;
+  const input = { shoppingListId: listId, shoppingIngredientRowId: rowId };
+  if (
+    (command.commandType === "shopping_list.set_available_supply" ||
+      command.commandType === "shopping_list.set_manual_purchase_target") &&
+    (typeof payload.quantity === "string" || payload.quantity === null) &&
+    (payload.quantity === null || quantity.test(payload.quantity))
+  ) {
+    const { row } = await activeRow(userId, organizationId, input);
+    const field =
+      command.commandType === "shopping_list.set_available_supply"
+        ? "available_supply_quantity"
+        : "manual_purchase_target";
+    await localDb.optimisticOverlays.put({
+      ...row,
+      fields: { ...row.fields, [field]: payload.quantity },
+      fieldClocks: {
+        ...row.fieldClocks,
+        [field]: { mutationId: command.id, actionAt: command.actionAt },
+      },
+      updatedAt: command.actionAt,
+    });
+  }
+  if (
+    command.commandType === "shopping_list.set_row_fulfilment" &&
+    typeof payload.fulfilled === "boolean"
+  ) {
+    const { row, list } = await activeRow(userId, organizationId, input);
+    const revisionId = list.fields.current_generation_revision_id;
+    if (typeof revisionId !== "string" || !uuid.test(revisionId)) return;
+    const [contributions, snapshots] = await Promise.all([
+      visibleRecords(userId, organizationId, "shopping_contribution"),
+      visibleRecords(userId, organizationId, "shopping_contribution_snapshot"),
+    ]);
+    const entries = contributions.filter(
+      (record) =>
+        record.fields.shopping_list_id === listId &&
+        record.fields.shopping_ingredient_row_id === rowId &&
+        record.lifecycle !== "tombstone",
+    );
+    const generated = new Map(
+      snapshots
+        .filter(
+          (record) =>
+            record.fields.shopping_list_id === listId &&
+            record.fields.generation_revision_id === revisionId &&
+            record.fields.active_in_revision === true &&
+            typeof record.fields.shopping_contribution_id === "string",
+        )
+        .map((record) => [
+          record.fields.shopping_contribution_id as string,
+          decimal(record.fields.generated_quantity) ?? add([]),
+        ]),
+    );
+    for (const entry of entries) {
+      const amount = generated.get(entry.entityId);
+      await localDb.optimisticOverlays.put({
+        ...entry,
+        fields: {
+          ...entry.fields,
+          fulfilment_credit:
+            payload.fulfilled && amount
+              ? print(amount)
+              : payload.fulfilled
+                ? entry.fields.fulfilment_credit
+                : "0",
+        },
+        fieldClocks: {
+          ...entry.fieldClocks,
+          fulfilment_credit: {
+            mutationId: command.id,
+            actionAt: command.actionAt,
+          },
+        },
+        updatedAt: command.actionAt,
+      });
+    }
+    const credits = add(
+      entries.map((entry) =>
+        payload.fulfilled
+          ? (generated.get(entry.entityId) ??
+            decimal(entry.fields.fulfilment_credit) ??
+            add([]))
+          : add([]),
+      ),
+    );
+    const target =
+      decimal(row.fields.manual_purchase_target) ??
+      maxZeroSubtract(
+        add([...generated.values()]),
+        decimal(row.fields.available_supply_quantity) ?? add([]),
+      );
+    await localDb.optimisticOverlays.put({
+      ...row,
+      fields: {
+        ...row.fields,
+        aggregate_fulfilment_credit: payload.fulfilled
+          ? print(maxZeroSubtract(target, credits))
+          : "0",
+      },
+      fieldClocks: {
+        ...row.fieldClocks,
+        aggregate_fulfilment_credit: {
+          mutationId: command.id,
+          actionAt: command.actionAt,
+        },
+      },
+      updatedAt: command.actionAt,
+    });
+  }
+}

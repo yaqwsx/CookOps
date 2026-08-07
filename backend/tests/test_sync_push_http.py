@@ -22,6 +22,7 @@ from cookops.persistence.models import (
     RecipeVersion,
     RecipeVersionIngredientLine,
     ScheduledRecipe,
+    ShoppingIngredientRow,
     ShoppingList,
     UnitDefinition,
 )
@@ -181,6 +182,163 @@ def _move_scheduled_recipe_command(
     )
     cast(dict[str, object], command["payload"])["event_id"] = str(event_id)
     return command
+
+
+def _shopping_operation_command(
+    *, mutation_id: UUID, kind: str, **payload: object
+) -> dict[str, object]:
+    values: dict[str, object] = {
+        "shopping_list_id": str(uuid4()),
+        "shopping_ingredient_row_id": str(uuid4()),
+    }
+    if kind == "shopping_list.set_available_supply":
+        values["quantity"] = "1.25"
+    elif kind == "shopping_list.set_manual_purchase_target":
+        values["quantity"] = None
+    elif kind == "shopping_list.set_row_fulfilment":
+        values["fulfilled"] = True
+    else:
+        values = {
+            "shopping_list_id": values["shopping_list_id"],
+            "shopping_contribution_id": str(uuid4()),
+            "fulfilled": True,
+        }
+    values.update(payload)
+    return _command(mutation_id=mutation_id, event_id=uuid4(), kind=kind, **values)
+
+
+@pytest.mark.parametrize(
+    ("kind", "payload"),
+    [
+        ("shopping_list.set_available_supply", {"quantity": 1}),
+        ("shopping_list.set_manual_purchase_target", {"quantity": {"bad": "input"}}),
+        ("shopping_list.set_contribution_fulfilment", {"fulfilled": "true"}),
+        ("shopping_list.set_row_fulfilment", {"fulfilled": 1}),
+    ],
+)
+def test_push_strictly_rejects_malformed_typed_shopping_operation_payloads(
+    sync_database: SyncDatabase, kind: str, payload: dict[str, object]
+) -> None:
+    installation_id = _installation(sync_database)
+    command = _shopping_operation_command(mutation_id=uuid4(), kind=kind, **payload)
+    with TestClient(create_app(_settings()), base_url="https://testserver") as client:
+        _sign_in(client, "dummy-member")
+        outcome = client.post(
+            "/api/v1/sync/push",
+            json=_body(sync_database, installation_id, [command]),
+        ).json()["outcomes"][0]
+    assert outcome["command_kind"] == kind
+    assert outcome["status"] == "rejected"
+    assert outcome["error"]["code"] == "validation_failed"
+
+
+def test_push_accepts_supply_and_replays_then_pulls_the_authoritative_field_clock(
+    sync_database: SyncDatabase,
+) -> None:
+    installation_id = _installation(sync_database)
+    event_id, list_id, revision_id = uuid4(), uuid4(), uuid4()
+    ingredient_id, ingredient_version_id, row_id = uuid4(), uuid4(), uuid4()
+    with sync_database.engine.begin() as connection:
+        grams_id = connection.scalar(
+            select(UnitDefinition.id).where(
+                UnitDefinition.organization_id.is_(None), UnitDefinition.code == "g"
+            )
+        )
+        actor_id = connection.scalar(
+            select(OrganizationMembership.user_id).where(
+                OrganizationMembership.organization_id == sync_database.organization_id
+            )
+        )
+        assert isinstance(grams_id, UUID) and isinstance(actor_id, UUID)
+        connection.execute(
+            insert(Ingredient).values(
+                id=ingredient_id,
+                organization_id=sync_database.organization_id,
+                current_version_id=ingredient_version_id,
+                created_by_user_id=actor_id,
+            )
+        )
+        connection.execute(
+            insert(IngredientVersion).values(
+                id=ingredient_version_id,
+                organization_id=sync_database.organization_id,
+                ingredient_id=ingredient_id,
+                name="Tomatoes",
+                normalized_name="tomatoes",
+                canonical_unit_id=grams_id,
+                mass_per_canonical_quantity=Decimal("1"),
+                published_by_user_id=actor_id,
+            )
+        )
+    with TestClient(create_app(_settings()), base_url="https://testserver") as client:
+        _sign_in(client, "dummy-member")
+        setup = client.post(
+            "/api/v1/sync/push",
+            json=_body(
+                sync_database,
+                installation_id,
+                [
+                    _command(mutation_id=uuid4(), event_id=event_id),
+                    _command(
+                        mutation_id=uuid4(),
+                        event_id=event_id,
+                        kind="shopping_list.create",
+                        shopping_list_id=str(list_id),
+                        generation_revision_id=str(revision_id),
+                    ),
+                ],
+            ),
+        )
+        assert [outcome["status"] for outcome in setup.json()["outcomes"]] == [
+            "accepted",
+            "accepted",
+        ]
+        with sync_database.engine.begin() as connection:
+            actor_id = connection.scalar(
+                select(OrganizationMembership.user_id).where(
+                    OrganizationMembership.organization_id == sync_database.organization_id
+                )
+            )
+            grams_id = connection.scalar(
+                select(UnitDefinition.id).where(
+                    UnitDefinition.organization_id.is_(None), UnitDefinition.code == "g"
+                )
+            )
+            assert isinstance(actor_id, UUID) and isinstance(grams_id, UUID)
+            connection.execute(
+                insert(ShoppingIngredientRow).values(
+                    id=row_id,
+                    organization_id=sync_database.organization_id,
+                    event_id=event_id,
+                    shopping_list_id=list_id,
+                    ingredient_id=ingredient_id,
+                    ingredient_name="Tomatoes",
+                    calculation_unit_id=grams_id,
+                    created_by_user_id=actor_id,
+                )
+            )
+        command = _shopping_operation_command(
+            mutation_id=uuid4(),
+            kind="shopping_list.set_available_supply",
+            shopping_list_id=str(list_id),
+            shopping_ingredient_row_id=str(row_id),
+            quantity="7.5",
+        )
+        before = setup.json()["change_cursor"]
+        body = _body(sync_database, installation_id, [command])
+        accepted = client.post("/api/v1/sync/push", json=body).json()["outcomes"][0]
+        assert accepted["status"] == "accepted" and not accepted["replayed"]
+        assert client.post("/api/v1/sync/push", json=body).json()["outcomes"][0]["replayed"]
+        pulled = client.post(
+            "/api/v1/sync/pull",
+            json={"organization_id": str(sync_database.organization_id), "cursor": before},
+        ).json()
+    record = pulled["transaction_groups"][-1]["records"][0]["payload"]["record"]
+    assert record["available_supply_quantity"] == "7.5"
+    assert (
+        record["field_clocks"]["available_supply_quantity"]["winning_mutation_id"]
+        == command["mutation_id"]
+    )
 
 
 def test_push_applies_ordered_commands_and_replays_a_retained_outcome(

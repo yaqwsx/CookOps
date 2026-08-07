@@ -4,6 +4,7 @@ import {
   type CanonicalRecord,
   type OutboxCommand,
 } from "./local-db";
+import { replayShoppingOperation } from "./shopping-operations";
 
 const supportedEntityKinds = new Set([
   "organization",
@@ -215,6 +216,18 @@ async function replayOptimisticCommands(
         },
         updatedAt: command.actionAt,
       });
+    }
+    if (
+      command.commandType === "shopping_list.set_available_supply" ||
+      command.commandType === "shopping_list.set_manual_purchase_target" ||
+      command.commandType === "shopping_list.set_contribution_fulfilment" ||
+      command.commandType === "shopping_list.set_row_fulfilment"
+    ) {
+      try {
+        await replayShoppingOperation(userId, organizationId, command);
+      } catch {
+        // A pending command targeting a now-archived or absent row stays recoverable.
+      }
     }
     const entityId =
       command.commandType === "shopping_list.create"

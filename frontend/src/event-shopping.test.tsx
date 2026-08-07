@@ -1,4 +1,4 @@
-import { render, screen } from "@testing-library/react";
+import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
@@ -7,21 +7,37 @@ import i18n, { defaultLocale } from "./i18n";
 
 const {
   readEventPlanner,
+  readShoppingList,
   readShoppingLists,
   queueShoppingList,
+  queueShoppingAvailableSupply,
+  queueShoppingContributionFulfilment,
+  queueShoppingManualPurchaseTarget,
+  queueShoppingRowFulfilment,
   pullOrganization,
 } = vi.hoisted(() => ({
   readEventPlanner: vi.fn(),
+  readShoppingList: vi.fn(),
   readShoppingLists: vi.fn(),
   queueShoppingList: vi.fn(),
+  queueShoppingAvailableSupply: vi.fn(),
+  queueShoppingContributionFulfilment: vi.fn(),
+  queueShoppingManualPurchaseTarget: vi.fn(),
+  queueShoppingRowFulfilment: vi.fn(),
   pullOrganization: vi.fn(),
 }));
 vi.mock("./planner-projections", () => ({ readEventPlanner }));
 vi.mock("./shopping-projections", () => ({
   readShoppingLists,
-  readShoppingList: vi.fn(),
+  readShoppingList,
 }));
 vi.mock("./shopping-list", () => ({ queueShoppingList }));
+vi.mock("./shopping-operations", () => ({
+  queueShoppingAvailableSupply,
+  queueShoppingContributionFulfilment,
+  queueShoppingManualPurchaseTarget,
+  queueShoppingRowFulfilment,
+}));
 vi.mock("./sync-bootstrap", () => ({
   pullOrganization,
   SyncRequestError: class SyncRequestError extends Error {},
@@ -79,5 +95,110 @@ describe("EventShopping", () => {
       name: "Sobota",
       scheduledRecipeIds: [ids.scheduled],
     });
+  });
+
+  it("keeps a mobile-sized shopping row editable through the typed outbox only", async () => {
+    await i18n.changeLanguage(defaultLocale);
+    readEventPlanner.mockResolvedValue({
+      name: "Letní vaření",
+      lifecycle: "active",
+      scheduled: [],
+    });
+    readShoppingLists.mockResolvedValue([]);
+    readShoppingList.mockResolvedValue({
+      id: "9d8b2b21-c378-4574-9e46-9338c81305ef",
+      name: "Sobota",
+      sourceCount: 1,
+      createdAt: "2026-08-07T12:00:00Z",
+      rows: [
+        {
+          id: "1e8b2b21-c378-4574-9e46-9338c81305ef",
+          ingredientName: "Rajčata",
+          sectionName: null,
+          availableSupply: "0",
+          manualPurchaseTarget: null,
+          target: "2",
+          remaining: "2",
+          unit: "kg",
+          fulfilled: false,
+          notRequired: false,
+          contributions: [
+            {
+              id: "2e8b2b21-c378-4574-9e46-9338c81305ef",
+              generated: "2",
+              fulfilled: false,
+              retired: false,
+              source: "Chili",
+            },
+          ],
+        },
+      ],
+    });
+    pullOrganization.mockResolvedValue(false);
+    const user = userEvent.setup();
+    const view = render(
+      <EventShopping
+        eventId={ids.event}
+        onBack={vi.fn()}
+        onOpenList={vi.fn()}
+        onOpenPlanner={vi.fn()}
+        onUnauthenticated={vi.fn()}
+        organizationId={ids.organization}
+        shoppingListId="9d8b2b21-c378-4574-9e46-9338c81305ef"
+        userId={ids.user}
+      />,
+    );
+    await user.click(await screen.findByLabelText("Nakoupeno"));
+    expect(queueShoppingRowFulfilment).toHaveBeenCalledWith(
+      ids.user,
+      ids.organization,
+      expect.objectContaining({ fulfilled: true }),
+    );
+    await user.click(screen.getByText("Příspěvky receptů"));
+    await user.click(screen.getByLabelText("Chili · 2 kg"));
+    expect(queueShoppingContributionFulfilment).toHaveBeenCalledWith(
+      ids.user,
+      ids.organization,
+      expect.objectContaining({
+        fulfilled: true,
+        shoppingContributionId: "2e8b2b21-c378-4574-9e46-9338c81305ef",
+      }),
+    );
+    readShoppingList.mockResolvedValue({
+      id: "9d8b2b21-c378-4574-9e46-9338c81305ef",
+      name: "Sobota",
+      sourceCount: 1,
+      createdAt: "2026-08-07T12:00:00Z",
+      rows: [
+        {
+          id: "1e8b2b21-c378-4574-9e46-9338c81305ef",
+          ingredientName: "Rajčata",
+          sectionName: null,
+          availableSupply: "3",
+          manualPurchaseTarget: null,
+          target: "0",
+          remaining: "0",
+          unit: "kg",
+          fulfilled: false,
+          notRequired: true,
+          contributions: [],
+        },
+      ],
+    });
+    view.rerender(
+      <EventShopping
+        eventId="4d8b2b21-c378-4574-9e46-9338c81305ef"
+        onBack={vi.fn()}
+        onOpenList={vi.fn()}
+        onOpenPlanner={vi.fn()}
+        onUnauthenticated={vi.fn()}
+        organizationId={ids.organization}
+        shoppingListId="9d8b2b21-c378-4574-9e46-9338c81305ef"
+        userId={ids.user}
+      />,
+    );
+    await waitFor(() =>
+      expect(screen.getByLabelText("K dispozici (kg)")).toHaveValue(3),
+    );
   });
 });

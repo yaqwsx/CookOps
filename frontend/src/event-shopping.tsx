@@ -8,6 +8,12 @@ import {
 } from "./planner-projections";
 import { queueShoppingList } from "./shopping-list";
 import {
+  queueShoppingAvailableSupply,
+  queueShoppingContributionFulfilment,
+  queueShoppingManualPurchaseTarget,
+  queueShoppingRowFulfilment,
+} from "./shopping-operations";
+import {
   readShoppingList,
   readShoppingLists,
   type ShoppingListProjection,
@@ -135,9 +141,15 @@ function ShoppingIndex({
 function ShoppingDetail({
   shoppingList,
   onBack,
+  organizationId,
+  userId,
+  editable,
 }: {
   shoppingList: ShoppingListProjection;
   onBack: () => void;
+  organizationId: string;
+  userId: string;
+  editable: boolean;
 }) {
   const { t } = useTranslation();
   const sections = new Map<string, ShoppingListProjection["rows"]>();
@@ -154,27 +166,20 @@ function ShoppingDetail({
         {t("shopping.back")}
       </button>
       <h3 id="shopping-detail-heading">{shoppingList.name}</h3>
-      <p>{t("shopping.readOnly")}</p>
       {shoppingList.rows.length ? (
         [...sections].map(([section, rows]) => (
           <section className="shopping-section" key={section}>
             <h4>{section}</h4>
             <ul className="shopping-rows">
               {rows.map((row) => (
-                <li key={row.id}>
-                  <h5>{row.ingredientName}</h5>
-                  <dl>
-                    <div>
-                      <dt>{t("shopping.remaining")}</dt>
-                      <dd>
-                        {t("shopping.quantity", {
-                          amount: row.remaining,
-                          unit: row.unit,
-                        })}
-                      </dd>
-                    </div>
-                  </dl>
-                </li>
+                <ShoppingRowControls
+                  editable={editable}
+                  key={row.id}
+                  organizationId={organizationId}
+                  row={row}
+                  shoppingListId={shoppingList.id}
+                  userId={userId}
+                />
               ))}
             </ul>
           </section>
@@ -183,6 +188,192 @@ function ShoppingDetail({
         <p>{t("shopping.noRows")}</p>
       )}
     </section>
+  );
+}
+
+function ShoppingRowControls({
+  editable,
+  organizationId,
+  row,
+  shoppingListId,
+  userId,
+}: {
+  editable: boolean;
+  organizationId: string;
+  row: ShoppingListProjection["rows"][number];
+  shoppingListId: string;
+  userId: string;
+}) {
+  const { t } = useTranslation();
+  const [error, setError] = useState(false);
+  const [availableSupply, setAvailableSupply] = useState(row.availableSupply);
+  const [manualTarget, setManualTarget] = useState(
+    row.manualPurchaseTarget ?? row.target,
+  );
+  useEffect(
+    () => setAvailableSupply(row.availableSupply),
+    [row.availableSupply],
+  );
+  useEffect(
+    () => setManualTarget(row.manualPurchaseTarget ?? row.target),
+    [row.manualPurchaseTarget, row.target],
+  );
+  const input = { shoppingListId, shoppingIngredientRowId: row.id };
+  async function run(work: () => Promise<void>) {
+    try {
+      await work();
+      setError(false);
+    } catch {
+      setError(true);
+    }
+  }
+  return (
+    <li>
+      <div>
+        <h5>{row.ingredientName}</h5>
+        <dl>
+          <div>
+            <dt>{t("shopping.remaining")}</dt>
+            <dd>
+              {t("shopping.quantity", {
+                amount: row.remaining,
+                unit: row.unit,
+              })}
+            </dd>
+          </div>
+          <div>
+            <dt>{t("shopping.target")}</dt>
+            <dd>
+              {t("shopping.quantity", { amount: row.target, unit: row.unit })}
+            </dd>
+          </div>
+        </dl>
+      </div>
+      {editable ? (
+        <div className="shopping-row-controls">
+          <label>
+            {t("shopping.availableSupply", { unit: row.unit })}
+            <input
+              onChange={(event) =>
+                setAvailableSupply(event.currentTarget.value)
+              }
+              inputMode="decimal"
+              min="0"
+              onBlur={() =>
+                availableSupply === row.availableSupply
+                  ? undefined
+                  : void run(() =>
+                      queueShoppingAvailableSupply(userId, organizationId, {
+                        ...input,
+                        quantity: availableSupply,
+                      }),
+                    )
+              }
+              type="number"
+              value={availableSupply}
+            />
+          </label>
+          <label>
+            {t("shopping.manualTarget", { unit: row.unit })}
+            <input
+              onChange={(event) => setManualTarget(event.currentTarget.value)}
+              inputMode="decimal"
+              min="0"
+              onBlur={() =>
+                manualTarget === (row.manualPurchaseTarget ?? row.target)
+                  ? undefined
+                  : void run(() =>
+                      queueShoppingManualPurchaseTarget(
+                        userId,
+                        organizationId,
+                        {
+                          ...input,
+                          quantity: manualTarget || null,
+                        },
+                      ),
+                    )
+              }
+              type="number"
+              value={manualTarget}
+            />
+          </label>
+          <label className="shopping-row-controls__fulfilled">
+            <input
+              checked={row.fulfilled}
+              disabled={row.notRequired}
+              onChange={(event) =>
+                void run(() =>
+                  queueShoppingRowFulfilment(userId, organizationId, {
+                    ...input,
+                    fulfilled: event.currentTarget.checked,
+                  }),
+                )
+              }
+              type="checkbox"
+            />
+            {row.notRequired
+              ? t("shopping.notRequired")
+              : t("shopping.fulfilled")}
+          </label>
+          {row.manualPurchaseTarget !== null ? (
+            <button
+              onClick={() =>
+                void run(() =>
+                  queueShoppingManualPurchaseTarget(userId, organizationId, {
+                    ...input,
+                    quantity: null,
+                  }),
+                )
+              }
+              type="button"
+            >
+              {t("shopping.clearManualTarget")}
+            </button>
+          ) : null}
+          {row.contributions.length ? (
+            <details className="shopping-contributions">
+              <summary>{t("shopping.contributions")}</summary>
+              <ul>
+                {row.contributions.map((contribution) => (
+                  <li key={contribution.id}>
+                    <label>
+                      <input
+                        checked={contribution.fulfilled}
+                        onChange={(event) =>
+                          void run(() =>
+                            queueShoppingContributionFulfilment(
+                              userId,
+                              organizationId,
+                              {
+                                ...input,
+                                shoppingContributionId: contribution.id,
+                                fulfilled: event.currentTarget.checked,
+                              },
+                            ),
+                          )
+                        }
+                        type="checkbox"
+                      />
+                      {contribution.source ?? t("shopping.scheduledRecipe")} ·{" "}
+                      {t("shopping.quantity", {
+                        amount: contribution.generated,
+                        unit: row.unit,
+                      })}
+                      {contribution.retired
+                        ? ` · ${t("shopping.retired")}`
+                        : null}
+                    </label>
+                  </li>
+                ))}
+              </ul>
+            </details>
+          ) : null}
+          {error ? (
+            <p role="alert">{t("shopping.errors.unavailable")}</p>
+          ) : null}
+        </div>
+      ) : null}
+    </li>
   );
 }
 
@@ -294,7 +485,13 @@ export function EventShopping({
       ) : null}
       {shoppingListId ? (
         shoppingList ? (
-          <ShoppingDetail onBack={onBack} shoppingList={shoppingList} />
+          <ShoppingDetail
+            editable={planner.lifecycle === "active"}
+            onBack={onBack}
+            organizationId={organizationId}
+            shoppingList={shoppingList}
+            userId={userId}
+          />
         ) : (
           <div role="alert">
             <p>{t("shopping.listUnavailable")}</p>

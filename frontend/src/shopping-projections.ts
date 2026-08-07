@@ -13,8 +13,22 @@ export type ShoppingRow = {
   id: string;
   ingredientName: string;
   sectionName: string | null;
+  availableSupply: string;
+  manualPurchaseTarget: string | null;
+  target: string;
   remaining: string;
   unit: string;
+  fulfilled: boolean;
+  notRequired: boolean;
+  contributions: ShoppingContribution[];
+};
+
+export type ShoppingContribution = {
+  id: string;
+  generated: string;
+  fulfilled: boolean;
+  retired: boolean;
+  source: string | null;
 };
 
 export type ShoppingListProjection = ShoppingListSummary & {
@@ -26,9 +40,9 @@ function value(record: CanonicalRecord, key: string): string | undefined {
   return typeof item === "string" ? item : undefined;
 }
 
-type Decimal = { value: bigint; scale: number };
+export type Decimal = { value: bigint; scale: number };
 
-function decimal(value: unknown): Decimal | undefined {
+export function decimal(value: unknown): Decimal | undefined {
   if (typeof value !== "string" || !/^\d+(?:\.\d+)?$/.test(value))
     return undefined;
   const [whole, fraction = ""] = value.split(".");
@@ -39,7 +53,7 @@ function atScale(value: Decimal, scale: number): bigint {
   return value.value * 10n ** BigInt(scale - value.scale);
 }
 
-function add(values: Decimal[]): Decimal {
+export function add(values: Decimal[]): Decimal {
   const scale = Math.max(0, ...values.map((value) => value.scale));
   return {
     value: values.reduce((sum, value) => sum + atScale(value, scale), 0n),
@@ -47,7 +61,7 @@ function add(values: Decimal[]): Decimal {
   };
 }
 
-function maxZeroSubtract(left: Decimal, right: Decimal): Decimal {
+export function maxZeroSubtract(left: Decimal, right: Decimal): Decimal {
   const scale = Math.max(left.scale, right.scale);
   return {
     value:
@@ -58,7 +72,7 @@ function maxZeroSubtract(left: Decimal, right: Decimal): Decimal {
   };
 }
 
-function print(value: Decimal): string {
+export function print(value: Decimal): string {
   const digits = value.value.toString().padStart(value.scale + 1, "0");
   if (!value.scale) return digits;
   return `${digits.slice(0, -value.scale)}.${digits.slice(-value.scale)}`
@@ -224,17 +238,18 @@ export async function readShoppingList(
           value(row, "id") === row.entityId,
       )
       .map((row) => {
-        const contributionIds = contributions
-          .filter(
-            (contribution) =>
-              value(contribution, "shopping_list_id") === shoppingListId &&
-              value(contribution, "shopping_ingredient_row_id") ===
-                row.entityId &&
-              value(contribution, "organization_id") === organizationId &&
-              value(contribution, "event_id") === eventId &&
-              value(contribution, "id") === contribution.entityId,
-          )
-          .map((contribution) => contribution.entityId);
+        const rowContributions = contributions.filter(
+          (contribution) =>
+            value(contribution, "shopping_list_id") === shoppingListId &&
+            value(contribution, "shopping_ingredient_row_id") ===
+              row.entityId &&
+            value(contribution, "organization_id") === organizationId &&
+            value(contribution, "event_id") === eventId &&
+            value(contribution, "id") === contribution.entityId,
+        );
+        const contributionIds = rowContributions.map(
+          (contribution) => contribution.entityId,
+        );
         const generated = add(
           snapshots
             .filter(
@@ -270,8 +285,8 @@ export async function readShoppingList(
             : decimal(row.fields.manual_purchase_target);
         const unit = unitNames.get(value(row, "calculation_unit_id") ?? "");
         const target =
-          manual ??
-          (available ? maxZeroSubtract(generated, available) : undefined);
+          manual ?? maxZeroSubtract(generated, available ?? add([]));
+        const remaining = maxZeroSubtract(target, credit);
         const override = value(row, "store_section_override_id");
         return {
           id: row.entityId,
@@ -280,14 +295,44 @@ export async function readShoppingList(
             (override && sectionNames.get(override)) ??
             value(row, "default_store_section_name") ??
             null,
-          remaining: target
-            ? print(maxZeroSubtract(target, credit))
-            : undefined,
+          availableSupply: print(available ?? add([])),
+          manualPurchaseTarget: manual ? print(manual) : null,
+          target: print(target),
+          remaining: print(remaining),
           unit,
+          fulfilled: target.value > 0n && remaining.value === 0n,
+          notRequired: target.value === 0n,
+          contributions: rowContributions.map((contribution) => {
+            const snapshot = snapshots.find(
+              (item) =>
+                value(item, "generation_revision_id") === currentRevisionId &&
+                value(item, "shopping_contribution_id") ===
+                  contribution.entityId,
+            );
+            const details = snapshot?.fields.source_details;
+            const source =
+              details && typeof details === "object" && !Array.isArray(details)
+                ? (details as Record<string, unknown>).recipe_name
+                : undefined;
+            const amount = snapshot
+              ? decimal(snapshot.fields.generated_quantity)
+              : undefined;
+            return {
+              id: contribution.entityId,
+              generated: print(amount ?? add([])),
+              fulfilled:
+                (decimal(contribution.fields.fulfilment_credit)?.value ?? 0n) >
+                0n,
+              retired:
+                contribution.lifecycle === "retired" ||
+                snapshot?.fields.active_in_revision !== true,
+              source: typeof source === "string" ? source : null,
+            };
+          }),
         };
       })
       .filter((row): row is ShoppingRow =>
-        Boolean(row.ingredientName && row.remaining && row.unit),
+        Boolean(row.ingredientName && row.unit),
       )
       .sort(
         (left, right) =>
