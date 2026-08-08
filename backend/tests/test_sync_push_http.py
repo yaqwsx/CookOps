@@ -15,6 +15,8 @@ from test_sync_pull_http import sync_database as _sync_database_fixture
 from cookops.main import create_app
 from cookops.persistence.models import (
     ClientInstallation,
+    Event,
+    EventArchiveSnapshot,
     EventDay,
     EventMealRole,
     FieldClock,
@@ -270,6 +272,8 @@ def _scheduled_ingredient_override_command(
         "quantity": "2.5",
     }
     values.update(payload)
+    if values["override_kind"] == "add":
+        values.pop("target_line_key", None)
     command = _command(
         mutation_id=mutation_id,
         event_id=event_id,
@@ -918,7 +922,15 @@ def test_push_schedules_a_recipe_through_the_typed_shared_command(
     assert isinstance(grams_id, UUID)
     assert isinstance(actor_id, UUID)
     ingredient_id, ingredient_version_id, line_key = uuid4(), uuid4(), uuid4()
+    added_ingredient_id, added_ingredient_version_id = uuid4(), uuid4()
+    foreign_ingredient_id, foreign_ingredient_version_id = uuid4(), uuid4()
     with sync_database.engine.begin() as connection:
+        other_actor_id = connection.scalar(
+            select(OrganizationMembership.user_id).where(
+                OrganizationMembership.organization_id == sync_database.other_organization_id
+            )
+        )
+        assert isinstance(other_actor_id, UUID)
         connection.execute(
             insert(Ingredient).values(
                 id=ingredient_id,
@@ -938,6 +950,48 @@ def test_push_schedules_a_recipe_through_the_typed_shared_command(
                 mass_per_canonical_quantity=Decimal("1"),
                 published_by_user_id=actor_id,
             )
+        )
+        connection.execute(
+            insert(Ingredient),
+            [
+                {
+                    "id": added_ingredient_id,
+                    "organization_id": sync_database.organization_id,
+                    "current_version_id": added_ingredient_version_id,
+                    "created_by_user_id": actor_id,
+                },
+                {
+                    "id": foreign_ingredient_id,
+                    "organization_id": sync_database.other_organization_id,
+                    "current_version_id": foreign_ingredient_version_id,
+                    "created_by_user_id": other_actor_id,
+                },
+            ],
+        )
+        connection.execute(
+            insert(IngredientVersion),
+            [
+                {
+                    "id": added_ingredient_version_id,
+                    "organization_id": sync_database.organization_id,
+                    "ingredient_id": added_ingredient_id,
+                    "name": "Added ingredient",
+                    "normalized_name": "added ingredient",
+                    "canonical_unit_id": grams_id,
+                    "mass_per_canonical_quantity": Decimal("1"),
+                    "published_by_user_id": actor_id,
+                },
+                {
+                    "id": foreign_ingredient_version_id,
+                    "organization_id": sync_database.other_organization_id,
+                    "ingredient_id": foreign_ingredient_id,
+                    "name": "Foreign ingredient",
+                    "normalized_name": "foreign ingredient",
+                    "canonical_unit_id": grams_id,
+                    "mass_per_canonical_quantity": Decimal("1"),
+                    "published_by_user_id": other_actor_id,
+                },
+            ],
         )
     with TestClient(create_app(_settings()), base_url="https://testserver") as client:
         _sign_in(client, "dummy-member")
@@ -1063,6 +1117,76 @@ def test_push_schedules_a_recipe_through_the_typed_shared_command(
         assert client.post("/api/v1/sync/push", json=override_body).json()["outcomes"][0][
             "replayed"
         ]
+        added_override = _scheduled_ingredient_override_command(
+            mutation_id=uuid4(),
+            event_id=event_id,
+            scheduled_recipe_id=scheduled_recipe_id,
+            line_key=line_key,
+            override_kind="add",
+            ingredient_id=str(added_ingredient_id),
+            ingredient_version_id=str(added_ingredient_version_id),
+            include_in_portion_weight=True,
+            position_key="z",
+        )
+        added_body = _body(sync_database, installation_id, [added_override])
+        added_outcome = client.post("/api/v1/sync/push", json=added_body).json()["outcomes"][0]
+        assert added_outcome["status"] == "accepted"
+        assert client.post("/api/v1/sync/push", json=added_body).json()["outcomes"][0][
+            "replayed"
+        ]
+        malformed_added = _scheduled_ingredient_override_command(
+            mutation_id=uuid4(),
+            event_id=event_id,
+            scheduled_recipe_id=scheduled_recipe_id,
+            line_key=line_key,
+            override_kind="add",
+            ingredient_id=str(added_ingredient_id),
+            ingredient_version_id=str(added_ingredient_version_id),
+            include_in_portion_weight="true",
+            position_key="z",
+        )
+        assert (
+            client.post(
+                "/api/v1/sync/push", json=_body(sync_database, installation_id, [malformed_added])
+            ).json()["outcomes"][0]["error"]["code"]
+            == "validation_failed"
+        )
+        mixed_added = _scheduled_ingredient_override_command(
+            mutation_id=uuid4(),
+            event_id=event_id,
+            scheduled_recipe_id=scheduled_recipe_id,
+            line_key=line_key,
+            override_kind="add",
+            ingredient_id=str(added_ingredient_id),
+            ingredient_version_id=str(added_ingredient_version_id),
+            include_in_portion_weight=True,
+            position_key="z",
+        )
+        cast(dict[str, object], mixed_added["payload"])["target_line_key"] = str(line_key)
+        assert (
+            client.post(
+                "/api/v1/sync/push", json=_body(sync_database, installation_id, [mixed_added])
+            ).json()["outcomes"][0]["error"]["code"]
+            == "validation_failed"
+        )
+        cross_organization_add = _scheduled_ingredient_override_command(
+            mutation_id=uuid4(),
+            event_id=event_id,
+            scheduled_recipe_id=scheduled_recipe_id,
+            line_key=line_key,
+            override_kind="add",
+            ingredient_id=str(foreign_ingredient_id),
+            ingredient_version_id=str(foreign_ingredient_version_id),
+            include_in_portion_weight=True,
+            position_key="z",
+        )
+        assert (
+            client.post(
+                "/api/v1/sync/push",
+                json=_body(sync_database, installation_id, [cross_organization_add]),
+            ).json()["outcomes"][0]["error"]["code"]
+            == "validation_failed"
+        )
         malformed_override = _scheduled_ingredient_override_command(
             mutation_id=uuid4(),
             event_id=event_id,
@@ -1168,6 +1292,46 @@ def test_push_schedules_a_recipe_through_the_typed_shared_command(
                 "/api/v1/sync/push", json=_body(sync_database, installation_id, [invalid])
             ).json()["outcomes"][0]["error"]["code"]
             == "validation_failed"
+        )
+        snapshot_id = uuid4()
+        with sync_database.engine.begin() as connection:
+            connection.execute(
+                insert(EventArchiveSnapshot).values(
+                    id=snapshot_id,
+                    event_id=event_id,
+                    archive_schema_version=1,
+                    payload={"event": {}},
+                    content_hash=b"s" * 32,
+                    attachment_manifest=[],
+                    created_by_user_id=actor_id,
+                )
+            )
+            connection.execute(
+                update(Event)
+                .where(Event.id == event_id)
+                .values(
+                    lifecycle="archived",
+                    current_archive_snapshot_id=snapshot_id,
+                    archived_at=datetime.now(UTC),
+                    archived_by_user_id=actor_id,
+                )
+            )
+        archived_add = _scheduled_ingredient_override_command(
+            mutation_id=uuid4(),
+            event_id=event_id,
+            scheduled_recipe_id=scheduled_recipe_id,
+            line_key=line_key,
+            override_kind="add",
+            ingredient_id=str(added_ingredient_id),
+            ingredient_version_id=str(added_ingredient_version_id),
+            include_in_portion_weight=True,
+            position_key="z",
+        )
+        assert (
+            client.post(
+                "/api/v1/sync/push", json=_body(sync_database, installation_id, [archived_add])
+            ).json()["outcomes"][0]["error"]["code"]
+            == "archived_event"
         )
     with sync_database.engine.connect() as connection:
         assert connection.execute(

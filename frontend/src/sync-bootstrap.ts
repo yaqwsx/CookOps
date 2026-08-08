@@ -13,7 +13,7 @@ import {
 } from "./scheduled-recipe";
 import { replayRecipeVersionPublish } from "./recipe-publish";
 import { replayIngredientCreate } from "./ingredient-create";
-import { replayReplacementOverride } from "./scheduled-ingredient-override";
+import { replayScheduledIngredientOverride } from "./scheduled-ingredient-override";
 import { replayReceiptCommand } from "./receipt-metadata";
 import { replayCatalogConfiguration } from "./catalog-configuration";
 
@@ -250,7 +250,7 @@ async function replayOptimisticCommands(
     if (command.commandType === "scheduled_recipe.context")
       await replayScheduledRecipeContext(userId, organizationId, command);
     if (command.commandType === "scheduled_recipe.ingredient_override")
-      await replayReplacementOverride(userId, organizationId, command);
+      await replayScheduledIngredientOverride(userId, organizationId, command);
     if (command.commandType.startsWith("receipt.")) {
       await replayReceiptCommand(userId, organizationId, command);
     }

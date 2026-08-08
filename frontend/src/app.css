@@ -814,6 +814,10 @@ h1 {
   background: #eee8de;
 }
 
+.planner-local-ingredients {
+  color: #6f4f37;
+}
+
 @media (max-width: 46rem) {
   .app-header {
     grid-template-columns: 1fr;

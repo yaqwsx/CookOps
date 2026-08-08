@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it } from "vitest";
 
 import { localDb } from "./local-db";
 import { readEventPlanner } from "./planner-projections";
+import { queueAddedOverride } from "./scheduled-ingredient-override";
 import {
   queueRecipeSchedule,
   queueScheduledRecipeMove,
@@ -231,5 +232,74 @@ describe("offline recipe scheduling", () => {
     await expect(
       readEventPlanner(ids.user, ids.organization, ids.event),
     ).resolves.toMatchObject({ lifecycle: "archived", name: "Cookout" });
+  });
+
+  it("projects an optimistic local added ingredient immediately", async () => {
+    await seed();
+    const scheduledId = "8d8b2b21-c378-4574-9e46-9338c81305ef";
+    const ingredientId = "9d8b2b21-c378-4574-9e46-9338c81305ef";
+    const ingredientVersionId = "ad8b2b21-c378-4574-9e46-9338c81305ef";
+    const base = {
+      userId: ids.user,
+      organizationId: ids.organization,
+      recordSchemaVersion: 1,
+      lifecycle: "active" as const,
+      fieldClocks: {},
+      immutable: false,
+      updatedAt: "2026-08-07T12:00:00.000Z",
+    };
+    await localDb.canonicalRecords.bulkPut([
+      {
+        ...base,
+        entityType: "scheduled_recipe",
+        entityId: scheduledId,
+        fields: {
+          id: scheduledId,
+          organization_id: ids.organization,
+          event_id: ids.event,
+          event_day_id: ids.day,
+          event_meal_role_id: ids.role,
+          recipe_id: ids.recipe,
+          recipe_version_id: ids.version,
+          diner_count: 12,
+          consumption_percentage: "100",
+          selected_scale_amount: "1",
+          position_key: "a",
+        },
+      },
+      {
+        ...base,
+        entityType: "ingredient",
+        entityId: ingredientId,
+        fields: {
+          id: ingredientId,
+          organization_id: ids.organization,
+          current_version_id: ingredientVersionId,
+        },
+      },
+      {
+        ...base,
+        entityType: "ingredient_version",
+        entityId: ingredientVersionId,
+        fields: {
+          id: ingredientVersionId,
+          organization_id: ids.organization,
+          ingredient_id: ingredientId,
+          name: "Paprika",
+        },
+      },
+    ]);
+    await queueAddedOverride(ids.user, ids.organization, {
+      eventId: ids.event,
+      scheduledRecipeId: scheduledId,
+      ingredientId,
+      ingredientVersionId,
+      quantity: "2.5",
+      includeInPortionWeight: true,
+    });
+    const planner = await readEventPlanner(ids.user, ids.organization, ids.event);
+    expect(planner?.scheduled[0]?.localAddedIngredients).toEqual([
+      expect.objectContaining({ name: "Paprika", quantity: "2.5" }),
+    ]);
   });
 });

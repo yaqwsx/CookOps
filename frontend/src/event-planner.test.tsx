@@ -10,12 +10,14 @@ const {
   queueRecipeSchedule,
   queueScheduledRecipeContext,
   queueScheduledRecipeMove,
+  queueAddedOverride,
   pullOrganization,
 } = vi.hoisted(() => ({
   readEventPlanner: vi.fn(),
   queueRecipeSchedule: vi.fn(),
   queueScheduledRecipeContext: vi.fn(),
   queueScheduledRecipeMove: vi.fn(),
+  queueAddedOverride: vi.fn(),
   pullOrganization: vi.fn(),
 }));
 vi.mock("./planner-projections", () => ({ readEventPlanner }));
@@ -24,6 +26,7 @@ vi.mock("./scheduled-recipe", () => ({
   queueScheduledRecipeContext,
   queueScheduledRecipeMove,
 }));
+vi.mock("./scheduled-ingredient-override", () => ({ queueAddedOverride }));
 vi.mock("./sync-bootstrap", () => ({
   pullOrganization,
   SyncRequestError: class SyncRequestError extends Error {},
@@ -220,5 +223,80 @@ describe("EventPlanner", () => {
     expect(
       screen.queryByText("Přesunout", { exact: true }),
     ).not.toBeInTheDocument();
+  });
+
+  it("adds an active catalog ingredient through the typed local override", async () => {
+    await i18n.changeLanguage(defaultLocale);
+    const ingredientId = "7d8b2b21-c378-4574-9e46-9338c81305ef";
+    const ingredientVersionId = "8d8b2b21-c378-4574-9e46-9338c81305ef";
+    const pinnedIngredientId = "9d8b2b21-c378-4574-9e46-9338c81305ef";
+    readEventPlanner.mockResolvedValue({
+      name: "Letní vaření",
+      startDate: "2026-08-10",
+      endDate: "2026-08-10",
+      attendance: 12,
+      lifecycle: "active",
+      days: [{ id: ids.day, date: "2026-08-10", note: null }],
+      roles: [{ id: ids.role, name: "Večeře", position: "a" }],
+      recipes: [],
+      ingredients: [
+        { id: ingredientId, versionId: ingredientVersionId, name: "Paprika" },
+        {
+          id: pinnedIngredientId,
+          versionId: "ad8b2b21-c378-4574-9e46-9338c81305ef",
+          name: "Pinto",
+        },
+      ],
+      scheduled: [
+        {
+          id: ids.recipe,
+          name: "Chili",
+          dinerCount: 12,
+          consumptionPercentage: "100",
+          selectedScaleAmount: "2",
+          dayId: ids.day,
+          roleId: ids.role,
+          position: "a",
+          lines: [{ id: "bd8b2b21-c378-4574-9e46-9338c81305ef", quantity: "1", ingredientId: pinnedIngredientId }],
+          localAddedIngredients: [
+            {
+              id: "cd8b2b21-c378-4574-9e46-9338c81305ef",
+              name: "Paprika",
+              quantity: "1",
+            },
+          ],
+        },
+      ],
+    });
+    pullOrganization.mockResolvedValue(false);
+    const user = userEvent.setup();
+    render(
+      <EventPlanner
+        eventId={ids.event}
+        onUnauthenticated={vi.fn()}
+        organizationId={ids.organization}
+        userId="a6a58bd6-214e-49af-8fae-e5f974bf8e08"
+      />,
+    );
+    await user.click(await screen.findByText("Přidat místní surovinu"));
+    expect(screen.getByText("Místní surovina: Paprika · 1")).toBeVisible();
+    expect(screen.queryByRole("option", { name: "Pinto" })).not.toBeInTheDocument();
+    const addQuantity = screen.getAllByLabelText("Množství").at(-1);
+    if (!addQuantity) throw new Error("Added ingredient quantity is missing");
+    await user.clear(addQuantity);
+    await user.type(addQuantity, "2.5");
+    await user.click(screen.getByRole("button", { name: "Přidat surovinu" }));
+    expect(queueAddedOverride).toHaveBeenCalledWith(
+      "a6a58bd6-214e-49af-8fae-e5f974bf8e08",
+      ids.organization,
+      {
+        eventId: ids.event,
+        scheduledRecipeId: ids.recipe,
+        ingredientId,
+        ingredientVersionId,
+        quantity: "2.5",
+        includeInPortionWeight: true,
+      },
+    );
   });
 });

@@ -20,7 +20,10 @@ import {
   queueScheduledRecipeContext,
   queueScheduledRecipeMove,
 } from "./scheduled-recipe";
-import { queueReplacementOverride } from "./scheduled-ingredient-override";
+import {
+  queueAddedOverride,
+  queueReplacementOverride,
+} from "./scheduled-ingredient-override";
 import { pullOrganization, SyncRequestError } from "./sync-bootstrap";
 
 type PlannerState = "loading" | "ready" | "offline" | "error";
@@ -528,6 +531,102 @@ function ReplacementOverride({
   );
 }
 
+function AddedOverride({
+  eventId,
+  active,
+  organizationId,
+  userId,
+  planner,
+  scheduled,
+}: {
+  eventId: string;
+  active: boolean;
+  organizationId: string;
+  userId: string;
+  planner: EventPlannerProjection;
+  scheduled: EventPlannerProjection["scheduled"][number];
+}) {
+  const { t } = useTranslation();
+  const ingredients = (planner.ingredients ?? []).filter(
+    (ingredient) =>
+      !scheduled.lines?.some((line) => line.ingredientId === ingredient.id),
+  );
+  const [ingredientId, setIngredientId] = useState(ingredients[0]?.id ?? "");
+  const [amount, setAmount] = useState("0");
+  const [included, setIncluded] = useState(true);
+  const [error, setError] = useState(false);
+  const inFlight = useRef(false);
+  useEffect(() => {
+    setIngredientId((current) =>
+      ingredients.some((item) => item.id === current)
+        ? current
+        : (ingredients[0]?.id ?? ""),
+    );
+  }, [ingredients]);
+  if (!active || !ingredients.length) return null;
+  const ingredient = ingredients.find((item) => item.id === ingredientId);
+  async function submit(event: React.FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (inFlight.current || !ingredient) return;
+    inFlight.current = true;
+    try {
+      await queueAddedOverride(userId, organizationId, {
+        eventId,
+        scheduledRecipeId: scheduled.id,
+        ingredientId: ingredient.id,
+        ingredientVersionId: ingredient.versionId,
+        quantity: amount,
+        includeInPortionWeight: included,
+      });
+      setError(false);
+    } catch {
+      setError(true);
+    } finally {
+      inFlight.current = false;
+    }
+  }
+  return (
+    <details>
+      <summary>{t("planner.addIngredientOverride")}</summary>
+      <form onSubmit={(event) => void submit(event)}>
+        <label>
+          {t("planner.ingredient")}
+          <select
+            value={ingredientId}
+            onChange={(event) => setIngredientId(event.target.value)}
+          >
+            {ingredients.map((item) => (
+              <option key={item.id} value={item.id}>
+                {item.name}
+              </option>
+            ))}
+          </select>
+        </label>
+        <label>
+          {t("planner.quantity")}
+          <input
+            value={amount}
+            onChange={(event) => setAmount(event.target.value)}
+            inputMode="decimal"
+            pattern="(?:0|[1-9][0-9]*)(?:\.[0-9]+)?"
+            required
+          />
+        </label>
+        <label>
+          <input
+            checked={included}
+            onChange={(event) => setIncluded(event.target.checked)}
+            type="checkbox"
+          />
+          {t("planner.includeInPortionWeight")}
+        </label>
+        <button type="submit">{t("planner.saveAddedIngredient")}</button>
+        {error ? <p role="alert">{t("planner.errors.unavailable")}</p> : null}
+      </form>
+    </details>
+  );
+}
+
 export function EventPlanner({
   eventId,
   organizationId,
@@ -674,6 +773,26 @@ export function EventPlanner({
                             active={planner.lifecycle === "active"}
                             eventId={eventId}
                             organizationId={organizationId}
+                            userId={userId}
+                            scheduled={item}
+                          />
+                          {(item.localAddedIngredients?.length ?? 0) ? (
+                            <ul className="planner-local-ingredients">
+                              {(item.localAddedIngredients ?? []).map((ingredient) => (
+                                <li key={ingredient.id}>
+                                  {t("planner.localIngredient", {
+                                    name: ingredient.name,
+                                    quantity: ingredient.quantity,
+                                  })}
+                                </li>
+                              ))}
+                            </ul>
+                          ) : null}
+                          <AddedOverride
+                            active={planner.lifecycle === "active"}
+                            eventId={eventId}
+                            organizationId={organizationId}
+                            planner={planner}
                             userId={userId}
                             scheduled={item}
                           />

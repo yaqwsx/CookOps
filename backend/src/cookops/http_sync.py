@@ -6,7 +6,7 @@ import json
 from dataclasses import dataclass
 from datetime import date, datetime
 from decimal import Decimal
-from typing import Literal
+from typing import Annotated, Literal
 from uuid import UUID
 
 from fastapi import APIRouter, HTTPException, Request, WebSocket, WebSocketDisconnect, status
@@ -16,6 +16,7 @@ from pydantic import (
     Field,
     StrictBool,
     StrictInt,
+    TypeAdapter,
     ValidationError,
     field_validator,
 )
@@ -458,15 +459,13 @@ class ScheduledRecipeAttendancePayload(BaseModel):
     logical_operation_id: UUID | None = None
 
 
-class ScheduledIngredientOverridePayload(BaseModel):
+class _ScheduledIngredientOverridePayload(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     override_id: UUID
     event_id: UUID
     scheduled_recipe_id: UUID
     operation: Literal["set"]
-    override_kind: Literal["replace"]
-    target_line_key: UUID
     quantity: Decimal
     note: str | None = None
     logical_operation_id: UUID | None = None
@@ -477,6 +476,27 @@ class ScheduledIngredientOverridePayload(BaseModel):
         if not isinstance(value, str):
             raise ValueError("must be a decimal string")
         return value
+
+
+class ReplacementScheduledIngredientOverridePayload(_ScheduledIngredientOverridePayload):
+    override_kind: Literal["replace"]
+    target_line_key: UUID
+
+
+class AddedScheduledIngredientOverridePayload(_ScheduledIngredientOverridePayload):
+    override_kind: Literal["add"]
+    ingredient_id: UUID
+    ingredient_version_id: UUID
+    include_in_portion_weight: StrictBool
+    position_key: str
+
+
+ScheduledIngredientOverridePayload = Annotated[
+    ReplacementScheduledIngredientOverridePayload
+    | AddedScheduledIngredientOverridePayload,
+    Field(discriminator="override_kind"),
+]
+scheduled_ingredient_override_payload_adapter = TypeAdapter(ScheduledIngredientOverridePayload)
 
 
 class ReceiptMetadataPayload(BaseModel):
@@ -885,7 +905,9 @@ def _push_command(command: PushCommandRequest, organization_id: UUID) -> SyncCom
                 logical_operation_id=payload.logical_operation_id,
             )
         if command.command_kind == "scheduled_recipe.ingredient_override":
-            override_payload = ScheduledIngredientOverridePayload.model_validate(command.payload)
+            override_payload = scheduled_ingredient_override_payload_adapter.validate_python(
+                command.payload
+            )
             return SetScheduledIngredientOverrideCommand(
                 mutation_id=command.mutation_id,
                 override_id=override_payload.override_id,
@@ -893,10 +915,16 @@ def _push_command(command: PushCommandRequest, organization_id: UUID) -> SyncCom
                 event_id=override_payload.event_id,
                 scheduled_recipe_id=override_payload.scheduled_recipe_id,
                 operation=override_payload.operation,
-                override_kind="replace",
-                target_line_key=override_payload.target_line_key,
+                override_kind=override_payload.override_kind,
+                target_line_key=getattr(override_payload, "target_line_key", None),
+                ingredient_id=getattr(override_payload, "ingredient_id", None),
+                ingredient_version_id=getattr(override_payload, "ingredient_version_id", None),
                 quantity=override_payload.quantity,
+                include_in_portion_weight=getattr(
+                    override_payload, "include_in_portion_weight", None
+                ),
                 note=override_payload.note,
+                position_key=getattr(override_payload, "position_key", None),
                 client_wall_time=command.client_wall_time,
                 logical_operation_id=override_payload.logical_operation_id,
             )

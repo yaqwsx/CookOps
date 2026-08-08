@@ -2,6 +2,7 @@ import type { CanonicalRecord } from "./local-db";
 import { readVisibleRecords } from "./visible-records";
 
 export type PlannerRecipe = { id: string; versionId: string; name: string };
+export type PlannerIngredient = { id: string; versionId: string; name: string };
 export type PlannerDay = { id: string; date: string; note: string | null };
 export type PlannerRole = { id: string; name: string; position: string };
 export type PlannedRecipe = {
@@ -13,7 +14,8 @@ export type PlannedRecipe = {
   consumptionPercentage: string;
   selectedScaleAmount: string;
   position: string;
-  lines: { id: string; quantity: string }[];
+  lines: { id: string; quantity: string; ingredientId?: string }[];
+  localAddedIngredients: { id: string; name: string; quantity: string }[];
 };
 export type EventPlannerProjection = {
   name: string;
@@ -24,6 +26,7 @@ export type EventPlannerProjection = {
   days: PlannerDay[];
   roles: PlannerRole[];
   recipes: PlannerRecipe[];
+  ingredients: PlannerIngredient[];
   scheduled: PlannedRecipe[];
 };
 
@@ -61,6 +64,9 @@ export async function readEventPlanner(
     versionRecords,
     lineRecords,
     scheduledRecords,
+    ingredientRecords,
+    ingredientVersionRecords,
+    overrideRecords,
   ] = await Promise.all([
     readVisibleRecords(userId, organizationId, "event", true),
     readVisibleRecords(userId, organizationId, "event_day"),
@@ -69,6 +75,9 @@ export async function readEventPlanner(
     readVisibleRecords(userId, organizationId, "recipe_version"),
     readVisibleRecords(userId, organizationId, "recipe_ingredient_line"),
     readVisibleRecords(userId, organizationId, "scheduled_recipe"),
+    readVisibleRecords(userId, organizationId, "ingredient"),
+    readVisibleRecords(userId, organizationId, "ingredient_version"),
+    readVisibleRecords(userId, organizationId, "scheduled_ingredient_override"),
   ]);
   const event = eventRecords.find(
     (record) =>
@@ -168,15 +177,82 @@ export async function readEventPlanner(
         left.name.localeCompare(right.name) || left.id.localeCompare(right.id),
     );
   const names = new Map(recipes.map((recipe) => [recipe.id, recipe.name]));
-  const lines = new Map<string, { id: string; quantity: string }[]>();
+  const ingredientVersions = new Map(
+    ingredientVersionRecords
+      .filter(
+        (record) =>
+          hasId(record) && belongsToOrganization(record, organizationId),
+      )
+      .map((record) => [record.entityId, record]),
+  );
+  const ingredients = ingredientRecords
+    .filter(
+      (record) => hasId(record) && belongsToOrganization(record, organizationId),
+    )
+    .map((record) => {
+      const versionId = value(record, "current_version_id");
+      const version = versionId ? ingredientVersions.get(versionId) : undefined;
+      return {
+        id: record.entityId,
+        versionId,
+        name:
+          version && value(version, "ingredient_id") === record.entityId
+            ? value(version, "name")
+            : undefined,
+      };
+    })
+    .filter((item): item is PlannerIngredient =>
+      Boolean(
+        item.name &&
+          item.versionId &&
+          uuid.test(item.id) &&
+          uuid.test(item.versionId),
+      ),
+    )
+    .sort(
+      (left, right) =>
+        left.name.localeCompare(right.name) || left.id.localeCompare(right.id),
+    );
+  const lines = new Map<
+    string,
+    { id: string; quantity: string; ingredientId?: string }[]
+  >();
   for (const record of lineRecords) {
     const versionId = value(record, "recipe_version_id");
     const baseQuantity = value(record, "base_quantity");
     const lineKey = value(record, "line_key");
+    const ingredientId = value(
+      ingredientVersions.get(value(record, "ingredient_version_id") ?? "") ?? record,
+      "ingredient_id",
+    );
     if (hasId(record) && versionId && baseQuantity && lineKey && uuid.test(lineKey))
       lines.set(versionId, [
         ...(lines.get(versionId) ?? []),
-        { id: lineKey, quantity: baseQuantity },
+        { id: lineKey, quantity: baseQuantity, ingredientId },
+      ]);
+  }
+  const localAddedIngredients = new Map<
+    string,
+    { id: string; name: string; quantity: string }[]
+  >();
+  for (const record of overrideRecords) {
+    const scheduledRecipeId = value(record, "scheduled_recipe_id");
+    const quantity = value(record, "quantity");
+    const version = ingredientVersions.get(
+      value(record, "ingredient_version_id") ?? "",
+    );
+    const name = version && value(version, "name");
+    if (
+      hasId(record) &&
+      value(record, "event_id") === eventId &&
+      record.fields.override_kind === "add" &&
+      scheduledRecipeId &&
+      quantity &&
+      name
+    )
+      localAddedIngredients.set(scheduledRecipeId, [
+        ...(localAddedIngredients.get(scheduledRecipeId) ?? []),
+        { id: record.entityId, name, quantity },
       ]);
   }
   const scheduled = scheduledRecords
@@ -192,6 +268,7 @@ export async function readEventPlanner(
       roleId: value(record, "event_meal_role_id"),
       name: names.get(value(record, "recipe_id") ?? ""),
       lines: lines.get(value(record, "recipe_version_id") ?? "") ?? [],
+      localAddedIngredients: localAddedIngredients.get(record.entityId) ?? [],
       dinerCount: record.fields.diner_count,
       consumptionPercentage: value(record, "consumption_percentage"),
       selectedScaleAmount: value(record, "selected_scale_amount"),
@@ -224,6 +301,7 @@ export async function readEventPlanner(
     days,
     roles,
     recipes,
+    ingredients,
     scheduled,
   };
 }
