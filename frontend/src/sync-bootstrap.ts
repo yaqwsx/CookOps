@@ -16,7 +16,10 @@ import { replayIngredientCreate } from "./ingredient-create";
 import { replayScheduledIngredientOverride } from "./scheduled-ingredient-override";
 import { replayReceiptCommand } from "./receipt-metadata";
 import { replayCatalogConfiguration } from "./catalog-configuration";
-import { replayAdHocShoppingItem } from "./ad-hoc-shopping-item";
+import {
+  replayAdHocShoppingItem,
+  replayAdHocShoppingItemFulfilment,
+} from "./ad-hoc-shopping-item";
 
 const supportedEntityKinds = new Set([
   "organization",
@@ -263,6 +266,13 @@ async function replayOptimisticCommands(
         await replayAdHocShoppingItem(userId, organizationId, command);
       } catch {
         // A pending item targeting a now-archived list remains recoverable.
+      }
+    }
+    if (command.commandType === "shopping_list.set_ad_hoc_item_fulfilment") {
+      try {
+        await replayAdHocShoppingItemFulfilment(userId, organizationId, command);
+      } catch {
+        // A pending checkbox targeting a retired item stays recoverable.
       }
     }
     const entityId =

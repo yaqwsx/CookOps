@@ -39,6 +39,7 @@ export type AdHocShoppingItem = {
   unit: string;
   sectionName: string | null;
   note: string | null;
+  fulfilled: boolean;
 };
 
 export type ShoppingInputOption = { id: string; name: string };
@@ -296,6 +297,9 @@ export async function readShoppingList(
             sectionName:
               sectionNames.get(value(item, "store_section_id") ?? "") ?? null,
             note: value(item, "note") ?? null,
+            fulfilled:
+              (decimal(item.fields.fulfilment_credit)?.value ?? 0n) >=
+              target.value,
           },
         ];
       })

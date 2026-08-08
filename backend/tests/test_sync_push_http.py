@@ -782,6 +782,52 @@ def test_push_creates_an_ad_hoc_item_with_scoped_dependencies_and_replays(
             ).json()["outcomes"][0]["replayed"]
             is True
         )
+        fulfilment = _command(
+            mutation_id=uuid4(),
+            event_id=event_id,
+            kind="shopping_list.set_ad_hoc_item_fulfilment",
+            shopping_list_id=str(list_id),
+            ad_hoc_shopping_item_id=str(item_id),
+            fulfilled=True,
+        )
+        outcome = client.post(
+            "/api/v1/sync/push", json=_body(sync_database, installation_id, [fulfilment])
+        ).json()["outcomes"][0]
+        assert outcome["status"] == "accepted" and not outcome["replayed"]
+        assert client.post(
+            "/api/v1/sync/push", json=_body(sync_database, installation_id, [fulfilment])
+        ).json()["outcomes"][0]["replayed"] is True
+        missing_fulfilment = _command(
+            mutation_id=uuid4(),
+            event_id=event_id,
+            kind="shopping_list.set_ad_hoc_item_fulfilment",
+            shopping_list_id=str(list_id),
+            ad_hoc_shopping_item_id=str(uuid4()),
+            fulfilled=True,
+        )
+        first_rejection = client.post(
+            "/api/v1/sync/push",
+            json=_body(sync_database, installation_id, [missing_fulfilment]),
+        ).json()["outcomes"][0]
+        replayed_rejection = client.post(
+            "/api/v1/sync/push",
+            json=_body(sync_database, installation_id, [missing_fulfilment]),
+        ).json()["outcomes"][0]
+        assert first_rejection["error"]["code"] == "validation_failed"
+        assert replayed_rejection["error"] == first_rejection["error"]
+        bootstrap = client.post(
+            "/api/v1/sync/bootstrap",
+            json={"organization_id": str(sync_database.organization_id)},
+        ).json()
+        record = next(
+            item["payload"]["record"]
+            for item in bootstrap["records"]
+            if item["entity_kind"] == "ad_hoc_shopping_item"
+            and item["entity_id"] == str(item_id)
+        )
+        assert record["field_clocks"]["fulfilment_credit"]["winning_mutation_id"] == fulfilment[
+            "mutation_id"
+        ]
         wrong_scope = _command(
             mutation_id=uuid4(),
             event_id=event_id,
@@ -798,11 +844,18 @@ def test_push_creates_an_ad_hoc_item_with_scoped_dependencies_and_replays(
             == "validation_failed"
         )
     with sync_database.engine.connect() as connection:
+        assert connection.scalar(
+            select(Mutation.outcome).where(Mutation.id == UUID(missing_fulfilment["mutation_id"]))
+        ) == "rejected"
         assert connection.execute(
-            select(AdHocShoppingItem.name, AdHocShoppingItem.target_amount).where(
+            select(
+                AdHocShoppingItem.name,
+                AdHocShoppingItem.target_amount,
+                AdHocShoppingItem.fulfilment_credit,
+            ).where(
                 AdHocShoppingItem.id == item_id
             )
-        ).one() == ("Lemons", Decimal("3.5"))
+        ).one() == ("Lemons", Decimal("3.5"), Decimal("3.5"))
 
 
 def test_push_refreshes_shopping_list_through_the_typed_shared_command(

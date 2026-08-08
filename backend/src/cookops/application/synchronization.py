@@ -122,6 +122,8 @@ from cookops.application.shopping_lists import (
     CreateShoppingListResult,
     RefreshShoppingListCommand,
     RefreshShoppingListResult,
+    SetAdHocShoppingItemFulfilmentCommand,
+    SetAdHocShoppingItemFulfilmentResult,
     SetShoppingAvailableSupplyCommand,
     SetShoppingContributionFulfilmentCommand,
     SetShoppingManualPurchaseTargetCommand,
@@ -136,6 +138,7 @@ from cookops.application.shopping_lists import (
     create_ad_hoc_shopping_item,
     create_shopping_list,
     refresh_shopping_list,
+    set_ad_hoc_shopping_item_fulfilment,
     set_shopping_available_supply,
     set_shopping_contribution_fulfilment,
     set_shopping_manual_purchase_target,
@@ -295,6 +298,7 @@ SyncCommand = (
     | SetShoppingContributionFulfilmentCommand
     | SetShoppingRowFulfilmentCommand
     | CreateAdHocShoppingItemCommand
+    | SetAdHocShoppingItemFulfilmentCommand
     | CreateReceiptCommand
     | UpdateReceiptCommand
     | SetReceiptLifecycleCommand
@@ -325,6 +329,7 @@ def _command_kind(
         | SetShoppingContributionFulfilmentCommand
         | SetShoppingRowFulfilmentCommand
         | CreateAdHocShoppingItemCommand
+        | SetAdHocShoppingItemFulfilmentCommand
         | CreateReceiptCommand
         | UpdateReceiptCommand
         | SetReceiptLifecycleCommand
@@ -369,6 +374,8 @@ def _command_kind(
         return "shopping_list.set_row_fulfilment"
     if isinstance(command, CreateAdHocShoppingItemCommand):
         return "shopping_list.create_ad_hoc_item"
+    if isinstance(command, SetAdHocShoppingItemFulfilmentCommand):
+        return "shopping_list.set_ad_hoc_item_fulfilment"
     if isinstance(command, CreateReceiptCommand):
         return "receipt.create"
     if isinstance(command, UpdateReceiptCommand):
@@ -676,6 +683,7 @@ class SynchronizationCommandService:
                 | CreateShoppingListResult
                 | RefreshShoppingListResult
                 | CreateAdHocShoppingItemResult
+                | SetAdHocShoppingItemFulfilmentResult
                 | CreateRecipeResult
                 | CreateIngredientResult
                 | ScheduleRecipeResult
@@ -737,6 +745,10 @@ class SynchronizationCommandService:
                 result = await set_shopping_row_fulfilment(self._session_factory, context, command)
             elif isinstance(command, CreateAdHocShoppingItemCommand):
                 result = await create_ad_hoc_shopping_item(self._session_factory, context, command)
+            elif isinstance(command, SetAdHocShoppingItemFulfilmentCommand):
+                result = await set_ad_hoc_shopping_item_fulfilment(
+                    self._session_factory, context, command
+                )
             elif isinstance(command, CreateReceiptCommand):
                 result = await create_receipt(self._session_factory, context, command)
             elif isinstance(command, UpdateReceiptCommand):
@@ -1907,31 +1919,29 @@ async def _bootstrap_records(
             .order_by(AdHocShoppingItem.id)
         )
     ).scalars():
-        append(
-            "ad_hoc_shopping_item",
-            item.id,
-            {
-                "id": str(item.id),
-                "organization_id": str(item.organization_id),
-                "event_id": str(item.event_id),
-                "shopping_list_id": str(item.shopping_list_id),
-                "name": item.name,
-                "target_amount": _decimal(item.target_amount),
-                "unit_id": str(item.unit_id),
-                "store_section_id": str(item.store_section_id),
-                "note": item.note,
-                "fulfilment_credit": _decimal(item.fulfilment_credit),
-                "fulfilment_updated_at": _time(item.fulfilment_updated_at),
-                "fulfilment_updated_by_user_id": _uuid(item.fulfilment_updated_by_user_id),
-                "fulfilment_updated_by_installation_id": _uuid(
-                    item.fulfilment_updated_by_installation_id
-                ),
-                "created_at": item.created_at.isoformat(),
-                "created_by_user_id": str(item.created_by_user_id),
-                "retired_at": _time(item.retired_at),
-                "retired_by_user_id": _uuid(item.retired_by_user_id),
-            },
-        )
+        record = {
+            "id": str(item.id),
+            "organization_id": str(item.organization_id),
+            "event_id": str(item.event_id),
+            "shopping_list_id": str(item.shopping_list_id),
+            "name": item.name,
+            "target_amount": _decimal(item.target_amount),
+            "unit_id": str(item.unit_id),
+            "store_section_id": str(item.store_section_id),
+            "note": item.note,
+            "fulfilment_credit": _decimal(item.fulfilment_credit),
+            "fulfilment_updated_at": _time(item.fulfilment_updated_at),
+            "fulfilment_updated_by_user_id": _uuid(item.fulfilment_updated_by_user_id),
+            "fulfilment_updated_by_installation_id": _uuid(
+                item.fulfilment_updated_by_installation_id
+            ),
+            "created_at": item.created_at.isoformat(),
+            "created_by_user_id": str(item.created_by_user_id),
+            "retired_at": _time(item.retired_at),
+            "retired_by_user_id": _uuid(item.retired_by_user_id),
+        }
+        record["field_clocks"] = _clock_fields(clocks, "ad_hoc_shopping_item", item.id)
+        append("ad_hoc_shopping_item", item.id, record)
     for item in (
         await session.execute(
             select(Receipt)

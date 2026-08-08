@@ -11,7 +11,10 @@ import {
   queueShoppingList,
   queueShoppingListRefresh,
 } from "./shopping-list";
-import { queueAdHocShoppingItem } from "./ad-hoc-shopping-item";
+import {
+  queueAdHocShoppingItem,
+  queueAdHocShoppingItemFulfilment,
+} from "./ad-hoc-shopping-item";
 import {
   queueShoppingAvailableSupply,
   queueShoppingContributionFulfilment,
@@ -221,6 +224,22 @@ function ShoppingDetail({
           <ul>
             {shoppingList.adHocItems.map((item) => (
               <li key={item.id}>
+                {editable ? (
+                  <label className="shopping-row-controls__fulfilled">
+                    <input
+                      checked={item.fulfilled}
+                      onChange={(event) =>
+                        void queueAdHocShoppingItemFulfilment(userId, organizationId, {
+                          shoppingListId: shoppingList.id,
+                          adHocShoppingItemId: item.id,
+                          fulfilled: event.currentTarget.checked,
+                        })
+                      }
+                      type="checkbox"
+                    />
+                    {t("shopping.fulfilled")}
+                  </label>
+                ) : null}
                 <strong>{item.name}</strong> ·{" "}
                 {t("shopping.quantity", {
                   amount: item.target,

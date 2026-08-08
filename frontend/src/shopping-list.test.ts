@@ -10,7 +10,11 @@ import {
   replayShoppingOperation,
 } from "./shopping-operations";
 import { readShoppingList, readShoppingLists } from "./shopping-projections";
-import { queueAdHocShoppingItem } from "./ad-hoc-shopping-item";
+import {
+  queueAdHocShoppingItem,
+  queueAdHocShoppingItemFulfilment,
+  replayAdHocShoppingItemFulfilment,
+} from "./ad-hoc-shopping-item";
 
 const ids = {
   user: "a6a58bd6-214e-49af-8fae-e5f974bf8e08",
@@ -219,6 +223,105 @@ describe("offline shopping-list creation", () => {
       }),
     ).rejects.toThrow("ad_hoc_shopping_item");
     await expect(localDb.outbox.count()).resolves.toBe(2);
+  });
+
+  it("queues ad-hoc fulfilment without reviving a newer canonical value", async () => {
+    await seedPlanner();
+    const record = (
+      entityType: string,
+      entityId: string,
+      fields: Record<string, unknown>,
+      fieldClocks: Record<string, unknown> = {},
+    ) => ({
+      userId: ids.user,
+      organizationId: ids.organization,
+      entityType,
+      entityId,
+      recordSchemaVersion: 1,
+      lifecycle: "active" as const,
+      fields,
+      fieldClocks,
+      immutable: false,
+      updatedAt: "2026-08-07T12:00:00.000Z",
+    });
+    const itemId = "2e8b2b21-c378-4574-9e46-9338c81305ef";
+    await localDb.canonicalRecords.bulkAdd([
+      record("shopping_list", ids.list, {
+        id: ids.list,
+        organization_id: ids.organization,
+        event_id: ids.event,
+        name: "Saturday",
+        current_generation_revision_id: ids.revision,
+        created_at: "2026-08-07T12:00:00.000Z",
+      }),
+      record(
+        "ad_hoc_shopping_item",
+        itemId,
+        {
+          id: itemId,
+          organization_id: ids.organization,
+          event_id: ids.event,
+          shopping_list_id: ids.list,
+          name: "Lemons",
+          target_amount: "3.5",
+          fulfilment_credit: "0",
+          unit_id: ids.unit,
+          store_section_id: ids.section,
+        },
+        { fulfilment_credit: null },
+      ),
+      record("unit_definition", ids.unit, {
+        id: ids.unit,
+        organization_id: null,
+        code: "g",
+        allows_ingredient_quantity: true,
+      }),
+      record("store_section", ids.section, {
+        id: ids.section,
+        organization_id: ids.organization,
+        name: "Produce",
+      }),
+    ]);
+    await queueAdHocShoppingItemFulfilment(ids.user, ids.organization, {
+      shoppingListId: ids.list,
+      adHocShoppingItemId: itemId,
+      fulfilled: true,
+    });
+    await expect(
+      readShoppingList(ids.user, ids.organization, ids.event, ids.list),
+    ).resolves.toMatchObject({ adHocItems: [{ fulfilled: true }] });
+    await expect(localDb.outbox.toArray()).resolves.toContainEqual(
+      expect.objectContaining({
+        commandType: "shopping_list.set_ad_hoc_item_fulfilment",
+        payload: {
+          shopping_list_id: ids.list,
+          ad_hoc_shopping_item_id: itemId,
+          fulfilled: true,
+        },
+      }),
+    );
+    await localDb.optimisticOverlays.clear();
+    await localDb.canonicalRecords.update(
+      [ids.user, ids.organization, "ad_hoc_shopping_item", itemId],
+      {
+        fieldClocks: {
+          fulfilment_credit: {
+            winning_client_wall_time: "2026-08-08T12:00:00.000Z",
+            winning_mutation_id: "3e8b2b21-c378-4574-9e46-9338c81305ef",
+          },
+        },
+      },
+    );
+    await replayAdHocShoppingItemFulfilment(ids.user, ids.organization, {
+      id: "4e8b2b21-c378-4574-9e46-9338c81305ef",
+      actionAt: "2026-08-07T12:00:00.000Z",
+      payload: {
+        shopping_list_id: ids.list,
+        ad_hoc_shopping_item_id: itemId,
+        fulfilled: true,
+      },
+    });
+    await expect(localDb.optimisticOverlays.count()).resolves.toBe(0);
   });
 
   it("rejects malformed, duplicate, and out-of-event source selections without partial state", async () => {

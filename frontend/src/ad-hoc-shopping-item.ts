@@ -190,3 +190,127 @@ export async function replayAdHocShoppingItem(
 ) {
   await apply(userId, organizationId, command);
 }
+
+async function applyFulfilment(
+  userId: string,
+  organizationId: string,
+  shoppingListId: string,
+  itemId: string,
+  fulfilled: boolean,
+  mutationId: string,
+  actionAt: string,
+) {
+  const [canonicalItem, canonicalList] = await Promise.all([
+    localDb.canonicalRecords.get([
+      userId,
+      organizationId,
+      "ad_hoc_shopping_item",
+      itemId,
+    ]),
+    localDb.canonicalRecords.get([
+      userId,
+      organizationId,
+      "shopping_list",
+      shoppingListId,
+    ]),
+  ]);
+  if (canonicalItem?.lifecycle === "retired" || canonicalList?.lifecycle === "retired")
+    throw new Error("ad_hoc_shopping_item");
+  const list =
+    (await localDb.optimisticOverlays.get([
+      userId,
+      organizationId,
+      "shopping_list",
+      shoppingListId,
+    ])) ?? canonicalList;
+  const item = await readVisibleCanonicalRecord(userId, organizationId, "ad_hoc_shopping_item", itemId);
+  const eventId = item?.fields.event_id;
+  const canonicalEvent =
+    typeof eventId === "string"
+      ? await localDb.canonicalRecords.get([userId, organizationId, "event", eventId])
+      : undefined;
+  if (canonicalEvent?.lifecycle === "retired") throw new Error("ad_hoc_shopping_item");
+  const event =
+    typeof eventId === "string"
+      ? (await localDb.optimisticOverlays.get([userId, organizationId, "event", eventId])) ?? canonicalEvent
+      : undefined;
+  if (
+    !uuid.test(shoppingListId) ||
+    !uuid.test(itemId) ||
+    item?.lifecycle !== "active" ||
+    list?.lifecycle !== "active" ||
+    item.fields.shopping_list_id !== shoppingListId ||
+    list.fields.event_id !== eventId ||
+    event?.lifecycle !== "active" ||
+    event.fields.lifecycle !== "active"
+  )
+    throw new Error("ad_hoc_shopping_item");
+  const clock = item.fieldClocks.fulfilment_credit;
+  if (clock !== undefined && clock !== null) {
+    if (typeof clock !== "object" || Array.isArray(clock))
+      throw new Error("ad_hoc_shopping_item");
+    const value = clock as Record<string, unknown>;
+    const currentAt = typeof value.actionAt === "string" ? value.actionAt : value.winning_client_wall_time;
+    const currentId = typeof value.mutationId === "string" ? value.mutationId : value.winning_mutation_id;
+    const candidateTime = Date.parse(actionAt);
+    const currentTime = typeof currentAt === "string" ? Date.parse(currentAt) : NaN;
+    if (
+      typeof currentId !== "string" ||
+      !Number.isFinite(candidateTime) ||
+      !Number.isFinite(currentTime) ||
+      candidateTime < currentTime ||
+      (candidateTime === currentTime && mutationId <= currentId)
+    )
+      return;
+  }
+  await localDb.optimisticOverlays.put({
+    ...item,
+    fields: {
+      ...item.fields,
+      fulfilment_credit: fulfilled ? item.fields.target_amount : "0",
+    },
+    fieldClocks: {
+      ...item.fieldClocks,
+      fulfilment_credit: { mutationId, actionAt },
+    },
+    updatedAt: actionAt,
+  });
+}
+
+export async function queueAdHocShoppingItemFulfilment(
+  userId: string,
+  organizationId: string,
+  input: { shoppingListId: string; adHocShoppingItemId: string; fulfilled: boolean },
+) {
+  if (typeof input.fulfilled !== "boolean") throw new Error("ad_hoc_shopping_item");
+  const mutationId = crypto.randomUUID();
+  const actionAt = new Date().toISOString();
+  await localDb.transaction("rw", localDb.canonicalRecords, localDb.optimisticOverlays, localDb.outbox, async () => {
+    await applyFulfilment(userId, organizationId, input.shoppingListId, input.adHocShoppingItemId, input.fulfilled, mutationId, actionAt);
+    await appendOutboxCommand({
+      id: mutationId, userId, organizationId,
+      commandType: "shopping_list.set_ad_hoc_item_fulfilment",
+      payload: { shopping_list_id: input.shoppingListId, ad_hoc_shopping_item_id: input.adHocShoppingItemId, fulfilled: input.fulfilled },
+      actionAt, createdAt: actionAt, state: "pending",
+    });
+  });
+}
+
+export async function replayAdHocShoppingItemFulfilment(
+  userId: string,
+  organizationId: string,
+  command: { id: string; actionAt: string; payload: Record<string, unknown> },
+) {
+  const { shopping_list_id: listId, ad_hoc_shopping_item_id: itemId, fulfilled } = command.payload;
+  if (
+    Object.keys(command.payload).length !== 3 ||
+    !["shopping_list_id", "ad_hoc_shopping_item_id", "fulfilled"].every((key) => key in command.payload) ||
+    typeof listId !== "string" ||
+    typeof itemId !== "string" ||
+    typeof fulfilled !== "boolean" ||
+    !uuid.test(command.id) ||
+    !Number.isFinite(Date.parse(command.actionAt))
+  )
+    return;
+  await applyFulfilment(userId, organizationId, listId, itemId, fulfilled, command.id, command.actionAt);
+}

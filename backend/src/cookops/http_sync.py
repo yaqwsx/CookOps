@@ -47,6 +47,7 @@ from cookops.application.shopping_lists import (
     CreateAdHocShoppingItemCommand,
     CreateShoppingListCommand,
     RefreshShoppingListCommand,
+    SetAdHocShoppingItemFulfilmentCommand,
     SetShoppingAvailableSupplyCommand,
     SetShoppingContributionFulfilmentCommand,
     SetShoppingManualPurchaseTargetCommand,
@@ -327,6 +328,14 @@ class SetShoppingRowFulfilmentPayload(BaseModel):
     model_config = ConfigDict(extra="forbid")
     shopping_list_id: UUID
     shopping_ingredient_row_id: UUID
+    fulfilled: StrictBool
+    logical_operation_id: UUID | None = None
+
+
+class SetAdHocShoppingItemFulfilmentPayload(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    shopping_list_id: UUID
+    ad_hoc_shopping_item_id: UUID
     fulfilled: StrictBool
     logical_operation_id: UUID | None = None
 
@@ -792,6 +801,19 @@ def _push_command(command: PushCommandRequest, organization_id: UUID) -> SyncCom
                 note=ad_hoc_payload.note,
                 client_wall_time=command.client_wall_time,
                 logical_operation_id=ad_hoc_payload.logical_operation_id,
+            )
+        if command.command_kind == "shopping_list.set_ad_hoc_item_fulfilment":
+            ad_hoc_fulfilment_payload = SetAdHocShoppingItemFulfilmentPayload.model_validate(
+                command.payload
+            )
+            return SetAdHocShoppingItemFulfilmentCommand(
+                command.mutation_id,
+                organization_id,
+                ad_hoc_fulfilment_payload.shopping_list_id,
+                ad_hoc_fulfilment_payload.ad_hoc_shopping_item_id,
+                ad_hoc_fulfilment_payload.fulfilled,
+                command.client_wall_time,
+                ad_hoc_fulfilment_payload.logical_operation_id,
             )
         if command.command_kind == "recipe.create":
             recipe_payload = CreateRecipePayload.model_validate(command.payload)

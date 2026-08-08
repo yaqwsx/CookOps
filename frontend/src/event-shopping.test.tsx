@@ -16,6 +16,7 @@ const {
   queueShoppingManualPurchaseTarget,
   queueShoppingRowFulfilment,
   queueAdHocShoppingItem,
+  queueAdHocShoppingItemFulfilment,
   pullOrganization,
 } = vi.hoisted(() => ({
   readEventPlanner: vi.fn(),
@@ -28,6 +29,7 @@ const {
   queueShoppingManualPurchaseTarget: vi.fn(),
   queueShoppingRowFulfilment: vi.fn(),
   queueAdHocShoppingItem: vi.fn(),
+  queueAdHocShoppingItemFulfilment: vi.fn(),
   pullOrganization: vi.fn(),
 }));
 vi.mock("./planner-projections", () => ({ readEventPlanner }));
@@ -46,7 +48,10 @@ vi.mock("./shopping-operations", () => ({
   queueShoppingManualPurchaseTarget,
   queueShoppingRowFulfilment,
 }));
-vi.mock("./ad-hoc-shopping-item", () => ({ queueAdHocShoppingItem }));
+vi.mock("./ad-hoc-shopping-item", () => ({
+  queueAdHocShoppingItem,
+  queueAdHocShoppingItemFulfilment,
+}));
 vi.mock("./sync-bootstrap", () => ({
   pullOrganization,
   SyncRequestError: class SyncRequestError extends Error {},
@@ -277,6 +282,31 @@ describe("EventShopping", () => {
         note: "",
       },
     );
+  });
+
+  it("marks an ad-hoc item fulfilled through its typed outbox command", async () => {
+    await i18n.changeLanguage(defaultLocale);
+    readEventPlanner.mockResolvedValue({ name: "Letní vaření", lifecycle: "active", scheduled: [] });
+    readShoppingLists.mockResolvedValue([]);
+    readShoppingList.mockResolvedValue({
+      id: "9d8b2b21-c378-4574-9e46-9338c81305ef",
+      name: "Sobota",
+      sourceCount: 0,
+      createdAt: "2026-08-07T12:00:00Z",
+      currentGenerationRevisionId: "0e8b2b21-c378-4574-9e46-9338c81305ef",
+      sourceRecipeIds: [], rows: [],
+      adHocItems: [{ id: "2e8b2b21-c378-4574-9e46-9338c81305ef", name: "Citrony", target: "3", unit: "kg", sectionName: null, note: null, fulfilled: false }],
+      quantityUnits: [], storeSections: [],
+    });
+    pullOrganization.mockResolvedValue(false);
+    const user = userEvent.setup();
+    render(<EventShopping eventId={ids.event} onBack={vi.fn()} onOpenList={vi.fn()} onOpenPlanner={vi.fn()} onUnauthenticated={vi.fn()} organizationId={ids.organization} shoppingListId="9d8b2b21-c378-4574-9e46-9338c81305ef" userId={ids.user} />);
+    await user.click(await screen.findByLabelText("Nakoupeno"));
+    expect(queueAdHocShoppingItemFulfilment).toHaveBeenCalledWith(ids.user, ids.organization, {
+      shoppingListId: "9d8b2b21-c378-4574-9e46-9338c81305ef",
+      adHocShoppingItemId: "2e8b2b21-c378-4574-9e46-9338c81305ef",
+      fulfilled: true,
+    });
   });
 
   it("queues a selected-source refresh without locally changing the list revision", async () => {
