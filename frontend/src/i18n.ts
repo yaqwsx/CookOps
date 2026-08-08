@@ -263,6 +263,15 @@ const resources = {
         noSection: "Bez oddělení obchodu",
         remaining: "Zbývá koupit",
         quantity: "{{amount}} {{unit}}",
+        adHoc: {
+          heading: "Vlastní položky",
+          name: "Název položky",
+          amount: "Množství",
+          unit: "Jednotka",
+          section: "Oddělení obchodu",
+          note: "Poznámka",
+          create: "Přidat položku",
+        },
         errors: {
           unavailable:
             "Nákupní seznam se nepodařilo uložit místně. Zkuste to znovu.",
@@ -621,6 +630,15 @@ const resources = {
         noSection: "No store section",
         remaining: "Remaining to buy",
         quantity: "{{amount}} {{unit}}",
+        adHoc: {
+          heading: "Custom items",
+          name: "Item name",
+          amount: "Amount",
+          unit: "Unit",
+          section: "Store section",
+          note: "Note",
+          create: "Add item",
+        },
         errors: {
           unavailable:
             "The shopping list could not be saved locally. Please try again.",

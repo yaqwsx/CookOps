@@ -44,6 +44,7 @@ from cookops.application.scheduled_recipe_moves import MoveScheduledRecipeComman
 from cookops.application.scheduled_recipe_overrides import SetScheduledIngredientOverrideCommand
 from cookops.application.scheduled_recipes import ScheduleRecipeCommand
 from cookops.application.shopping_lists import (
+    CreateAdHocShoppingItemCommand,
     CreateShoppingListCommand,
     RefreshShoppingListCommand,
     SetShoppingAvailableSupplyCommand,
@@ -328,6 +329,26 @@ class SetShoppingRowFulfilmentPayload(BaseModel):
     shopping_ingredient_row_id: UUID
     fulfilled: StrictBool
     logical_operation_id: UUID | None = None
+
+
+class CreateAdHocShoppingItemPayload(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    shopping_list_id: UUID
+    ad_hoc_shopping_item_id: UUID
+    name: str = Field(min_length=1, max_length=200)
+    target_amount: Decimal
+    unit_id: UUID
+    store_section_id: UUID
+    note: str | None = Field(default=None, max_length=4000)
+    logical_operation_id: UUID | None = None
+
+    @field_validator("target_amount", mode="before")
+    @classmethod
+    def target_amount_must_be_decimal_string(cls, value: object) -> object:
+        if not isinstance(value, str):
+            raise ValueError("must be a decimal string")
+        return value
 
 
 class RecipeIngredientLinePayload(BaseModel):
@@ -756,6 +777,21 @@ def _push_command(command: PushCommandRequest, organization_id: UUID) -> SyncCom
                 row_fulfilment_payload.fulfilled,
                 command.client_wall_time,
                 row_fulfilment_payload.logical_operation_id,
+            )
+        if command.command_kind == "shopping_list.create_ad_hoc_item":
+            ad_hoc_payload = CreateAdHocShoppingItemPayload.model_validate(command.payload)
+            return CreateAdHocShoppingItemCommand(
+                mutation_id=command.mutation_id,
+                organization_id=organization_id,
+                shopping_list_id=ad_hoc_payload.shopping_list_id,
+                ad_hoc_shopping_item_id=ad_hoc_payload.ad_hoc_shopping_item_id,
+                name=ad_hoc_payload.name,
+                target_amount=ad_hoc_payload.target_amount,
+                unit_id=ad_hoc_payload.unit_id,
+                store_section_id=ad_hoc_payload.store_section_id,
+                note=ad_hoc_payload.note,
+                client_wall_time=command.client_wall_time,
+                logical_operation_id=ad_hoc_payload.logical_operation_id,
             )
         if command.command_kind == "recipe.create":
             recipe_payload = CreateRecipePayload.model_validate(command.payload)

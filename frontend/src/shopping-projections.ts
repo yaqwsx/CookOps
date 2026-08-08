@@ -32,10 +32,24 @@ export type ShoppingContribution = {
   source: string | null;
 };
 
+export type AdHocShoppingItem = {
+  id: string;
+  name: string;
+  target: string;
+  unit: string;
+  sectionName: string | null;
+  note: string | null;
+};
+
+export type ShoppingInputOption = { id: string; name: string };
+
 export type ShoppingListProjection = ShoppingListSummary & {
   currentGenerationRevisionId: string;
   sourceRecipeIds: string[];
   rows: ShoppingRow[];
+  adHocItems: AdHocShoppingItem[];
+  storeSections: ShoppingInputOption[];
+  quantityUnits: ShoppingInputOption[];
 };
 
 function value(record: CanonicalRecord, key: string): string | undefined {
@@ -160,20 +174,29 @@ export async function readShoppingList(
   shoppingListId: string,
 ): Promise<ShoppingListProjection | undefined> {
   if (!uuid.test(shoppingListId)) return undefined;
-  const [lists, rows, contributions, snapshots, sections, units, sources] =
-    await Promise.all([
-      readShoppingLists(userId, organizationId, eventId),
-      readVisibleRecords(userId, organizationId, "shopping_ingredient_row"),
-      readVisibleRecords(userId, organizationId, "shopping_contribution", true),
-      readVisibleRecords(
-        userId,
-        organizationId,
-        "shopping_contribution_snapshot",
-      ),
-      readVisibleRecords(userId, organizationId, "store_section"),
-      readVisibleRecords(userId, organizationId, "unit_definition"),
-      readVisibleRecords(userId, organizationId, "shopping_revision_source"),
-    ]);
+  const [
+    lists,
+    rows,
+    contributions,
+    snapshots,
+    sections,
+    units,
+    sources,
+    adHocItems,
+  ] = await Promise.all([
+    readShoppingLists(userId, organizationId, eventId),
+    readVisibleRecords(userId, organizationId, "shopping_ingredient_row"),
+    readVisibleRecords(userId, organizationId, "shopping_contribution", true),
+    readVisibleRecords(
+      userId,
+      organizationId,
+      "shopping_contribution_snapshot",
+    ),
+    readVisibleRecords(userId, organizationId, "store_section"),
+    readVisibleRecords(userId, organizationId, "unit_definition"),
+    readVisibleRecords(userId, organizationId, "shopping_revision_source"),
+    readVisibleRecords(userId, organizationId, "ad_hoc_shopping_item"),
+  ]);
   const summary = lists.find((list) => list.id === shoppingListId);
   if (!summary) return undefined;
   const list = (
@@ -213,6 +236,75 @@ export async function readShoppingList(
       .map((source) => value(source, "scheduled_recipe_id"))
       .filter((id): id is string => typeof id === "string" && uuid.test(id))
       .sort(),
+    storeSections: sections
+      .filter(
+        (section) =>
+          value(section, "id") === section.entityId &&
+          value(section, "organization_id") === organizationId &&
+          typeof value(section, "name") === "string",
+      )
+      .flatMap((section) => {
+        const name = value(section, "name");
+        return name ? [{ id: section.entityId, name }] : [];
+      })
+      .sort(
+        (left, right) =>
+          left.name.localeCompare(right.name) ||
+          left.id.localeCompare(right.id),
+      ),
+    quantityUnits: units
+      .filter(
+        (unit) =>
+          value(unit, "id") === unit.entityId &&
+          unit.fields.allows_ingredient_quantity === true &&
+          (unit.fields.organization_id === null ||
+            value(unit, "organization_id") === organizationId),
+      )
+      .map((unit) => ({
+        id: unit.entityId,
+        name: value(unit, "custom_name") ?? value(unit, "code") ?? "",
+      }))
+      .filter((unit) => Boolean(unit.name))
+      .sort(
+        (left, right) =>
+          left.name.localeCompare(right.name) ||
+          left.id.localeCompare(right.id),
+      ),
+    adHocItems: adHocItems
+      .filter(
+        (item) =>
+          value(item, "id") === item.entityId &&
+          value(item, "organization_id") === organizationId &&
+          value(item, "event_id") === eventId &&
+          value(item, "shopping_list_id") === shoppingListId &&
+          value(item, "name") &&
+          decimal(item.fields.target_amount) &&
+          unitNames.has(value(item, "unit_id") ?? ""),
+      )
+      .flatMap((item) => {
+        const name = value(item, "name");
+        const target = decimal(item.fields.target_amount);
+        const unitId = value(item, "unit_id");
+        const unit = unitId ? unitNames.get(unitId) : undefined;
+        if (!name || !target || !unit) return [];
+        return [
+          {
+            id: item.entityId,
+            name,
+            target: print(target),
+            unit,
+            sectionName:
+              sectionNames.get(value(item, "store_section_id") ?? "") ?? null,
+            note: value(item, "note") ?? null,
+          },
+        ];
+      })
+      .sort(
+        (left, right) =>
+          (left.sectionName ?? "").localeCompare(right.sectionName ?? "") ||
+          left.name.localeCompare(right.name) ||
+          left.id.localeCompare(right.id),
+      ),
     rows: rows
       .filter(
         (row) =>

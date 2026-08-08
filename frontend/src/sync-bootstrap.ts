@@ -16,6 +16,7 @@ import { replayIngredientCreate } from "./ingredient-create";
 import { replayScheduledIngredientOverride } from "./scheduled-ingredient-override";
 import { replayReceiptCommand } from "./receipt-metadata";
 import { replayCatalogConfiguration } from "./catalog-configuration";
+import { replayAdHocShoppingItem } from "./ad-hoc-shopping-item";
 
 const supportedEntityKinds = new Set([
   "organization",
@@ -256,6 +257,13 @@ async function replayOptimisticCommands(
     }
     if (command.commandType === "catalog_configuration.mutate") {
       await replayCatalogConfiguration(userId, organizationId, command);
+    }
+    if (command.commandType === "shopping_list.create_ad_hoc_item") {
+      try {
+        await replayAdHocShoppingItem(userId, organizationId, command);
+      } catch {
+        // A pending item targeting a now-archived list remains recoverable.
+      }
     }
     const entityId =
       command.commandType === "shopping_list.create"

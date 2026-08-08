@@ -14,6 +14,7 @@ from test_sync_pull_http import sync_database as _sync_database_fixture
 
 from cookops.main import create_app
 from cookops.persistence.models import (
+    AdHocShoppingItem,
     ClientInstallation,
     Event,
     EventArchiveSnapshot,
@@ -29,6 +30,7 @@ from cookops.persistence.models import (
     ScheduledRecipe,
     ShoppingIngredientRow,
     ShoppingList,
+    StoreSection,
     UnitDefinition,
 )
 
@@ -100,6 +102,16 @@ def _command(
             "shopping_list_id": str(uuid4()),
             "parent_generation_revision_id": str(uuid4()),
             "scheduled_recipe_ids": [],
+            **payload,
+        }
+    elif kind == "shopping_list.create_ad_hoc_item":
+        payload = {
+            "shopping_list_id": str(uuid4()),
+            "ad_hoc_shopping_item_id": str(uuid4()),
+            "name": "Ad-hoc item",
+            "target_amount": "1",
+            "unit_id": str(uuid4()),
+            "store_section_id": str(uuid4()),
             **payload,
         }
     return {
@@ -693,6 +705,104 @@ def test_push_creates_a_shopping_list_through_the_typed_shared_command(
         assert connection.scalar(
             select(ShoppingList.name).where(ShoppingList.id == shopping_list_id)
         ) == ("Push shopping")
+
+
+def test_push_creates_an_ad_hoc_item_with_scoped_dependencies_and_replays(
+    sync_database: SyncDatabase,
+) -> None:
+    installation_id = _installation(sync_database)
+    event_id, list_id, revision_id, item_id, mutation_id = (
+        uuid4(),
+        uuid4(),
+        uuid4(),
+        uuid4(),
+        uuid4(),
+    )
+    section_id = uuid4()
+    with sync_database.engine.begin() as connection:
+        actor_id = connection.scalar(
+            select(OrganizationMembership.user_id).where(
+                OrganizationMembership.organization_id == sync_database.organization_id
+            )
+        )
+        unit_id = connection.scalar(
+            select(UnitDefinition.id).where(
+                UnitDefinition.organization_id.is_(None), UnitDefinition.code == "g"
+            )
+        )
+        assert isinstance(actor_id, UUID) and isinstance(unit_id, UUID)
+        connection.execute(
+            insert(StoreSection).values(
+                id=section_id,
+                organization_id=sync_database.organization_id,
+                name="Produce",
+                normalized_name="produce",
+                position_key="a",
+                created_by_user_id=actor_id,
+            )
+        )
+    setup = [
+        _command(mutation_id=uuid4(), event_id=event_id),
+        _command(
+            mutation_id=uuid4(),
+            event_id=event_id,
+            kind="shopping_list.create",
+            shopping_list_id=str(list_id),
+            generation_revision_id=str(revision_id),
+        ),
+    ]
+    item = _command(
+        mutation_id=mutation_id,
+        event_id=event_id,
+        kind="shopping_list.create_ad_hoc_item",
+        shopping_list_id=str(list_id),
+        ad_hoc_shopping_item_id=str(item_id),
+        name="  Lemons ",
+        target_amount="3.5",
+        unit_id=str(unit_id),
+        store_section_id=str(section_id),
+        note="fresh",
+    )
+    with TestClient(create_app(_settings()), base_url="https://testserver") as client:
+        _sign_in(client, "dummy-member")
+        assert [
+            outcome["status"]
+            for outcome in client.post(
+                "/api/v1/sync/push", json=_body(sync_database, installation_id, setup)
+            ).json()["outcomes"]
+        ] == ["accepted", "accepted"]
+        accepted = client.post(
+            "/api/v1/sync/push", json=_body(sync_database, installation_id, [item])
+        ).json()["outcomes"][0]
+        assert accepted["command_kind"] == "shopping_list.create_ad_hoc_item"
+        assert accepted["status"] == "accepted" and not accepted["replayed"]
+        assert (
+            client.post(
+                "/api/v1/sync/push", json=_body(sync_database, installation_id, [item])
+            ).json()["outcomes"][0]["replayed"]
+            is True
+        )
+        wrong_scope = _command(
+            mutation_id=uuid4(),
+            event_id=event_id,
+            kind="shopping_list.create_ad_hoc_item",
+            shopping_list_id=str(list_id),
+            ad_hoc_shopping_item_id=str(uuid4()),
+            unit_id=str(unit_id),
+            store_section_id=str(uuid4()),
+        )
+        assert (
+            client.post(
+                "/api/v1/sync/push", json=_body(sync_database, installation_id, [wrong_scope])
+            ).json()["outcomes"][0]["error"]["code"]
+            == "validation_failed"
+        )
+    with sync_database.engine.connect() as connection:
+        assert connection.execute(
+            select(AdHocShoppingItem.name, AdHocShoppingItem.target_amount).where(
+                AdHocShoppingItem.id == item_id
+            )
+        ).one() == ("Lemons", Decimal("3.5"))
 
 
 def test_push_refreshes_shopping_list_through_the_typed_shared_command(

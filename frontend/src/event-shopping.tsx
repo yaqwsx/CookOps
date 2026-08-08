@@ -11,6 +11,7 @@ import {
   queueShoppingList,
   queueShoppingListRefresh,
 } from "./shopping-list";
+import { queueAdHocShoppingItem } from "./ad-hoc-shopping-item";
 import {
   queueShoppingAvailableSupply,
   queueShoppingContributionFulfilment,
@@ -183,6 +184,13 @@ function ShoppingDetail({
           userId={userId}
         />
       ) : null}
+      {editable ? (
+        <AdHocShoppingCreate
+          organizationId={organizationId}
+          shoppingList={shoppingList}
+          userId={userId}
+        />
+      ) : null}
       {shoppingList.rows.length ? (
         [...sections].map(([section, rows]) => (
           <section className="shopping-section" key={section}>
@@ -204,7 +212,140 @@ function ShoppingDetail({
       ) : (
         <p>{t("shopping.noRows")}</p>
       )}
+      {shoppingList.adHocItems.length ? (
+        <section
+          className="shopping-ad-hoc-items"
+          aria-labelledby="shopping-ad-hoc-heading"
+        >
+          <h4 id="shopping-ad-hoc-heading">{t("shopping.adHoc.heading")}</h4>
+          <ul>
+            {shoppingList.adHocItems.map((item) => (
+              <li key={item.id}>
+                <strong>{item.name}</strong> ·{" "}
+                {t("shopping.quantity", {
+                  amount: item.target,
+                  unit: item.unit,
+                })}
+                {item.sectionName ? ` · ${item.sectionName}` : null}
+                {item.note ? <p>{item.note}</p> : null}
+              </li>
+            ))}
+          </ul>
+        </section>
+      ) : null}
     </section>
+  );
+}
+
+function AdHocShoppingCreate({
+  organizationId,
+  shoppingList,
+  userId,
+}: {
+  organizationId: string;
+  shoppingList: ShoppingListProjection;
+  userId: string;
+}) {
+  const { t } = useTranslation();
+  const units = shoppingList.quantityUnits;
+  const sections = shoppingList.storeSections;
+  const [name, setName] = useState("");
+  const [targetAmount, setTargetAmount] = useState("");
+  const [unitId, setUnitId] = useState(units[0]?.id ?? "");
+  const [sectionId, setSectionId] = useState(sections[0]?.id ?? "");
+  const [note, setNote] = useState("");
+  const [error, setError] = useState(false);
+  useEffect(
+    () => setUnitId((current) => current || units[0]?.id || ""),
+    [units],
+  );
+  useEffect(
+    () => setSectionId((current) => current || sections[0]?.id || ""),
+    [sections],
+  );
+  async function submit(event: React.FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    try {
+      await queueAdHocShoppingItem(userId, organizationId, {
+        shoppingListId: shoppingList.id,
+        name,
+        targetAmount,
+        unitId,
+        storeSectionId: sectionId,
+        note,
+      });
+      setName("");
+      setTargetAmount("");
+      setNote("");
+      setError(false);
+    } catch {
+      setError(true);
+    }
+  }
+  if (!units.length || !sections.length) return null;
+  return (
+    <form
+      className="shopping-ad-hoc-create"
+      onSubmit={(event) => void submit(event)}
+    >
+      <h4>{t("shopping.adHoc.heading")}</h4>
+      <label>
+        {t("shopping.adHoc.name")}
+        <input
+          maxLength={200}
+          onChange={(event) => setName(event.currentTarget.value)}
+          required
+          value={name}
+        />
+      </label>
+      <label>
+        {t("shopping.adHoc.amount")}
+        <input
+          inputMode="decimal"
+          min="0"
+          onChange={(event) => setTargetAmount(event.currentTarget.value)}
+          required
+          type="number"
+          value={targetAmount}
+        />
+      </label>
+      <label>
+        {t("shopping.adHoc.unit")}
+        <select
+          onChange={(event) => setUnitId(event.currentTarget.value)}
+          value={unitId}
+        >
+          {units.map((unit) => (
+            <option key={unit.id} value={unit.id}>
+              {unit.name}
+            </option>
+          ))}
+        </select>
+      </label>
+      <label>
+        {t("shopping.adHoc.section")}
+        <select
+          onChange={(event) => setSectionId(event.currentTarget.value)}
+          value={sectionId}
+        >
+          {sections.map((section) => (
+            <option key={section.id} value={section.id}>
+              {section.name}
+            </option>
+          ))}
+        </select>
+      </label>
+      <label>
+        {t("shopping.adHoc.note")}
+        <input
+          maxLength={4000}
+          onChange={(event) => setNote(event.currentTarget.value)}
+          value={note}
+        />
+      </label>
+      <button type="submit">{t("shopping.adHoc.create")}</button>
+      {error ? <p role="alert">{t("shopping.errors.unavailable")}</p> : null}
+    </form>
   );
 }
 

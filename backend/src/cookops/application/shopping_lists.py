@@ -27,6 +27,7 @@ from cookops.application.organizations import (
     _advisory_lock_key,
 )
 from cookops.persistence.models import (
+    AdHocShoppingItem,
     Event,
     EventDay,
     EventIngredientPrice,
@@ -50,6 +51,7 @@ from cookops.persistence.models import (
     ShoppingRevisionSource,
     StoreSection,
     SystemRoleAssignment,
+    UnitDefinition,
     User,
 )
 
@@ -2698,3 +2700,327 @@ async def set_shopping_row_fulfilment(
     command: SetShoppingRowFulfilmentCommand,
 ) -> ShoppingOperationResult:
     return await _apply_shopping_operation(session_factory, context, command)
+
+
+AD_HOC_CREATE_COMMAND_KIND = "shopping_list.create_ad_hoc_item"
+
+
+@dataclass(frozen=True, slots=True)
+class CreateAdHocShoppingItemCommand:
+    mutation_id: UUID
+    organization_id: UUID
+    shopping_list_id: UUID
+    ad_hoc_shopping_item_id: UUID
+    name: str
+    target_amount: Decimal
+    unit_id: UUID
+    store_section_id: UUID
+    client_wall_time: datetime
+    note: str | None = None
+    logical_operation_id: UUID | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class CreateAdHocShoppingItemResult:
+    mutation_id: UUID
+    shopping_list_id: UUID
+    ad_hoc_shopping_item_id: UUID
+    first_change_sequence: int
+    last_change_sequence: int
+    replayed: bool
+    outcome: Literal["accepted"] = "accepted"
+
+
+def _ad_hoc_record(item: AdHocShoppingItem) -> dict[str, object]:
+    return {
+        "id": str(item.id),
+        "organization_id": str(item.organization_id),
+        "event_id": str(item.event_id),
+        "shopping_list_id": str(item.shopping_list_id),
+        "name": item.name,
+        "target_amount": _canonical_decimal(item.target_amount),
+        "unit_id": str(item.unit_id),
+        "store_section_id": str(item.store_section_id),
+        "note": item.note,
+        "fulfilment_credit": _canonical_decimal(item.fulfilment_credit),
+        "fulfilment_updated_at": None,
+        "fulfilment_updated_by_user_id": None,
+        "fulfilment_updated_by_installation_id": None,
+        "created_at": item.created_at.isoformat(),
+        "created_by_user_id": str(item.created_by_user_id),
+        "retired_at": None,
+        "retired_by_user_id": None,
+    }
+
+
+def _ad_hoc_request_hash(command: CreateAdHocShoppingItemCommand) -> bytes:
+    return hashlib.sha256(
+        json.dumps(
+            {
+                "command_kind": AD_HOC_CREATE_COMMAND_KIND,
+                "command_schema_version": COMMAND_SCHEMA_VERSION,
+                "mutation_id": _raw_uuid(command.mutation_id),
+                "organization_id": _raw_uuid(command.organization_id),
+                "shopping_list_id": _raw_uuid(command.shopping_list_id),
+                "ad_hoc_shopping_item_id": _raw_uuid(command.ad_hoc_shopping_item_id),
+                "name": _canonical_name(command.name)
+                if isinstance(command.name, str)
+                else _invalid(command.name),
+                "target_amount": _canonical_decimal(command.target_amount)
+                if isinstance(command.target_amount, Decimal) and command.target_amount.is_finite()
+                else _invalid(command.target_amount),
+                "unit_id": _raw_uuid(command.unit_id),
+                "store_section_id": _raw_uuid(command.store_section_id),
+                "note": command.note,
+                "client_wall_time": _raw_time(command.client_wall_time),
+                "logical_operation_id": _raw_uuid(command.logical_operation_id)
+                if command.logical_operation_id is not None
+                else None,
+            },
+            ensure_ascii=False,
+            sort_keys=True,
+            separators=(",", ":"),
+        ).encode()
+    ).digest()
+
+
+def _ad_hoc_violations(command: CreateAdHocShoppingItemCommand) -> tuple[FieldViolation, ...]:
+    violations: list[FieldViolation] = []
+    for name in (
+        "mutation_id",
+        "organization_id",
+        "shopping_list_id",
+        "ad_hoc_shopping_item_id",
+        "unit_id",
+        "store_section_id",
+    ):
+        if not isinstance(getattr(command, name), UUID):
+            violations.append(FieldViolation(name, "must_be_uuid"))
+    name = _canonical_name(command.name) if isinstance(command.name, str) else ""
+    if (
+        not isinstance(command.name, str)
+        or not name
+        or len(name) > 200
+        or len(json.dumps(name, ensure_ascii=False).encode()) > MAX_SERIALIZED_NAME_BYTES
+    ):
+        violations.append(FieldViolation("name", "must_be_nonempty_at_most_200_characters"))
+    if (
+        not isinstance(command.target_amount, Decimal)
+        or not command.target_amount.is_finite()
+        or command.target_amount < 0
+    ):
+        violations.append(FieldViolation("target_amount", "must_be_nonnegative_finite_decimal"))
+    if command.note is not None and (not isinstance(command.note, str) or len(command.note) > 4000):
+        violations.append(FieldViolation("note", "must_be_null_or_at_most_4000_characters"))
+    if (
+        not isinstance(command.client_wall_time, datetime)
+        or command.client_wall_time.tzinfo is None
+        or command.client_wall_time.utcoffset() is None
+    ):
+        violations.append(FieldViolation("client_wall_time", "must_include_timezone"))
+    if command.logical_operation_id is not None and not isinstance(
+        command.logical_operation_id, UUID
+    ):
+        violations.append(FieldViolation("logical_operation_id", "must_be_uuid_or_null"))
+    return tuple(violations)
+
+
+def _ad_hoc_mutation(
+    command: CreateAdHocShoppingItemCommand,
+    context: ExecutionContext,
+    role: Literal["member", "organization_admin", "system_admin"],
+    request_hash: bytes,
+    outcome: Literal["accepted", "rejected"],
+    payload: dict[str, object],
+    first: int | None = None,
+    last: int | None = None,
+) -> Mutation:
+    return Mutation(
+        id=command.mutation_id,
+        logical_operation_id=command.logical_operation_id,
+        organization_id=command.organization_id
+        if isinstance(command.organization_id, UUID)
+        else UUID(int=0),
+        is_system_administration_scope=False,
+        actor_user_id=context.actor_user_id,
+        actor_role=role,
+        client_installation_id=context.client_installation_id,
+        oauth_client_id=context.oauth_client_id,
+        oauth_grant_id=context.oauth_grant_id,
+        client_wall_time=command.client_wall_time.astimezone(UTC)
+        if isinstance(command.client_wall_time, datetime) and command.client_wall_time.tzinfo
+        else datetime(1970, 1, 1, tzinfo=UTC),
+        command_schema_version=COMMAND_SCHEMA_VERSION,
+        command_kind=AD_HOC_CREATE_COMMAND_KIND,
+        target_identities=[
+            {"entity_kind": "shopping_list", "entity_id": str(command.shopping_list_id)},
+            {
+                "entity_kind": "ad_hoc_shopping_item",
+                "entity_id": str(command.ad_hoc_shopping_item_id),
+            },
+        ],
+        request_hash=request_hash,
+        outcome=outcome,
+        outcome_payload=payload,
+        first_change_sequence=first,
+        last_change_sequence=last,
+    )
+
+
+async def create_ad_hoc_shopping_item(
+    session_factory: async_sessionmaker[AsyncSession],
+    context: ExecutionContext,
+    command: CreateAdHocShoppingItemCommand,
+) -> CreateAdHocShoppingItemResult:
+    request_hash = _ad_hoc_request_hash(command)
+    error: ApplicationServiceError | None = None
+    result: CreateAdHocShoppingItemResult | None = None
+    async with session_factory() as session, session.begin():
+        organization_id = (
+            command.organization_id if isinstance(command.organization_id, UUID) else UUID(int=0)
+        )
+        role = await _authorize_member_and_lock_organization(session, context, organization_id)
+        mutation_id = command.mutation_id if isinstance(command.mutation_id, UUID) else UUID(int=0)
+        await session.execute(
+            text("SELECT pg_advisory_xact_lock(:key)"),
+            {"key": _advisory_lock_key("mutation", mutation_id)},
+        )
+        retained = await session.get(Mutation, mutation_id)
+        if retained is not None:
+            if (
+                retained.actor_user_id != context.actor_user_id
+                or retained.command_kind != AD_HOC_CREATE_COMMAND_KIND
+                or retained.command_schema_version != COMMAND_SCHEMA_VERSION
+                or retained.request_hash != request_hash
+            ):
+                raise ApplicationServiceError("idempotency_mismatch", retry_same_identity=False)
+            if (
+                retained.outcome != "accepted"
+                or retained.first_change_sequence is None
+                or retained.last_change_sequence is None
+                or not retained.outcome_payload
+            ):
+                raise _retained_error(retained)
+            try:
+                payload = retained.outcome_payload["ad_hoc_shopping_item"]
+                assert isinstance(payload, dict)
+                return CreateAdHocShoppingItemResult(
+                    mutation_id,
+                    UUID(str(payload["shopping_list_id"])),
+                    UUID(str(payload["id"])),
+                    retained.first_change_sequence,
+                    retained.last_change_sequence,
+                    True,
+                )
+            except (AssertionError, KeyError, ValueError, TypeError) as exc:
+                raise RuntimeError("Retained ad-hoc item has invalid outcome payload") from exc
+        if violations := _ad_hoc_violations(command):
+            error = _error(violations)
+        elif command.client_wall_time > datetime.now(UTC) + timedelta(hours=24):
+            error = ApplicationServiceError("client_time_too_far_ahead", retry_same_identity=False)
+        if error is None:
+            shopping_list = await session.scalar(
+                select(ShoppingList)
+                .join(Event, Event.id == ShoppingList.event_id)
+                .where(
+                    ShoppingList.id == command.shopping_list_id,
+                    ShoppingList.organization_id == command.organization_id,
+                    Event.organization_id == command.organization_id,
+                    Event.lifecycle == "active",
+                )
+                .with_for_update(of=(ShoppingList, Event))
+            )
+            if shopping_list is None:
+                error = _error((FieldViolation("shopping_list_id", "not_found"),))
+            section = (
+                await session.scalar(
+                    select(StoreSection.id).where(
+                        StoreSection.id == command.store_section_id,
+                        StoreSection.organization_id == command.organization_id,
+                        StoreSection.retired_at.is_(None),
+                    )
+                )
+                if error is None
+                else None
+            )
+            unit = (
+                await session.scalar(
+                    select(UnitDefinition.id).where(
+                        UnitDefinition.id == command.unit_id,
+                        UnitDefinition.retired_at.is_(None),
+                        UnitDefinition.allows_ingredient_quantity.is_(True),
+                        or_(
+                            UnitDefinition.organization_id.is_(None),
+                            UnitDefinition.organization_id == command.organization_id,
+                        ),
+                    )
+                )
+                if error is None
+                else None
+            )
+            if error is None and section is None:
+                error = _error((FieldViolation("store_section_id", "not_found"),))
+            if error is None and unit is None:
+                error = _error((FieldViolation("unit_id", "not_found"),))
+            if (
+                error is None
+                and await session.get(AdHocShoppingItem, command.ad_hoc_shopping_item_id)
+                is not None
+            ):
+                error = _error((FieldViolation("ad_hoc_shopping_item_id", "already_exists"),))
+            if error is None:
+                item = AdHocShoppingItem(
+                    id=command.ad_hoc_shopping_item_id,
+                    organization_id=command.organization_id,
+                    event_id=shopping_list.event_id,
+                    shopping_list_id=shopping_list.id,
+                    name=_canonical_name(command.name),
+                    target_amount=command.target_amount,
+                    unit_id=command.unit_id,
+                    store_section_id=command.store_section_id,
+                    note=command.note,
+                    created_by_user_id=context.actor_user_id,
+                )
+                session.add(item)
+                await session.flush()
+                record = _ad_hoc_record(item)
+                first, last = await _reserve_change_range(
+                    session, command.organization_id, command.mutation_id, 1
+                )
+                result = CreateAdHocShoppingItemResult(
+                    command.mutation_id, shopping_list.id, item.id, first, last, False
+                )
+                session.add(
+                    OrganizationChange(
+                        organization_id=command.organization_id,
+                        sequence=first,
+                        mutation_id=command.mutation_id,
+                        entity_id=item.id,
+                        entity_kind="ad_hoc_shopping_item",
+                        operation="upsert",
+                        payload={"record_schema_version": 1, "record": record},
+                    )
+                )
+                session.add(
+                    _ad_hoc_mutation(
+                        command,
+                        context,
+                        role,
+                        request_hash,
+                        "accepted",
+                        {"ad_hoc_shopping_item": record},
+                        first,
+                        last,
+                    )
+                )
+        if error is not None:
+            session.add(
+                _ad_hoc_mutation(
+                    command, context, role, request_hash, "rejected", _error_payload(error)
+                )
+            )
+    if error is not None:
+        raise error
+    if result is None:
+        raise RuntimeError("Ad-hoc shopping item produced no outcome")
+    return result

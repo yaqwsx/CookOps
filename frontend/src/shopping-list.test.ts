@@ -10,6 +10,7 @@ import {
   replayShoppingOperation,
 } from "./shopping-operations";
 import { readShoppingList, readShoppingLists } from "./shopping-projections";
+import { queueAdHocShoppingItem } from "./ad-hoc-shopping-item";
 
 const ids = {
   user: "a6a58bd6-214e-49af-8fae-e5f974bf8e08",
@@ -131,6 +132,93 @@ describe("offline shopping-list creation", () => {
         }),
       }),
     ]);
+  });
+
+  it("projects and queues a distinct ad-hoc shopping item atomically", async () => {
+    await seedPlanner();
+    const record = (
+      entityType: string,
+      entityId: string,
+      fields: Record<string, unknown>,
+    ) => ({
+      userId: ids.user,
+      organizationId: ids.organization,
+      entityType,
+      entityId,
+      recordSchemaVersion: 1,
+      lifecycle: "active" as const,
+      fields,
+      fieldClocks: {},
+      immutable: false,
+      updatedAt: "2026-08-07T12:00:00.000Z",
+    });
+    await localDb.canonicalRecords.bulkAdd([
+      record("shopping_list", ids.list, {
+        id: ids.list,
+        organization_id: ids.organization,
+        event_id: ids.event,
+        name: "Saturday",
+        current_generation_revision_id: ids.revision,
+        created_at: "2026-08-07T12:00:00.000Z",
+      }),
+      record("unit_definition", ids.unit, {
+        id: ids.unit,
+        organization_id: null,
+        code: "g",
+        allows_ingredient_quantity: true,
+      }),
+      record("store_section", ids.section, {
+        id: ids.section,
+        organization_id: ids.organization,
+        name: "Produce",
+      }),
+    ]);
+    await queueAdHocShoppingItem(ids.user, ids.organization, {
+      shoppingListId: ids.list,
+      name: "  Lemons ",
+      targetAmount: "3.5",
+      unitId: ids.unit,
+      storeSectionId: ids.section,
+    });
+    await expect(
+      readShoppingList(ids.user, ids.organization, ids.event, ids.list),
+    ).resolves.toMatchObject({
+      adHocItems: [
+        { name: "Lemons", target: "3.5", unit: "g", sectionName: "Produce" },
+      ],
+    });
+    await expect(localDb.outbox.toArray()).resolves.toEqual([
+      expect.objectContaining({
+        commandType: "shopping_list.create_ad_hoc_item",
+        payload: expect.objectContaining({
+          shopping_list_id: ids.list,
+          name: "Lemons",
+          target_amount: "3.5",
+        }),
+      }),
+    ]);
+    await queueAdHocShoppingItem(ids.user, ids.organization, {
+      shoppingListId: ids.list,
+      name: "Cafe\u0301",
+      targetAmount: "1",
+      unitId: ids.unit,
+      storeSectionId: ids.section,
+    });
+    await expect(localDb.outbox.orderBy("createdAt").last()).resolves.toEqual(
+      expect.objectContaining({
+        payload: expect.objectContaining({ name: "Café" }),
+      }),
+    );
+    await expect(
+      queueAdHocShoppingItem(ids.user, ids.organization, {
+        shoppingListId: ids.list,
+        name: "😀".repeat(200),
+        targetAmount: "1",
+        unitId: ids.unit,
+        storeSectionId: ids.section,
+      }),
+    ).rejects.toThrow("ad_hoc_shopping_item");
+    await expect(localDb.outbox.count()).resolves.toBe(2);
   });
 
   it("rejects malformed, duplicate, and out-of-event source selections without partial state", async () => {

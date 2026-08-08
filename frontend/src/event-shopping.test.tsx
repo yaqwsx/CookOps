@@ -15,6 +15,7 @@ const {
   queueShoppingContributionFulfilment,
   queueShoppingManualPurchaseTarget,
   queueShoppingRowFulfilment,
+  queueAdHocShoppingItem,
   pullOrganization,
 } = vi.hoisted(() => ({
   readEventPlanner: vi.fn(),
@@ -26,6 +27,7 @@ const {
   queueShoppingContributionFulfilment: vi.fn(),
   queueShoppingManualPurchaseTarget: vi.fn(),
   queueShoppingRowFulfilment: vi.fn(),
+  queueAdHocShoppingItem: vi.fn(),
   pullOrganization: vi.fn(),
 }));
 vi.mock("./planner-projections", () => ({ readEventPlanner }));
@@ -44,6 +46,7 @@ vi.mock("./shopping-operations", () => ({
   queueShoppingManualPurchaseTarget,
   queueShoppingRowFulfilment,
 }));
+vi.mock("./ad-hoc-shopping-item", () => ({ queueAdHocShoppingItem }));
 vi.mock("./sync-bootstrap", () => ({
   pullOrganization,
   SyncRequestError: class SyncRequestError extends Error {},
@@ -141,6 +144,9 @@ describe("EventShopping", () => {
           ],
         },
       ],
+      adHocItems: [],
+      quantityUnits: [],
+      storeSections: [],
     });
     pullOrganization.mockResolvedValue(false);
     const user = userEvent.setup();
@@ -194,6 +200,9 @@ describe("EventShopping", () => {
           contributions: [],
         },
       ],
+      adHocItems: [],
+      quantityUnits: [],
+      storeSections: [],
     });
     view.rerender(
       <EventShopping
@@ -209,6 +218,64 @@ describe("EventShopping", () => {
     );
     await waitFor(() =>
       expect(screen.getByLabelText("K dispozici (kg)")).toHaveValue(3),
+    );
+  });
+
+  it("creates a distinct accessible ad-hoc item through the typed outbox", async () => {
+    await i18n.changeLanguage(defaultLocale);
+    readEventPlanner.mockResolvedValue({
+      name: "Letní vaření",
+      lifecycle: "active",
+      scheduled: [],
+    });
+    readShoppingLists.mockResolvedValue([]);
+    readShoppingList.mockResolvedValue({
+      id: "9d8b2b21-c378-4574-9e46-9338c81305ef",
+      name: "Sobota",
+      sourceCount: 0,
+      createdAt: "2026-08-07T12:00:00Z",
+      currentGenerationRevisionId: "0e8b2b21-c378-4574-9e46-9338c81305ef",
+      sourceRecipeIds: [],
+      rows: [],
+      adHocItems: [],
+      quantityUnits: [
+        { id: "4e8b2b21-c378-4574-9e46-9338c81305ef", name: "kg" },
+      ],
+      storeSections: [
+        { id: "5e8b2b21-c378-4574-9e46-9338c81305ef", name: "Zelenina" },
+      ],
+    });
+    pullOrganization.mockResolvedValue(false);
+    const user = userEvent.setup();
+    render(
+      <EventShopping
+        eventId={ids.event}
+        onBack={vi.fn()}
+        onOpenList={vi.fn()}
+        onOpenPlanner={vi.fn()}
+        onUnauthenticated={vi.fn()}
+        organizationId={ids.organization}
+        shoppingListId="9d8b2b21-c378-4574-9e46-9338c81305ef"
+        userId={ids.user}
+      />,
+    );
+    await user.type(
+      await screen.findByLabelText("Název položky"),
+      "  Citrony ",
+    );
+    await user.type(screen.getByLabelText("Množství"), "3");
+    await user.click(screen.getByRole("button", { name: "Přidat položku" }));
+    expect(queueAdHocShoppingItem).toHaveBeenCalledWith(
+      ids.user,
+      ids.organization,
+      {
+        shoppingListId: "9d8b2b21-c378-4574-9e46-9338c81305ef",
+        name: "  Citrony ",
+        targetAmount: "3",
+        unitId: "4e8b2b21-c378-4574-9e46-9338c81305ef",
+        storeSectionId: "5e8b2b21-c378-4574-9e46-9338c81305ef",
+        note: "",
+      },
     );
   });
 
@@ -237,6 +304,9 @@ describe("EventShopping", () => {
       currentGenerationRevisionId: "0e8b2b21-c378-4574-9e46-9338c81305ef",
       sourceRecipeIds: [ids.scheduled],
       rows: [],
+      adHocItems: [],
+      quantityUnits: [],
+      storeSections: [],
     });
     pullOrganization.mockResolvedValue(false);
     const user = userEvent.setup();
