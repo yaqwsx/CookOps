@@ -131,6 +131,8 @@ from cookops.application.shopping_lists import (
     SetShoppingManualPurchaseTargetCommand,
     SetShoppingRowFulfilmentCommand,
     ShoppingOperationResult,
+    UpdateAdHocShoppingItemCommand,
+    UpdateAdHocShoppingItemResult,
     _contribution_record,
     _contribution_snapshot_record,
     _generation_revision_record,
@@ -146,6 +148,7 @@ from cookops.application.shopping_lists import (
     set_shopping_contribution_fulfilment,
     set_shopping_manual_purchase_target,
     set_shopping_row_fulfilment,
+    update_ad_hoc_shopping_item,
 )
 from cookops.persistence.models import (
     AdHocShoppingItem,
@@ -303,6 +306,7 @@ SyncCommand = (
     | CreateAdHocShoppingItemCommand
     | SetAdHocShoppingItemFulfilmentCommand
     | SetAdHocShoppingItemLifecycleCommand
+    | UpdateAdHocShoppingItemCommand
     | CreateReceiptCommand
     | UpdateReceiptCommand
     | SetReceiptLifecycleCommand
@@ -335,6 +339,7 @@ def _command_kind(
         | CreateAdHocShoppingItemCommand
         | SetAdHocShoppingItemFulfilmentCommand
         | SetAdHocShoppingItemLifecycleCommand
+        | UpdateAdHocShoppingItemCommand
         | CreateReceiptCommand
         | UpdateReceiptCommand
         | SetReceiptLifecycleCommand
@@ -383,6 +388,8 @@ def _command_kind(
         return "shopping_list.set_ad_hoc_item_fulfilment"
     if isinstance(command, SetAdHocShoppingItemLifecycleCommand):
         return "shopping_list.ad_hoc_item_lifecycle"
+    if isinstance(command, UpdateAdHocShoppingItemCommand):
+        return "shopping_list.update_ad_hoc_item"
     if isinstance(command, CreateReceiptCommand):
         return "receipt.create"
     if isinstance(command, UpdateReceiptCommand):
@@ -692,6 +699,7 @@ class SynchronizationCommandService:
                 | CreateAdHocShoppingItemResult
                 | SetAdHocShoppingItemFulfilmentResult
                 | SetAdHocShoppingItemLifecycleResult
+                | UpdateAdHocShoppingItemResult
                 | CreateRecipeResult
                 | CreateIngredientResult
                 | ScheduleRecipeResult
@@ -761,6 +769,8 @@ class SynchronizationCommandService:
                 result = await set_ad_hoc_shopping_item_lifecycle(
                     self._session_factory, context, command
                 )
+            elif isinstance(command, UpdateAdHocShoppingItemCommand):
+                result = await update_ad_hoc_shopping_item(self._session_factory, context, command)
             elif isinstance(command, CreateReceiptCommand):
                 result = await create_receipt(self._session_factory, context, command)
             elif isinstance(command, UpdateReceiptCommand):

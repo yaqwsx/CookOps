@@ -2010,7 +2010,15 @@ _ROW_SYNCHRONIZABLE_FIELDS = (
     "aggregate_fulfilment_credit",
 )
 _CONTRIBUTION_SYNCHRONIZABLE_FIELDS = ("fulfilment_credit",)
-_AD_HOC_SYNCHRONIZABLE_FIELDS = ("fulfilment_credit", "lifecycle")
+_AD_HOC_SYNCHRONIZABLE_FIELDS = (
+    "name",
+    "target_amount",
+    "unit_id",
+    "store_section_id",
+    "note",
+    "fulfilment_credit",
+    "lifecycle",
+)
 
 
 async def _field_clock_metadata(
@@ -2706,6 +2714,7 @@ async def set_shopping_row_fulfilment(
 AD_HOC_CREATE_COMMAND_KIND = "shopping_list.create_ad_hoc_item"
 AD_HOC_FULFILMENT_COMMAND_KIND = "shopping_list.set_ad_hoc_item_fulfilment"
 AD_HOC_LIFECYCLE_COMMAND_KIND = "shopping_list.ad_hoc_item_lifecycle"
+AD_HOC_UPDATE_COMMAND_KIND = "shopping_list.update_ad_hoc_item"
 
 
 @dataclass(frozen=True, slots=True)
@@ -2746,6 +2755,21 @@ class SetAdHocShoppingItemLifecycleCommand:
 
 
 @dataclass(frozen=True, slots=True)
+class UpdateAdHocShoppingItemCommand:
+    mutation_id: UUID
+    organization_id: UUID
+    shopping_list_id: UUID
+    ad_hoc_shopping_item_id: UUID
+    name: str
+    target_amount: Decimal
+    unit_id: UUID
+    store_section_id: UUID
+    note: str | None
+    client_wall_time: datetime
+    logical_operation_id: UUID | None = None
+
+
+@dataclass(frozen=True, slots=True)
 class CreateAdHocShoppingItemResult:
     mutation_id: UUID
     shopping_list_id: UUID
@@ -2769,6 +2793,17 @@ class SetAdHocShoppingItemFulfilmentResult:
 
 @dataclass(frozen=True, slots=True)
 class SetAdHocShoppingItemLifecycleResult:
+    mutation_id: UUID
+    shopping_list_id: UUID
+    ad_hoc_shopping_item_id: UUID
+    first_change_sequence: int
+    last_change_sequence: int
+    replayed: bool
+    outcome: Literal["accepted", "partially_superseded"] = "accepted"
+
+
+@dataclass(frozen=True, slots=True)
+class UpdateAdHocShoppingItemResult:
     mutation_id: UUID
     shopping_list_id: UUID
     ad_hoc_shopping_item_id: UUID
@@ -3647,4 +3682,340 @@ async def set_ad_hoc_shopping_item_lifecycle(
         raise error
     if result is None:
         raise RuntimeError("Ad-hoc lifecycle produced no outcome")
+    return result
+
+
+def _ad_hoc_update_hash(command: UpdateAdHocShoppingItemCommand) -> bytes:
+    return hashlib.sha256(
+        json.dumps(
+            {
+                "command_kind": AD_HOC_UPDATE_COMMAND_KIND,
+                "command_schema_version": COMMAND_SCHEMA_VERSION,
+                "mutation_id": _raw_uuid(command.mutation_id),
+                "organization_id": _raw_uuid(command.organization_id),
+                "shopping_list_id": _raw_uuid(command.shopping_list_id),
+                "ad_hoc_shopping_item_id": _raw_uuid(command.ad_hoc_shopping_item_id),
+                "name": _canonical_name(command.name)
+                if isinstance(command.name, str)
+                else _invalid(command.name),
+                "target_amount": _canonical_decimal(command.target_amount)
+                if isinstance(command.target_amount, Decimal) and command.target_amount.is_finite()
+                else _invalid(command.target_amount),
+                "unit_id": _raw_uuid(command.unit_id),
+                "store_section_id": _raw_uuid(command.store_section_id),
+                "note": command.note,
+                "client_wall_time": _raw_time(command.client_wall_time),
+                "logical_operation_id": _raw_uuid(command.logical_operation_id)
+                if command.logical_operation_id is not None
+                else None,
+            },
+            ensure_ascii=False,
+            sort_keys=True,
+            separators=(",", ":"),
+        ).encode()
+    ).digest()
+
+
+def _ad_hoc_update_violations(
+    command: UpdateAdHocShoppingItemCommand,
+) -> tuple[FieldViolation, ...]:
+    violations = [
+        FieldViolation(name, "must_be_uuid")
+        for name in (
+            "mutation_id",
+            "organization_id",
+            "shopping_list_id",
+            "ad_hoc_shopping_item_id",
+            "unit_id",
+            "store_section_id",
+        )
+        if not isinstance(getattr(command, name), UUID)
+    ]
+    name = _canonical_name(command.name) if isinstance(command.name, str) else ""
+    if (
+        not isinstance(command.name, str)
+        or not name
+        or len(name) > 200
+        or len(json.dumps(name, ensure_ascii=False).encode()) > MAX_SERIALIZED_NAME_BYTES
+    ):
+        violations.append(FieldViolation("name", "must_be_nonempty_at_most_200_characters"))
+    if (
+        not isinstance(command.target_amount, Decimal)
+        or not command.target_amount.is_finite()
+        or command.target_amount < 0
+    ):
+        violations.append(FieldViolation("target_amount", "must_be_nonnegative_finite_decimal"))
+    if command.note is not None and (not isinstance(command.note, str) or len(command.note) > 4000):
+        violations.append(FieldViolation("note", "must_be_null_or_at_most_4000_characters"))
+    if (
+        not isinstance(command.client_wall_time, datetime)
+        or command.client_wall_time.tzinfo is None
+        or command.client_wall_time.utcoffset() is None
+    ):
+        violations.append(FieldViolation("client_wall_time", "must_include_timezone"))
+    if command.logical_operation_id is not None and not isinstance(
+        command.logical_operation_id, UUID
+    ):
+        violations.append(FieldViolation("logical_operation_id", "must_be_uuid_or_null"))
+    return tuple(violations)
+
+
+def _ad_hoc_update_mutation(
+    command: UpdateAdHocShoppingItemCommand,
+    context: ExecutionContext,
+    role: Literal["member", "organization_admin", "system_admin"],
+    request_hash: bytes,
+    outcome: Literal["accepted", "partially_superseded", "rejected"],
+    payload: dict[str, object],
+    first: int | None = None,
+    last: int | None = None,
+) -> Mutation:
+    return Mutation(
+        id=command.mutation_id if isinstance(command.mutation_id, UUID) else UUID(int=0),
+        logical_operation_id=command.logical_operation_id
+        if isinstance(command.logical_operation_id, UUID)
+        else None,
+        organization_id=command.organization_id
+        if isinstance(command.organization_id, UUID)
+        else UUID(int=0),
+        is_system_administration_scope=False,
+        actor_user_id=context.actor_user_id,
+        actor_role=role,
+        client_installation_id=context.client_installation_id,
+        oauth_client_id=context.oauth_client_id,
+        oauth_grant_id=context.oauth_grant_id,
+        client_wall_time=command.client_wall_time.astimezone(UTC)
+        if isinstance(command.client_wall_time, datetime)
+        and command.client_wall_time.tzinfo is not None
+        else datetime(1970, 1, 1, tzinfo=UTC),
+        command_schema_version=COMMAND_SCHEMA_VERSION,
+        command_kind=AD_HOC_UPDATE_COMMAND_KIND,
+        target_identities=[
+            {"entity_kind": "shopping_list", "entity_id": str(command.shopping_list_id)},
+            {
+                "entity_kind": "ad_hoc_shopping_item",
+                "entity_id": str(command.ad_hoc_shopping_item_id),
+            },
+        ],
+        request_hash=request_hash,
+        outcome=outcome,
+        outcome_payload=payload,
+        first_change_sequence=first,
+        last_change_sequence=last,
+    )
+
+
+async def update_ad_hoc_shopping_item(
+    session_factory: async_sessionmaker[AsyncSession],
+    context: ExecutionContext,
+    command: UpdateAdHocShoppingItemCommand,
+) -> UpdateAdHocShoppingItemResult:
+    request_hash = _ad_hoc_update_hash(command)
+    error: ApplicationServiceError | None = None
+    result: UpdateAdHocShoppingItemResult | None = None
+    async with session_factory() as session, session.begin():
+        organization_id = (
+            command.organization_id if isinstance(command.organization_id, UUID) else UUID(int=0)
+        )
+        role = await _authorize_member_and_lock_organization(session, context, organization_id)
+        mutation_id = command.mutation_id if isinstance(command.mutation_id, UUID) else UUID(int=0)
+        await session.execute(
+            text("SELECT pg_advisory_xact_lock(:key)"),
+            {"key": _advisory_lock_key("mutation", mutation_id)},
+        )
+        retained = await session.get(Mutation, mutation_id)
+        if retained is not None:
+            if (
+                retained.actor_user_id != context.actor_user_id
+                or retained.command_kind != AD_HOC_UPDATE_COMMAND_KIND
+                or retained.command_schema_version != COMMAND_SCHEMA_VERSION
+                or retained.request_hash != request_hash
+            ):
+                raise ApplicationServiceError("idempotency_mismatch", retry_same_identity=False)
+            if (
+                retained.outcome not in ("accepted", "partially_superseded")
+                or retained.first_change_sequence is None
+                or retained.last_change_sequence is None
+            ):
+                raise _retained_error(retained)
+            return UpdateAdHocShoppingItemResult(
+                command.mutation_id,
+                command.shopping_list_id,
+                command.ad_hoc_shopping_item_id,
+                retained.first_change_sequence,
+                retained.last_change_sequence,
+                True,
+                "accepted" if retained.outcome == "accepted" else "partially_superseded",
+            )
+        if violations := _ad_hoc_update_violations(command):
+            error = _error(violations)
+        elif command.client_wall_time > datetime.now(UTC) + timedelta(hours=24):
+            error = ApplicationServiceError("client_time_too_far_ahead", retry_same_identity=False)
+        shopping_list: ShoppingList | None = None
+        if error is None:
+            shopping_list = await session.scalar(
+                select(ShoppingList)
+                .join(Event, Event.id == ShoppingList.event_id)
+                .where(
+                    ShoppingList.id == command.shopping_list_id,
+                    ShoppingList.organization_id == command.organization_id,
+                    Event.organization_id == command.organization_id,
+                    Event.lifecycle == "active",
+                )
+                .with_for_update(of=(ShoppingList, Event))
+            )
+            if shopping_list is None:
+                archived = await session.scalar(
+                    select(ShoppingList.id).where(
+                        ShoppingList.id == command.shopping_list_id,
+                        ShoppingList.organization_id == command.organization_id,
+                    )
+                )
+                error = (
+                    ApplicationServiceError("archived_event", retry_same_identity=False)
+                    if archived is not None
+                    else _error((FieldViolation("shopping_list_id", "not_found"),))
+                )
+        section = (
+            await session.scalar(
+                select(StoreSection.id).where(
+                    StoreSection.id == command.store_section_id,
+                    StoreSection.organization_id == command.organization_id,
+                    StoreSection.retired_at.is_(None),
+                )
+            )
+            if error is None
+            else None
+        )
+        unit = (
+            await session.scalar(
+                select(UnitDefinition.id).where(
+                    UnitDefinition.id == command.unit_id,
+                    UnitDefinition.retired_at.is_(None),
+                    UnitDefinition.allows_ingredient_quantity.is_(True),
+                    or_(
+                        UnitDefinition.organization_id.is_(None),
+                        UnitDefinition.organization_id == command.organization_id,
+                    ),
+                )
+            )
+            if error is None
+            else None
+        )
+        if error is None and section is None:
+            error = _error((FieldViolation("store_section_id", "not_found"),))
+        if error is None and unit is None:
+            error = _error((FieldViolation("unit_id", "not_found"),))
+        item: AdHocShoppingItem | None = None
+        if error is None and shopping_list is not None:
+            item = await session.scalar(
+                select(AdHocShoppingItem)
+                .where(
+                    AdHocShoppingItem.id == command.ad_hoc_shopping_item_id,
+                    AdHocShoppingItem.shopping_list_id == shopping_list.id,
+                    AdHocShoppingItem.organization_id == command.organization_id,
+                    AdHocShoppingItem.retired_at.is_(None),
+                )
+                .with_for_update(of=AdHocShoppingItem)
+            )
+            if item is None:
+                error = _error((FieldViolation("ad_hoc_shopping_item_id", "not_found"),))
+        if error is None and item is not None:
+            fields = {
+                "name": _canonical_name(command.name),
+                "target_amount": command.target_amount,
+                "unit_id": command.unit_id,
+                "store_section_id": command.store_section_id,
+                "note": command.note,
+            }
+            clocks = {
+                clock.field_name: clock
+                for clock in (
+                    await session.scalars(
+                        select(FieldClock)
+                        .where(
+                            FieldClock.organization_id == command.organization_id,
+                            FieldClock.entity_kind == "ad_hoc_shopping_item",
+                            FieldClock.entity_id == item.id,
+                            FieldClock.field_name.in_(tuple(fields)),
+                        )
+                        .with_for_update(of=FieldClock)
+                    )
+                ).all()
+            }
+            winners = tuple(
+                name
+                for name in fields
+                if (clock := clocks.get(name)) is None
+                or (command.client_wall_time, command.mutation_id)
+                > (clock.winning_client_wall_time, clock.winning_mutation_id)
+            )
+            for name in winners:
+                setattr(item, name, fields[name])
+                if (clock := clocks.get(name)) is None:
+                    session.add(
+                        FieldClock(
+                            organization_id=command.organization_id,
+                            entity_kind="ad_hoc_shopping_item",
+                            entity_id=item.id,
+                            field_name=name,
+                            winning_client_wall_time=command.client_wall_time,
+                            winning_mutation_id=command.mutation_id,
+                        )
+                    )
+                else:
+                    clock.winning_client_wall_time, clock.winning_mutation_id = (
+                        command.client_wall_time,
+                        command.mutation_id,
+                    )
+            record = _ad_hoc_record(item)
+            record["field_clocks"] = await _field_clock_metadata(
+                session,
+                item.organization_id,
+                "ad_hoc_shopping_item",
+                item.id,
+                _AD_HOC_SYNCHRONIZABLE_FIELDS,
+            )
+            first, last = await _reserve_change_range(
+                session, command.organization_id, command.mutation_id, 1
+            )
+            outcome: Literal["accepted", "partially_superseded"] = (
+                "accepted" if len(winners) == len(fields) else "partially_superseded"
+            )
+            session.add(
+                OrganizationChange(
+                    organization_id=command.organization_id,
+                    sequence=first,
+                    mutation_id=command.mutation_id,
+                    entity_id=item.id,
+                    entity_kind="ad_hoc_shopping_item",
+                    operation="upsert",
+                    payload={"record_schema_version": 1, "record": record},
+                )
+            )
+            session.add(
+                _ad_hoc_update_mutation(
+                    command,
+                    context,
+                    role,
+                    request_hash,
+                    outcome,
+                    {"ad_hoc_shopping_item": record},
+                    first,
+                    last,
+                )
+            )
+            result = UpdateAdHocShoppingItemResult(
+                command.mutation_id, command.shopping_list_id, item.id, first, last, False, outcome
+            )
+        if error is not None:
+            session.add(
+                _ad_hoc_update_mutation(
+                    command, context, role, request_hash, "rejected", _error_payload(error)
+                )
+            )
+    if error is not None:
+        raise error
+    if result is None:
+        raise RuntimeError("Ad-hoc item update produced no outcome")
     return result

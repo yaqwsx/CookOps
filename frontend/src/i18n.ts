@@ -273,6 +273,8 @@ const resources = {
           section: "Oddělení obchodu",
           note: "Poznámka",
           create: "Přidat položku",
+          edit: "Upravit položku",
+          save: "Uložit změny",
         },
         errors: {
           unavailable:
@@ -642,6 +644,8 @@ const resources = {
           section: "Store section",
           note: "Note",
           create: "Add item",
+          edit: "Edit item",
+          save: "Save changes",
         },
         errors: {
           unavailable:

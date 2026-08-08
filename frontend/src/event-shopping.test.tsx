@@ -18,6 +18,7 @@ const {
   queueAdHocShoppingItem,
   queueAdHocShoppingItemFulfilment,
   queueAdHocShoppingItemLifecycle,
+  queueAdHocShoppingItemUpdate,
   pullOrganization,
 } = vi.hoisted(() => ({
   readEventPlanner: vi.fn(),
@@ -32,6 +33,7 @@ const {
   queueAdHocShoppingItem: vi.fn(),
   queueAdHocShoppingItemFulfilment: vi.fn(),
   queueAdHocShoppingItemLifecycle: vi.fn(),
+  queueAdHocShoppingItemUpdate: vi.fn(),
   pullOrganization: vi.fn(),
 }));
 vi.mock("./planner-projections", () => ({ readEventPlanner }));
@@ -54,6 +56,7 @@ vi.mock("./ad-hoc-shopping-item", () => ({
   queueAdHocShoppingItem,
   queueAdHocShoppingItemFulfilment,
   queueAdHocShoppingItemLifecycle,
+  queueAdHocShoppingItemUpdate,
 }));
 vi.mock("./sync-bootstrap", () => ({
   pullOrganization,
@@ -332,6 +335,29 @@ describe("EventShopping", () => {
       adHocShoppingItemId: "2e8b2b21-c378-4574-9e46-9338c81305ef",
       operation: "restore",
     });
+  });
+
+  it("edits an active ad-hoc item through the typed outbox", async () => {
+    await i18n.changeLanguage(defaultLocale);
+    readEventPlanner.mockResolvedValue({ name: "Letní vaření", lifecycle: "active", scheduled: [] });
+    readShoppingLists.mockResolvedValue([]);
+    readShoppingList.mockResolvedValue({
+      id: "9d8b2b21-c378-4574-9e46-9338c81305ef", name: "Sobota", sourceCount: 0,
+      createdAt: "2026-08-07T12:00:00Z", currentGenerationRevisionId: "0e8b2b21-c378-4574-9e46-9338c81305ef",
+      sourceRecipeIds: [], rows: [],
+      adHocItems: [{ id: "2e8b2b21-c378-4574-9e46-9338c81305ef", name: "Citrony", target: "3", unitId: "4e8b2b21-c378-4574-9e46-9338c81305ef", unit: "kg", sectionId: "5e8b2b21-c378-4574-9e46-9338c81305ef", sectionName: null, note: null, fulfilled: false, retired: false }],
+      quantityUnits: [{ id: "4e8b2b21-c378-4574-9e46-9338c81305ef", name: "kg" }], storeSections: [{ id: "5e8b2b21-c378-4574-9e46-9338c81305ef", name: "Zelenina" }],
+    });
+    pullOrganization.mockResolvedValue(false);
+    const user = userEvent.setup();
+    render(<EventShopping eventId={ids.event} onBack={vi.fn()} onOpenList={vi.fn()} onOpenPlanner={vi.fn()} onUnauthenticated={vi.fn()} organizationId={ids.organization} shoppingListId="9d8b2b21-c378-4574-9e46-9338c81305ef" userId={ids.user} />);
+    await user.click(await screen.findByRole("button", { name: "Upravit položku" }));
+    const name = screen.getAllByLabelText("Název položky").at(-1);
+    if (!name) throw new Error("missing edit name input");
+    await user.clear(name);
+    await user.type(name, "Limety");
+    await user.click(screen.getByRole("button", { name: "Uložit změny" }));
+    expect(queueAdHocShoppingItemUpdate).toHaveBeenCalledWith(ids.user, ids.organization, expect.objectContaining({ adHocShoppingItemId: "2e8b2b21-c378-4574-9e46-9338c81305ef", name: "Limety" }));
   });
 
   it("queues a selected-source refresh without locally changing the list revision", async () => {

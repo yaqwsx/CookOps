@@ -20,6 +20,7 @@ import {
   replayAdHocShoppingItem,
   replayAdHocShoppingItemFulfilment,
   replayAdHocShoppingItemLifecycle,
+  replayAdHocShoppingItemUpdate,
 } from "./ad-hoc-shopping-item";
 
 const supportedEntityKinds = new Set([
@@ -281,6 +282,13 @@ async function replayOptimisticCommands(
         await replayAdHocShoppingItemLifecycle(userId, organizationId, command);
       } catch {
         // A lifecycle intent targeting a changed item stays recoverable.
+      }
+    }
+    if (command.commandType === "shopping_list.update_ad_hoc_item") {
+      try {
+        await replayAdHocShoppingItemUpdate(userId, organizationId, command);
+      } catch {
+        // A pending edit targeting a changed item stays recoverable.
       }
     }
     const entityId =

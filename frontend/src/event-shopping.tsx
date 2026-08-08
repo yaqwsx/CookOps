@@ -15,6 +15,7 @@ import {
   queueAdHocShoppingItem,
   queueAdHocShoppingItemFulfilment,
   queueAdHocShoppingItemLifecycle,
+  queueAdHocShoppingItemUpdate,
 } from "./ad-hoc-shopping-item";
 import {
   queueShoppingAvailableSupply,
@@ -249,6 +250,14 @@ function ShoppingDetail({
                 {item.sectionName ? ` · ${item.sectionName}` : null}
                 {item.retired ? ` · ${t("shopping.retired")}` : null}
                 {item.note ? <p>{item.note}</p> : null}
+                {editable && !item.retired ? (
+                  <AdHocShoppingEdit
+                    item={item}
+                    organizationId={organizationId}
+                    shoppingList={shoppingList}
+                    userId={userId}
+                  />
+                ) : null}
                 {editable ? (
                   <button
                     onClick={() =>
@@ -269,6 +278,54 @@ function ShoppingDetail({
         </section>
       ) : null}
     </section>
+  );
+}
+
+function AdHocShoppingEdit({
+  item,
+  organizationId,
+  shoppingList,
+  userId,
+}: {
+  item: ShoppingListProjection["adHocItems"][number];
+  organizationId: string;
+  shoppingList: ShoppingListProjection;
+  userId: string;
+}) {
+  const { t } = useTranslation();
+  const [editing, setEditing] = useState(false);
+  const [name, setName] = useState(item.name);
+  const [targetAmount, setTargetAmount] = useState(item.target);
+  const [unitId, setUnitId] = useState(item.unitId);
+  const [sectionId, setSectionId] = useState(item.sectionId);
+  const [note, setNote] = useState(item.note ?? "");
+  const [error, setError] = useState(false);
+  if (!editing)
+    return <button onClick={() => setEditing(true)} type="button">{t("shopping.adHoc.edit")}</button>;
+  async function submit(event: React.FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    try {
+      await queueAdHocShoppingItemUpdate(userId, organizationId, {
+        shoppingListId: shoppingList.id, adHocShoppingItemId: item.id, name, targetAmount,
+        unitId, storeSectionId: sectionId, note,
+      });
+      setError(false);
+      setEditing(false);
+    } catch {
+      setError(true);
+    }
+  }
+  return (
+    <form onSubmit={(event) => void submit(event)}>
+      <label>{t("shopping.adHoc.name")}<input maxLength={200} onChange={(event) => setName(event.currentTarget.value)} required value={name} /></label>
+      <label>{t("shopping.adHoc.amount")}<input inputMode="decimal" min="0" onChange={(event) => setTargetAmount(event.currentTarget.value)} required type="number" value={targetAmount} /></label>
+      <label>{t("shopping.adHoc.unit")}<select onChange={(event) => setUnitId(event.currentTarget.value)} value={unitId}>{shoppingList.quantityUnits.map((unit) => <option key={unit.id} value={unit.id}>{unit.name}</option>)}</select></label>
+      <label>{t("shopping.adHoc.section")}<select onChange={(event) => setSectionId(event.currentTarget.value)} value={sectionId}>{shoppingList.storeSections.map((section) => <option key={section.id} value={section.id}>{section.name}</option>)}</select></label>
+      <label>{t("shopping.adHoc.note")}<input maxLength={4000} onChange={(event) => setNote(event.currentTarget.value)} value={note} /></label>
+      <button type="submit">{t("shopping.adHoc.save")}</button>
+      <button onClick={() => setEditing(false)} type="button">{t("shopping.cancel")}</button>
+      {error ? <p role="alert">{t("shopping.errors.unavailable")}</p> : null}
+    </form>
   );
 }
 

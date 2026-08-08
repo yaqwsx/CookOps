@@ -17,6 +17,10 @@ export type CreateAdHocShoppingItemInput = {
   note?: string;
 };
 
+export type UpdateAdHocShoppingItemInput = CreateAdHocShoppingItemInput & {
+  adHocShoppingItemId: string;
+};
+
 function checked(input: CreateAdHocShoppingItemInput) {
   const name = input.name.normalize("NFC").trim();
   const note = input.note?.trim() || null;
@@ -189,6 +193,144 @@ export async function replayAdHocShoppingItem(
   command: { id: string; actionAt: string; payload: Record<string, unknown> },
 ) {
   await apply(userId, organizationId, command);
+}
+
+async function applyUpdate(
+  userId: string,
+  organizationId: string,
+  command: { id: string; actionAt: string; payload: Record<string, unknown> },
+) {
+  const payload = command.payload;
+  if (
+    Object.keys(payload).length !== 7 ||
+    ![
+      "shopping_list_id",
+      "ad_hoc_shopping_item_id",
+      "name",
+      "target_amount",
+      "unit_id",
+      "store_section_id",
+      "note",
+    ].every((key) => key in payload) ||
+    typeof payload.shopping_list_id !== "string" ||
+    typeof payload.ad_hoc_shopping_item_id !== "string" ||
+    typeof payload.name !== "string" ||
+    typeof payload.target_amount !== "string" ||
+    typeof payload.unit_id !== "string" ||
+    typeof payload.store_section_id !== "string" ||
+    (payload.note !== null && typeof payload.note !== "string") ||
+    !uuid.test(command.id) ||
+    !Number.isFinite(Date.parse(command.actionAt))
+  )
+    return;
+  const input: UpdateAdHocShoppingItemInput = {
+    shoppingListId: payload.shopping_list_id,
+    adHocShoppingItemId: payload.ad_hoc_shopping_item_id,
+    name: payload.name,
+    targetAmount: payload.target_amount,
+    unitId: payload.unit_id,
+    storeSectionId: payload.store_section_id,
+    ...(typeof payload.note === "string" ? { note: payload.note } : {}),
+  };
+  const { name, note } = checked(input);
+  const [canonicalItem, canonicalList] = await Promise.all([
+    localDb.canonicalRecords.get([userId, organizationId, "ad_hoc_shopping_item", input.adHocShoppingItemId]),
+    localDb.canonicalRecords.get([userId, organizationId, "shopping_list", input.shoppingListId]),
+  ]);
+  const item = await readVisibleCanonicalRecord(
+    userId,
+    organizationId,
+    "ad_hoc_shopping_item",
+    input.adHocShoppingItemId,
+  );
+  const list = await readVisibleCanonicalRecord(userId, organizationId, "shopping_list", input.shoppingListId);
+  const eventId = item?.fields.event_id;
+  const [canonicalEvent, visibleEvent] = typeof eventId === "string"
+    ? await Promise.all([
+        localDb.canonicalRecords.get([userId, organizationId, "event", eventId]),
+        readVisibleCanonicalRecord(userId, organizationId, "event", eventId),
+      ])
+    : [undefined, undefined];
+  if (
+    canonicalItem?.lifecycle === "retired" ||
+    canonicalList?.lifecycle === "retired" ||
+    canonicalEvent?.lifecycle === "retired" ||
+    item?.lifecycle !== "active" ||
+    list?.lifecycle !== "active" ||
+    visibleEvent?.lifecycle !== "active" ||
+    item.fields.shopping_list_id !== input.shoppingListId
+  )
+    throw new Error("ad_hoc_shopping_item");
+  await activeInputScope(userId, organizationId, input);
+  const fields = {
+    name,
+    target_amount: input.targetAmount,
+    unit_id: input.unitId,
+    store_section_id: input.storeSectionId,
+    note,
+  };
+  const winning = Object.fromEntries(
+    Object.entries(fields).filter(([field]) => {
+      const clock = item.fieldClocks[field];
+      if (clock === undefined || clock === null) return true;
+      if (typeof clock !== "object" || Array.isArray(clock)) return false;
+      const value = clock as Record<string, unknown>;
+      const currentAt = typeof value.actionAt === "string" ? value.actionAt : value.winning_client_wall_time;
+      const currentId = typeof value.mutationId === "string" ? value.mutationId : value.winning_mutation_id;
+      const currentTime = typeof currentAt === "string" ? Date.parse(currentAt) : NaN;
+      return (
+        typeof currentId === "string" &&
+        Number.isFinite(currentTime) &&
+        (Date.parse(command.actionAt) > currentTime ||
+          (Date.parse(command.actionAt) === currentTime && command.id > currentId))
+      );
+    }),
+  );
+  if (!Object.keys(winning).length) return;
+  await localDb.optimisticOverlays.put({
+    ...item,
+    fields: { ...item.fields, ...winning },
+    fieldClocks: {
+      ...item.fieldClocks,
+      ...Object.fromEntries(Object.keys(winning).map((field) => [field, { mutationId: command.id, actionAt: command.actionAt }])),
+    },
+    updatedAt: command.actionAt,
+  });
+}
+
+export async function queueAdHocShoppingItemUpdate(
+  userId: string,
+  organizationId: string,
+  input: UpdateAdHocShoppingItemInput,
+) {
+  const { name, note } = checked(input);
+  if (!uuid.test(input.adHocShoppingItemId)) throw new Error("ad_hoc_shopping_item");
+  const id = crypto.randomUUID();
+  const actionAt = new Date().toISOString();
+  const payload = {
+    shopping_list_id: input.shoppingListId,
+    ad_hoc_shopping_item_id: input.adHocShoppingItemId,
+    name,
+    target_amount: input.targetAmount,
+    unit_id: input.unitId,
+    store_section_id: input.storeSectionId,
+    note,
+  };
+  await localDb.transaction("rw", localDb.canonicalRecords, localDb.optimisticOverlays, localDb.outbox, async () => {
+    await applyUpdate(userId, organizationId, { id, actionAt, payload });
+    await appendOutboxCommand({
+      id, userId, organizationId, commandType: "shopping_list.update_ad_hoc_item", payload,
+      actionAt, createdAt: actionAt, state: "pending",
+    });
+  });
+}
+
+export async function replayAdHocShoppingItemUpdate(
+  userId: string,
+  organizationId: string,
+  command: { id: string; actionAt: string; payload: Record<string, unknown> },
+) {
+  await applyUpdate(userId, organizationId, command);
 }
 
 async function applyFulfilment(

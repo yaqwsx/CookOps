@@ -36,7 +36,9 @@ export type AdHocShoppingItem = {
   id: string;
   name: string;
   target: string;
+  unitId: string;
   unit: string;
+  sectionId: string;
   sectionName: string | null;
   note: string | null;
   fulfilled: boolean;
@@ -294,7 +296,9 @@ export async function readShoppingList(
             id: item.entityId,
             name,
             target: print(target),
+            unitId: unitId ?? "",
             unit,
+            sectionId: value(item, "store_section_id") ?? "",
             sectionName:
               sectionNames.get(value(item, "store_section_id") ?? "") ?? null,
             note: value(item, "note") ?? null,

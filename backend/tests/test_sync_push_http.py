@@ -783,6 +783,31 @@ def test_push_creates_an_ad_hoc_item_with_scoped_dependencies_and_replays(
             ).json()["outcomes"][0]["replayed"]
             is True
         )
+        update = _command(
+            mutation_id=uuid4(),
+            event_id=event_id,
+            kind="shopping_list.update_ad_hoc_item",
+            shopping_list_id=str(list_id),
+            ad_hoc_shopping_item_id=str(item_id),
+            name="Limes",
+            target_amount="4",
+            unit_id=str(unit_id),
+            store_section_id=str(section_id),
+            note=None,
+        )
+        updated = client.post(
+            "/api/v1/sync/push", json=_body(sync_database, installation_id, [update])
+        ).json()["outcomes"][0]
+        assert updated["command_kind"] == "shopping_list.update_ad_hoc_item"
+        assert updated["status"] == "accepted" and not updated["replayed"]
+        assert client.post(
+            "/api/v1/sync/push", json=_body(sync_database, installation_id, [update])
+        ).json()["outcomes"][0]["replayed"] is True
+        malformed_update = {**update, "mutation_id": str(uuid4()), "payload": {**update["payload"], "target_amount": 4}}
+        malformed_outcome = client.post(
+            "/api/v1/sync/push", json=_body(sync_database, installation_id, [malformed_update])
+        ).json()["outcomes"][0]
+        assert malformed_outcome["status"] == "rejected"
         fulfilment = _command(
             mutation_id=uuid4(),
             event_id=event_id,
@@ -813,6 +838,18 @@ def test_push_creates_an_ad_hoc_item_with_scoped_dependencies_and_replays(
         assert client.post(
             "/api/v1/sync/push", json=_body(sync_database, installation_id, [retire])
         ).json()["outcomes"][0]["replayed"] is True
+        retired_fulfilment = _command(
+            mutation_id=uuid4(),
+            event_id=event_id,
+            kind="shopping_list.set_ad_hoc_item_fulfilment",
+            shopping_list_id=str(list_id),
+            ad_hoc_shopping_item_id=str(item_id),
+            fulfilled=False,
+        )
+        assert client.post(
+            "/api/v1/sync/push",
+            json=_body(sync_database, installation_id, [retired_fulfilment]),
+        ).json()["outcomes"][0]["status"] == "rejected"
         restore = _command(
             mutation_id=uuid4(),
             event_id=event_id,
@@ -889,7 +926,7 @@ def test_push_creates_an_ad_hoc_item_with_scoped_dependencies_and_replays(
             ).where(
                 AdHocShoppingItem.id == item_id
             )
-        ).one() == ("Lemons", Decimal("3.5"), Decimal("3.5"))
+        ).one() == ("Limes", Decimal("4"), Decimal("4"))
 
 
 def test_push_refreshes_shopping_list_through_the_typed_shared_command(

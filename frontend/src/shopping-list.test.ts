@@ -14,8 +14,10 @@ import {
   queueAdHocShoppingItem,
   queueAdHocShoppingItemFulfilment,
   queueAdHocShoppingItemLifecycle,
+  queueAdHocShoppingItemUpdate,
   replayAdHocShoppingItemFulfilment,
   replayAdHocShoppingItemLifecycle,
+  replayAdHocShoppingItemUpdate,
 } from "./ad-hoc-shopping-item";
 
 const ids = {
@@ -225,6 +227,33 @@ describe("offline shopping-list creation", () => {
       }),
     ).rejects.toThrow("ad_hoc_shopping_item");
     await expect(localDb.outbox.count()).resolves.toBe(2);
+  });
+
+  it("updates an ad-hoc item through the typed outbox without overwriting a newer field", async () => {
+    await seedPlanner();
+    const itemId = "2e8b2b21-c378-4574-9e46-9338c81305ef";
+    const record = (entityType: string, entityId: string, fields: Record<string, unknown>, fieldClocks: Record<string, unknown> = {}) => ({
+      userId: ids.user, organizationId: ids.organization, entityType, entityId,
+      recordSchemaVersion: 1, lifecycle: "active" as const, fields, fieldClocks,
+      immutable: false, updatedAt: "2026-08-07T12:00:00.000Z",
+    });
+    await localDb.canonicalRecords.bulkAdd([
+      record("shopping_list", ids.list, { id: ids.list, organization_id: ids.organization, event_id: ids.event }),
+      record("unit_definition", ids.unit, { id: ids.unit, organization_id: null, code: "g", allows_ingredient_quantity: true }),
+      record("store_section", ids.section, { id: ids.section, organization_id: ids.organization, name: "Produce" }),
+      record("ad_hoc_shopping_item", itemId, {
+        id: itemId, organization_id: ids.organization, event_id: ids.event, shopping_list_id: ids.list,
+        name: "Lemons", target_amount: "3", unit_id: ids.unit, store_section_id: ids.section, note: null,
+      }, { name: { winning_client_wall_time: "2999-01-01T00:00:00.000Z", winning_mutation_id: "ffffffff-ffff-4fff-8fff-ffffffffffff" } }),
+    ]);
+    await queueAdHocShoppingItemUpdate(ids.user, ids.organization, {
+      shoppingListId: ids.list, adHocShoppingItemId: itemId, name: "Limes", targetAmount: "4", unitId: ids.unit, storeSectionId: ids.section, note: "fresh",
+    });
+    await expect(localDb.optimisticOverlays.get([ids.user, ids.organization, "ad_hoc_shopping_item", itemId])).resolves.toMatchObject({ fields: { name: "Lemons", target_amount: "4", note: "fresh" } });
+    await expect(localDb.outbox.orderBy("createdAt").last()).resolves.toEqual(expect.objectContaining({ commandType: "shopping_list.update_ad_hoc_item" }));
+    await replayAdHocShoppingItemUpdate(ids.user, ids.organization, {
+      id: "1e8b2b21-c378-4574-9e46-9338c81305ef", actionAt: "invalid", payload: {},
+    });
   });
 
   it("queues ad-hoc fulfilment without reviving a newer canonical value", async () => {

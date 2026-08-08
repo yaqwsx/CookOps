@@ -53,6 +53,7 @@ from cookops.application.shopping_lists import (
     SetShoppingContributionFulfilmentCommand,
     SetShoppingManualPurchaseTargetCommand,
     SetShoppingRowFulfilmentCommand,
+    UpdateAdHocShoppingItemCommand,
 )
 from cookops.application.synchronization import (
     MAX_COMMANDS_PER_PUSH,
@@ -367,6 +368,10 @@ class CreateAdHocShoppingItemPayload(BaseModel):
         if not isinstance(value, str):
             raise ValueError("must be a decimal string")
         return value
+
+
+class UpdateAdHocShoppingItemPayload(CreateAdHocShoppingItemPayload):
+    ad_hoc_shopping_item_id: UUID
 
 
 class RecipeIngredientLinePayload(BaseModel):
@@ -799,6 +804,21 @@ def _push_command(command: PushCommandRequest, organization_id: UUID) -> SyncCom
         if command.command_kind == "shopping_list.create_ad_hoc_item":
             ad_hoc_payload = CreateAdHocShoppingItemPayload.model_validate(command.payload)
             return CreateAdHocShoppingItemCommand(
+                mutation_id=command.mutation_id,
+                organization_id=organization_id,
+                shopping_list_id=ad_hoc_payload.shopping_list_id,
+                ad_hoc_shopping_item_id=ad_hoc_payload.ad_hoc_shopping_item_id,
+                name=ad_hoc_payload.name,
+                target_amount=ad_hoc_payload.target_amount,
+                unit_id=ad_hoc_payload.unit_id,
+                store_section_id=ad_hoc_payload.store_section_id,
+                note=ad_hoc_payload.note,
+                client_wall_time=command.client_wall_time,
+                logical_operation_id=ad_hoc_payload.logical_operation_id,
+            )
+        if command.command_kind == "shopping_list.update_ad_hoc_item":
+            ad_hoc_payload = UpdateAdHocShoppingItemPayload.model_validate(command.payload)
+            return UpdateAdHocShoppingItemCommand(
                 mutation_id=command.mutation_id,
                 organization_id=organization_id,
                 shopping_list_id=ad_hoc_payload.shopping_list_id,
