@@ -1,12 +1,16 @@
 import { liveQuery } from "dexie";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 
 import {
   readEventPlanner,
   type EventPlannerProjection,
 } from "./planner-projections";
-import { queueShoppingList } from "./shopping-list";
+import {
+  hasQueuedShoppingListRefresh,
+  queueShoppingList,
+  queueShoppingListRefresh,
+} from "./shopping-list";
 import {
   queueShoppingAvailableSupply,
   queueShoppingContributionFulfilment,
@@ -144,12 +148,16 @@ function ShoppingDetail({
   organizationId,
   userId,
   editable,
+  planner,
+  refreshPending,
 }: {
   shoppingList: ShoppingListProjection;
   onBack: () => void;
   organizationId: string;
   userId: string;
   editable: boolean;
+  planner: EventPlannerProjection;
+  refreshPending: boolean;
 }) {
   const { t } = useTranslation();
   const sections = new Map<string, ShoppingListProjection["rows"]>();
@@ -166,6 +174,15 @@ function ShoppingDetail({
         {t("shopping.back")}
       </button>
       <h3 id="shopping-detail-heading">{shoppingList.name}</h3>
+      {editable ? (
+        <ShoppingRefresh
+          organizationId={organizationId}
+          planner={planner}
+          refreshPending={refreshPending}
+          shoppingList={shoppingList}
+          userId={userId}
+        />
+      ) : null}
       {shoppingList.rows.length ? (
         [...sections].map(([section, rows]) => (
           <section className="shopping-section" key={section}>
@@ -188,6 +205,104 @@ function ShoppingDetail({
         <p>{t("shopping.noRows")}</p>
       )}
     </section>
+  );
+}
+
+function ShoppingRefresh({
+  organizationId,
+  planner,
+  refreshPending,
+  shoppingList,
+  userId,
+}: {
+  organizationId: string;
+  planner: EventPlannerProjection;
+  refreshPending: boolean;
+  shoppingList: ShoppingListProjection;
+  userId: string;
+}) {
+  const { t } = useTranslation();
+  const [open, setOpen] = useState(false);
+  const currentSources = useMemo(() => {
+    const selectableSourceIds = new Set(
+      planner.scheduled.map((recipe) => recipe.id),
+    );
+    return shoppingList.sourceRecipeIds.filter((id) =>
+      selectableSourceIds.has(id),
+    );
+  }, [planner.scheduled, shoppingList.sourceRecipeIds]);
+  const [selected, setSelected] = useState(currentSources);
+  const [error, setError] = useState(false);
+  const [submitting, setSubmitting] = useState(false);
+  const [queued, setQueued] = useState(false);
+  useEffect(() => setSelected(currentSources), [currentSources]);
+  function toggle(id: string, checked: boolean) {
+    setSelected((current) =>
+      checked
+        ? [...new Set([...current, id])]
+        : current.filter((item) => item !== id),
+    );
+  }
+  async function submit(event: React.FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (submitting) return;
+    setSubmitting(true);
+    try {
+      await queueShoppingListRefresh(userId, organizationId, {
+        shoppingListId: shoppingList.id,
+        parentGenerationRevisionId: shoppingList.currentGenerationRevisionId,
+        scheduledRecipeIds: selected,
+      });
+      setError(false);
+      setOpen(false);
+      setQueued(true);
+    } catch {
+      setError(true);
+    } finally {
+      setSubmitting(false);
+    }
+  }
+  if (refreshPending || queued)
+    return <p role="status">{t("shopping.refreshPending")}</p>;
+  return open ? (
+    <form
+      aria-label={t("shopping.refreshHeading")}
+      onSubmit={(event) => void submit(event)}
+      role="dialog"
+    >
+      <h4>{t("shopping.refreshHeading")}</h4>
+      <fieldset>
+        <legend>{t("shopping.sources")}</legend>
+        {planner.scheduled.map((recipe) => (
+          <label className="shopping-create__source" key={recipe.id}>
+            <input
+              checked={selected.includes(recipe.id)}
+              onChange={(event) => toggle(recipe.id, event.target.checked)}
+              type="checkbox"
+            />
+            <span>
+              {recipe.name} ·{" "}
+              {t("planner.diners", { count: recipe.dinerCount })}
+            </span>
+          </label>
+        ))}
+      </fieldset>
+      <button disabled={submitting} type="submit">
+        {t("shopping.refresh")}
+      </button>
+      <button
+        disabled={submitting}
+        onClick={() => setOpen(false)}
+        type="button"
+      >
+        {t("shopping.cancel")}
+      </button>
+      {error ? <p role="alert">{t("shopping.errors.unavailable")}</p> : null}
+    </form>
+  ) : (
+    <button onClick={() => setOpen(true)} type="button">
+      {t("shopping.refresh")}
+    </button>
   );
 }
 
@@ -401,6 +516,7 @@ export function EventShopping({
   const [planner, setPlanner] = useState<EventPlannerProjection>();
   const [lists, setLists] = useState<ShoppingListSummary[]>([]);
   const [shoppingList, setShoppingList] = useState<ShoppingListProjection>();
+  const [refreshPending, setRefreshPending] = useState(false);
   const generation = useRef(0);
   const synchronize = useCallback(async () => {
     const current = generation.current;
@@ -428,12 +544,20 @@ export function EventShopping({
             shoppingListId,
           )
         : undefined,
+      refreshPending: shoppingListId
+        ? await hasQueuedShoppingListRefresh(
+            userId,
+            organizationId,
+            shoppingListId,
+          )
+        : false,
     })).subscribe({
       next: (next) => {
         if (!active) return;
         setPlanner(next.planner);
         setLists(next.lists);
         setShoppingList(next.shoppingList);
+        setRefreshPending(next.refreshPending);
       },
       error: () => active && setState("error"),
     });
@@ -489,6 +613,8 @@ export function EventShopping({
             editable={planner.lifecycle === "active"}
             onBack={onBack}
             organizationId={organizationId}
+            planner={planner}
+            refreshPending={refreshPending}
             shoppingList={shoppingList}
             userId={userId}
           />

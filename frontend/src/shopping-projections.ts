@@ -33,6 +33,8 @@ export type ShoppingContribution = {
 };
 
 export type ShoppingListProjection = ShoppingListSummary & {
+  currentGenerationRevisionId: string;
+  sourceRecipeIds: string[];
   rows: ShoppingRow[];
 };
 
@@ -158,7 +160,7 @@ export async function readShoppingList(
   shoppingListId: string,
 ): Promise<ShoppingListProjection | undefined> {
   if (!uuid.test(shoppingListId)) return undefined;
-  const [lists, rows, contributions, snapshots, sections, units] =
+  const [lists, rows, contributions, snapshots, sections, units, sources] =
     await Promise.all([
       readShoppingLists(userId, organizationId, eventId),
       readVisibleRecords(userId, organizationId, "shopping_ingredient_row"),
@@ -170,6 +172,7 @@ export async function readShoppingList(
       ),
       readVisibleRecords(userId, organizationId, "store_section"),
       readVisibleRecords(userId, organizationId, "unit_definition"),
+      readVisibleRecords(userId, organizationId, "shopping_revision_source"),
     ]);
   const summary = lists.find((list) => list.id === shoppingListId);
   if (!summary) return undefined;
@@ -198,6 +201,18 @@ export async function readShoppingList(
   );
   return {
     ...summary,
+    currentGenerationRevisionId: currentRevisionId,
+    sourceRecipeIds: sources
+      .filter(
+        (source) =>
+          value(source, "shopping_list_id") === shoppingListId &&
+          value(source, "organization_id") === organizationId &&
+          value(source, "event_id") === eventId &&
+          value(source, "generation_revision_id") === currentRevisionId,
+      )
+      .map((source) => value(source, "scheduled_recipe_id"))
+      .filter((id): id is string => typeof id === "string" && uuid.test(id))
+      .sort(),
     rows: rows
       .filter(
         (row) =>

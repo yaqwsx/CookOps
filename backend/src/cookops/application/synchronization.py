@@ -118,6 +118,8 @@ from cookops.application.scheduled_recipes import (
 from cookops.application.shopping_lists import (
     CreateShoppingListCommand,
     CreateShoppingListResult,
+    RefreshShoppingListCommand,
+    RefreshShoppingListResult,
     SetShoppingAvailableSupplyCommand,
     SetShoppingContributionFulfilmentCommand,
     SetShoppingManualPurchaseTargetCommand,
@@ -130,6 +132,7 @@ from cookops.application.shopping_lists import (
     _row_record,
     _shopping_list_record,
     create_shopping_list,
+    refresh_shopping_list,
     set_shopping_available_supply,
     set_shopping_contribution_fulfilment,
     set_shopping_manual_purchase_target,
@@ -275,12 +278,14 @@ SyncCommand = (
     | DuplicateEventCommand
     | UpdateEventPriceEstimatesCommand
     | CreateShoppingListCommand
+    | RefreshShoppingListCommand
     | CreateRecipeCommand
     | PublishRecipeVersionCommand
     | CreateIngredientCommand
     | ScheduleRecipeCommand
     | MoveScheduledRecipeCommand
     | SetScheduledRecipeAttendanceCommand
+    | SetScheduledRecipeContextCommand
     | SetScheduledIngredientOverrideCommand
     | SetShoppingAvailableSupplyCommand
     | SetShoppingManualPurchaseTargetCommand
@@ -302,6 +307,7 @@ def _command_kind(
         | DuplicateEventCommand
         | UpdateEventPriceEstimatesCommand
         | CreateShoppingListCommand
+        | RefreshShoppingListCommand
         | CreateRecipeCommand
         | PublishRecipeVersionCommand
         | CreateIngredientCommand
@@ -330,6 +336,8 @@ def _command_kind(
         return "event.duplicate"
     if isinstance(command, UpdateEventPriceEstimatesCommand):
         return "event.update_price_estimates"
+    if isinstance(command, RefreshShoppingListCommand):
+        return "shopping_list.refresh"
     if isinstance(command, CreateRecipeCommand):
         return "recipe.create"
     if isinstance(command, PublishRecipeVersionCommand):
@@ -659,6 +667,7 @@ class SynchronizationCommandService:
                 | DuplicateEventResult
                 | UpdateEventPriceEstimatesResult
                 | CreateShoppingListResult
+                | RefreshShoppingListResult
                 | CreateRecipeResult
                 | CreateIngredientResult
                 | ScheduleRecipeResult
@@ -680,6 +689,8 @@ class SynchronizationCommandService:
                 result = await duplicate_event(self._session_factory, context, command)
             elif isinstance(command, UpdateEventPriceEstimatesCommand):
                 result = await update_event_price_estimates(self._session_factory, context, command)
+            elif isinstance(command, RefreshShoppingListCommand):
+                result = await refresh_shopping_list(self._session_factory, context, command)
             elif isinstance(command, CreateRecipeCommand):
                 result = await create_recipe(self._session_factory, context, command)
             elif isinstance(command, PublishRecipeVersionCommand):
@@ -839,6 +850,7 @@ class SynchronizationCommandService:
             | DuplicateEventResult
             | UpdateEventPriceEstimatesResult
             | CreateShoppingListResult
+            | RefreshShoppingListResult
             | CreateRecipeResult
             | CreateIngredientResult
             | ScheduleRecipeResult
@@ -866,6 +878,8 @@ class SynchronizationCommandService:
                 if isinstance(result, DuplicateEventResult)
                 else "event.update_price_estimates"
                 if isinstance(result, UpdateEventPriceEstimatesResult)
+                else "shopping_list.refresh"
+                if isinstance(result, RefreshShoppingListResult)
                 else "recipe.create"
                 if isinstance(result, CreateRecipeResult)
                 else "ingredient.create"

@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, it } from "vitest";
 
-import { localDb } from "./local-db";
-import { queueShoppingList } from "./shopping-list";
+import { compareOutboxCommands, localDb } from "./local-db";
+import { queueShoppingList, queueShoppingListRefresh } from "./shopping-list";
 import {
   queueShoppingAvailableSupply,
   queueShoppingContributionFulfilment,
@@ -94,6 +94,8 @@ async function seedPlanner() {
       event_meal_role_id: ids.role,
       recipe_id: ids.recipe,
       diner_count: 4,
+      consumption_percentage: "100",
+      selected_scale_amount: "4",
       position_key: "a",
     }),
   ]);
@@ -170,6 +172,139 @@ describe("offline shopping-list creation", () => {
       ).rejects.toThrow("shopping_list");
     }
     await expect(localDb.outbox.count()).resolves.toBe(0);
+  });
+
+  it("durably queues refresh without advancing the canonical generation pointer", async () => {
+    await seedPlanner();
+    await localDb.canonicalRecords.bulkAdd([
+      {
+        userId: ids.user,
+        organizationId: ids.organization,
+        entityType: "shopping_list",
+        entityId: ids.list,
+        recordSchemaVersion: 1,
+        lifecycle: "active",
+        fields: {
+          id: ids.list,
+          organization_id: ids.organization,
+          event_id: ids.event,
+          current_generation_revision_id: ids.revision,
+        },
+        fieldClocks: {},
+        immutable: false,
+        updatedAt: "2026-08-07T12:00:00.000Z",
+      },
+    ]);
+
+    await queueShoppingListRefresh(ids.user, ids.organization, {
+      shoppingListId: ids.list,
+      parentGenerationRevisionId: ids.revision,
+      scheduledRecipeIds: [ids.scheduled],
+    });
+
+    await expect(
+      localDb.canonicalRecords.get([
+        ids.user,
+        ids.organization,
+        "shopping_list",
+        ids.list,
+      ]),
+    ).resolves.toMatchObject({
+      fields: { current_generation_revision_id: ids.revision },
+    });
+    await expect(
+      localDb.optimisticOverlays.get([
+        ids.user,
+        ids.organization,
+        "shopping_list",
+        ids.list,
+      ]),
+    ).resolves.toBeUndefined();
+    await expect(localDb.outbox.toArray()).resolves.toEqual([
+      expect.objectContaining({
+        commandType: "shopping_list.refresh",
+        payload: expect.objectContaining({
+          shopping_list_id: ids.list,
+          parent_generation_revision_id: ids.revision,
+          scheduled_recipe_ids: [ids.scheduled],
+        }),
+      }),
+    ]);
+  });
+
+  it("orders a refresh after a locally created list without requiring a server pointer", async () => {
+    await seedPlanner();
+    await queueShoppingList(ids.user, ids.organization, {
+      eventId: ids.event,
+      name: "Saturday shopping",
+      scheduledRecipeIds: [ids.scheduled],
+    });
+    const created = await localDb.optimisticOverlays
+      .where("[userId+organizationId]")
+      .equals([ids.user, ids.organization])
+      .filter((record) => record.entityType === "shopping_list")
+      .first();
+    const parentGenerationRevisionId =
+      created?.fields.current_generation_revision_id;
+    expect(typeof parentGenerationRevisionId).toBe("string");
+    await expect(
+      queueShoppingListRefresh(ids.user, ids.organization, {
+        shoppingListId: created?.entityId ?? "",
+        parentGenerationRevisionId:
+          typeof parentGenerationRevisionId === "string"
+            ? parentGenerationRevisionId
+            : "",
+        scheduledRecipeIds: [ids.scheduled],
+      }),
+    ).resolves.toBe(true);
+    const commands = (await localDb.outbox.toArray()).sort(
+      compareOutboxCommands,
+    );
+    expect(commands.map((command) => command.commandType)).toEqual([
+      "shopping_list.create",
+      "shopping_list.refresh",
+    ]);
+    expect(
+      await localDb.canonicalRecords.get([
+        ids.user,
+        ids.organization,
+        "shopping_list",
+        created?.entityId ?? "",
+      ]),
+    ).toBeUndefined();
+  });
+
+  it("deduplicates concurrent refresh clicks in the durable outbox", async () => {
+    await seedPlanner();
+    await localDb.canonicalRecords.add({
+      userId: ids.user,
+      organizationId: ids.organization,
+      entityType: "shopping_list",
+      entityId: ids.list,
+      recordSchemaVersion: 1,
+      lifecycle: "active",
+      fields: {
+        id: ids.list,
+        organization_id: ids.organization,
+        event_id: ids.event,
+        current_generation_revision_id: ids.revision,
+      },
+      fieldClocks: {},
+      immutable: false,
+      updatedAt: "2026-08-07T12:00:00.000Z",
+    });
+    const input = {
+      shoppingListId: ids.list,
+      parentGenerationRevisionId: ids.revision,
+      scheduledRecipeIds: [ids.scheduled],
+    };
+    await expect(
+      Promise.all([
+        queueShoppingListRefresh(ids.user, ids.organization, input),
+        queueShoppingListRefresh(ids.user, ids.organization, input),
+      ]),
+    ).resolves.toEqual(expect.arrayContaining([true, false]));
+    await expect(localDb.outbox.count()).resolves.toBe(1);
   });
 
   it("derives remaining from active generation and all contribution credit, including retired sources", async () => {

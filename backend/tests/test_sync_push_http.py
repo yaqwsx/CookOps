@@ -92,6 +92,14 @@ def _command(
             "scheduled_recipe_ids": [],
             **payload,
         }
+    elif kind == "shopping_list.refresh":
+        payload = {
+            "generation_revision_id": str(uuid4()),
+            "shopping_list_id": str(uuid4()),
+            "parent_generation_revision_id": str(uuid4()),
+            "scheduled_recipe_ids": [],
+            **payload,
+        }
     return {
         "mutation_id": str(mutation_id),
         "command_kind": kind,
@@ -681,6 +689,82 @@ def test_push_creates_a_shopping_list_through_the_typed_shared_command(
         assert connection.scalar(
             select(ShoppingList.name).where(ShoppingList.id == shopping_list_id)
         ) == ("Push shopping")
+
+
+def test_push_refreshes_shopping_list_through_the_typed_shared_command(
+    sync_database: SyncDatabase,
+) -> None:
+    installation_id = _installation(sync_database)
+    event_id, shopping_list_id, parent_revision_id = uuid4(), uuid4(), uuid4()
+    refresh_mutation_id, refresh_revision_id = uuid4(), uuid4()
+    setup = [
+        _command(mutation_id=uuid4(), event_id=event_id),
+        _command(
+            mutation_id=uuid4(),
+            event_id=event_id,
+            kind="shopping_list.create",
+            shopping_list_id=str(shopping_list_id),
+            generation_revision_id=str(parent_revision_id),
+        ),
+    ]
+    refresh = _command(
+        mutation_id=refresh_mutation_id,
+        event_id=event_id,
+        kind="shopping_list.refresh",
+        shopping_list_id=str(shopping_list_id),
+        parent_generation_revision_id=str(parent_revision_id),
+        generation_revision_id=str(refresh_revision_id),
+    )
+    with TestClient(create_app(_settings()), base_url="https://testserver") as client:
+        _sign_in(client, "dummy-member")
+        assert [item["status"] for item in client.post(
+            "/api/v1/sync/push", json=_body(sync_database, installation_id, setup)
+        ).json()["outcomes"]] == ["accepted", "accepted"]
+        accepted = client.post(
+            "/api/v1/sync/push",
+            json=_body(sync_database, installation_id, [refresh]),
+        ).json()["outcomes"][0]
+        assert accepted["command_kind"] == "shopping_list.refresh"
+        assert accepted["status"] == "accepted" and not accepted["replayed"]
+        assert client.post(
+            "/api/v1/sync/push",
+            json=_body(sync_database, installation_id, [refresh]),
+        ).json()["outcomes"][0]["replayed"] is True
+        stale = _command(
+            mutation_id=uuid4(),
+            event_id=event_id,
+            kind="shopping_list.refresh",
+            shopping_list_id=str(shopping_list_id),
+            parent_generation_revision_id=str(uuid4()),
+        )
+        assert client.post(
+            "/api/v1/sync/push",
+            json=_body(sync_database, installation_id, [stale]),
+        ).json()["outcomes"][0]["error"]["code"] == "stale_precondition"
+        malformed = _command(
+            mutation_id=uuid4(),
+            event_id=event_id,
+            kind="shopping_list.refresh",
+            shopping_list_id=str(shopping_list_id),
+            parent_generation_revision_id=str(refresh_revision_id),
+            unexpected="value",
+        )
+        assert client.post(
+            "/api/v1/sync/push",
+            json=_body(sync_database, installation_id, [malformed]),
+        ).json()["outcomes"][0]["error"]["code"] == "validation_failed"
+        duplicate_sources = _command(
+            mutation_id=uuid4(),
+            event_id=event_id,
+            kind="shopping_list.refresh",
+            shopping_list_id=str(shopping_list_id),
+            parent_generation_revision_id=str(refresh_revision_id),
+            scheduled_recipe_ids=[str(uuid4())] * 2,
+        )
+        assert client.post(
+            "/api/v1/sync/push",
+            json=_body(sync_database, installation_id, [duplicate_sources]),
+        ).json()["outcomes"][0]["error"]["code"] == "validation_failed"
 
 
 def test_push_creates_a_recipe_through_the_typed_shared_command(

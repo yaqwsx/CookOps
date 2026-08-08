@@ -44,6 +44,7 @@ from cookops.application.scheduled_recipe_overrides import SetScheduledIngredien
 from cookops.application.scheduled_recipes import ScheduleRecipeCommand
 from cookops.application.shopping_lists import (
     CreateShoppingListCommand,
+    RefreshShoppingListCommand,
     SetShoppingAvailableSupplyCommand,
     SetShoppingContributionFulfilmentCommand,
     SetShoppingManualPurchaseTargetCommand,
@@ -272,6 +273,25 @@ class CreateShoppingListPayload(BaseModel):
     name: str
     scheduled_recipe_ids: tuple[UUID, ...]
     logical_operation_id: UUID | None = None
+
+
+class RefreshShoppingListPayload(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    generation_revision_id: UUID
+    shopping_list_id: UUID
+    parent_generation_revision_id: UUID
+    scheduled_recipe_ids: tuple[UUID, ...]
+    logical_operation_id: UUID | None = None
+
+    @field_validator("scheduled_recipe_ids")
+    @classmethod
+    def scheduled_recipe_ids_must_be_unique(
+        cls, value: tuple[UUID, ...]
+    ) -> tuple[UUID, ...]:
+        if len(set(value)) != len(value):
+            raise ValueError("scheduled recipe IDs must be unique")
+        return value
 
 
 class SetShoppingQuantityPayload(BaseModel):
@@ -658,6 +678,18 @@ def _push_command(command: PushCommandRequest, organization_id: UUID) -> SyncCom
                 scheduled_recipe_ids=shopping_payload.scheduled_recipe_ids,
                 client_wall_time=command.client_wall_time,
                 logical_operation_id=shopping_payload.logical_operation_id,
+            )
+        if command.command_kind == "shopping_list.refresh":
+            refresh_payload = RefreshShoppingListPayload.model_validate(command.payload)
+            return RefreshShoppingListCommand(
+                mutation_id=command.mutation_id,
+                generation_revision_id=refresh_payload.generation_revision_id,
+                organization_id=organization_id,
+                shopping_list_id=refresh_payload.shopping_list_id,
+                parent_generation_revision_id=refresh_payload.parent_generation_revision_id,
+                scheduled_recipe_ids=refresh_payload.scheduled_recipe_ids,
+                client_wall_time=command.client_wall_time,
+                logical_operation_id=refresh_payload.logical_operation_id,
             )
         if command.command_kind == "shopping_list.set_available_supply":
             supply_payload = SetShoppingSupplyPayload.model_validate(command.payload)

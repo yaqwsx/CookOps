@@ -10,6 +10,7 @@ const {
   readShoppingList,
   readShoppingLists,
   queueShoppingList,
+  queueShoppingListRefresh,
   queueShoppingAvailableSupply,
   queueShoppingContributionFulfilment,
   queueShoppingManualPurchaseTarget,
@@ -20,6 +21,7 @@ const {
   readShoppingList: vi.fn(),
   readShoppingLists: vi.fn(),
   queueShoppingList: vi.fn(),
+  queueShoppingListRefresh: vi.fn(),
   queueShoppingAvailableSupply: vi.fn(),
   queueShoppingContributionFulfilment: vi.fn(),
   queueShoppingManualPurchaseTarget: vi.fn(),
@@ -31,7 +33,11 @@ vi.mock("./shopping-projections", () => ({
   readShoppingLists,
   readShoppingList,
 }));
-vi.mock("./shopping-list", () => ({ queueShoppingList }));
+vi.mock("./shopping-list", () => ({
+  hasQueuedShoppingListRefresh: vi.fn().mockResolvedValue(false),
+  queueShoppingList,
+  queueShoppingListRefresh,
+}));
 vi.mock("./shopping-operations", () => ({
   queueShoppingAvailableSupply,
   queueShoppingContributionFulfilment,
@@ -110,6 +116,8 @@ describe("EventShopping", () => {
       name: "Sobota",
       sourceCount: 1,
       createdAt: "2026-08-07T12:00:00Z",
+      currentGenerationRevisionId: "0e8b2b21-c378-4574-9e46-9338c81305ef",
+      sourceRecipeIds: [ids.scheduled],
       rows: [
         {
           id: "1e8b2b21-c378-4574-9e46-9338c81305ef",
@@ -169,6 +177,8 @@ describe("EventShopping", () => {
       name: "Sobota",
       sourceCount: 1,
       createdAt: "2026-08-07T12:00:00Z",
+      currentGenerationRevisionId: "0e8b2b21-c378-4574-9e46-9338c81305ef",
+      sourceRecipeIds: [ids.scheduled],
       rows: [
         {
           id: "1e8b2b21-c378-4574-9e46-9338c81305ef",
@@ -199,6 +209,63 @@ describe("EventShopping", () => {
     );
     await waitFor(() =>
       expect(screen.getByLabelText("K dispozici (kg)")).toHaveValue(3),
+    );
+  });
+
+  it("queues a selected-source refresh without locally changing the list revision", async () => {
+    await i18n.changeLanguage(defaultLocale);
+    readEventPlanner.mockResolvedValue({
+      name: "Letní vaření",
+      lifecycle: "active",
+      scheduled: [
+        {
+          id: ids.scheduled,
+          name: "Chili",
+          dinerCount: 12,
+          dayId: "day",
+          roleId: "role",
+          position: "a",
+        },
+      ],
+    });
+    readShoppingLists.mockResolvedValue([]);
+    readShoppingList.mockResolvedValue({
+      id: "9d8b2b21-c378-4574-9e46-9338c81305ef",
+      name: "Sobota",
+      sourceCount: 1,
+      createdAt: "2026-08-07T12:00:00Z",
+      currentGenerationRevisionId: "0e8b2b21-c378-4574-9e46-9338c81305ef",
+      sourceRecipeIds: [ids.scheduled],
+      rows: [],
+    });
+    pullOrganization.mockResolvedValue(false);
+    const user = userEvent.setup();
+    render(
+      <EventShopping
+        eventId={ids.event}
+        onBack={vi.fn()}
+        onOpenList={vi.fn()}
+        onOpenPlanner={vi.fn()}
+        onUnauthenticated={vi.fn()}
+        organizationId={ids.organization}
+        shoppingListId="9d8b2b21-c378-4574-9e46-9338c81305ef"
+        userId={ids.user}
+      />,
+    );
+    await user.click(
+      await screen.findByRole("button", { name: "Obnovit vypočtené položky" }),
+    );
+    await user.click(
+      screen.getByRole("button", { name: "Obnovit vypočtené položky" }),
+    );
+    expect(queueShoppingListRefresh).toHaveBeenCalledWith(
+      ids.user,
+      ids.organization,
+      {
+        shoppingListId: "9d8b2b21-c378-4574-9e46-9338c81305ef",
+        parentGenerationRevisionId: "0e8b2b21-c378-4574-9e46-9338c81305ef",
+        scheduledRecipeIds: [ids.scheduled],
+      },
     );
   });
 });
