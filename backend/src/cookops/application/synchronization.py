@@ -65,6 +65,11 @@ from cookops.application.event_meal_role_creation import (
     EventMealRoleCreationResult,
     create_event_meal_role,
 )
+from cookops.application.event_meal_role_position import (
+    EventMealRolePositionResult,
+    SetEventMealRolePositionCommand,
+    set_event_meal_role_position,
+)
 from cookops.application.event_prices import (
     UpdateEventPriceEstimatesCommand,
     UpdateEventPriceEstimatesResult,
@@ -317,6 +322,7 @@ SyncCommand = (
     | SetEventDayVisibilityCommand
     | CreateEventDayCommand
     | CreateEventMealRoleCommand
+    | SetEventMealRolePositionCommand
     | SetEventDayNoteCommand
     | CreateShoppingListCommand
     | RefreshShoppingListCommand
@@ -355,6 +361,7 @@ def _command_kind(
         | SetEventDayVisibilityCommand
         | CreateEventDayCommand
         | CreateEventMealRoleCommand
+        | SetEventMealRolePositionCommand
         | SetEventDayNoteCommand
         | CreateShoppingListCommand
         | RefreshShoppingListCommand
@@ -397,6 +404,8 @@ def _command_kind(
         return "event_day.create"
     if isinstance(command, CreateEventMealRoleCommand):
         return "event_meal_role.create"
+    if isinstance(command, SetEventMealRolePositionCommand):
+        return "event_meal_role.position"
     if isinstance(command, SetEventDayNoteCommand):
         return "event_day.note"
     if isinstance(command, RefreshShoppingListCommand):
@@ -742,6 +751,7 @@ class SynchronizationCommandService:
                 | EventDayVisibilityResult
                 | EventDayCreationResult
                 | EventMealRoleCreationResult
+                | EventMealRolePositionResult
                 | EventDayNoteResult
                 | CreateShoppingListResult
                 | RefreshShoppingListResult
@@ -777,6 +787,8 @@ class SynchronizationCommandService:
                 result = await create_event_day(self._session_factory, context, command)
             elif isinstance(command, CreateEventMealRoleCommand):
                 result = await create_event_meal_role(self._session_factory, context, command)
+            elif isinstance(command, SetEventMealRolePositionCommand):
+                result = await set_event_meal_role_position(self._session_factory, context, command)
             elif isinstance(command, SetEventDayNoteCommand):
                 result = await set_event_day_note(self._session_factory, context, command)
             elif isinstance(command, RefreshShoppingListCommand):

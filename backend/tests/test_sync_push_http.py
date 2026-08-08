@@ -1388,6 +1388,32 @@ def test_push_schedules_a_recipe_through_the_typed_shared_command(
         assert client.post("/api/v1/sync/push", json=meal_role_body).json()["outcomes"][0][
             "replayed"
         ]
+        role_position = _command(
+            mutation_id=uuid4(),
+            event_id=event_id,
+            kind="event_meal_role.position",
+            event_meal_role_id=meal_role["payload"]["event_meal_role_id"],
+            position_key="z9",
+        )
+        cast(dict[str, object], role_position["payload"])["event_id"] = str(event_id)
+        role_position_body = _body(sync_database, installation_id, [role_position])
+        assert client.post("/api/v1/sync/push", json=role_position_body).json()["outcomes"][0][
+            "status"
+        ] == "accepted"
+        assert client.post("/api/v1/sync/push", json=role_position_body).json()["outcomes"][0][
+            "replayed"
+        ]
+        malformed_position = _command(
+            mutation_id=uuid4(),
+            event_id=event_id,
+            kind="event_meal_role.position",
+            event_meal_role_id=meal_role["payload"]["event_meal_role_id"],
+            position_key="!",
+        )
+        cast(dict[str, object], malformed_position["payload"])["event_id"] = str(event_id)
+        assert client.post(
+            "/api/v1/sync/push", json=_body(sync_database, installation_id, [malformed_position])
+        ).json()["outcomes"][0]["error"]["code"] == "validation_failed"
         bootstrap = client.post(
             "/api/v1/sync/bootstrap",
             json={"organization_id": str(sync_database.organization_id)},
@@ -1398,7 +1424,8 @@ def test_push_schedules_a_recipe_through_the_typed_shared_command(
             if item["entity_kind"] == "event_meal_role"
             and item["entity_id"] == meal_role["payload"]["event_meal_role_id"]
         )
-        assert role_record["field_clocks"]["position_key"]["winning_mutation_id"] == meal_role[
+        assert role_record["position_key"] == "z9"
+        assert role_record["field_clocks"]["position_key"]["winning_mutation_id"] == role_position[
             "mutation_id"
         ]
         malformed_role = _event_meal_role_command(

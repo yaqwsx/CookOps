@@ -26,7 +26,7 @@ import {
   queueReplacementOverride,
 } from "./scheduled-ingredient-override";
 import { queueEventDayCreate, queueEventDayNote, queueEventDayVisibility } from "./event-day";
-import { queueEventMealRoleCreate } from "./event-meal-role";
+import { queueEventMealRoleCreate, queueEventMealRolePosition } from "./event-meal-role";
 import { pullOrganization, SyncRequestError } from "./sync-bootstrap";
 
 type PlannerState = "loading" | "ready" | "offline" | "error";
@@ -252,6 +252,19 @@ function AddMealRole({ eventId, organizationId, userId, active }: { eventId: str
     }
   }
   return <form onSubmit={(event) => void submit(event)}><label>{t("planner.mealRoleName")}<input maxLength={200} onChange={(event) => setCustomName(event.target.value)} required value={customName} /></label><button type="submit">{t("planner.addMealRole")}</button>{error ? <p role="alert">{t("planner.errors.unavailable")}</p> : null}</form>;
+}
+
+function OrderMealRoles({ planner, eventId, organizationId, userId }: { planner: EventPlannerProjection; eventId: string; organizationId: string; userId: string }) {
+  const { t } = useTranslation();
+  const [roleId, setRoleId] = useState(planner.roles[0]?.id ?? "");
+  const [positionKey, setPositionKey] = useState(planner.roles[0]?.position ?? "");
+  const [error, setError] = useState(false);
+  useEffect(() => {
+    const role = planner.roles.find((item) => item.id === roleId) ?? planner.roles[0];
+    if (role) { setRoleId(role.id); setPositionKey(role.position); }
+  }, [planner.roles, roleId]);
+  if (planner.lifecycle !== "active" || !planner.roles.length) return null;
+  return <form onSubmit={(event) => { event.preventDefault(); void queueEventMealRolePosition(userId, organizationId, { eventId, eventMealRoleId: roleId, positionKey }).then(() => setError(false)).catch(() => setError(true)); }}><label>{t("planner.role")}<select value={roleId} onChange={(event) => setRoleId(event.target.value)}>{planner.roles.map((role) => <option key={role.id} value={role.id}>{role.name}</option>)}</select></label><label>{t("planner.rolePosition")}<input maxLength={255} pattern="[0-9A-Za-z]+" required value={positionKey} onChange={(event) => setPositionKey(event.target.value)} /></label><button type="submit">{t("planner.saveRolePosition")}</button>{error ? <p role="alert">{t("planner.errors.unavailable")}</p> : null}</form>;
 }
 
 function AddRecipe({
@@ -794,6 +807,7 @@ export function EventPlanner({
       />
       <AddDay eventId={eventId} organizationId={organizationId} userId={userId} active={planner.lifecycle === "active"} />
       <AddMealRole eventId={eventId} organizationId={organizationId} userId={userId} active={planner.lifecycle === "active"} />
+      <OrderMealRoles eventId={eventId} organizationId={organizationId} planner={planner} userId={userId} />
       <div className="planner-days">
         {planner.days.map((day) => (
           <section

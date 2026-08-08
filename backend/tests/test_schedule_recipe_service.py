@@ -26,6 +26,10 @@ from cookops.application.event_meal_role_creation import (
     CreateEventMealRoleCommand,
     create_event_meal_role,
 )
+from cookops.application.event_meal_role_position import (
+    SetEventMealRolePositionCommand,
+    set_event_meal_role_position,
+)
 from cookops.application.organizations import ApplicationServiceError, ExecutionContext
 from cookops.application.scheduled_recipe_attendance import (
     SetScheduledRecipeAttendanceCommand,
@@ -729,6 +733,28 @@ def test_member_creates_one_custom_event_meal_role(service_database: ServiceData
     assert payload is not None
     assert payload["record"]["custom_name"] == "Late supper"
     assert payload["record"]["position_key"] == f"z{command.event_meal_role_id.hex}"
+
+
+def test_member_reorders_an_event_meal_role_once(service_database: ServiceDatabase) -> None:
+    command = SetEventMealRolePositionCommand(
+        mutation_id=uuid4(),
+        event_meal_role_id=service_database.event_role_id,
+        organization_id=service_database.organization_id,
+        event_id=service_database.event_id,
+        position_key="z9",
+        client_wall_time=datetime.now(UTC),
+    )
+    accepted = asyncio.run(
+        set_event_meal_role_position(service_database.sessions, context(service_database), command)
+    )
+    assert asyncio.run(
+        set_event_meal_role_position(service_database.sessions, context(service_database), command)
+    ).replayed
+    with service_database.sync_engine.connect() as connection:
+        assert connection.scalar(
+            select(EventMealRole.position_key).where(EventMealRole.id == command.event_meal_role_id)
+        ) == "z9"
+    assert accepted.outcome == "accepted"
 
 
 def test_member_creates_a_manual_event_day_once(service_database: ServiceDatabase) -> None:
