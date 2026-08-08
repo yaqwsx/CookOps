@@ -35,6 +35,11 @@ from cookops.application.catalog_configuration import (
     CatalogConfigurationResult,
     mutate_catalog_configuration,
 )
+from cookops.application.event_day_visibility import (
+    EventDayVisibilityResult,
+    SetEventDayVisibilityCommand,
+    set_event_day_visibility,
+)
 from cookops.application.event_duplication import (
     DuplicateEventCommand,
     DuplicateEventResult,
@@ -294,6 +299,7 @@ SyncCommand = (
     | SetEventLifecycleCommand
     | DuplicateEventCommand
     | UpdateEventPriceEstimatesCommand
+    | SetEventDayVisibilityCommand
     | CreateShoppingListCommand
     | RefreshShoppingListCommand
     | CreateRecipeCommand
@@ -328,6 +334,7 @@ def _command_kind(
         | SetEventLifecycleCommand
         | DuplicateEventCommand
         | UpdateEventPriceEstimatesCommand
+        | SetEventDayVisibilityCommand
         | CreateShoppingListCommand
         | RefreshShoppingListCommand
         | CreateRecipeCommand
@@ -363,6 +370,8 @@ def _command_kind(
         return "event.duplicate"
     if isinstance(command, UpdateEventPriceEstimatesCommand):
         return "event.update_price_estimates"
+    if isinstance(command, SetEventDayVisibilityCommand):
+        return "event_day.visibility"
     if isinstance(command, RefreshShoppingListCommand):
         return "shopping_list.refresh"
     if isinstance(command, CreateRecipeCommand):
@@ -703,6 +712,7 @@ class SynchronizationCommandService:
                 | EventLifecycleResult
                 | DuplicateEventResult
                 | UpdateEventPriceEstimatesResult
+                | EventDayVisibilityResult
                 | CreateShoppingListResult
                 | RefreshShoppingListResult
                 | CreateAdHocShoppingItemResult
@@ -731,6 +741,8 @@ class SynchronizationCommandService:
                 result = await duplicate_event(self._session_factory, context, command)
             elif isinstance(command, UpdateEventPriceEstimatesCommand):
                 result = await update_event_price_estimates(self._session_factory, context, command)
+            elif isinstance(command, SetEventDayVisibilityCommand):
+                result = await set_event_day_visibility(self._session_factory, context, command)
             elif isinstance(command, RefreshShoppingListCommand):
                 result = await refresh_shopping_list(self._session_factory, context, command)
             elif isinstance(command, CreateRecipeCommand):
@@ -1785,22 +1797,20 @@ async def _bootstrap_records(
             select(EventDay).where(EventDay.event_id.in_(active_ids)).order_by(EventDay.id)
         )
     ).scalars():
-        append(
-            "event_day",
-            item.id,
-            {
-                "id": str(item.id),
-                "event_id": str(item.event_id),
-                "calendar_date": item.calendar_date.isoformat(),
-                "note": item.note,
-                "is_visible": item.is_visible,
-                "provenance": item.provenance,
-                "created_at": item.created_at.isoformat(),
-                "created_by_user_id": str(item.created_by_user_id),
-                "retired_at": _time(item.retired_at),
-                "retired_by_user_id": _uuid(item.retired_by_user_id),
-            },
-        )
+        record = {
+            "id": str(item.id),
+            "event_id": str(item.event_id),
+            "calendar_date": item.calendar_date.isoformat(),
+            "note": item.note,
+            "is_visible": item.is_visible,
+            "provenance": item.provenance,
+            "created_at": item.created_at.isoformat(),
+            "created_by_user_id": str(item.created_by_user_id),
+            "retired_at": _time(item.retired_at),
+            "retired_by_user_id": _uuid(item.retired_by_user_id),
+        }
+        record["field_clocks"] = _clock_fields(clocks, "event_day", item.id)
+        append("event_day", item.id, record)
     for item in (
         await session.execute(
             select(EventMealRole)

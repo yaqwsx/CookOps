@@ -16,6 +16,10 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_asyn
 from sqlalchemy.pool import NullPool
 
 from alembic import command as alembic_command
+from cookops.application.event_day_visibility import (
+    SetEventDayVisibilityCommand,
+    set_event_day_visibility,
+)
 from cookops.application.organizations import ApplicationServiceError, ExecutionContext
 from cookops.application.scheduled_recipe_attendance import (
     SetScheduledRecipeAttendanceCommand,
@@ -601,6 +605,46 @@ def test_member_sets_manual_diners_and_can_resume_event_attendance(
         )
     )
     assert (resumed.diner_count, resumed.attendance_mode) == (42, "follows_event")
+
+
+def test_member_hides_an_event_day_with_lww_replay(
+    service_database: ServiceDatabase,
+) -> None:
+    command = SetEventDayVisibilityCommand(
+        mutation_id=uuid4(),
+        event_day_id=service_database.event_day_id,
+        organization_id=service_database.organization_id,
+        event_id=service_database.event_id,
+        is_visible=False,
+        client_wall_time=datetime.now(UTC),
+    )
+    accepted = asyncio.run(
+        set_event_day_visibility(service_database.sessions, context(service_database), command)
+    )
+    assert accepted.outcome == "accepted"
+    assert asyncio.run(
+        set_event_day_visibility(service_database.sessions, context(service_database), command)
+    ).replayed
+    stale = replace(
+        command,
+        mutation_id=uuid4(),
+        is_visible=True,
+        client_wall_time=command.client_wall_time - timedelta(seconds=1),
+    )
+    assert asyncio.run(
+        set_event_day_visibility(service_database.sessions, context(service_database), stale)
+    ).outcome == "partially_superseded"
+    with service_database.sync_engine.connect() as connection:
+        payload = connection.scalar(
+            select(OrganizationChange.payload).where(
+                OrganizationChange.mutation_id == stale.mutation_id
+            )
+        )
+    assert payload is not None
+    assert payload["record"]["is_visible"] is False
+    assert payload["record"]["field_clocks"]["is_visible"]["winning_mutation_id"] == str(
+        command.mutation_id
+    )
 
 
 def test_stale_attendance_keeps_the_winning_clock_in_the_change_feed(

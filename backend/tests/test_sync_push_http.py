@@ -259,6 +259,20 @@ def _scheduled_recipe_lifecycle_command(
     return command
 
 
+def _event_day_visibility_command(
+    *, mutation_id: UUID, event_id: UUID, event_day_id: UUID, is_visible: object
+) -> dict[str, object]:
+    command = _command(
+        mutation_id=mutation_id,
+        event_id=event_id,
+        kind="event_day.visibility",
+        event_day_id=str(event_day_id),
+        is_visible=is_visible,
+    )
+    cast(dict[str, object], command["payload"])["event_id"] = str(event_id)
+    return command
+
+
 def _scheduled_recipe_context_command(
     *, mutation_id: UUID, event_id: UUID, scheduled_recipe_id: UUID, **payload: object
 ) -> dict[str, object]:
@@ -1276,6 +1290,31 @@ def test_push_schedules_a_recipe_through_the_typed_shared_command(
                 select(EventDay.id).where(EventDay.event_id == event_id)
             )
             assert isinstance(event_day_id, UUID)
+        visibility = _event_day_visibility_command(
+            mutation_id=uuid4(),
+            event_id=event_id,
+            event_day_id=event_day_id,
+            is_visible=False,
+        )
+        visibility_body = _body(sync_database, installation_id, [visibility])
+        visibility_outcome = client.post(
+            "/api/v1/sync/push", json=visibility_body
+        ).json()["outcomes"][0]
+        assert visibility_outcome["status"] == "accepted"
+        assert visibility_outcome["command_kind"] == "event_day.visibility"
+        assert client.post("/api/v1/sync/push", json=visibility_body).json()["outcomes"][0][
+            "replayed"
+        ]
+        malformed_visibility = _event_day_visibility_command(
+            mutation_id=uuid4(),
+            event_id=event_id,
+            event_day_id=event_day_id,
+            is_visible="false",
+        )
+        assert client.post(
+            "/api/v1/sync/push",
+            json=_body(sync_database, installation_id, [malformed_visibility]),
+        ).json()["outcomes"][0]["error"]["code"] == "validation_failed"
         event_meal_role_id = uuid4()
         with sync_database.engine.begin() as connection:
             connection.execute(

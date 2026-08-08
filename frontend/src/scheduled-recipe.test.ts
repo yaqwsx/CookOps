@@ -95,7 +95,10 @@ describe("offline recipe scheduling", () => {
       [ids.user, ids.organization, "event_day", ids.day],
       { fields: { id: ids.day, event_id: ids.event, calendar_date: "2026-08-10", note: null, is_visible: false } },
     );
-    await expect(readEventPlanner(ids.user, ids.organization, ids.event)).resolves.toMatchObject({ days: [] });
+    await expect(readEventPlanner(ids.user, ids.organization, ids.event)).resolves.toMatchObject({
+      days: [],
+      hiddenDays: [expect.objectContaining({ id: ids.day, visible: false })],
+    });
   });
 
   it("writes one visible scheduled recipe and typed outbox command atomically", async () => {

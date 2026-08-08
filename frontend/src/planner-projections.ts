@@ -3,7 +3,7 @@ import { readVisibleRecords } from "./visible-records";
 
 export type PlannerRecipe = { id: string; versionId: string; name: string };
 export type PlannerIngredient = { id: string; versionId: string; name: string };
-export type PlannerDay = { id: string; date: string; note: string | null };
+export type PlannerDay = { id: string; date: string; note: string | null; visible: boolean };
 export type PlannerRole = { id: string; name: string; position: string };
 export type PlannedRecipe = {
   id: string;
@@ -25,6 +25,7 @@ export type EventPlannerProjection = {
   attendance: number;
   lifecycle: "active" | "archived";
   days: PlannerDay[];
+  hiddenDays: PlannerDay[];
   roles: PlannerRole[];
   recipes: PlannerRecipe[];
   ingredients: PlannerIngredient[];
@@ -101,21 +102,21 @@ export async function readEventPlanner(
     (lifecycle !== "active" && lifecycle !== "archived")
   )
     return undefined;
-  const days = dayRecords
+  const projectedDays = dayRecords
     .filter(
       (record) =>
         hasId(record) &&
         belongsToOrganization(record, organizationId) &&
-        value(record, "event_id") === eventId &&
-        record.fields.is_visible !== false,
+        value(record, "event_id") === eventId,
     )
     .map((record) => ({
       id: record.entityId,
       date: value(record, "calendar_date"),
       note: record.fields.note,
+      visible: record.fields.is_visible !== false,
     }))
     .filter(
-      (day): day is { id: string; date: string; note: string | null } =>
+      (day): day is PlannerDay =>
         Boolean(day.date) &&
         (day.note === null || typeof day.note === "string"),
     )
@@ -301,7 +302,8 @@ export async function readEventPlanner(
     endDate,
     attendance,
     lifecycle,
-    days,
+    days: projectedDays.filter((day) => day.visible),
+    hiddenDays: projectedDays.filter((day) => !day.visible),
     roles,
     recipes,
     ingredients,

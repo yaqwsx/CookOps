@@ -1,0 +1,29 @@
+import { beforeEach, expect, it } from "vitest";
+
+import { queueEventDayVisibility, replayEventDayVisibility } from "./event-day";
+import { localDb } from "./local-db";
+
+const user = "a6a58bd6-214e-49af-8fae-e5f974bf8e08";
+const organization = "5ce17d2f-8365-4b1f-a80b-34d10425d51c";
+const event = "6ce17d2f-8365-4b1f-a80b-34d10425d51c";
+const day = "7ce17d2f-8365-4b1f-a80b-34d10425d51c";
+const base = { userId: user, organizationId: organization, recordSchemaVersion: 1, lifecycle: "active" as const, immutable: false, updatedAt: "2026-08-08T12:00:00.000Z" };
+
+beforeEach(async () => {
+  await Promise.all([localDb.canonicalRecords.clear(), localDb.optimisticOverlays.clear(), localDb.outbox.clear()]);
+  await localDb.canonicalRecords.bulkPut([
+    { ...base, entityType: "event", entityId: event, fields: { id: event, organization_id: organization, lifecycle: "active" }, fieldClocks: {} },
+    { ...base, entityType: "event_day", entityId: day, fields: { id: day, event_id: event, is_visible: true }, fieldClocks: {} },
+  ]);
+});
+
+it("queues visibility atomically and keeps a newer canonical visibility winner", async () => {
+  await queueEventDayVisibility(user, organization, { eventDayId: day, eventId: event, isVisible: false });
+  await expect(localDb.outbox.toArray()).resolves.toEqual([expect.objectContaining({ commandType: "event_day.visibility" })]);
+  await expect(localDb.optimisticOverlays.get([user, organization, "event_day", day])).resolves.toMatchObject({ fields: { is_visible: false } });
+
+  await localDb.optimisticOverlays.clear();
+  await localDb.canonicalRecords.put({ ...base, entityType: "event_day", entityId: day, fields: { id: day, event_id: event, is_visible: true }, fieldClocks: { is_visible: { winning_client_wall_time: "2026-08-08T14:00:00.000Z", winning_mutation_id: "ffffffff-ffff-4fff-8fff-ffffffffffff" } } });
+  await replayEventDayVisibility(user, organization, { id: "00000000-0000-4000-8000-000000000000", actionAt: "2026-08-08T13:00:00.000Z", payload: { event_day_id: day, event_id: event, is_visible: false } });
+  await expect(localDb.optimisticOverlays.count()).resolves.toBe(0);
+});

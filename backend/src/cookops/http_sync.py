@@ -23,6 +23,7 @@ from pydantic import (
 
 from cookops.application.browser_sessions import BrowserSessionService
 from cookops.application.catalog_configuration import CatalogConfigurationCommand
+from cookops.application.event_day_visibility import SetEventDayVisibilityCommand
 from cookops.application.event_duplication import DuplicateEventCommand
 from cookops.application.event_lifecycle import SetEventLifecycleCommand
 from cookops.application.event_prices import UpdateEventPriceEstimatesCommand
@@ -510,6 +511,15 @@ class ScheduledRecipeLifecyclePayload(BaseModel):
     scheduled_recipe_id: UUID
     event_id: UUID
     operation: Literal["retire", "restore"]
+    logical_operation_id: UUID | None = None
+
+
+class EventDayVisibilityPayload(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    event_day_id: UUID
+    event_id: UUID
+    is_visible: StrictBool
     logical_operation_id: UUID | None = None
 
 
@@ -1011,6 +1021,17 @@ def _push_command(command: PushCommandRequest, organization_id: UUID) -> SyncCom
                 operation=payload.operation,
                 client_wall_time=command.client_wall_time,
                 logical_operation_id=payload.logical_operation_id,
+            )
+        if command.command_kind == "event_day.visibility":
+            day_payload = EventDayVisibilityPayload.model_validate(command.payload)
+            return SetEventDayVisibilityCommand(
+                mutation_id=command.mutation_id,
+                event_day_id=day_payload.event_day_id,
+                organization_id=organization_id,
+                event_id=day_payload.event_id,
+                is_visible=day_payload.is_visible,
+                client_wall_time=command.client_wall_time,
+                logical_operation_id=day_payload.logical_operation_id,
             )
         if command.command_kind == "scheduled_recipe.context":
             payload = ScheduledRecipeContextPayload.model_validate(command.payload)

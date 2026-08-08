@@ -25,6 +25,7 @@ import {
   queueAddedOverride,
   queueReplacementOverride,
 } from "./scheduled-ingredient-override";
+import { queueEventDayVisibility } from "./event-day";
 import { pullOrganization, SyncRequestError } from "./sync-bootstrap";
 
 type PlannerState = "loading" | "ready" | "offline" | "error";
@@ -183,6 +184,30 @@ function EventCosts({
       ) : null}
     </section>
   );
+}
+
+function DayVisibility({
+  day,
+  eventId,
+  organizationId,
+  userId,
+}: {
+  day: EventPlannerProjection["days"][number];
+  eventId: string;
+  organizationId: string;
+  userId: string;
+}) {
+  const { t } = useTranslation();
+  const [error, setError] = useState(false);
+  async function setVisibility(isVisible: boolean) {
+    try {
+      await queueEventDayVisibility(userId, organizationId, { eventDayId: day.id, eventId, isVisible });
+      setError(false);
+    } catch {
+      setError(true);
+    }
+  }
+  return <><button onClick={() => void setVisibility(!day.visible)} type="button">{t(day.visible ? "planner.hideDay" : "planner.restoreDay")}</button>{error ? <p role="alert">{t("planner.errors.unavailable")}</p> : null}</>;
 }
 
 function AddRecipe({
@@ -732,6 +757,7 @@ export function EventPlanner({
           >
             <h3 id={`day-${day.id}`}>{day.date}</h3>
             {day.note ? <p>{day.note}</p> : null}
+            {planner.lifecycle === "active" ? <DayVisibility day={day} eventId={eventId} organizationId={organizationId} userId={userId} /> : null}
             {planner.roles.map((role) => {
               const scheduled = planner.scheduled.filter(
                 (item) => item.dayId === day.id && item.roleId === role.id,
@@ -813,6 +839,7 @@ export function EventPlanner({
           </section>
         ))}
       </div>
+      {planner.lifecycle === "active" && planner.hiddenDays.length ? <details><summary>{t("planner.hiddenDays")}</summary><ul>{planner.hiddenDays.map((day) => <li key={day.id}>{day.date} <DayVisibility day={day} eventId={eventId} organizationId={organizationId} userId={userId} /></li>)}</ul></details> : null}
       {state === "error" ? (
         <div role="alert">
           <p>{t("planner.error")}</p>

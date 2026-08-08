@@ -199,6 +199,9 @@ const resources = {
         saved: "Recept je uložen místně a bude synchronizován.",
         noAddOptions:
           "Pro přidání receptu je potřeba uložený den, chod a recept.",
+        hideDay: "Skrýt den",
+        restoreDay: "Obnovit den",
+        hiddenDays: "Skryté dny",
         emptyRole: "Pro tento chod zatím není naplánovaný recept.",
         diners: "Strávníci: {{count}}",
         retired: "vyřazeno",
@@ -572,6 +575,9 @@ const resources = {
         saved: "The recipe is saved locally and will synchronize.",
         noAddOptions:
           "A stored day, meal role, and recipe are required to add a recipe.",
+        hideDay: "Hide day",
+        restoreDay: "Restore day",
+        hiddenDays: "Hidden days",
         emptyRole: "No recipe is scheduled for this meal role yet.",
         diners: "Diners: {{count}}",
         retired: "retired",
