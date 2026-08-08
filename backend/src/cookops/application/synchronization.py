@@ -65,6 +65,11 @@ from cookops.application.event_meal_role_creation import (
     EventMealRoleCreationResult,
     create_event_meal_role,
 )
+from cookops.application.event_meal_role_lifecycle import (
+    EventMealRoleLifecycleResult,
+    SetEventMealRoleLifecycleCommand,
+    set_event_meal_role_lifecycle,
+)
 from cookops.application.event_meal_role_position import (
     EventMealRolePositionResult,
     SetEventMealRolePositionCommand,
@@ -323,6 +328,7 @@ SyncCommand = (
     | CreateEventDayCommand
     | CreateEventMealRoleCommand
     | SetEventMealRolePositionCommand
+    | SetEventMealRoleLifecycleCommand
     | SetEventDayNoteCommand
     | CreateShoppingListCommand
     | RefreshShoppingListCommand
@@ -362,6 +368,7 @@ def _command_kind(
         | CreateEventDayCommand
         | CreateEventMealRoleCommand
         | SetEventMealRolePositionCommand
+        | SetEventMealRoleLifecycleCommand
         | SetEventDayNoteCommand
         | CreateShoppingListCommand
         | RefreshShoppingListCommand
@@ -406,6 +413,8 @@ def _command_kind(
         return "event_meal_role.create"
     if isinstance(command, SetEventMealRolePositionCommand):
         return "event_meal_role.position"
+    if isinstance(command, SetEventMealRoleLifecycleCommand):
+        return "event_meal_role.lifecycle"
     if isinstance(command, SetEventDayNoteCommand):
         return "event_day.note"
     if isinstance(command, RefreshShoppingListCommand):
@@ -752,6 +761,7 @@ class SynchronizationCommandService:
                 | EventDayCreationResult
                 | EventMealRoleCreationResult
                 | EventMealRolePositionResult
+                | EventMealRoleLifecycleResult
                 | EventDayNoteResult
                 | CreateShoppingListResult
                 | RefreshShoppingListResult
@@ -789,6 +799,10 @@ class SynchronizationCommandService:
                 result = await create_event_meal_role(self._session_factory, context, command)
             elif isinstance(command, SetEventMealRolePositionCommand):
                 result = await set_event_meal_role_position(self._session_factory, context, command)
+            elif isinstance(command, SetEventMealRoleLifecycleCommand):
+                result = await set_event_meal_role_lifecycle(
+                    self._session_factory, context, command
+                )
             elif isinstance(command, SetEventDayNoteCommand):
                 result = await set_event_day_note(self._session_factory, context, command)
             elif isinstance(command, RefreshShoppingListCommand):
@@ -975,11 +989,15 @@ class SynchronizationCommandService:
             | ScheduleRecipeResult
             | MoveScheduledRecipeResult
             | ScheduledRecipeAttendanceResult
+            | ScheduledRecipeContextResult
+            | ScheduledRecipeLifecycleResult
             | ScheduledIngredientOverrideResult
             | ShoppingOperationResult
             | ReceiptResult
             | CatalogConfigurationResult
             | EventMealRoleCreationResult
+            | EventMealRolePositionResult
+            | EventMealRoleLifecycleResult
         ),
         *,
         command_kind: str | None = None,
@@ -1012,6 +1030,12 @@ class SynchronizationCommandService:
                 if isinstance(result, ScheduledRecipeAttendanceResult)
                 else "scheduled_recipe.context"
                 if isinstance(result, ScheduledRecipeContextResult)
+                else "scheduled_recipe.lifecycle"
+                if isinstance(result, ScheduledRecipeLifecycleResult)
+                else "event_meal_role.position"
+                if isinstance(result, EventMealRolePositionResult)
+                else "event_meal_role.lifecycle"
+                if isinstance(result, EventMealRoleLifecycleResult)
                 else "receipt.create"
                 if isinstance(result, ReceiptResult)
                 else "scheduled_recipe.ingredient_override"

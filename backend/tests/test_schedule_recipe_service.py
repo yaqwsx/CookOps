@@ -26,6 +26,10 @@ from cookops.application.event_meal_role_creation import (
     CreateEventMealRoleCommand,
     create_event_meal_role,
 )
+from cookops.application.event_meal_role_lifecycle import (
+    SetEventMealRoleLifecycleCommand,
+    set_event_meal_role_lifecycle,
+)
 from cookops.application.event_meal_role_position import (
     SetEventMealRolePositionCommand,
     set_event_meal_role_position,
@@ -755,6 +759,42 @@ def test_member_reorders_an_event_meal_role_once(service_database: ServiceDataba
             select(EventMealRole.position_key).where(EventMealRole.id == command.event_meal_role_id)
         ) == "z9"
     assert accepted.outcome == "accepted"
+
+
+def test_member_retires_and_restores_an_event_meal_role(service_database: ServiceDatabase) -> None:
+    retired = SetEventMealRoleLifecycleCommand(
+        mutation_id=uuid4(),
+        event_meal_role_id=service_database.event_role_id,
+        organization_id=service_database.organization_id,
+        event_id=service_database.event_id,
+        operation="retire",
+        client_wall_time=datetime.now(UTC),
+    )
+    assert asyncio.run(
+        set_event_meal_role_lifecycle(service_database.sessions, context(service_database), retired)
+    ).outcome == "accepted"
+    assert asyncio.run(
+        set_event_meal_role_lifecycle(service_database.sessions, context(service_database), retired)
+    ).replayed
+    restored = replace(
+        retired, mutation_id=uuid4(), operation="restore", client_wall_time=datetime.now(UTC)
+    )
+    assert asyncio.run(
+        set_event_meal_role_lifecycle(
+            service_database.sessions, context(service_database), restored
+        )
+    ).outcome == "accepted"
+    with service_database.sync_engine.connect() as connection:
+        payload = connection.scalar(
+            select(OrganizationChange.payload).where(
+                OrganizationChange.mutation_id == restored.mutation_id
+            )
+        )
+    assert payload is not None
+    assert payload["record"]["retired_at"] is None
+    assert payload["record"]["field_clocks"]["lifecycle"]["winning_mutation_id"] == str(
+        restored.mutation_id
+    )
 
 
 def test_member_creates_a_manual_event_day_once(service_database: ServiceDatabase) -> None:

@@ -1,5 +1,5 @@
 import { liveQuery } from "dexie";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 
 import {
@@ -26,7 +26,7 @@ import {
   queueReplacementOverride,
 } from "./scheduled-ingredient-override";
 import { queueEventDayCreate, queueEventDayNote, queueEventDayVisibility } from "./event-day";
-import { queueEventMealRoleCreate, queueEventMealRolePosition } from "./event-meal-role";
+import { queueEventMealRoleCreate, queueEventMealRoleLifecycle, queueEventMealRolePosition } from "./event-meal-role";
 import { pullOrganization, SyncRequestError } from "./sync-bootstrap";
 
 type PlannerState = "loading" | "ready" | "offline" | "error";
@@ -265,6 +265,17 @@ function OrderMealRoles({ planner, eventId, organizationId, userId }: { planner:
   }, [planner.roles, roleId]);
   if (planner.lifecycle !== "active" || !planner.roles.length) return null;
   return <form onSubmit={(event) => { event.preventDefault(); void queueEventMealRolePosition(userId, organizationId, { eventId, eventMealRoleId: roleId, positionKey }).then(() => setError(false)).catch(() => setError(true)); }}><label>{t("planner.role")}<select value={roleId} onChange={(event) => setRoleId(event.target.value)}>{planner.roles.map((role) => <option key={role.id} value={role.id}>{role.name}</option>)}</select></label><label>{t("planner.rolePosition")}<input maxLength={255} pattern="[0-9A-Za-z]+" required value={positionKey} onChange={(event) => setPositionKey(event.target.value)} /></label><button type="submit">{t("planner.saveRolePosition")}</button>{error ? <p role="alert">{t("planner.errors.unavailable")}</p> : null}</form>;
+}
+
+function MealRoleLifecycle({ planner, eventId, organizationId, userId }: { planner: EventPlannerProjection; eventId: string; organizationId: string; userId: string }) {
+  const { t } = useTranslation();
+  const roles = useMemo(() => [...planner.roles, ...planner.retiredRoles], [planner.roles, planner.retiredRoles]);
+  const [roleId, setRoleId] = useState(roles[0]?.id ?? "");
+  const [error, setError] = useState(false);
+  useEffect(() => setRoleId((current) => roles.some((role) => role.id === current) ? current : (roles[0]?.id ?? "")), [roles]);
+  const role = roles.find((item) => item.id === roleId);
+  if (planner.lifecycle !== "active" || !role) return null;
+  return <form onSubmit={(event) => { event.preventDefault(); void queueEventMealRoleLifecycle(userId, organizationId, { eventId, eventMealRoleId: role.id, operation: role.retired ? "restore" : "retire" }).then(() => setError(false)).catch(() => setError(true)); }}><label>{t("planner.role")}<select value={roleId} onChange={(event) => setRoleId(event.target.value)}>{roles.map((item) => <option key={item.id} value={item.id}>{item.name}{item.retired ? ` (${t("planner.retired")})` : ""}</option>)}</select></label><button type="submit">{t(role.retired ? "planner.restoreMealRole" : "planner.retireMealRole")}</button>{error ? <p role="alert">{t("planner.errors.unavailable")}</p> : null}</form>;
 }
 
 function AddRecipe({
@@ -808,6 +819,7 @@ export function EventPlanner({
       <AddDay eventId={eventId} organizationId={organizationId} userId={userId} active={planner.lifecycle === "active"} />
       <AddMealRole eventId={eventId} organizationId={organizationId} userId={userId} active={planner.lifecycle === "active"} />
       <OrderMealRoles eventId={eventId} organizationId={organizationId} planner={planner} userId={userId} />
+      <MealRoleLifecycle eventId={eventId} organizationId={organizationId} planner={planner} userId={userId} />
       <div className="planner-days">
         {planner.days.map((day) => (
           <section

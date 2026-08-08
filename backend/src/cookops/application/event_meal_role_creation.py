@@ -51,7 +51,7 @@ class EventMealRoleCreationResult:
     outcome: str = "accepted"
 
 
-def _record(role: EventMealRole, clock: FieldClock) -> dict[str, object]:
+def _record(role: EventMealRole, *clocks: FieldClock) -> dict[str, object]:
     return {
         "id": str(role.id),
         "event_id": str(role.event_id),
@@ -62,13 +62,14 @@ def _record(role: EventMealRole, clock: FieldClock) -> dict[str, object]:
         "position_key": role.position_key,
         "created_at": role.created_at.isoformat(),
         "created_by_user_id": str(role.created_by_user_id),
-        "retired_at": None,
-        "retired_by_user_id": None,
+        "retired_at": role.retired_at.isoformat() if role.retired_at else None,
+        "retired_by_user_id": str(role.retired_by_user_id) if role.retired_by_user_id else None,
         "field_clocks": {
-            "position_key": {
+            clock.field_name: {
                 "winning_client_wall_time": clock.winning_client_wall_time.isoformat(),
                 "winning_mutation_id": str(clock.winning_mutation_id),
             }
+            for clock in clocks
         },
     }
 

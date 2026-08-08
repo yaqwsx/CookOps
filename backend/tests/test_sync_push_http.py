@@ -1403,6 +1403,22 @@ def test_push_schedules_a_recipe_through_the_typed_shared_command(
         assert client.post("/api/v1/sync/push", json=role_position_body).json()["outcomes"][0][
             "replayed"
         ]
+        role_lifecycle = _command(
+            mutation_id=uuid4(),
+            event_id=event_id,
+            kind="event_meal_role.lifecycle",
+            event_meal_role_id=meal_role["payload"]["event_meal_role_id"],
+            operation="retire",
+        )
+        cast(dict[str, object], role_lifecycle["payload"])["event_id"] = str(event_id)
+        role_lifecycle_body = _body(sync_database, installation_id, [role_lifecycle])
+        assert client.post(
+            "/api/v1/sync/push", json=role_lifecycle_body
+        ).json()["outcomes"][0]["status"] == "accepted"
+        assert client.post(
+            "/api/v1/sync/push", json=role_lifecycle_body).json()["outcomes"][0][
+            "replayed"
+        ]
         malformed_position = _command(
             mutation_id=uuid4(),
             event_id=event_id,
@@ -1426,6 +1442,10 @@ def test_push_schedules_a_recipe_through_the_typed_shared_command(
         )
         assert role_record["position_key"] == "z9"
         assert role_record["field_clocks"]["position_key"]["winning_mutation_id"] == role_position[
+            "mutation_id"
+        ]
+        assert role_record["retired_at"] is not None
+        assert role_record["field_clocks"]["lifecycle"]["winning_mutation_id"] == role_lifecycle[
             "mutation_id"
         ]
         malformed_role = _event_meal_role_command(

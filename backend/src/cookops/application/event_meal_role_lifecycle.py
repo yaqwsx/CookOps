@@ -1,10 +1,10 @@
-"""Set one event meal role position through its LWW field."""
+"""Retire or restore one event meal role through its LWW lifecycle field."""
 
 import hashlib
 import json
-import unicodedata
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
+from typing import Literal, cast
 from uuid import UUID
 
 from sqlalchemy import select, text
@@ -27,47 +27,42 @@ from cookops.persistence.models import (
     OrganizationChange,
 )
 
-COMMAND_KIND = "event_meal_role.position"
+COMMAND_KIND = "event_meal_role.lifecycle"
 COMMAND_SCHEMA_VERSION = 1
 
 
 @dataclass(frozen=True, slots=True)
-class SetEventMealRolePositionCommand:
+class SetEventMealRoleLifecycleCommand:
     mutation_id: UUID
     event_meal_role_id: UUID
     organization_id: UUID
     event_id: UUID
-    position_key: str
+    operation: Literal["retire", "restore"]
     client_wall_time: datetime
     logical_operation_id: UUID | None = None
 
 
 @dataclass(frozen=True, slots=True)
-class EventMealRolePositionResult:
+class EventMealRoleLifecycleResult:
     mutation_id: UUID
     event_meal_role_id: UUID
     first_change_sequence: int
     last_change_sequence: int
     replayed: bool
-    outcome: str = "accepted"
+    outcome: Literal["accepted", "partially_superseded"] = "accepted"
 
 
-def _value(value: object) -> object:
-    if isinstance(value, UUID):
-        return str(value)
-    if isinstance(value, datetime) and value.tzinfo and value.utcoffset() is not None:
-        return value.astimezone(UTC).isoformat()
-    if isinstance(value, str):
-        return unicodedata.normalize("NFC", value).strip()
-    if value is None:
-        return None
-    return {"invalid": type(value).__name__}
+def _hash(command: SetEventMealRoleLifecycleCommand) -> bytes:
+    def value(item: object) -> object:
+        if isinstance(item, UUID):
+            return str(item)
+        if isinstance(item, datetime) and item.tzinfo and item.utcoffset() is not None:
+            return item.astimezone(UTC).isoformat()
+        return item if item is None or isinstance(item, str) else {"invalid": type(item).__name__}
 
-
-def _hash(command: SetEventMealRolePositionCommand) -> bytes:
     return hashlib.sha256(
         json.dumps(
-            {key: _value(getattr(command, key)) for key in command.__dataclass_fields__}
+            {key: value(getattr(command, key)) for key in command.__dataclass_fields__}
             | {"command_kind": COMMAND_KIND, "command_schema_version": COMMAND_SCHEMA_VERSION},
             sort_keys=True,
             separators=(",", ":"),
@@ -75,30 +70,60 @@ def _hash(command: SetEventMealRolePositionCommand) -> bytes:
     ).digest()
 
 
-async def set_event_meal_role_position(
+def _mutation(
+    command: SetEventMealRoleLifecycleCommand,
+    context: ExecutionContext,
+    role: Literal["member", "organization_admin", "system_admin"],
+    request_hash: bytes,
+    outcome: Literal["accepted", "partially_superseded", "rejected"],
+    payload: dict[str, object],
+    first: int | None = None,
+    last: int | None = None,
+) -> Mutation:
+    return Mutation(
+        id=command.mutation_id,
+        logical_operation_id=command.logical_operation_id,
+        organization_id=command.organization_id,
+        is_system_administration_scope=False,
+        actor_user_id=context.actor_user_id,
+        actor_role=role,
+        client_installation_id=context.client_installation_id,
+        oauth_client_id=context.oauth_client_id,
+        oauth_grant_id=context.oauth_grant_id,
+        client_wall_time=(
+            command.client_wall_time.astimezone(UTC)
+            if isinstance(command.client_wall_time, datetime)
+            and command.client_wall_time.tzinfo is not None
+            and command.client_wall_time.utcoffset() is not None
+            else datetime(1970, 1, 1, tzinfo=UTC)
+        ),
+        command_schema_version=COMMAND_SCHEMA_VERSION,
+        command_kind=COMMAND_KIND,
+        target_identities=[
+            {"entity_kind": "event", "entity_id": str(command.event_id)},
+            {"entity_kind": "event_meal_role", "entity_id": str(command.event_meal_role_id)},
+        ],
+        request_hash=request_hash,
+        outcome=outcome,
+        outcome_payload=payload,
+        first_change_sequence=first,
+        last_change_sequence=last,
+    )
+
+
+async def set_event_meal_role_lifecycle(
     session_factory: async_sessionmaker[AsyncSession],
     context: ExecutionContext,
-    command: SetEventMealRolePositionCommand,
-) -> EventMealRolePositionResult:
-    """Order one active role without changing its identity or scheduled recipes."""
+    command: SetEventMealRoleLifecycleCommand,
+) -> EventMealRoleLifecycleResult:
     request_hash = _hash(command)
-    position_key = (
-        unicodedata.normalize("NFC", command.position_key).strip()
-        if isinstance(command.position_key, str)
-        else ""
-    )
     violations = [
         FieldViolation(name, "must_be_uuid")
         for name in ("mutation_id", "event_meal_role_id", "organization_id", "event_id")
         if not isinstance(getattr(command, name), UUID)
     ]
-    if (
-        not position_key
-        or len(position_key) > 255
-        or not position_key.isascii()
-        or not position_key.isalnum()
-    ):
-        violations.append(FieldViolation("position_key", "must_be_ascii_alphanumeric_at_most_255"))
+    if command.operation not in ("retire", "restore"):
+        violations.append(FieldViolation("operation", "must_be_retire_or_restore"))
     if (
         not isinstance(command.client_wall_time, datetime)
         or command.client_wall_time.tzinfo is None
@@ -119,7 +144,7 @@ async def set_event_meal_role_position(
         command.organization_id if isinstance(command.organization_id, UUID) else UUID(int=0)
     )
     deferred: ApplicationServiceError | None = None
-    result: EventMealRolePositionResult | None = None
+    result: EventMealRoleLifecycleResult | None = None
     async with session_factory() as session, session.begin():
         role = await _authorize_and_lock_organization(session, context, organization_id)
         await session.execute(
@@ -145,16 +170,18 @@ async def set_event_meal_role_position(
                 retained.first_change_sequence is not None
                 and retained.last_change_sequence is not None
             ):
-                return EventMealRolePositionResult(
+                if retained.outcome not in ("accepted", "partially_superseded"):
+                    raise RuntimeError("invalid retained event meal role lifecycle outcome")
+                return EventMealRoleLifecycleResult(
                     command.mutation_id,
                     command.event_meal_role_id,
                     retained.first_change_sequence,
                     retained.last_change_sequence,
                     True,
-                    retained.outcome,
+                    cast(Literal["accepted", "partially_superseded"], retained.outcome),
                 )
             else:
-                raise RuntimeError("invalid retained event meal role position outcome")
+                raise RuntimeError("invalid retained event meal role lifecycle outcome")
         elif violations:
             deferred = ApplicationServiceError(
                 "validation_failed", field_violations=tuple(violations), retry_same_identity=False
@@ -174,7 +201,6 @@ async def set_event_meal_role_position(
                 .where(
                     EventMealRole.id == command.event_meal_role_id,
                     EventMealRole.event_id == command.event_id,
-                    EventMealRole.retired_at.is_(None),
                     Event.organization_id == command.organization_id,
                     Event.lifecycle == "active",
                 )
@@ -195,7 +221,7 @@ async def set_event_meal_role_position(
                         FieldClock.organization_id == command.organization_id,
                         FieldClock.entity_kind == "event_meal_role",
                         FieldClock.entity_id == meal_role.id,
-                        FieldClock.field_name == "position_key",
+                        FieldClock.field_name == "lifecycle",
                     )
                     .with_for_update(of=FieldClock)
                 )
@@ -204,13 +230,17 @@ async def set_event_meal_role_position(
                     clock.winning_mutation_id,
                 )
                 if wins:
-                    meal_role.position_key = position_key
+                    meal_role.retired_at, meal_role.retired_by_user_id = (
+                        (datetime.now(UTC), context.actor_user_id)
+                        if command.operation == "retire"
+                        else (None, None)
+                    )
                     if clock is None:
                         clock = FieldClock(
                             organization_id=command.organization_id,
                             entity_kind="event_meal_role",
                             entity_id=meal_role.id,
-                            field_name="position_key",
+                            field_name="lifecycle",
                             winning_client_wall_time=when,
                             winning_mutation_id=command.mutation_id,
                         )
@@ -221,9 +251,26 @@ async def set_event_meal_role_position(
                             command.mutation_id,
                         )
                 assert clock is not None
-                outcome = "accepted" if wins else "partially_superseded"
+                outcome: Literal["accepted", "partially_superseded"] = (
+                    "accepted" if wins else "partially_superseded"
+                )
                 first, last = await _reserve_change_range(
                     session, command.organization_id, command.mutation_id, 1
+                )
+                record = _record(
+                    meal_role,
+                    *(
+                        await session.scalars(
+                            select(FieldClock).where(
+                                FieldClock.organization_id == command.organization_id,
+                                FieldClock.entity_kind == "event_meal_role",
+                                FieldClock.entity_id == meal_role.id,
+                            )
+                        )
+                    ).all(),
+                )
+                result = EventMealRoleLifecycleResult(
+                    command.mutation_id, meal_role.id, first, last, False, outcome
                 )
                 session.add(
                     OrganizationChange(
@@ -233,84 +280,27 @@ async def set_event_meal_role_position(
                         entity_id=meal_role.id,
                         entity_kind="event_meal_role",
                         operation="upsert",
-                        payload={
-                            "record_schema_version": 1,
-                            "record": _record(
-                                meal_role,
-                                *(await session.scalars(
-                                    select(FieldClock).where(
-                                        FieldClock.organization_id == command.organization_id,
-                                        FieldClock.entity_kind == "event_meal_role",
-                                        FieldClock.entity_id == meal_role.id,
-                                    )
-                                )).all(),
-                            ),
-                        },
+                        payload={"record_schema_version": 1, "record": record},
                     )
                 )
                 session.add(
-                    Mutation(
-                        id=mutation_id,
-                        logical_operation_id=command.logical_operation_id
-                        if isinstance(command.logical_operation_id, UUID)
-                        else None,
-                        organization_id=organization_id,
-                        is_system_administration_scope=False,
-                        actor_user_id=context.actor_user_id,
-                        actor_role=role,
-                        client_installation_id=context.client_installation_id,
-                        oauth_client_id=context.oauth_client_id,
-                        oauth_grant_id=context.oauth_grant_id,
-                        client_wall_time=when,
-                        command_schema_version=COMMAND_SCHEMA_VERSION,
-                        command_kind=COMMAND_KIND,
-                        target_identities=[
-                            {"entity_kind": "event_meal_role", "entity_id": str(meal_role.id)}
-                        ],
-                        request_hash=request_hash,
-                        outcome=outcome,
-                        outcome_payload={"outcome": outcome},
-                        first_change_sequence=first,
-                        last_change_sequence=last,
+                    _mutation(
+                        command,
+                        context,
+                        role,
+                        request_hash,
+                        outcome,
+                        {"event_meal_role": record, "outcome": outcome},
+                        first,
+                        last,
                     )
-                )
-                result = EventMealRolePositionResult(
-                    command.mutation_id, meal_role.id, first, last, False, outcome
                 )
         if deferred is not None and retained is None:
             session.add(
-                Mutation(
-                    id=mutation_id,
-                    logical_operation_id=command.logical_operation_id
-                    if isinstance(command.logical_operation_id, UUID)
-                    else None,
-                    organization_id=organization_id,
-                    is_system_administration_scope=False,
-                    actor_user_id=context.actor_user_id,
-                    actor_role=role,
-                    client_installation_id=context.client_installation_id,
-                    oauth_client_id=context.oauth_client_id,
-                    oauth_grant_id=context.oauth_grant_id,
-                    client_wall_time=when,
-                    command_schema_version=COMMAND_SCHEMA_VERSION,
-                    command_kind=COMMAND_KIND,
-                    target_identities=[
-                        {
-                            "entity_kind": "event_meal_role",
-                            "entity_id": str(
-                                command.event_meal_role_id
-                                if isinstance(command.event_meal_role_id, UUID)
-                                else mutation_id
-                            ),
-                        }
-                    ],
-                    request_hash=request_hash,
-                    outcome="rejected",
-                    outcome_payload=_error(deferred),
-                )
+                _mutation(command, context, role, request_hash, "rejected", _error(deferred))
             )
     if deferred is not None:
         raise deferred
     if result is None:
-        raise RuntimeError("Event meal role position produced no outcome")
+        raise RuntimeError("Event meal role lifecycle produced no outcome")
     return result

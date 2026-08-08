@@ -4,7 +4,7 @@ import { readVisibleRecords } from "./visible-records";
 export type PlannerRecipe = { id: string; versionId: string; name: string };
 export type PlannerIngredient = { id: string; versionId: string; name: string };
 export type PlannerDay = { id: string; date: string; note: string | null; visible: boolean };
-export type PlannerRole = { id: string; name: string; position: string };
+export type PlannerRole = { id: string; name: string; position: string; retired: boolean };
 export type PlannedRecipe = {
   id: string;
   dayId: string;
@@ -27,6 +27,7 @@ export type EventPlannerProjection = {
   days: PlannerDay[];
   hiddenDays: PlannerDay[];
   roles: PlannerRole[];
+  retiredRoles: PlannerRole[];
   recipes: PlannerRecipe[];
   ingredients: PlannerIngredient[];
   scheduled: PlannedRecipe[];
@@ -72,7 +73,7 @@ export async function readEventPlanner(
   ] = await Promise.all([
     readVisibleRecords(userId, organizationId, "event", true),
     readVisibleRecords(userId, organizationId, "event_day"),
-    readVisibleRecords(userId, organizationId, "event_meal_role"),
+    readVisibleRecords(userId, organizationId, "event_meal_role", true),
     readVisibleRecords(userId, organizationId, "recipe"),
     readVisibleRecords(userId, organizationId, "recipe_version"),
     readVisibleRecords(userId, organizationId, "recipe_ingredient_line"),
@@ -134,6 +135,7 @@ export async function readEventPlanner(
     .map((record) => ({
       id: record.entityId,
       position: value(record, "position_key"),
+      retired: record.lifecycle === "retired",
       name:
         value(record, "custom_name") ??
         value(record, "built_in_translation_key"),
@@ -304,7 +306,8 @@ export async function readEventPlanner(
     lifecycle,
     days: projectedDays.filter((day) => day.visible),
     hiddenDays: projectedDays.filter((day) => !day.visible),
-    roles,
+    roles: roles.filter((role) => !role.retired),
+    retiredRoles: roles.filter((role) => role.retired),
     recipes,
     ingredients,
     scheduled,

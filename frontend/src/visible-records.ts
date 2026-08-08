@@ -42,7 +42,7 @@ export async function readVisibleRecords(
   for (const overlay of overlays) {
     const canonical = result.get(overlay.entityId);
     const explicitLifecycleRestore =
-      (entityType === "receipt" || entityType === "ad_hoc_shopping_item") &&
+      (entityType === "receipt" || entityType === "ad_hoc_shopping_item" || entityType === "event_meal_role") &&
       isExplicitLifecycleRestore(overlay);
     if (canonical?.lifecycle !== "retired" || explicitLifecycleRestore)
       result.set(overlay.entityId, overlay);
