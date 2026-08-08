@@ -24,6 +24,7 @@ from pydantic import (
 from cookops.application.browser_sessions import BrowserSessionService
 from cookops.application.catalog_configuration import CatalogConfigurationCommand
 from cookops.application.event_day_creation import CreateEventDayCommand
+from cookops.application.event_day_note import SetEventDayNoteCommand
 from cookops.application.event_day_visibility import SetEventDayVisibilityCommand
 from cookops.application.event_duplication import DuplicateEventCommand
 from cookops.application.event_lifecycle import SetEventLifecycleCommand
@@ -521,6 +522,15 @@ class EventDayVisibilityPayload(BaseModel):
     event_day_id: UUID
     event_id: UUID
     is_visible: StrictBool
+    logical_operation_id: UUID | None = None
+
+
+class EventDayNotePayload(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    event_day_id: UUID
+    event_id: UUID
+    note: str | None = Field(default=None, max_length=4000)
     logical_operation_id: UUID | None = None
 
 
@@ -1053,6 +1063,17 @@ def _push_command(command: PushCommandRequest, organization_id: UUID) -> SyncCom
                 calendar_date=create_day_payload.calendar_date,
                 client_wall_time=command.client_wall_time,
                 logical_operation_id=create_day_payload.logical_operation_id,
+            )
+        if command.command_kind == "event_day.note":
+            note_payload = EventDayNotePayload.model_validate(command.payload)
+            return SetEventDayNoteCommand(
+                mutation_id=command.mutation_id,
+                event_day_id=note_payload.event_day_id,
+                organization_id=organization_id,
+                event_id=note_payload.event_id,
+                note=note_payload.note,
+                client_wall_time=command.client_wall_time,
+                logical_operation_id=note_payload.logical_operation_id,
             )
         if command.command_kind == "scheduled_recipe.context":
             payload = ScheduledRecipeContextPayload.model_validate(command.payload)

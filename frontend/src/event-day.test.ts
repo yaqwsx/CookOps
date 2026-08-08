@@ -1,6 +1,6 @@
 import { beforeEach, expect, it } from "vitest";
 
-import { queueEventDayCreate, queueEventDayVisibility, replayEventDayVisibility } from "./event-day";
+import { queueEventDayCreate, queueEventDayNote, queueEventDayVisibility, replayEventDayNote, replayEventDayVisibility } from "./event-day";
 import { localDb } from "./local-db";
 
 const user = "a6a58bd6-214e-49af-8fae-e5f974bf8e08";
@@ -26,6 +26,18 @@ it("queues visibility atomically and keeps a newer canonical visibility winner",
   await localDb.canonicalRecords.put({ ...base, entityType: "event_day", entityId: day, fields: { id: day, event_id: event, is_visible: true }, fieldClocks: { is_visible: { winning_client_wall_time: "2026-08-08T14:00:00.000Z", winning_mutation_id: "ffffffff-ffff-4fff-8fff-ffffffffffff" } } });
   await replayEventDayVisibility(user, organization, { id: "00000000-0000-4000-8000-000000000000", actionAt: "2026-08-08T13:00:00.000Z", payload: { event_day_id: day, event_id: event, is_visible: false } });
   await expect(localDb.optimisticOverlays.count()).resolves.toBe(0);
+});
+
+it("queues a normalized note and keeps a newer canonical note winner", async () => {
+  await queueEventDayNote(user, organization, { eventDayId: day, eventId: event, note: "Menu\r\npro hosty" });
+  await expect(localDb.outbox.toArray()).resolves.toEqual([expect.objectContaining({ commandType: "event_day.note", payload: expect.objectContaining({ note: "Menu\npro hosty" }) })]);
+  await expect(localDb.optimisticOverlays.get([user, organization, "event_day", day])).resolves.toMatchObject({ fields: { note: "Menu\npro hosty" } });
+
+  await localDb.optimisticOverlays.clear();
+  await localDb.canonicalRecords.put({ ...base, entityType: "event_day", entityId: day, fields: { id: day, event_id: event, note: "Newer" }, fieldClocks: { note: { winning_client_wall_time: "2026-08-08T14:00:00.000Z", winning_mutation_id: "ffffffff-ffff-4fff-8fff-ffffffffffff" } } });
+  await replayEventDayNote(user, organization, { id: "00000000-0000-4000-8000-000000000000", actionAt: "2026-08-08T13:00:00.000Z", payload: { event_day_id: day, event_id: event, note: "Older" } });
+  await expect(localDb.optimisticOverlays.count()).resolves.toBe(0);
+  await expect(queueEventDayNote(user, organization, { eventDayId: day, eventId: event, note: "bad\0note" })).rejects.toThrow("selection");
 });
 
 it("creates one visible manual day locally and refuses a duplicate date", async () => {

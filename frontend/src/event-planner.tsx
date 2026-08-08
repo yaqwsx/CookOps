@@ -25,7 +25,7 @@ import {
   queueAddedOverride,
   queueReplacementOverride,
 } from "./scheduled-ingredient-override";
-import { queueEventDayCreate, queueEventDayVisibility } from "./event-day";
+import { queueEventDayCreate, queueEventDayNote, queueEventDayVisibility } from "./event-day";
 import { pullOrganization, SyncRequestError } from "./sync-bootstrap";
 
 type PlannerState = "loading" | "ready" | "offline" | "error";
@@ -208,6 +208,23 @@ function DayVisibility({
     }
   }
   return <><button onClick={() => void setVisibility(!day.visible)} type="button">{t(day.visible ? "planner.hideDay" : "planner.restoreDay")}</button>{error ? <p role="alert">{t("planner.errors.unavailable")}</p> : null}</>;
+}
+
+function DayNote({ day, eventId, organizationId, userId }: { day: EventPlannerProjection["days"][number]; eventId: string; organizationId: string; userId: string }) {
+  const { t } = useTranslation();
+  const [note, setNote] = useState(day.note ?? "");
+  const [error, setError] = useState(false);
+  useEffect(() => setNote(day.note ?? ""), [day.note]);
+  async function submit(event: React.FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    try {
+      await queueEventDayNote(userId, organizationId, { eventDayId: day.id, eventId, note: note || null });
+      setError(false);
+    } catch {
+      setError(true);
+    }
+  }
+  return <form onSubmit={(event) => void submit(event)}><label>{t("planner.dayNote")}<textarea maxLength={4000} onChange={(event) => setNote(event.target.value)} value={note} /></label><button type="submit">{t("planner.saveDayNote")}</button>{error ? <p role="alert">{t("planner.errors.unavailable")}</p> : null}</form>;
 }
 
 function AddDay({ eventId, organizationId, userId, active }: { eventId: string; organizationId: string; userId: string; active: boolean }) {
@@ -767,6 +784,7 @@ export function EventPlanner({
             <h3 id={`day-${day.id}`}>{day.date}</h3>
             {day.note ? <p>{day.note}</p> : null}
             {planner.lifecycle === "active" ? <DayVisibility day={day} eventId={eventId} organizationId={organizationId} userId={userId} /> : null}
+            {planner.lifecycle === "active" ? <DayNote day={day} eventId={eventId} organizationId={organizationId} userId={userId} /> : null}
             {planner.roles.map((role) => {
               const scheduled = planner.scheduled.filter(
                 (item) => item.dayId === day.id && item.roleId === role.id,

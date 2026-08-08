@@ -40,6 +40,11 @@ from cookops.application.event_day_creation import (
     EventDayCreationResult,
     create_event_day,
 )
+from cookops.application.event_day_note import (
+    EventDayNoteResult,
+    SetEventDayNoteCommand,
+    set_event_day_note,
+)
 from cookops.application.event_day_visibility import (
     EventDayVisibilityResult,
     SetEventDayVisibilityCommand,
@@ -306,6 +311,7 @@ SyncCommand = (
     | UpdateEventPriceEstimatesCommand
     | SetEventDayVisibilityCommand
     | CreateEventDayCommand
+    | SetEventDayNoteCommand
     | CreateShoppingListCommand
     | RefreshShoppingListCommand
     | CreateRecipeCommand
@@ -342,6 +348,7 @@ def _command_kind(
         | UpdateEventPriceEstimatesCommand
         | SetEventDayVisibilityCommand
         | CreateEventDayCommand
+        | SetEventDayNoteCommand
         | CreateShoppingListCommand
         | RefreshShoppingListCommand
         | CreateRecipeCommand
@@ -381,6 +388,8 @@ def _command_kind(
         return "event_day.visibility"
     if isinstance(command, CreateEventDayCommand):
         return "event_day.create"
+    if isinstance(command, SetEventDayNoteCommand):
+        return "event_day.note"
     if isinstance(command, RefreshShoppingListCommand):
         return "shopping_list.refresh"
     if isinstance(command, CreateRecipeCommand):
@@ -723,6 +732,7 @@ class SynchronizationCommandService:
                 | UpdateEventPriceEstimatesResult
                 | EventDayVisibilityResult
                 | EventDayCreationResult
+                | EventDayNoteResult
                 | CreateShoppingListResult
                 | RefreshShoppingListResult
                 | CreateAdHocShoppingItemResult
@@ -755,6 +765,8 @@ class SynchronizationCommandService:
                 result = await set_event_day_visibility(self._session_factory, context, command)
             elif isinstance(command, CreateEventDayCommand):
                 result = await create_event_day(self._session_factory, context, command)
+            elif isinstance(command, SetEventDayNoteCommand):
+                result = await set_event_day_note(self._session_factory, context, command)
             elif isinstance(command, RefreshShoppingListCommand):
                 result = await refresh_shopping_list(self._session_factory, context, command)
             elif isinstance(command, CreateRecipeCommand):

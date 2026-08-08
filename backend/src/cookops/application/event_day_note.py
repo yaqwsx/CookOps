@@ -1,7 +1,8 @@
-"""Set one event day's visibility with a single LWW field."""
+"""Set one event day's note with field-level last-write-wins."""
 
 import hashlib
 import json
+import unicodedata
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from uuid import UUID
@@ -9,6 +10,7 @@ from uuid import UUID
 from sqlalchemy import select, text
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
+from cookops.application.event_day_visibility import _record
 from cookops.application.events import _reserve_change_range
 from cookops.application.organizations import (
     ApplicationServiceError,
@@ -19,23 +21,23 @@ from cookops.application.organizations import (
 from cookops.application.recipes import _authorize_and_lock_organization
 from cookops.persistence.models import Event, EventDay, FieldClock, Mutation, OrganizationChange
 
-COMMAND_KIND = "event_day.visibility"
+COMMAND_KIND = "event_day.note"
 COMMAND_SCHEMA_VERSION = 1
 
 
 @dataclass(frozen=True, slots=True)
-class SetEventDayVisibilityCommand:
+class SetEventDayNoteCommand:
     mutation_id: UUID
     event_day_id: UUID
     organization_id: UUID
     event_id: UUID
-    is_visible: bool
+    note: str | None
     client_wall_time: datetime
     logical_operation_id: UUID | None = None
 
 
 @dataclass(frozen=True, slots=True)
-class EventDayVisibilityResult:
+class EventDayNoteResult:
     mutation_id: UUID
     event_day_id: UUID
     first_change_sequence: int
@@ -44,19 +46,20 @@ class EventDayVisibilityResult:
     outcome: str = "accepted"
 
 
-def _hash(command: SetEventDayVisibilityCommand) -> bytes:
+def _hash(command: SetEventDayNoteCommand, note: str | None) -> bytes:
     def value(item: object) -> object:
         if isinstance(item, UUID):
             return str(item)
         if isinstance(item, datetime) and item.tzinfo and item.utcoffset() is not None:
             return item.astimezone(UTC).isoformat()
-        if item is None or isinstance(item, (str, bool)):
-            return item
-        return {"invalid": type(item).__name__}
+        return item if item is None or isinstance(item, str) else {"invalid": type(item).__name__}
 
     return hashlib.sha256(
         json.dumps(
-            {key: value(getattr(command, key)) for key in command.__dataclass_fields__}
+            {
+                key: value(note if key == "note" else getattr(command, key))
+                for key in command.__dataclass_fields__
+            }
             | {"command_kind": COMMAND_KIND, "command_schema_version": COMMAND_SCHEMA_VERSION},
             sort_keys=True,
             separators=(",", ":"),
@@ -75,42 +78,34 @@ def _error(error: ApplicationServiceError) -> dict[str, object]:
     }
 
 
-def _record(day: EventDay, *clocks: FieldClock) -> dict[str, object]:
-    return {
-        "id": str(day.id),
-        "event_id": str(day.event_id),
-        "calendar_date": day.calendar_date.isoformat(),
-        "note": day.note,
-        "is_visible": day.is_visible,
-        "provenance": day.provenance,
-        "created_at": day.created_at.isoformat(),
-        "created_by_user_id": str(day.created_by_user_id),
-        "retired_at": day.retired_at.isoformat() if day.retired_at else None,
-        "retired_by_user_id": str(day.retired_by_user_id) if day.retired_by_user_id else None,
-        "field_clocks": {
-            clock.field_name: {
-                "winning_client_wall_time": clock.winning_client_wall_time.isoformat(),
-                "winning_mutation_id": str(clock.winning_mutation_id),
-            }
-            for clock in clocks
-        },
-    }
-
-
-async def set_event_day_visibility(
+async def set_event_day_note(
     session_factory: async_sessionmaker[AsyncSession],
     context: ExecutionContext,
-    command: SetEventDayVisibilityCommand,
-) -> EventDayVisibilityResult:
-    """Hide or show an active event day without touching its placements."""
-    request_hash = _hash(command)
+    command: SetEventDayNoteCommand,
+) -> EventDayNoteResult:
+    """Set an active event day's normalized Markdown note once per mutation."""
     violations = [
         FieldViolation(name, "must_be_uuid")
         for name in ("mutation_id", "event_day_id", "organization_id", "event_id")
         if not isinstance(getattr(command, name), UUID)
     ]
-    if not isinstance(command.is_visible, bool):
-        violations.append(FieldViolation("is_visible", "must_be_boolean"))
+    note = (
+        unicodedata.normalize("NFC", command.note).replace("\r\n", "\n").replace("\r", "\n")
+        if isinstance(command.note, str)
+        else None
+    )
+    if command.note is not None and not isinstance(command.note, str):
+        violations.append(FieldViolation("note", "must_be_string_or_null"))
+    if note is not None and len(note) > 4000:
+        violations.append(FieldViolation("note", "must_be_at_most_4000_characters"))
+    if note is not None and "\0" in note:
+        violations.append(FieldViolation("note", "must_not_contain_nul"))
+    if note is not None:
+        try:
+            note.encode("utf-8")
+        except UnicodeEncodeError:
+            violations.append(FieldViolation("note", "must_be_utf8"))
+    request_hash = _hash(command, note)
     if (
         not isinstance(command.client_wall_time, datetime)
         or command.client_wall_time.tzinfo is None
@@ -127,7 +122,7 @@ async def set_event_day_visibility(
         else datetime(1970, 1, 1, tzinfo=UTC)
     )
     deferred: ApplicationServiceError | None = None
-    result: EventDayVisibilityResult | None = None
+    result: EventDayNoteResult | None = None
     async with session_factory() as session, session.begin():
         organization_id = (
             command.organization_id if isinstance(command.organization_id, UUID) else UUID(int=0)
@@ -157,7 +152,7 @@ async def set_event_day_visibility(
                 retained.first_change_sequence is not None
                 and retained.last_change_sequence is not None
             ):
-                return EventDayVisibilityResult(
+                return EventDayNoteResult(
                     command.mutation_id,
                     command.event_day_id,
                     retained.first_change_sequence,
@@ -166,12 +161,10 @@ async def set_event_day_visibility(
                     retained.outcome,
                 )
             else:
-                raise RuntimeError("invalid retained event day visibility outcome")
+                raise RuntimeError("invalid retained event day note outcome")
         elif violations:
             deferred = ApplicationServiceError(
-                "validation_failed",
-                field_violations=tuple(violations),
-                retry_same_identity=False,
+                "validation_failed", field_violations=tuple(violations), retry_same_identity=False
             )
         elif when > datetime.now(UTC) + timedelta(hours=24):
             deferred = ApplicationServiceError(
@@ -209,7 +202,7 @@ async def set_event_day_visibility(
                         FieldClock.organization_id == command.organization_id,
                         FieldClock.entity_kind == "event_day",
                         FieldClock.entity_id == day.id,
-                        FieldClock.field_name == "is_visible",
+                        FieldClock.field_name == "note",
                     )
                     .with_for_update(of=FieldClock)
                 )
@@ -218,22 +211,23 @@ async def set_event_day_visibility(
                     clock.winning_mutation_id,
                 )
                 if wins:
-                    day.is_visible = command.is_visible
+                    day.note = note
                     if clock is None:
                         clock = FieldClock(
                             organization_id=command.organization_id,
                             entity_kind="event_day",
                             entity_id=day.id,
-                            field_name="is_visible",
+                            field_name="note",
                             winning_client_wall_time=when,
                             winning_mutation_id=command.mutation_id,
                         )
                         session.add(clock)
                     else:
-                        clock.winning_client_wall_time = when
-                        clock.winning_mutation_id = command.mutation_id
+                        clock.winning_client_wall_time, clock.winning_mutation_id = (
+                            when,
+                            command.mutation_id,
+                        )
                 assert clock is not None
-                outcome = "accepted" if wins else "partially_superseded"
                 first, last = await _reserve_change_range(
                     session, command.organization_id, command.mutation_id, 1
                 )
@@ -260,6 +254,7 @@ async def set_event_day_visibility(
                         payload={"record_schema_version": 1, "record": record},
                     )
                 )
+                outcome = "accepted" if wins else "partially_superseded"
                 session.add(
                     Mutation(
                         id=command.mutation_id,
@@ -277,15 +272,12 @@ async def set_event_day_visibility(
                         target_identities=[{"entity_kind": "event_day", "entity_id": str(day.id)}],
                         request_hash=request_hash,
                         outcome=outcome,
-                        outcome_payload={
-                            "event_day": {"is_visible": day.is_visible},
-                            "outcome": outcome,
-                        },
+                        outcome_payload={"event_day": {"note": day.note}, "outcome": outcome},
                         first_change_sequence=first,
                         last_change_sequence=last,
                     )
                 )
-                result = EventDayVisibilityResult(
+                result = EventDayNoteResult(
                     command.mutation_id, day.id, first, last, False, outcome
                 )
         if deferred is not None and retained is None:
@@ -303,7 +295,16 @@ async def set_event_day_visibility(
                     client_wall_time=when,
                     command_schema_version=COMMAND_SCHEMA_VERSION,
                     command_kind=COMMAND_KIND,
-                    target_identities=[],
+                    target_identities=[
+                        {
+                            "entity_kind": "event_day",
+                            "entity_id": str(
+                                command.event_day_id
+                                if isinstance(command.event_day_id, UUID)
+                                else mutation_id
+                            ),
+                        }
+                    ],
                     request_hash=request_hash,
                     outcome="rejected",
                     outcome_payload=_error(deferred),
@@ -312,5 +313,5 @@ async def set_event_day_visibility(
     if deferred is not None:
         raise deferred
     if result is None:
-        raise RuntimeError("Event day visibility produced no outcome")
+        raise RuntimeError("Event day note produced no outcome")
     return result

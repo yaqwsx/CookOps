@@ -4,6 +4,7 @@ const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 type VisibilityInput = { eventDayId: string; eventId: string; isVisible: boolean };
 type CreateInput = { eventId: string; calendarDate: string };
+type NoteInput = { eventDayId: string; eventId: string; note: string | null };
 
 export async function queueEventDayCreate(userId: string, organizationId: string, input: CreateInput): Promise<void> {
   if (!uuid.test(input.eventId) || !/^\d{4}-\d{2}-\d{2}$/.test(input.calendarDate)) throw new Error("selection");
@@ -39,7 +40,11 @@ function wins(clock: unknown, mutationId: string, actionAt: string): boolean {
   return typeof id === "string" && Number.isFinite(candidate) && Number.isFinite(current) && (candidate > current || (candidate === current && mutationId > id));
 }
 
-async function apply(userId: string, organizationId: string, input: VisibilityInput, mutationId: string, actionAt: string): Promise<boolean> {
+function validNote(note: unknown): note is string | null {
+  return note === null || (typeof note === "string" && !note.includes("\0") && !/[\uD800-\uDFFF]/.test(note) && Array.from(note).length <= 4000);
+}
+
+async function apply(userId: string, organizationId: string, input: { eventDayId: string; eventId: string }, field: "is_visible" | "note", value: boolean | string | null, mutationId: string, actionAt: string): Promise<boolean> {
   const [canonicalEvent, canonicalDay] = await Promise.all([
     localDb.canonicalRecords.get([userId, organizationId, "event", input.eventId]),
     localDb.canonicalRecords.get([userId, organizationId, "event_day", input.eventDayId]),
@@ -51,11 +56,11 @@ async function apply(userId: string, organizationId: string, input: VisibilityIn
   ]);
   const visibleEvent = event ?? canonicalEvent;
   const visibleDay = day ?? canonicalDay;
-  if (visibleEvent?.lifecycle !== "active" || visibleEvent.fields.lifecycle !== "active" || visibleDay?.lifecycle !== "active" || visibleDay.fields.event_id !== input.eventId || !wins(visibleDay.fieldClocks.is_visible, mutationId, actionAt)) return false;
+  if (visibleEvent?.lifecycle !== "active" || visibleEvent.fields.lifecycle !== "active" || visibleDay?.lifecycle !== "active" || visibleDay.fields.event_id !== input.eventId || !wins(visibleDay.fieldClocks[field], mutationId, actionAt)) return false;
   await localDb.optimisticOverlays.put({
     ...visibleDay,
-    fields: { ...visibleDay.fields, is_visible: input.isVisible },
-    fieldClocks: { ...visibleDay.fieldClocks, is_visible: { mutationId, actionAt } },
+    fields: { ...visibleDay.fields, [field]: value },
+    fieldClocks: { ...visibleDay.fieldClocks, [field]: { mutationId, actionAt } },
     updatedAt: actionAt,
   });
   return true;
@@ -66,7 +71,7 @@ export async function queueEventDayVisibility(userId: string, organizationId: st
   const id = crypto.randomUUID();
   const actionAt = new Date().toISOString();
   await localDb.transaction("rw", localDb.canonicalRecords, localDb.optimisticOverlays, localDb.outbox, async () => {
-    if (!(await apply(userId, organizationId, input, id, actionAt))) throw new Error("selection");
+    if (!(await apply(userId, organizationId, input, "is_visible", input.isVisible, id, actionAt))) throw new Error("selection");
     await appendOutboxCommand({ id, userId, organizationId, commandType: "event_day.visibility", payload: { event_day_id: input.eventDayId, event_id: input.eventId, is_visible: input.isVisible }, actionAt, createdAt: actionAt, state: "pending" });
   });
 }
@@ -74,5 +79,23 @@ export async function queueEventDayVisibility(userId: string, organizationId: st
 export async function replayEventDayVisibility(userId: string, organizationId: string, command: { id: string; actionAt: string; payload: Record<string, unknown> }): Promise<void> {
   const payload = command.payload;
   if (Object.keys(payload).length !== 3 || typeof payload.event_day_id !== "string" || typeof payload.event_id !== "string" || typeof payload.is_visible !== "boolean" || ![command.id, payload.event_day_id, payload.event_id].every((value) => uuid.test(value)) || !Number.isFinite(Date.parse(command.actionAt))) return;
-  await apply(userId, organizationId, { eventDayId: payload.event_day_id, eventId: payload.event_id, isVisible: payload.is_visible }, command.id, command.actionAt);
+  await apply(userId, organizationId, { eventDayId: payload.event_day_id, eventId: payload.event_id }, "is_visible", payload.is_visible, command.id, command.actionAt);
+}
+
+export async function queueEventDayNote(userId: string, organizationId: string, input: NoteInput): Promise<void> {
+  const rawNote: unknown = input.note;
+  const note = typeof rawNote === "string" ? rawNote.normalize("NFC").replace(/\r\n?/g, "\n") : rawNote;
+  if (![input.eventDayId, input.eventId].every((value) => uuid.test(value)) || !validNote(note)) throw new Error("selection");
+  const id = crypto.randomUUID();
+  const actionAt = new Date().toISOString();
+  await localDb.transaction("rw", localDb.canonicalRecords, localDb.optimisticOverlays, localDb.outbox, async () => {
+    if (!(await apply(userId, organizationId, input, "note", note, id, actionAt))) throw new Error("selection");
+    await appendOutboxCommand({ id, userId, organizationId, commandType: "event_day.note", payload: { event_day_id: input.eventDayId, event_id: input.eventId, note }, actionAt, createdAt: actionAt, state: "pending" });
+  });
+}
+
+export async function replayEventDayNote(userId: string, organizationId: string, command: { id: string; actionAt: string; payload: Record<string, unknown> }): Promise<void> {
+  const payload = command.payload;
+  if (Object.keys(payload).length !== 3 || typeof payload.event_day_id !== "string" || typeof payload.event_id !== "string" || (payload.note !== null && typeof payload.note !== "string") || ![command.id, payload.event_day_id, payload.event_id].every((value) => uuid.test(value)) || !Number.isFinite(Date.parse(command.actionAt)) || (typeof payload.note === "string" && (payload.note.normalize("NFC").replace(/\r\n?/g, "\n") !== payload.note || !validNote(payload.note)))) return;
+  await apply(userId, organizationId, { eventDayId: payload.event_day_id, eventId: payload.event_id }, "note", payload.note, command.id, command.actionAt);
 }

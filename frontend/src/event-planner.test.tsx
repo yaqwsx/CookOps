@@ -11,6 +11,9 @@ const {
   queueScheduledRecipeContext,
   queueScheduledRecipeMove,
   queueAddedOverride,
+  queueEventDayCreate,
+  queueEventDayNote,
+  queueEventDayVisibility,
   pullOrganization,
 } = vi.hoisted(() => ({
   readEventPlanner: vi.fn(),
@@ -18,6 +21,9 @@ const {
   queueScheduledRecipeContext: vi.fn(),
   queueScheduledRecipeMove: vi.fn(),
   queueAddedOverride: vi.fn(),
+  queueEventDayCreate: vi.fn(),
+  queueEventDayNote: vi.fn(),
+  queueEventDayVisibility: vi.fn(),
   pullOrganization: vi.fn(),
 }));
 vi.mock("./planner-projections", () => ({ readEventPlanner }));
@@ -27,6 +33,7 @@ vi.mock("./scheduled-recipe", () => ({
   queueScheduledRecipeMove,
 }));
 vi.mock("./scheduled-ingredient-override", () => ({ queueAddedOverride }));
+vi.mock("./event-day", () => ({ queueEventDayCreate, queueEventDayNote, queueEventDayVisibility }));
 vi.mock("./sync-bootstrap", () => ({
   pullOrganization,
   SyncRequestError: class SyncRequestError extends Error {},
@@ -61,6 +68,7 @@ describe("EventPlanner", () => {
         },
       ],
       scheduled: [],
+      hiddenDays: [],
     });
     pullOrganization.mockResolvedValue(false);
     const user = userEvent.setup();
@@ -73,7 +81,7 @@ describe("EventPlanner", () => {
       />,
     );
     await screen.findByRole("heading", { name: "Plán akce" });
-    expect(screen.getByLabelText("Den")).toBeVisible();
+    expect(screen.getByRole("combobox", { name: "Den" })).toBeVisible();
     expect(screen.getByLabelText("Chod")).toBeVisible();
     expect(screen.getByLabelText("Recept")).toBeVisible();
     await user.click(screen.getByRole("button", { name: "Přidat do plánu" }));
@@ -87,6 +95,22 @@ describe("EventPlanner", () => {
         recipeId: ids.recipe,
       },
     );
+  });
+
+  it("saves a day note through an accessible native textarea", async () => {
+    await i18n.changeLanguage(defaultLocale);
+    readEventPlanner.mockResolvedValue({
+      name: "Letní vaření", startDate: "2026-08-10", endDate: "2026-08-10", attendance: 12,
+      lifecycle: "active", days: [{ id: ids.day, date: "2026-08-10", note: "Původní" }], roles: [], recipes: [], scheduled: [], hiddenDays: [],
+    });
+    pullOrganization.mockResolvedValue(false);
+    const user = userEvent.setup();
+    render(<EventPlanner eventId={ids.event} onUnauthenticated={vi.fn()} organizationId={ids.organization} userId="a6a58bd6-214e-49af-8fae-e5f974bf8e08" />);
+    const note = await screen.findByLabelText("Poznámka dne");
+    await user.clear(note);
+    await user.type(note, "Nová poznámka");
+    await user.click(screen.getByRole("button", { name: "Uložit poznámku dne" }));
+    expect(queueEventDayNote).toHaveBeenCalledWith("a6a58bd6-214e-49af-8fae-e5f974bf8e08", ids.organization, { eventDayId: ids.day, eventId: ids.event, note: "Nová poznámka" });
   });
 
   it("moves a card through labelled controls without drag precision", async () => {
@@ -112,6 +136,7 @@ describe("EventPlanner", () => {
           position: "a",
         },
       ],
+      hiddenDays: [],
     });
     pullOrganization.mockResolvedValue(false);
     const user = userEvent.setup();
@@ -164,6 +189,7 @@ describe("EventPlanner", () => {
           lines: [],
         },
       ],
+      hiddenDays: [],
     });
     pullOrganization.mockResolvedValue(false);
     const user = userEvent.setup();
@@ -209,6 +235,7 @@ describe("EventPlanner", () => {
           position: "a",
         },
       ],
+      hiddenDays: [],
     });
     pullOrganization.mockResolvedValue(false);
     render(
@@ -267,6 +294,7 @@ describe("EventPlanner", () => {
           ],
         },
       ],
+      hiddenDays: [],
     });
     pullOrganization.mockResolvedValue(false);
     const user = userEvent.setup();

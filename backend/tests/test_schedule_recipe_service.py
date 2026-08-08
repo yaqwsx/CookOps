@@ -17,6 +17,7 @@ from sqlalchemy.pool import NullPool
 
 from alembic import command as alembic_command
 from cookops.application.event_day_creation import CreateEventDayCommand, create_event_day
+from cookops.application.event_day_note import SetEventDayNoteCommand, set_event_day_note
 from cookops.application.event_day_visibility import (
     SetEventDayVisibilityCommand,
     set_event_day_visibility,
@@ -644,6 +645,53 @@ def test_member_hides_an_event_day_with_lww_replay(
     assert payload is not None
     assert payload["record"]["is_visible"] is False
     assert payload["record"]["field_clocks"]["is_visible"]["winning_mutation_id"] == str(
+        command.mutation_id
+    )
+
+
+def test_member_updates_an_event_day_note_with_lww_replay(
+    service_database: ServiceDatabase,
+) -> None:
+    command = SetEventDayNoteCommand(
+        mutation_id=uuid4(),
+        event_day_id=service_database.event_day_id,
+        organization_id=service_database.organization_id,
+        event_id=service_database.event_id,
+        note="Menu\r\npro hosty",
+        client_wall_time=datetime.now(UTC),
+    )
+    accepted = asyncio.run(
+        set_event_day_note(service_database.sessions, context(service_database), command)
+    )
+    assert accepted.outcome == "accepted"
+    assert asyncio.run(
+        set_event_day_note(
+            service_database.sessions,
+            context(service_database),
+            replace(command, note="Menu\npro hosty"),
+        )
+    ).replayed
+    stale = replace(
+        command,
+        mutation_id=uuid4(),
+        note="Older",
+        client_wall_time=command.client_wall_time - timedelta(seconds=1),
+    )
+    assert (
+        asyncio.run(
+            set_event_day_note(service_database.sessions, context(service_database), stale)
+        ).outcome
+        == "partially_superseded"
+    )
+    with service_database.sync_engine.connect() as connection:
+        payload = connection.scalar(
+            select(OrganizationChange.payload).where(
+                OrganizationChange.mutation_id == stale.mutation_id
+            )
+        )
+    assert payload is not None
+    assert payload["record"]["note"] == "Menu\npro hosty"
+    assert payload["record"]["field_clocks"]["note"]["winning_mutation_id"] == str(
         command.mutation_id
     )
 

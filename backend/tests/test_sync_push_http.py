@@ -273,6 +273,20 @@ def _event_day_visibility_command(
     return command
 
 
+def _event_day_note_command(
+    *, mutation_id: UUID, event_id: UUID, event_day_id: UUID, note: object
+) -> dict[str, object]:
+    command = _command(
+        mutation_id=mutation_id,
+        event_id=event_id,
+        kind="event_day.note",
+        event_day_id=str(event_day_id),
+        note=note,
+    )
+    cast(dict[str, object], command["payload"])["event_id"] = str(event_id)
+    return command
+
+
 def _event_day_create_command(
     *, mutation_id: UUID, event_id: UUID, event_day_id: UUID, calendar_date: object
 ) -> dict[str, object]:
@@ -1319,6 +1333,32 @@ def test_push_schedules_a_recipe_through_the_typed_shared_command(
         assert client.post("/api/v1/sync/push", json=visibility_body).json()["outcomes"][0][
             "replayed"
         ]
+        note = _event_day_note_command(
+            mutation_id=uuid4(),
+            event_id=event_id,
+            event_day_id=event_day_id,
+            note="Friday menu",
+        )
+        note_body = _body(sync_database, installation_id, [note])
+        note_outcome = client.post("/api/v1/sync/push", json=note_body).json()["outcomes"][0]
+        assert note_outcome["status"] == "accepted"
+        assert note_outcome["command_kind"] == "event_day.note"
+        assert client.post("/api/v1/sync/push", json=note_body).json()["outcomes"][0]["replayed"]
+        malformed_note = _event_day_note_command(
+            mutation_id=uuid4(), event_id=event_id, event_day_id=event_day_id, note=42
+        )
+        assert (
+            client.post(
+                "/api/v1/sync/push", json=_body(sync_database, installation_id, [malformed_note])
+            ).json()["outcomes"][0]["error"]["code"]
+            == "validation_failed"
+        )
+        nul_note = _event_day_note_command(
+            mutation_id=uuid4(), event_id=event_id, event_day_id=event_day_id, note="bad\0note"
+        )
+        assert client.post(
+            "/api/v1/sync/push", json=_body(sync_database, installation_id, [nul_note])
+        ).json()["outcomes"][0]["status"] == "rejected"
         malformed_visibility = _event_day_visibility_command(
             mutation_id=uuid4(),
             event_id=event_id,
