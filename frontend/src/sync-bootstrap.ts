@@ -18,6 +18,7 @@ import { replayScheduledIngredientOverride } from "./scheduled-ingredient-overri
 import { replayReceiptCommand } from "./receipt-metadata";
 import { replayCatalogConfiguration } from "./catalog-configuration";
 import { replayEventDayCreate, replayEventDayNote, replayEventDayVisibility } from "./event-day";
+import { replayEventMealRoleCreate } from "./event-meal-role";
 import {
   replayAdHocShoppingItem,
   replayAdHocShoppingItemFulfilment,
@@ -268,6 +269,8 @@ async function replayOptimisticCommands(
       await replayEventDayNote(userId, organizationId, command);
     if (command.commandType === "event_day.create")
       await replayEventDayCreate(userId, organizationId, command);
+    if (command.commandType === "event_meal_role.create")
+      await replayEventMealRoleCreate(userId, organizationId, command);
     if (command.commandType.startsWith("receipt.")) {
       await replayReceiptCommand(userId, organizationId, command);
     }

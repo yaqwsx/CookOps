@@ -60,6 +60,11 @@ from cookops.application.event_lifecycle import (
     SetEventLifecycleCommand,
     set_event_lifecycle,
 )
+from cookops.application.event_meal_role_creation import (
+    CreateEventMealRoleCommand,
+    EventMealRoleCreationResult,
+    create_event_meal_role,
+)
 from cookops.application.event_prices import (
     UpdateEventPriceEstimatesCommand,
     UpdateEventPriceEstimatesResult,
@@ -311,6 +316,7 @@ SyncCommand = (
     | UpdateEventPriceEstimatesCommand
     | SetEventDayVisibilityCommand
     | CreateEventDayCommand
+    | CreateEventMealRoleCommand
     | SetEventDayNoteCommand
     | CreateShoppingListCommand
     | RefreshShoppingListCommand
@@ -348,6 +354,7 @@ def _command_kind(
         | UpdateEventPriceEstimatesCommand
         | SetEventDayVisibilityCommand
         | CreateEventDayCommand
+        | CreateEventMealRoleCommand
         | SetEventDayNoteCommand
         | CreateShoppingListCommand
         | RefreshShoppingListCommand
@@ -388,6 +395,8 @@ def _command_kind(
         return "event_day.visibility"
     if isinstance(command, CreateEventDayCommand):
         return "event_day.create"
+    if isinstance(command, CreateEventMealRoleCommand):
+        return "event_meal_role.create"
     if isinstance(command, SetEventDayNoteCommand):
         return "event_day.note"
     if isinstance(command, RefreshShoppingListCommand):
@@ -732,6 +741,7 @@ class SynchronizationCommandService:
                 | UpdateEventPriceEstimatesResult
                 | EventDayVisibilityResult
                 | EventDayCreationResult
+                | EventMealRoleCreationResult
                 | EventDayNoteResult
                 | CreateShoppingListResult
                 | RefreshShoppingListResult
@@ -765,6 +775,8 @@ class SynchronizationCommandService:
                 result = await set_event_day_visibility(self._session_factory, context, command)
             elif isinstance(command, CreateEventDayCommand):
                 result = await create_event_day(self._session_factory, context, command)
+            elif isinstance(command, CreateEventMealRoleCommand):
+                result = await create_event_meal_role(self._session_factory, context, command)
             elif isinstance(command, SetEventDayNoteCommand):
                 result = await set_event_day_note(self._session_factory, context, command)
             elif isinstance(command, RefreshShoppingListCommand):
@@ -955,6 +967,7 @@ class SynchronizationCommandService:
             | ShoppingOperationResult
             | ReceiptResult
             | CatalogConfigurationResult
+            | EventMealRoleCreationResult
         ),
         *,
         command_kind: str | None = None,
@@ -1842,23 +1855,21 @@ async def _bootstrap_records(
             .order_by(EventMealRole.id)
         )
     ).scalars():
-        append(
-            "event_meal_role",
-            item.id,
-            {
-                "id": str(item.id),
-                "event_id": str(item.event_id),
-                "source_preset_id": _uuid(item.source_preset_id),
-                "built_in_translation_key": item.built_in_translation_key,
-                "custom_name": item.custom_name,
-                "normalized_custom_name": item.normalized_custom_name,
-                "position_key": item.position_key,
-                "created_at": item.created_at.isoformat(),
-                "created_by_user_id": str(item.created_by_user_id),
-                "retired_at": _time(item.retired_at),
-                "retired_by_user_id": _uuid(item.retired_by_user_id),
-            },
-        )
+        record = {
+            "id": str(item.id),
+            "event_id": str(item.event_id),
+            "source_preset_id": _uuid(item.source_preset_id),
+            "built_in_translation_key": item.built_in_translation_key,
+            "custom_name": item.custom_name,
+            "normalized_custom_name": item.normalized_custom_name,
+            "position_key": item.position_key,
+            "created_at": item.created_at.isoformat(),
+            "created_by_user_id": str(item.created_by_user_id),
+            "retired_at": _time(item.retired_at),
+            "retired_by_user_id": _uuid(item.retired_by_user_id),
+        }
+        record["field_clocks"] = _clock_fields(clocks, "event_meal_role", item.id)
+        append("event_meal_role", item.id, record)
     for item in (
         await session.execute(
             select(ScheduledRecipe)

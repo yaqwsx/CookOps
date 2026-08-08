@@ -14,6 +14,7 @@ const {
   queueEventDayCreate,
   queueEventDayNote,
   queueEventDayVisibility,
+  queueEventMealRoleCreate,
   pullOrganization,
 } = vi.hoisted(() => ({
   readEventPlanner: vi.fn(),
@@ -24,6 +25,7 @@ const {
   queueEventDayCreate: vi.fn(),
   queueEventDayNote: vi.fn(),
   queueEventDayVisibility: vi.fn(),
+  queueEventMealRoleCreate: vi.fn(),
   pullOrganization: vi.fn(),
 }));
 vi.mock("./planner-projections", () => ({ readEventPlanner }));
@@ -34,6 +36,7 @@ vi.mock("./scheduled-recipe", () => ({
 }));
 vi.mock("./scheduled-ingredient-override", () => ({ queueAddedOverride }));
 vi.mock("./event-day", () => ({ queueEventDayCreate, queueEventDayNote, queueEventDayVisibility }));
+vi.mock("./event-meal-role", () => ({ queueEventMealRoleCreate }));
 vi.mock("./sync-bootstrap", () => ({
   pullOrganization,
   SyncRequestError: class SyncRequestError extends Error {},
@@ -111,6 +114,20 @@ describe("EventPlanner", () => {
     await user.type(note, "Nová poznámka");
     await user.click(screen.getByRole("button", { name: "Uložit poznámku dne" }));
     expect(queueEventDayNote).toHaveBeenCalledWith("a6a58bd6-214e-49af-8fae-e5f974bf8e08", ids.organization, { eventDayId: ids.day, eventId: ids.event, note: "Nová poznámka" });
+  });
+
+  it("adds a custom meal role through a labelled native input", async () => {
+    await i18n.changeLanguage(defaultLocale);
+    readEventPlanner.mockResolvedValue({
+      name: "Letní vaření", startDate: "2026-08-10", endDate: "2026-08-10", attendance: 12,
+      lifecycle: "active", days: [], hiddenDays: [], roles: [], recipes: [], scheduled: [],
+    });
+    pullOrganization.mockResolvedValue(false);
+    const user = userEvent.setup();
+    render(<EventPlanner eventId={ids.event} onUnauthenticated={vi.fn()} organizationId={ids.organization} userId="a6a58bd6-214e-49af-8fae-e5f974bf8e08" />);
+    await user.type(await screen.findByLabelText("Název chodu"), "Pozdní večeře");
+    await user.click(screen.getByRole("button", { name: "Přidat chod" }));
+    expect(queueEventMealRoleCreate).toHaveBeenCalledWith("a6a58bd6-214e-49af-8fae-e5f974bf8e08", ids.organization, { eventId: ids.event, customName: "Pozdní večeře" });
   });
 
   it("moves a card through labelled controls without drag precision", async () => {

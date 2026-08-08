@@ -287,6 +287,20 @@ def _event_day_note_command(
     return command
 
 
+def _event_meal_role_command(
+    *, mutation_id: UUID, event_id: UUID, event_meal_role_id: UUID, custom_name: object
+) -> dict[str, object]:
+    command = _command(
+        mutation_id=mutation_id,
+        event_id=event_id,
+        kind="event_meal_role.create",
+        event_meal_role_id=str(event_meal_role_id),
+        custom_name=custom_name,
+    )
+    cast(dict[str, object], command["payload"])["event_id"] = str(event_id)
+    return command
+
+
 def _event_day_create_command(
     *, mutation_id: UUID, event_id: UUID, event_day_id: UUID, calendar_date: object
 ) -> dict[str, object]:
@@ -1359,6 +1373,40 @@ def test_push_schedules_a_recipe_through_the_typed_shared_command(
         assert client.post(
             "/api/v1/sync/push", json=_body(sync_database, installation_id, [nul_note])
         ).json()["outcomes"][0]["status"] == "rejected"
+        meal_role = _event_meal_role_command(
+            mutation_id=uuid4(),
+            event_id=event_id,
+            event_meal_role_id=uuid4(),
+            custom_name="Late supper",
+        )
+        meal_role_body = _body(sync_database, installation_id, [meal_role])
+        meal_role_outcome = client.post(
+            "/api/v1/sync/push", json=meal_role_body
+        ).json()["outcomes"][0]
+        assert meal_role_outcome["status"] == "accepted"
+        assert meal_role_outcome["command_kind"] == "event_meal_role.create"
+        assert client.post("/api/v1/sync/push", json=meal_role_body).json()["outcomes"][0][
+            "replayed"
+        ]
+        bootstrap = client.post(
+            "/api/v1/sync/bootstrap",
+            json={"organization_id": str(sync_database.organization_id)},
+        ).json()
+        role_record = next(
+            item["payload"]["record"]
+            for item in bootstrap["records"]
+            if item["entity_kind"] == "event_meal_role"
+            and item["entity_id"] == meal_role["payload"]["event_meal_role_id"]
+        )
+        assert role_record["field_clocks"]["position_key"]["winning_mutation_id"] == meal_role[
+            "mutation_id"
+        ]
+        malformed_role = _event_meal_role_command(
+            mutation_id=uuid4(), event_id=event_id, event_meal_role_id=uuid4(), custom_name=""
+        )
+        assert client.post(
+            "/api/v1/sync/push", json=_body(sync_database, installation_id, [malformed_role])
+        ).json()["outcomes"][0]["error"]["code"] == "validation_failed"
         malformed_visibility = _event_day_visibility_command(
             mutation_id=uuid4(),
             event_id=event_id,

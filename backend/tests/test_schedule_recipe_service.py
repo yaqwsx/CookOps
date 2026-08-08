@@ -22,6 +22,10 @@ from cookops.application.event_day_visibility import (
     SetEventDayVisibilityCommand,
     set_event_day_visibility,
 )
+from cookops.application.event_meal_role_creation import (
+    CreateEventMealRoleCommand,
+    create_event_meal_role,
+)
 from cookops.application.organizations import ApplicationServiceError, ExecutionContext
 from cookops.application.scheduled_recipe_attendance import (
     SetScheduledRecipeAttendanceCommand,
@@ -694,6 +698,37 @@ def test_member_updates_an_event_day_note_with_lww_replay(
     assert payload["record"]["field_clocks"]["note"]["winning_mutation_id"] == str(
         command.mutation_id
     )
+
+
+def test_member_creates_one_custom_event_meal_role(service_database: ServiceDatabase) -> None:
+    command = CreateEventMealRoleCommand(
+        mutation_id=uuid4(),
+        event_meal_role_id=uuid4(),
+        organization_id=service_database.organization_id,
+        event_id=service_database.event_id,
+        custom_name="  Late supper  ",
+        client_wall_time=datetime.now(UTC),
+    )
+    accepted = asyncio.run(
+        create_event_meal_role(service_database.sessions, context(service_database), command)
+    )
+    assert asyncio.run(
+        create_event_meal_role(
+            service_database.sessions,
+            context(service_database),
+            replace(command, custom_name="Late supper"),
+        )
+    ).replayed
+    with service_database.sync_engine.connect() as connection:
+        payload = connection.scalar(
+            select(OrganizationChange.payload).where(
+                OrganizationChange.mutation_id == command.mutation_id
+            )
+        )
+    assert accepted.event_meal_role_id == command.event_meal_role_id
+    assert payload is not None
+    assert payload["record"]["custom_name"] == "Late supper"
+    assert payload["record"]["position_key"] == f"z{command.event_meal_role_id.hex}"
 
 
 def test_member_creates_a_manual_event_day_once(service_database: ServiceDatabase) -> None:

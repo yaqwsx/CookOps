@@ -28,6 +28,7 @@ from cookops.application.event_day_note import SetEventDayNoteCommand
 from cookops.application.event_day_visibility import SetEventDayVisibilityCommand
 from cookops.application.event_duplication import DuplicateEventCommand
 from cookops.application.event_lifecycle import SetEventLifecycleCommand
+from cookops.application.event_meal_role_creation import CreateEventMealRoleCommand
 from cookops.application.event_prices import UpdateEventPriceEstimatesCommand
 from cookops.application.events import CreateEventCommand, UpdateEventBaseAttendanceCommand
 from cookops.application.ingredients import CreateIngredientCommand, InitialPrice
@@ -540,6 +541,15 @@ class CreateEventDayPayload(BaseModel):
     event_day_id: UUID
     event_id: UUID
     calendar_date: date
+    logical_operation_id: UUID | None = None
+
+
+class CreateEventMealRolePayload(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    event_meal_role_id: UUID
+    event_id: UUID
+    custom_name: str = Field(min_length=1, max_length=200)
     logical_operation_id: UUID | None = None
 
 
@@ -1074,6 +1084,17 @@ def _push_command(command: PushCommandRequest, organization_id: UUID) -> SyncCom
                 note=note_payload.note,
                 client_wall_time=command.client_wall_time,
                 logical_operation_id=note_payload.logical_operation_id,
+            )
+        if command.command_kind == "event_meal_role.create":
+            role_payload = CreateEventMealRolePayload.model_validate(command.payload)
+            return CreateEventMealRoleCommand(
+                mutation_id=command.mutation_id,
+                event_meal_role_id=role_payload.event_meal_role_id,
+                organization_id=organization_id,
+                event_id=role_payload.event_id,
+                custom_name=role_payload.custom_name,
+                client_wall_time=command.client_wall_time,
+                logical_operation_id=role_payload.logical_operation_id,
             )
         if command.command_kind == "scheduled_recipe.context":
             payload = ScheduledRecipeContextPayload.model_validate(command.payload)

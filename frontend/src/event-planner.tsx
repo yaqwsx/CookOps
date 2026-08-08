@@ -26,6 +26,7 @@ import {
   queueReplacementOverride,
 } from "./scheduled-ingredient-override";
 import { queueEventDayCreate, queueEventDayNote, queueEventDayVisibility } from "./event-day";
+import { queueEventMealRoleCreate } from "./event-meal-role";
 import { pullOrganization, SyncRequestError } from "./sync-bootstrap";
 
 type PlannerState = "loading" | "ready" | "offline" | "error";
@@ -233,6 +234,24 @@ function AddDay({ eventId, organizationId, userId, active }: { eventId: string; 
   const [error, setError] = useState(false);
   if (!active) return null;
   return <form onSubmit={(event) => { event.preventDefault(); void queueEventDayCreate(userId, organizationId, { eventId, calendarDate }).then(() => setError(false)).catch(() => setError(true)); }}><label>{t("planner.day")}<input type="date" required value={calendarDate} onChange={(event) => setCalendarDate(event.target.value)} /></label><button type="submit">{t("planner.addDay")}</button>{error ? <p role="alert">{t("planner.errors.unavailable")}</p> : null}</form>;
+}
+
+function AddMealRole({ eventId, organizationId, userId, active }: { eventId: string; organizationId: string; userId: string; active: boolean }) {
+  const { t } = useTranslation();
+  const [customName, setCustomName] = useState("");
+  const [error, setError] = useState(false);
+  if (!active) return null;
+  async function submit(event: React.FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    try {
+      await queueEventMealRoleCreate(userId, organizationId, { eventId, customName });
+      setCustomName("");
+      setError(false);
+    } catch {
+      setError(true);
+    }
+  }
+  return <form onSubmit={(event) => void submit(event)}><label>{t("planner.mealRoleName")}<input maxLength={200} onChange={(event) => setCustomName(event.target.value)} required value={customName} /></label><button type="submit">{t("planner.addMealRole")}</button>{error ? <p role="alert">{t("planner.errors.unavailable")}</p> : null}</form>;
 }
 
 function AddRecipe({
@@ -774,6 +793,7 @@ export function EventPlanner({
         userId={userId}
       />
       <AddDay eventId={eventId} organizationId={organizationId} userId={userId} active={planner.lifecycle === "active"} />
+      <AddMealRole eventId={eventId} organizationId={organizationId} userId={userId} active={planner.lifecycle === "active"} />
       <div className="planner-days">
         {planner.days.map((day) => (
           <section
