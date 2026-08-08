@@ -314,3 +314,147 @@ export async function replayAdHocShoppingItemFulfilment(
     return;
   await applyFulfilment(userId, organizationId, listId, itemId, fulfilled, command.id, command.actionAt);
 }
+
+async function applyLifecycle(
+  userId: string,
+  organizationId: string,
+  shoppingListId: string,
+  itemId: string,
+  operation: "retire" | "restore",
+  mutationId: string,
+  actionAt: string,
+) {
+  const [canonicalItem, canonicalList] = await Promise.all([
+    localDb.canonicalRecords.get([userId, organizationId, "ad_hoc_shopping_item", itemId]),
+    localDb.canonicalRecords.get([userId, organizationId, "shopping_list", shoppingListId]),
+  ]);
+  const current =
+    (await localDb.optimisticOverlays.get([
+      userId,
+      organizationId,
+      "ad_hoc_shopping_item",
+      itemId,
+    ])) ?? canonicalItem;
+  const eventId = current?.fields.event_id;
+  const canonicalEvent =
+    typeof eventId === "string"
+      ? await localDb.canonicalRecords.get([userId, organizationId, "event", eventId])
+      : undefined;
+  const event =
+    typeof eventId === "string"
+      ? (await localDb.optimisticOverlays.get([userId, organizationId, "event", eventId])) ?? canonicalEvent
+      : undefined;
+  if (
+    !uuid.test(shoppingListId) ||
+    !uuid.test(itemId) ||
+    canonicalList?.lifecycle === "retired" ||
+    canonicalEvent?.lifecycle === "retired" ||
+    current?.fields.shopping_list_id !== shoppingListId ||
+    current.lifecycle !== (operation === "retire" ? "active" : "retired") ||
+    canonicalList?.fields.event_id !== eventId ||
+    event?.lifecycle !== "active" ||
+    event.fields.lifecycle !== "active"
+  )
+    throw new Error("ad_hoc_shopping_item");
+  const clock = current.fieldClocks.lifecycle;
+  if (clock !== undefined && clock !== null) {
+    if (typeof clock !== "object" || Array.isArray(clock))
+      throw new Error("ad_hoc_shopping_item");
+    const value = clock as Record<string, unknown>;
+    const currentAt = typeof value.actionAt === "string" ? value.actionAt : value.winning_client_wall_time;
+    const currentId = typeof value.mutationId === "string" ? value.mutationId : value.winning_mutation_id;
+    const candidateTime = Date.parse(actionAt);
+    const currentTime = typeof currentAt === "string" ? Date.parse(currentAt) : NaN;
+    if (
+      typeof currentId !== "string" ||
+      !Number.isFinite(candidateTime) ||
+      !Number.isFinite(currentTime) ||
+      candidateTime < currentTime ||
+      (candidateTime === currentTime && mutationId <= currentId)
+    )
+      return;
+  }
+  await localDb.optimisticOverlays.put({
+    ...current,
+    lifecycle: operation === "retire" ? "retired" : "active",
+    fields:
+      operation === "retire"
+        ? { ...current.fields, retired_at: actionAt, retired_by_user_id: userId }
+        : { ...current.fields, retired_at: null, retired_by_user_id: null },
+    fieldClocks: { ...current.fieldClocks, lifecycle: { mutationId, actionAt } },
+    updatedAt: actionAt,
+  });
+}
+
+export async function queueAdHocShoppingItemLifecycle(
+  userId: string,
+  organizationId: string,
+  input: {
+    shoppingListId: string;
+    adHocShoppingItemId: string;
+    operation: "retire" | "restore";
+  },
+) {
+  if (!uuid.test(input.shoppingListId) || !uuid.test(input.adHocShoppingItemId))
+    throw new Error("ad_hoc_shopping_item");
+  const id = crypto.randomUUID();
+  const actionAt = new Date().toISOString();
+  await localDb.transaction(
+    "rw",
+    localDb.canonicalRecords,
+    localDb.optimisticOverlays,
+    localDb.outbox,
+    async () => {
+      await applyLifecycle(
+        userId,
+        organizationId,
+        input.shoppingListId,
+        input.adHocShoppingItemId,
+        input.operation,
+        id,
+        actionAt,
+      );
+      await appendOutboxCommand({
+        id,
+        userId,
+        organizationId,
+        commandType: "shopping_list.ad_hoc_item_lifecycle",
+        payload: {
+          shopping_list_id: input.shoppingListId,
+          ad_hoc_shopping_item_id: input.adHocShoppingItemId,
+          operation: input.operation,
+        },
+        actionAt,
+        createdAt: actionAt,
+        state: "pending",
+      });
+    },
+  );
+}
+
+export async function replayAdHocShoppingItemLifecycle(
+  userId: string,
+  organizationId: string,
+  command: { id: string; actionAt: string; payload: Record<string, unknown> },
+) {
+  const payload = command.payload;
+  if (
+    Object.keys(payload).length !== 3 ||
+    !["shopping_list_id", "ad_hoc_shopping_item_id", "operation"].every((key) => key in payload) ||
+    typeof payload.shopping_list_id !== "string" ||
+    typeof payload.ad_hoc_shopping_item_id !== "string" ||
+    !uuid.test(command.id) ||
+    !Number.isFinite(Date.parse(command.actionAt)) ||
+    (payload.operation !== "retire" && payload.operation !== "restore")
+  )
+    return;
+  await applyLifecycle(
+    userId,
+    organizationId,
+    payload.shopping_list_id,
+    payload.ad_hoc_shopping_item_id,
+    payload.operation,
+    command.id,
+    command.actionAt,
+  );
+}

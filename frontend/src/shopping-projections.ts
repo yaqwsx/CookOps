@@ -40,6 +40,7 @@ export type AdHocShoppingItem = {
   sectionName: string | null;
   note: string | null;
   fulfilled: boolean;
+  retired: boolean;
 };
 
 export type ShoppingInputOption = { id: string; name: string };
@@ -196,7 +197,7 @@ export async function readShoppingList(
     readVisibleRecords(userId, organizationId, "store_section"),
     readVisibleRecords(userId, organizationId, "unit_definition"),
     readVisibleRecords(userId, organizationId, "shopping_revision_source"),
-    readVisibleRecords(userId, organizationId, "ad_hoc_shopping_item"),
+    readVisibleRecords(userId, organizationId, "ad_hoc_shopping_item", true),
   ]);
   const summary = lists.find((list) => list.id === shoppingListId);
   if (!summary) return undefined;
@@ -300,6 +301,7 @@ export async function readShoppingList(
             fulfilled:
               (decimal(item.fields.fulfilment_credit)?.value ?? 0n) >=
               target.value,
+            retired: item.lifecycle === "retired",
           },
         ];
       })

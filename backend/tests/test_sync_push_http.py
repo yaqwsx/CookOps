@@ -24,6 +24,7 @@ from cookops.persistence.models import (
     Ingredient,
     IngredientVersion,
     Mutation,
+    OrganizationChange,
     OrganizationMembership,
     RecipeVersion,
     RecipeVersionIngredientLine,
@@ -797,6 +798,32 @@ def test_push_creates_an_ad_hoc_item_with_scoped_dependencies_and_replays(
         assert client.post(
             "/api/v1/sync/push", json=_body(sync_database, installation_id, [fulfilment])
         ).json()["outcomes"][0]["replayed"] is True
+        retire = _command(
+            mutation_id=uuid4(),
+            event_id=event_id,
+            kind="shopping_list.ad_hoc_item_lifecycle",
+            shopping_list_id=str(list_id),
+            ad_hoc_shopping_item_id=str(item_id),
+            operation="retire",
+        )
+        retired = client.post(
+            "/api/v1/sync/push", json=_body(sync_database, installation_id, [retire])
+        ).json()["outcomes"][0]
+        assert retired["status"] == "accepted"
+        assert client.post(
+            "/api/v1/sync/push", json=_body(sync_database, installation_id, [retire])
+        ).json()["outcomes"][0]["replayed"] is True
+        restore = _command(
+            mutation_id=uuid4(),
+            event_id=event_id,
+            kind="shopping_list.ad_hoc_item_lifecycle",
+            shopping_list_id=str(list_id),
+            ad_hoc_shopping_item_id=str(item_id),
+            operation="restore",
+        )
+        assert client.post(
+            "/api/v1/sync/push", json=_body(sync_database, installation_id, [restore])
+        ).json()["outcomes"][0]["status"] == "accepted"
         missing_fulfilment = _command(
             mutation_id=uuid4(),
             event_id=event_id,
@@ -844,6 +871,13 @@ def test_push_creates_an_ad_hoc_item_with_scoped_dependencies_and_replays(
             == "validation_failed"
         )
     with sync_database.engine.connect() as connection:
+        retired_record = connection.scalar(
+            select(OrganizationChange.payload).where(
+                OrganizationChange.mutation_id == UUID(retire["mutation_id"])
+            )
+        )
+        assert isinstance(retired_record, dict)
+        assert isinstance(retired_record["record"].get("retired_at"), str)
         assert connection.scalar(
             select(Mutation.outcome).where(Mutation.id == UUID(missing_fulfilment["mutation_id"]))
         ) == "rejected"

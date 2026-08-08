@@ -2,7 +2,7 @@ import { localDb, type CanonicalRecord } from "./local-db";
 
 const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
-function isExplicitReceiptRestore(record: CanonicalRecord): boolean {
+function isExplicitLifecycleRestore(record: CanonicalRecord): boolean {
   const lifecycle = record.fieldClocks.lifecycle;
   if (
     record.lifecycle !== "active" ||
@@ -41,9 +41,10 @@ export async function readVisibleRecords(
   const result = new Map(records.map((record) => [record.entityId, record]));
   for (const overlay of overlays) {
     const canonical = result.get(overlay.entityId);
-    const explicitReceiptRestore =
-      entityType === "receipt" && isExplicitReceiptRestore(overlay);
-    if (canonical?.lifecycle !== "retired" || explicitReceiptRestore)
+    const explicitLifecycleRestore =
+      (entityType === "receipt" || entityType === "ad_hoc_shopping_item") &&
+      isExplicitLifecycleRestore(overlay);
+    if (canonical?.lifecycle !== "retired" || explicitLifecycleRestore)
       result.set(overlay.entityId, overlay);
   }
   return [...result.values()].filter(

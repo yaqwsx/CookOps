@@ -17,6 +17,7 @@ const {
   queueShoppingRowFulfilment,
   queueAdHocShoppingItem,
   queueAdHocShoppingItemFulfilment,
+  queueAdHocShoppingItemLifecycle,
   pullOrganization,
 } = vi.hoisted(() => ({
   readEventPlanner: vi.fn(),
@@ -30,6 +31,7 @@ const {
   queueShoppingRowFulfilment: vi.fn(),
   queueAdHocShoppingItem: vi.fn(),
   queueAdHocShoppingItemFulfilment: vi.fn(),
+  queueAdHocShoppingItemLifecycle: vi.fn(),
   pullOrganization: vi.fn(),
 }));
 vi.mock("./planner-projections", () => ({ readEventPlanner }));
@@ -51,6 +53,7 @@ vi.mock("./shopping-operations", () => ({
 vi.mock("./ad-hoc-shopping-item", () => ({
   queueAdHocShoppingItem,
   queueAdHocShoppingItemFulfilment,
+  queueAdHocShoppingItemLifecycle,
 }));
 vi.mock("./sync-bootstrap", () => ({
   pullOrganization,
@@ -306,6 +309,28 @@ describe("EventShopping", () => {
       shoppingListId: "9d8b2b21-c378-4574-9e46-9338c81305ef",
       adHocShoppingItemId: "2e8b2b21-c378-4574-9e46-9338c81305ef",
       fulfilled: true,
+    });
+  });
+
+  it("offers an explicit restore action for a retired ad-hoc item", async () => {
+    await i18n.changeLanguage(defaultLocale);
+    readEventPlanner.mockResolvedValue({ name: "Letní vaření", lifecycle: "active", scheduled: [] });
+    readShoppingLists.mockResolvedValue([]);
+    readShoppingList.mockResolvedValue({
+      id: "9d8b2b21-c378-4574-9e46-9338c81305ef", name: "Sobota", sourceCount: 0,
+      createdAt: "2026-08-07T12:00:00Z", currentGenerationRevisionId: "0e8b2b21-c378-4574-9e46-9338c81305ef",
+      sourceRecipeIds: [], rows: [],
+      adHocItems: [{ id: "2e8b2b21-c378-4574-9e46-9338c81305ef", name: "Citrony", target: "3", unit: "kg", sectionName: null, note: null, fulfilled: false, retired: true }],
+      quantityUnits: [], storeSections: [],
+    });
+    pullOrganization.mockResolvedValue(false);
+    const user = userEvent.setup();
+    render(<EventShopping eventId={ids.event} onBack={vi.fn()} onOpenList={vi.fn()} onOpenPlanner={vi.fn()} onUnauthenticated={vi.fn()} organizationId={ids.organization} shoppingListId="9d8b2b21-c378-4574-9e46-9338c81305ef" userId={ids.user} />);
+    await user.click(await screen.findByRole("button", { name: "Obnovit položku" }));
+    expect(queueAdHocShoppingItemLifecycle).toHaveBeenCalledWith(ids.user, ids.organization, {
+      shoppingListId: "9d8b2b21-c378-4574-9e46-9338c81305ef",
+      adHocShoppingItemId: "2e8b2b21-c378-4574-9e46-9338c81305ef",
+      operation: "restore",
     });
   });
 

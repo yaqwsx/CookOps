@@ -13,7 +13,9 @@ import { readShoppingList, readShoppingLists } from "./shopping-projections";
 import {
   queueAdHocShoppingItem,
   queueAdHocShoppingItemFulfilment,
+  queueAdHocShoppingItemLifecycle,
   replayAdHocShoppingItemFulfilment,
+  replayAdHocShoppingItemLifecycle,
 } from "./ad-hoc-shopping-item";
 
 const ids = {
@@ -322,6 +324,32 @@ describe("offline shopping-list creation", () => {
       },
     });
     await expect(localDb.optimisticOverlays.count()).resolves.toBe(0);
+  });
+
+  it("retires and explicitly restores an ad-hoc item through durable lifecycle intent", async () => {
+    await seedPlanner();
+    const itemId = "2e8b2b21-c378-4574-9e46-9338c81305ef";
+    const record = (entityType: string, entityId: string, fields: Record<string, unknown>) => ({
+      userId: ids.user, organizationId: ids.organization, entityType, entityId,
+      recordSchemaVersion: 1, lifecycle: "active" as const, fields, fieldClocks: {},
+      immutable: false, updatedAt: "2026-08-07T12:00:00.000Z",
+    });
+    await localDb.canonicalRecords.bulkAdd([
+      record("shopping_list", ids.list, { id: ids.list, organization_id: ids.organization, event_id: ids.event }),
+      record("ad_hoc_shopping_item", itemId, { id: itemId, organization_id: ids.organization, event_id: ids.event, shopping_list_id: ids.list }),
+    ]);
+    await queueAdHocShoppingItemLifecycle(ids.user, ids.organization, {
+      shoppingListId: ids.list, adHocShoppingItemId: itemId, operation: "retire",
+    });
+    const retired = await localDb.optimisticOverlays.get([ids.user, ids.organization, "ad_hoc_shopping_item", itemId]);
+    expect(retired?.lifecycle).toBe("retired");
+    await expect(localDb.outbox.toArray()).resolves.toContainEqual(expect.objectContaining({ commandType: "shopping_list.ad_hoc_item_lifecycle" }));
+    await replayAdHocShoppingItemLifecycle(ids.user, ids.organization, {
+      id: "3e8b2b21-c378-4574-9e46-9338c81305ef",
+      actionAt: new Date(Date.parse(retired?.updatedAt ?? "") + 1).toISOString(),
+      payload: { shopping_list_id: ids.list, ad_hoc_shopping_item_id: itemId, operation: "restore" },
+    });
+    await expect(localDb.optimisticOverlays.get([ids.user, ids.organization, "ad_hoc_shopping_item", itemId])).resolves.toMatchObject({ lifecycle: "active", fields: { retired_at: null } });
   });
 
   it("rejects malformed, duplicate, and out-of-event source selections without partial state", async () => {

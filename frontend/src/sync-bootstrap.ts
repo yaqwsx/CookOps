@@ -19,6 +19,7 @@ import { replayCatalogConfiguration } from "./catalog-configuration";
 import {
   replayAdHocShoppingItem,
   replayAdHocShoppingItemFulfilment,
+  replayAdHocShoppingItemLifecycle,
 } from "./ad-hoc-shopping-item";
 
 const supportedEntityKinds = new Set([
@@ -273,6 +274,13 @@ async function replayOptimisticCommands(
         await replayAdHocShoppingItemFulfilment(userId, organizationId, command);
       } catch {
         // A pending checkbox targeting a retired item stays recoverable.
+      }
+    }
+    if (command.commandType === "shopping_list.ad_hoc_item_lifecycle") {
+      try {
+        await replayAdHocShoppingItemLifecycle(userId, organizationId, command);
+      } catch {
+        // A lifecycle intent targeting a changed item stays recoverable.
       }
     }
     const entityId =

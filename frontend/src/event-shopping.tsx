@@ -14,6 +14,7 @@ import {
 import {
   queueAdHocShoppingItem,
   queueAdHocShoppingItemFulfilment,
+  queueAdHocShoppingItemLifecycle,
 } from "./ad-hoc-shopping-item";
 import {
   queueShoppingAvailableSupply,
@@ -224,7 +225,7 @@ function ShoppingDetail({
           <ul>
             {shoppingList.adHocItems.map((item) => (
               <li key={item.id}>
-                {editable ? (
+                {editable && !item.retired ? (
                   <label className="shopping-row-controls__fulfilled">
                     <input
                       checked={item.fulfilled}
@@ -246,7 +247,22 @@ function ShoppingDetail({
                   unit: item.unit,
                 })}
                 {item.sectionName ? ` · ${item.sectionName}` : null}
+                {item.retired ? ` · ${t("shopping.retired")}` : null}
                 {item.note ? <p>{item.note}</p> : null}
+                {editable ? (
+                  <button
+                    onClick={() =>
+                      void queueAdHocShoppingItemLifecycle(userId, organizationId, {
+                        shoppingListId: shoppingList.id,
+                        adHocShoppingItemId: item.id,
+                        operation: item.retired ? "restore" : "retire",
+                      })
+                    }
+                    type="button"
+                  >
+                    {t(item.retired ? "shopping.adHoc.restore" : "shopping.adHoc.retire")}
+                  </button>
+                ) : null}
               </li>
             ))}
           </ul>

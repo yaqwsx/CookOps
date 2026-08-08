@@ -48,6 +48,7 @@ from cookops.application.shopping_lists import (
     CreateShoppingListCommand,
     RefreshShoppingListCommand,
     SetAdHocShoppingItemFulfilmentCommand,
+    SetAdHocShoppingItemLifecycleCommand,
     SetShoppingAvailableSupplyCommand,
     SetShoppingContributionFulfilmentCommand,
     SetShoppingManualPurchaseTargetCommand,
@@ -337,6 +338,14 @@ class SetAdHocShoppingItemFulfilmentPayload(BaseModel):
     shopping_list_id: UUID
     ad_hoc_shopping_item_id: UUID
     fulfilled: StrictBool
+    logical_operation_id: UUID | None = None
+
+
+class SetAdHocShoppingItemLifecyclePayload(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    shopping_list_id: UUID
+    ad_hoc_shopping_item_id: UUID
+    operation: Literal["retire", "restore"]
     logical_operation_id: UUID | None = None
 
 
@@ -814,6 +823,19 @@ def _push_command(command: PushCommandRequest, organization_id: UUID) -> SyncCom
                 ad_hoc_fulfilment_payload.fulfilled,
                 command.client_wall_time,
                 ad_hoc_fulfilment_payload.logical_operation_id,
+            )
+        if command.command_kind == "shopping_list.ad_hoc_item_lifecycle":
+            ad_hoc_lifecycle_payload = SetAdHocShoppingItemLifecyclePayload.model_validate(
+                command.payload
+            )
+            return SetAdHocShoppingItemLifecycleCommand(
+                command.mutation_id,
+                organization_id,
+                ad_hoc_lifecycle_payload.shopping_list_id,
+                ad_hoc_lifecycle_payload.ad_hoc_shopping_item_id,
+                ad_hoc_lifecycle_payload.operation,
+                command.client_wall_time,
+                ad_hoc_lifecycle_payload.logical_operation_id,
             )
         if command.command_kind == "recipe.create":
             recipe_payload = CreateRecipePayload.model_validate(command.payload)
