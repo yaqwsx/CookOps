@@ -10,6 +10,8 @@ export type PlannedRecipe = {
   roleId: string;
   name: string;
   dinerCount: number;
+  consumptionPercentage: string;
+  selectedScaleAmount: string;
   position: string;
   lines: { id: string; quantity: string }[];
 };
@@ -191,6 +193,8 @@ export async function readEventPlanner(
       name: names.get(value(record, "recipe_id") ?? ""),
       lines: lines.get(value(record, "recipe_version_id") ?? "") ?? [],
       dinerCount: record.fields.diner_count,
+      consumptionPercentage: value(record, "consumption_percentage"),
+      selectedScaleAmount: value(record, "selected_scale_amount"),
       position: value(record, "position_key"),
     }))
     .filter((item): item is PlannedRecipe =>
@@ -201,7 +205,9 @@ export async function readEventPlanner(
           item.position &&
           uuid.test(item.dayId) &&
           uuid.test(item.roleId) &&
-          Number.isSafeInteger(item.dinerCount),
+          Number.isSafeInteger(item.dinerCount) &&
+          item.consumptionPercentage !== undefined &&
+          item.selectedScaleAmount !== undefined,
       ),
     )
     .sort(

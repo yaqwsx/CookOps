@@ -225,6 +225,26 @@ def _scheduled_recipe_attendance_command(
     return command
 
 
+def _scheduled_recipe_context_command(
+    *, mutation_id: UUID, event_id: UUID, scheduled_recipe_id: UUID, **payload: object
+) -> dict[str, object]:
+    values: dict[str, object] = {
+        "scheduled_recipe_id": str(scheduled_recipe_id),
+        "consumption_percentage": "75",
+        "operation": "set_manual",
+        "selected_scale_amount": "3",
+    }
+    values.update(payload)
+    command = _command(
+        mutation_id=mutation_id,
+        event_id=event_id,
+        kind="scheduled_recipe.context",
+        **values,
+    )
+    cast(dict[str, object], command["payload"])["event_id"] = str(event_id)
+    return command
+
+
 def _scheduled_ingredient_override_command(
     *,
     mutation_id: UUID,
@@ -910,6 +930,26 @@ def test_push_schedules_a_recipe_through_the_typed_shared_command(
             "/api/v1/sync/push", json=_body(sync_database, installation_id, [attendance])
         )
         assert attendance_response.json()["outcomes"][0]["status"] == "accepted"
+        context = _scheduled_recipe_context_command(
+            mutation_id=uuid4(), event_id=event_id, scheduled_recipe_id=scheduled_recipe_id
+        )
+        context_body = _body(sync_database, installation_id, [context])
+        context_response = client.post("/api/v1/sync/push", json=context_body)
+        assert context_response.json()["outcomes"][0]["status"] == "accepted"
+        assert context_response.json()["outcomes"][0]["command_kind"] == "scheduled_recipe.context"
+        assert client.post("/api/v1/sync/push", json=context_body).json()["outcomes"][0]["replayed"]
+        malformed_context = _scheduled_recipe_context_command(
+            mutation_id=uuid4(),
+            event_id=event_id,
+            scheduled_recipe_id=scheduled_recipe_id,
+            consumption_percentage=75,
+        )
+        assert (
+            client.post(
+                "/api/v1/sync/push", json=_body(sync_database, installation_id, [malformed_context])
+            ).json()["outcomes"][0]["error"]["code"]
+            == "validation_failed"
+        )
         for malformed_diners in ("17", True):
             malformed_attendance = _scheduled_recipe_attendance_command(
                 mutation_id=uuid4(),
@@ -1052,7 +1092,7 @@ def test_push_schedules_a_recipe_through_the_typed_shared_command(
                 ScheduledRecipe.position_key,
                 ScheduledRecipe.note,
             ).where(ScheduledRecipe.id == scheduled_recipe_id)
-        ).one() == (Decimal("75.5"), "z9", "  Serve warm  ")
+        ).one() == (Decimal("75"), "z9", "  Serve warm  ")
 
 
 def test_push_rejects_unknown_commands_and_untrusted_batch_shapes(

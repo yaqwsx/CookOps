@@ -21,6 +21,10 @@ from cookops.application.scheduled_recipe_attendance import (
     SetScheduledRecipeAttendanceCommand,
     set_scheduled_recipe_attendance,
 )
+from cookops.application.scheduled_recipe_context import (
+    SetScheduledRecipeContextCommand,
+    set_scheduled_recipe_context,
+)
 from cookops.application.scheduled_recipe_moves import (
     MoveScheduledRecipeCommand,
     MoveScheduledRecipeResult,
@@ -636,6 +640,73 @@ def test_stale_attendance_keeps_the_winning_clock_in_the_change_feed(
         "winning_client_wall_time": newer_time.isoformat(),
         "winning_mutation_id": str(newer.mutation_id),
     }
+
+
+def test_context_sets_manual_or_suggested_scale_with_lww_replay(
+    service_database: ServiceDatabase,
+) -> None:
+    scheduled_recipe_id = schedule_then_override(service_database)
+    now = datetime.now(UTC)
+    manual = SetScheduledRecipeContextCommand(
+        mutation_id=uuid4(),
+        scheduled_recipe_id=scheduled_recipe_id,
+        organization_id=service_database.organization_id,
+        event_id=service_database.event_id,
+        consumption_percentage=Decimal("75"),
+        operation="set_manual",
+        selected_scale_amount=Decimal("3"),
+        client_wall_time=now,
+    )
+    accepted = asyncio.run(
+        set_scheduled_recipe_context(service_database.sessions, context(service_database), manual)
+    )
+    assert (accepted.selected_scale_amount, accepted.scale_mode) == (Decimal("3"), "manual")
+    assert asyncio.run(
+        set_scheduled_recipe_context(service_database.sessions, context(service_database), manual)
+    ).replayed
+    suggestion = SetScheduledRecipeContextCommand(
+        mutation_id=uuid4(),
+        scheduled_recipe_id=scheduled_recipe_id,
+        organization_id=service_database.organization_id,
+        event_id=service_database.event_id,
+        consumption_percentage=Decimal("50"),
+        operation="use_suggestion",
+        selected_scale_amount=None,
+        client_wall_time=now + timedelta(seconds=1),
+    )
+    suggested = asyncio.run(
+        set_scheduled_recipe_context(
+            service_database.sessions, context(service_database), suggestion
+        )
+    )
+    assert (suggested.selected_scale_amount, suggested.scale_mode) == (Decimal("2"), "suggested")
+    stale = SetScheduledRecipeContextCommand(
+        mutation_id=uuid4(),
+        scheduled_recipe_id=scheduled_recipe_id,
+        organization_id=service_database.organization_id,
+        event_id=service_database.event_id,
+        consumption_percentage=Decimal("1"),
+        operation="set_manual",
+        selected_scale_amount=Decimal("1"),
+        client_wall_time=now,
+    )
+    assert (
+        asyncio.run(
+            set_scheduled_recipe_context(
+                service_database.sessions, context(service_database), stale
+            )
+        ).outcome
+        == "partially_superseded"
+    )
+    with service_database.sync_engine.connect() as connection:
+        payload = connection.scalar(
+            select(OrganizationChange.payload).where(
+                OrganizationChange.mutation_id == stale.mutation_id
+            )
+        )
+    assert payload["record"]["field_clocks"]["context"]["winning_mutation_id"] == str(
+        suggestion.mutation_id
+    )
 
 
 def test_member_sets_replaces_and_clears_pinned_recipe_ingredient(

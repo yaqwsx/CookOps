@@ -17,6 +17,7 @@ import {
 import {
   queueRecipeSchedule,
   queueScheduledRecipeAttendance,
+  queueScheduledRecipeContext,
   queueScheduledRecipeMove,
 } from "./scheduled-recipe";
 import { queueReplacementOverride } from "./scheduled-ingredient-override";
@@ -390,6 +391,71 @@ function Attendance({ eventId, organizationId, userId, scheduled, active }: { ev
   return <details><summary>{t("planner.attendanceEdit")}</summary><label>{t("planner.attendance")}<input value={count} inputMode="numeric" pattern="[0-9]+" onChange={(event) => setCount(event.target.value)} /></label><button type="button" onClick={() => void save(Number(count))}>{t("planner.saveAttendance")}</button><button type="button" onClick={() => void save(null)}>{t("planner.followEvent")}</button>{error ? <p role="alert">{t("planner.errors.unavailable")}</p> : null}</details>;
 }
 
+function Scaling({
+  eventId,
+  organizationId,
+  userId,
+  scheduled,
+  active,
+}: {
+  eventId: string;
+  organizationId: string;
+  userId: string;
+  scheduled: EventPlannerProjection["scheduled"][number];
+  active: boolean;
+}) {
+  const { t } = useTranslation();
+  const [consumption, setConsumption] = useState(
+    scheduled.consumptionPercentage,
+  );
+  const [scale, setScale] = useState(scheduled.selectedScaleAmount);
+  const [error, setError] = useState(false);
+  if (!active) return null;
+  async function save(selectedScaleAmount: string | null) {
+    try {
+      await queueScheduledRecipeContext(userId, organizationId, {
+        scheduledRecipeId: scheduled.id,
+        eventId,
+        consumptionPercentage: consumption,
+        selectedScaleAmount,
+      });
+      setError(false);
+    } catch {
+      setError(true);
+    }
+  }
+  return (
+    <details>
+      <summary>{t("planner.scalingEdit")}</summary>
+      <label>
+        {t("planner.consumption")}
+        <input
+          value={consumption}
+          inputMode="decimal"
+          pattern="(?:0|[1-9][0-9]*)(?:\.[0-9]+)?"
+          onChange={(event) => setConsumption(event.target.value)}
+        />
+      </label>
+      <label>
+        {t("planner.scale")}
+        <input
+          value={scale}
+          inputMode="decimal"
+          pattern="(?:0|[1-9][0-9]*)(?:\.[0-9]+)?"
+          onChange={(event) => setScale(event.target.value)}
+        />
+      </label>
+      <button type="button" onClick={() => void save(scale)}>
+        {t("planner.saveScale")}
+      </button>
+      <button type="button" onClick={() => void save(null)}>
+        {t("planner.useSuggestion")}
+      </button>
+      {error ? <p role="alert">{t("planner.errors.unavailable")}</p> : null}
+    </details>
+  );
+}
+
 function ReplacementOverride({
   eventId,
   active,
@@ -590,7 +656,20 @@ export function EventPlanner({
                             scheduled={item}
                             userId={userId}
                           />
-                          <Attendance eventId={eventId} organizationId={organizationId} userId={userId} scheduled={item} active={planner.lifecycle === "active"} />
+                          <Attendance
+                            eventId={eventId}
+                            organizationId={organizationId}
+                            userId={userId}
+                            scheduled={item}
+                            active={planner.lifecycle === "active"}
+                          />
+                          <Scaling
+                            eventId={eventId}
+                            organizationId={organizationId}
+                            userId={userId}
+                            scheduled={item}
+                            active={planner.lifecycle === "active"}
+                          />
                           <ReplacementOverride
                             active={planner.lifecycle === "active"}
                             eventId={eventId}

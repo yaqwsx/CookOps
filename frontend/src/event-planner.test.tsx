@@ -8,17 +8,20 @@ import i18n, { defaultLocale } from "./i18n";
 const {
   readEventPlanner,
   queueRecipeSchedule,
+  queueScheduledRecipeContext,
   queueScheduledRecipeMove,
   pullOrganization,
 } = vi.hoisted(() => ({
   readEventPlanner: vi.fn(),
   queueRecipeSchedule: vi.fn(),
+  queueScheduledRecipeContext: vi.fn(),
   queueScheduledRecipeMove: vi.fn(),
   pullOrganization: vi.fn(),
 }));
 vi.mock("./planner-projections", () => ({ readEventPlanner }));
 vi.mock("./scheduled-recipe", () => ({
   queueRecipeSchedule,
+  queueScheduledRecipeContext,
   queueScheduledRecipeMove,
 }));
 vi.mock("./sync-bootstrap", () => ({
@@ -99,6 +102,8 @@ describe("EventPlanner", () => {
           id: ids.recipe,
           name: "Chili",
           dinerCount: 12,
+          consumptionPercentage: "100",
+          selectedScaleAmount: "2",
           dayId: ids.day,
           roleId: ids.role,
           position: "a",
@@ -128,6 +133,55 @@ describe("EventPlanner", () => {
         eventDayId: ids.day,
         eventMealRoleId: ids.role,
         positionKey: "z9",
+      },
+    );
+  });
+
+  it("edits scaling through accessible controls", async () => {
+    await i18n.changeLanguage(defaultLocale);
+    readEventPlanner.mockResolvedValue({
+      name: "Letní vaření",
+      startDate: "2026-08-10",
+      endDate: "2026-08-10",
+      attendance: 12,
+      lifecycle: "active",
+      days: [{ id: ids.day, date: "2026-08-10", note: null }],
+      roles: [{ id: ids.role, name: "Večeře", position: "a" }],
+      recipes: [],
+      scheduled: [
+        {
+          id: ids.recipe,
+          name: "Chili",
+          dinerCount: 12,
+          consumptionPercentage: "100",
+          selectedScaleAmount: "2",
+          dayId: ids.day,
+          roleId: ids.role,
+          position: "a",
+          lines: [],
+        },
+      ],
+    });
+    pullOrganization.mockResolvedValue(false);
+    const user = userEvent.setup();
+    render(
+      <EventPlanner
+        eventId={ids.event}
+        onUnauthenticated={vi.fn()}
+        organizationId={ids.organization}
+        userId="a6a58bd6-214e-49af-8fae-e5f974bf8e08"
+      />,
+    );
+    await user.click(await screen.findByText("Upravit škálování"));
+    await user.click(screen.getByRole("button", { name: "Použít doporučení" }));
+    expect(queueScheduledRecipeContext).toHaveBeenCalledWith(
+      "a6a58bd6-214e-49af-8fae-e5f974bf8e08",
+      ids.organization,
+      {
+        scheduledRecipeId: ids.recipe,
+        eventId: ids.event,
+        consumptionPercentage: "100",
+        selectedScaleAmount: null,
       },
     );
   });

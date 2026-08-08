@@ -7,7 +7,10 @@ import {
 } from "./local-db";
 import { replayShoppingOperation } from "./shopping-operations";
 import { replayRecipeCreate } from "./recipe-create";
-import { replayScheduledRecipeAttendance } from "./scheduled-recipe";
+import {
+  replayScheduledRecipeAttendance,
+  replayScheduledRecipeContext,
+} from "./scheduled-recipe";
 import { replayRecipeVersionPublish } from "./recipe-publish";
 import { replayIngredientCreate } from "./ingredient-create";
 import { replayReplacementOverride } from "./scheduled-ingredient-override";
@@ -244,6 +247,8 @@ async function replayOptimisticCommands(
     }
     if (command.commandType === "scheduled_recipe.attendance")
       await replayScheduledRecipeAttendance(userId, organizationId, command);
+    if (command.commandType === "scheduled_recipe.context")
+      await replayScheduledRecipeContext(userId, organizationId, command);
     if (command.commandType === "scheduled_recipe.ingredient_override")
       await replayReplacementOverride(userId, organizationId, command);
     if (command.commandType.startsWith("receipt.")) {

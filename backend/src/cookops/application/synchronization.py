@@ -95,6 +95,11 @@ from cookops.application.scheduled_recipe_attendance import (
     SetScheduledRecipeAttendanceCommand,
     set_scheduled_recipe_attendance,
 )
+from cookops.application.scheduled_recipe_context import (
+    ScheduledRecipeContextResult,
+    SetScheduledRecipeContextCommand,
+    set_scheduled_recipe_context,
+)
 from cookops.application.scheduled_recipe_moves import (
     MoveScheduledRecipeCommand,
     MoveScheduledRecipeResult,
@@ -303,6 +308,7 @@ def _command_kind(
         | ScheduleRecipeCommand
         | MoveScheduledRecipeCommand
         | SetScheduledRecipeAttendanceCommand
+        | SetScheduledRecipeContextCommand
         | SetScheduledIngredientOverrideCommand
         | SetShoppingAvailableSupplyCommand
         | SetShoppingManualPurchaseTargetCommand
@@ -336,6 +342,8 @@ def _command_kind(
         return "scheduled_recipe.move"
     if isinstance(command, SetScheduledRecipeAttendanceCommand):
         return "scheduled_recipe.attendance"
+    if isinstance(command, SetScheduledRecipeContextCommand):
+        return "scheduled_recipe.context"
     if isinstance(command, SetScheduledIngredientOverrideCommand):
         return "scheduled_recipe.ingredient_override"
     if isinstance(command, SetShoppingAvailableSupplyCommand):
@@ -656,6 +664,7 @@ class SynchronizationCommandService:
                 | ScheduleRecipeResult
                 | MoveScheduledRecipeResult
                 | ScheduledRecipeAttendanceResult
+                | ScheduledRecipeContextResult
                 | ScheduledIngredientOverrideResult
                 | ShoppingOperationResult
                 | ReceiptResult
@@ -683,6 +692,10 @@ class SynchronizationCommandService:
                 result = await move_scheduled_recipe(self._session_factory, context, command)
             elif isinstance(command, SetScheduledRecipeAttendanceCommand):
                 result = await set_scheduled_recipe_attendance(
+                    self._session_factory, context, command
+                )
+            elif isinstance(command, SetScheduledRecipeContextCommand):
+                result = await set_scheduled_recipe_context(
                     self._session_factory, context, command
                 )
             elif isinstance(command, SetScheduledIngredientOverrideCommand):
@@ -863,6 +876,8 @@ class SynchronizationCommandService:
                 if isinstance(result, MoveScheduledRecipeResult)
                 else "scheduled_recipe.attendance"
                 if isinstance(result, ScheduledRecipeAttendanceResult)
+                else "scheduled_recipe.context"
+                if isinstance(result, ScheduledRecipeContextResult)
                 else "receipt.create"
                 if isinstance(result, ReceiptResult)
                 else "scheduled_recipe.ingredient_override"

@@ -3,7 +3,9 @@ import { beforeEach, expect, it } from "vitest";
 import { localDb } from "./local-db";
 import {
   queueScheduledRecipeAttendance,
+  queueScheduledRecipeContext,
   replayScheduledRecipeAttendance,
+  replayScheduledRecipeContext,
 } from "./scheduled-recipe";
 
 const user = "a6a58bd6-214e-49af-8fae-e5f974bf8e08";
@@ -106,4 +108,22 @@ it("does not queue or replay attendance through an optimistic archive or retirem
     expect.objectContaining({ entityType: "event", lifecycle: "retired" }),
     expect.objectContaining({ entityType: "scheduled_recipe", lifecycle: "retired" }),
   ]);
+});
+
+it("fails closed for stale context and archived targets", async () => {
+  const records = [
+    { userId: user, organizationId: organization, entityType: "event", entityId: event, recordSchemaVersion: 1, lifecycle: "active" as const, fields: { id: event, organization_id: organization, lifecycle: "active", base_expected_attendance: 12 }, fieldClocks: {}, immutable: false, updatedAt: "2026-08-08T12:00:00.000Z" },
+    { userId: user, organizationId: organization, entityType: "scheduled_recipe", entityId: scheduled, recordSchemaVersion: 1, lifecycle: "active" as const, fields: { id: scheduled, organization_id: organization, event_id: event, consumption_percentage: "100", selected_scale_amount: "2", scale_mode: "suggested" }, fieldClocks: { context: { winning_client_wall_time: "2026-08-08T12:00:00.000Z", winning_mutation_id: "ffffffff-ffff-4fff-8fff-ffffffffffff" } }, immutable: false, updatedAt: "2026-08-08T12:00:00.000Z" },
+  ];
+  await localDb.canonicalRecords.bulkPut(records);
+  const command = { id: "00000000-0000-4000-8000-000000000000", actionAt: "2026-08-08T11:00:00.000Z", payload: { scheduled_recipe_id: scheduled, event_id: event, consumption_percentage: "75", operation: "set_manual", selected_scale_amount: "3" } } as const;
+  await replayScheduledRecipeContext(user, organization, command);
+  await expect(localDb.optimisticOverlays.count()).resolves.toBe(0);
+  await localDb.optimisticOverlays.bulkPut([
+    { ...records[0], lifecycle: "retired", fields: { ...records[0].fields, lifecycle: "archived" } },
+    { ...records[1], lifecycle: "retired" },
+  ]);
+  await expect(queueScheduledRecipeContext(user, organization, { eventId: event, scheduledRecipeId: scheduled, consumptionPercentage: "75", selectedScaleAmount: "3" })).rejects.toThrow("selection");
+  await replayScheduledRecipeContext(user, organization, { ...command, actionAt: "2026-08-08T13:00:00.000Z" });
+  await expect(localDb.outbox.count()).resolves.toBe(0);
 });

@@ -2,6 +2,7 @@ import { appendOutboxCommand, localDb } from "./local-db";
 import { readEventPlanner } from "./planner-projections";
 
 const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+const decimal = /^(?:0|[1-9][0-9]*)(?:\.[0-9]+)?$/;
 
 export type ScheduleRecipeInput = {
   eventId: string;
@@ -48,6 +49,197 @@ export async function queueScheduledRecipeAttendance(
     if (!Number.isSafeInteger(dinerCount)) throw new Error("selection");
     await localDb.optimisticOverlays.put({ ...scheduled, fields: { ...scheduled.fields, diner_count: dinerCount, attendance_mode: input.dinerCount === null ? "follows_event" : "manual" }, fieldClocks: { ...scheduled.fieldClocks, attendance: { mutationId, actionAt } }, updatedAt: actionAt });
     await appendOutboxCommand({ id: mutationId, userId, organizationId, commandType: "scheduled_recipe.attendance", payload, actionAt, createdAt: actionAt, state: "pending" });
+  });
+}
+
+export async function queueScheduledRecipeContext(
+  userId: string,
+  organizationId: string,
+  input: {
+    scheduledRecipeId: string;
+    eventId: string;
+    consumptionPercentage: string;
+    selectedScaleAmount: string | null;
+  },
+): Promise<void> {
+  if (
+    ![input.scheduledRecipeId, input.eventId].every((id) => uuid.test(id)) ||
+    !decimal.test(input.consumptionPercentage) ||
+    (input.selectedScaleAmount !== null &&
+      !decimal.test(input.selectedScaleAmount))
+  )
+    throw new Error("selection");
+  const actionAt = new Date().toISOString();
+  const mutationId = crypto.randomUUID();
+  const payload = {
+    scheduled_recipe_id: input.scheduledRecipeId,
+    event_id: input.eventId,
+    consumption_percentage: input.consumptionPercentage,
+    operation:
+      input.selectedScaleAmount === null ? "use_suggestion" : "set_manual",
+    selected_scale_amount: input.selectedScaleAmount,
+  };
+  await localDb.transaction(
+    "rw",
+    localDb.canonicalRecords,
+    localDb.optimisticOverlays,
+    localDb.outbox,
+    async () => {
+      const canonicalEvent = await localDb.canonicalRecords.get([
+        userId,
+        organizationId,
+        "event",
+        input.eventId,
+      ]);
+      const canonical = await localDb.canonicalRecords.get([
+        userId,
+        organizationId,
+        "scheduled_recipe",
+        input.scheduledRecipeId,
+      ]);
+      if (
+        canonicalEvent?.lifecycle === "retired" ||
+        canonical?.lifecycle === "retired"
+      )
+        throw new Error("selection");
+      const event =
+        (await localDb.optimisticOverlays.get([
+          userId,
+          organizationId,
+          "event",
+          input.eventId,
+        ])) ?? canonicalEvent;
+      const scheduled =
+        (await localDb.optimisticOverlays.get([
+          userId,
+          organizationId,
+          "scheduled_recipe",
+          input.scheduledRecipeId,
+        ])) ?? canonical;
+      if (
+        event?.lifecycle !== "active" ||
+        event.fields.lifecycle !== "active" ||
+        scheduled?.lifecycle !== "active" ||
+        scheduled.fields.event_id !== input.eventId
+      )
+        throw new Error("selection");
+      const scale =
+        input.selectedScaleAmount ?? scheduled.fields.selected_scale_amount;
+      await localDb.optimisticOverlays.put({
+        ...scheduled,
+        fields: {
+          ...scheduled.fields,
+          consumption_percentage: input.consumptionPercentage,
+          selected_scale_amount: scale,
+          scale_mode:
+            input.selectedScaleAmount === null ? "suggested" : "manual",
+        },
+        fieldClocks: {
+          ...scheduled.fieldClocks,
+          context: { mutationId, actionAt },
+        },
+        updatedAt: actionAt,
+      });
+      await appendOutboxCommand({
+        id: mutationId,
+        userId,
+        organizationId,
+        commandType: "scheduled_recipe.context",
+        payload,
+        actionAt,
+        createdAt: actionAt,
+        state: "pending",
+      });
+    },
+  );
+}
+
+export async function replayScheduledRecipeContext(
+  userId: string,
+  organizationId: string,
+  command: { id: string; actionAt: string; payload: Record<string, unknown> },
+) {
+  const p = command.payload;
+  if (
+    Object.keys(p).length !== 5 ||
+    ![
+      "scheduled_recipe_id",
+      "event_id",
+      "consumption_percentage",
+      "operation",
+      "selected_scale_amount",
+    ].every((key) => key in p) ||
+    typeof p.scheduled_recipe_id !== "string" ||
+    typeof p.event_id !== "string" ||
+    typeof p.consumption_percentage !== "string" ||
+    !uuid.test(p.scheduled_recipe_id) ||
+    !uuid.test(p.event_id) ||
+    !decimal.test(p.consumption_percentage) ||
+    !(
+      (p.operation === "use_suggestion" && p.selected_scale_amount === null) ||
+      (p.operation === "set_manual" &&
+        typeof p.selected_scale_amount === "string" &&
+        decimal.test(p.selected_scale_amount))
+    )
+  )
+    return;
+  const event = await localDb.canonicalRecords.get([
+    userId,
+    organizationId,
+    "event",
+    p.event_id,
+  ]);
+  const canonical = await localDb.canonicalRecords.get([
+    userId,
+    organizationId,
+    "scheduled_recipe",
+    p.scheduled_recipe_id,
+  ]);
+  if (
+    event?.lifecycle !== "active" ||
+    event.fields.lifecycle !== "active" ||
+    canonical?.lifecycle !== "active" ||
+    canonical.fields.event_id !== p.event_id
+  )
+    return;
+  const clock = canonical.fieldClocks.context;
+  if (clock !== undefined) {
+    if (clock === null || typeof clock !== "object" || Array.isArray(clock))
+      return;
+    const contextClock = clock as Record<string, unknown>;
+    const at =
+      typeof contextClock.actionAt === "string"
+        ? contextClock.actionAt
+        : contextClock.winning_client_wall_time;
+    const id =
+      typeof contextClock.mutationId === "string"
+        ? contextClock.mutationId
+        : contextClock.winning_mutation_id;
+    const candidateTime = Date.parse(command.actionAt);
+    const currentTime = typeof at === "string" ? Date.parse(at) : NaN;
+    if (
+      typeof id !== "string" ||
+      !Number.isFinite(candidateTime) ||
+      !Number.isFinite(currentTime) ||
+      candidateTime < currentTime ||
+      (candidateTime === currentTime && command.id <= id)
+    )
+      return;
+  }
+  await localDb.optimisticOverlays.put({
+    ...canonical,
+    fields: {
+      ...canonical.fields,
+      consumption_percentage: p.consumption_percentage,
+      selected_scale_amount:
+        p.selected_scale_amount ?? canonical.fields.selected_scale_amount,
+      scale_mode: p.operation === "set_manual" ? "manual" : "suggested",
+    },
+    fieldClocks: {
+      ...canonical.fieldClocks,
+      context: { mutationId: command.id, actionAt: command.actionAt },
+    },
+    updatedAt: command.actionAt,
   });
 }
 

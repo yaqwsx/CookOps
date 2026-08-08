@@ -38,6 +38,7 @@ from cookops.application.recipes import (
     RecipeIngredientLineInput,
 )
 from cookops.application.scheduled_recipe_attendance import SetScheduledRecipeAttendanceCommand
+from cookops.application.scheduled_recipe_context import SetScheduledRecipeContextCommand
 from cookops.application.scheduled_recipe_moves import MoveScheduledRecipeCommand
 from cookops.application.scheduled_recipe_overrides import SetScheduledIngredientOverrideCommand
 from cookops.application.scheduled_recipes import ScheduleRecipeCommand
@@ -217,6 +218,24 @@ class UpdateEventBaseAttendancePayload(BaseModel):
     event_id: UUID
     base_expected_attendance: int
     logical_operation_id: UUID | None = None
+
+
+class ScheduledRecipeContextPayload(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    scheduled_recipe_id: UUID
+    event_id: UUID
+    consumption_percentage: Decimal
+    operation: Literal["set_manual", "use_suggestion"]
+    selected_scale_amount: Decimal | None = None
+    logical_operation_id: UUID | None = None
+
+    @field_validator("consumption_percentage", "selected_scale_amount", mode="before")
+    @classmethod
+    def decimals_must_be_strings(cls, value: object) -> object:
+        if value is not None and not isinstance(value, str):
+            raise ValueError("must be a decimal string or null")
+        return value
 
 
 class EventLifecyclePayload(BaseModel):
@@ -817,6 +836,19 @@ def _push_command(command: PushCommandRequest, organization_id: UUID) -> SyncCom
                 event_id=payload.event_id,
                 operation=payload.operation,
                 diner_count=payload.diner_count,
+                client_wall_time=command.client_wall_time,
+                logical_operation_id=payload.logical_operation_id,
+            )
+        if command.command_kind == "scheduled_recipe.context":
+            payload = ScheduledRecipeContextPayload.model_validate(command.payload)
+            return SetScheduledRecipeContextCommand(
+                mutation_id=command.mutation_id,
+                scheduled_recipe_id=payload.scheduled_recipe_id,
+                organization_id=organization_id,
+                event_id=payload.event_id,
+                consumption_percentage=payload.consumption_percentage,
+                operation=payload.operation,
+                selected_scale_amount=payload.selected_scale_amount,
                 client_wall_time=command.client_wall_time,
                 logical_operation_id=payload.logical_operation_id,
             )
