@@ -25,6 +25,10 @@ from cookops.application.scheduled_recipe_context import (
     SetScheduledRecipeContextCommand,
     set_scheduled_recipe_context,
 )
+from cookops.application.scheduled_recipe_lifecycle import (
+    SetScheduledRecipeLifecycleCommand,
+    set_scheduled_recipe_lifecycle,
+)
 from cookops.application.scheduled_recipe_moves import (
     MoveScheduledRecipeCommand,
     MoveScheduledRecipeResult,
@@ -640,6 +644,39 @@ def test_stale_attendance_keeps_the_winning_clock_in_the_change_feed(
         "winning_client_wall_time": newer_time.isoformat(),
         "winning_mutation_id": str(newer.mutation_id),
     }
+
+
+def test_member_retires_and_restores_a_scheduled_recipe_with_replay(
+    service_database: ServiceDatabase,
+) -> None:
+    scheduled_recipe_id = schedule_then_override(service_database)
+    retire = SetScheduledRecipeLifecycleCommand(
+        mutation_id=uuid4(), scheduled_recipe_id=scheduled_recipe_id,
+        organization_id=service_database.organization_id, event_id=service_database.event_id,
+        operation="retire", client_wall_time=datetime.now(UTC),
+    )
+    accepted = asyncio.run(
+        set_scheduled_recipe_lifecycle(
+            service_database.sessions, context(service_database), retire
+        )
+    )
+    assert accepted.outcome == "accepted"
+    assert asyncio.run(
+        set_scheduled_recipe_lifecycle(
+            service_database.sessions, context(service_database), retire
+        )
+    ).replayed
+    restore = replace(
+        retire,
+        mutation_id=uuid4(),
+        operation="restore",
+        client_wall_time=retire.client_wall_time + timedelta(seconds=1),
+    )
+    assert asyncio.run(
+        set_scheduled_recipe_lifecycle(
+            service_database.sessions, context(service_database), restore
+        )
+    ).outcome == "accepted"
 
 
 def test_context_sets_manual_or_suggested_scale_with_lww_replay(

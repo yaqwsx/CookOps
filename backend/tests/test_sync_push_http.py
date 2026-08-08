@@ -248,6 +248,17 @@ def _scheduled_recipe_attendance_command(
     return command
 
 
+def _scheduled_recipe_lifecycle_command(
+    *, mutation_id: UUID, event_id: UUID, scheduled_recipe_id: UUID, operation: str = "retire"
+) -> dict[str, object]:
+    command = _command(
+        mutation_id=mutation_id, event_id=event_id, kind="scheduled_recipe.lifecycle",
+        scheduled_recipe_id=str(scheduled_recipe_id), operation=operation,
+    )
+    cast(dict[str, object], command["payload"])["event_id"] = str(event_id)
+    return command
+
+
 def _scheduled_recipe_context_command(
     *, mutation_id: UUID, event_id: UUID, scheduled_recipe_id: UUID, **payload: object
 ) -> dict[str, object]:
@@ -1495,6 +1506,26 @@ def test_push_schedules_a_recipe_through_the_typed_shared_command(
                 "code": "must_reference_active_day_and_meal_role_in_event",
             }
         ]
+        lifecycle = _scheduled_recipe_lifecycle_command(
+            mutation_id=uuid4(), event_id=event_id, scheduled_recipe_id=scheduled_recipe_id
+        )
+        lifecycle_body = _body(sync_database, installation_id, [lifecycle])
+        lifecycle_outcome = client.post(
+            "/api/v1/sync/push", json=lifecycle_body
+        ).json()["outcomes"][0]
+        assert lifecycle_outcome["command_kind"] == "scheduled_recipe.lifecycle"
+        assert lifecycle_outcome["status"] == "accepted"
+        assert client.post("/api/v1/sync/push", json=lifecycle_body).json()["outcomes"][0][
+            "replayed"
+        ]
+        malformed_lifecycle = _scheduled_recipe_lifecycle_command(
+            mutation_id=uuid4(), event_id=event_id, scheduled_recipe_id=scheduled_recipe_id
+        )
+        cast(dict[str, object], malformed_lifecycle["payload"])["operation"] = "delete"
+        assert client.post(
+            "/api/v1/sync/push",
+            json=_body(sync_database, installation_id, [malformed_lifecycle]),
+        ).json()["outcomes"][0]["error"]["code"] == "validation_failed"
         changed = _schedule_recipe_command(
             mutation_id=mutation_id,
             scheduled_recipe_id=scheduled_recipe_id,

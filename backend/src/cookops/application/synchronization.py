@@ -100,6 +100,11 @@ from cookops.application.scheduled_recipe_context import (
     SetScheduledRecipeContextCommand,
     set_scheduled_recipe_context,
 )
+from cookops.application.scheduled_recipe_lifecycle import (
+    ScheduledRecipeLifecycleResult,
+    SetScheduledRecipeLifecycleCommand,
+    set_scheduled_recipe_lifecycle,
+)
 from cookops.application.scheduled_recipe_moves import (
     MoveScheduledRecipeCommand,
     MoveScheduledRecipeResult,
@@ -298,6 +303,7 @@ SyncCommand = (
     | MoveScheduledRecipeCommand
     | SetScheduledRecipeAttendanceCommand
     | SetScheduledRecipeContextCommand
+    | SetScheduledRecipeLifecycleCommand
     | SetScheduledIngredientOverrideCommand
     | SetShoppingAvailableSupplyCommand
     | SetShoppingManualPurchaseTargetCommand
@@ -331,6 +337,7 @@ def _command_kind(
         | MoveScheduledRecipeCommand
         | SetScheduledRecipeAttendanceCommand
         | SetScheduledRecipeContextCommand
+        | SetScheduledRecipeLifecycleCommand
         | SetScheduledIngredientOverrideCommand
         | SetShoppingAvailableSupplyCommand
         | SetShoppingManualPurchaseTargetCommand
@@ -372,6 +379,8 @@ def _command_kind(
         return "scheduled_recipe.attendance"
     if isinstance(command, SetScheduledRecipeContextCommand):
         return "scheduled_recipe.context"
+    if isinstance(command, SetScheduledRecipeLifecycleCommand):
+        return "scheduled_recipe.lifecycle"
     if isinstance(command, SetScheduledIngredientOverrideCommand):
         return "scheduled_recipe.ingredient_override"
     if isinstance(command, SetShoppingAvailableSupplyCommand):
@@ -706,6 +715,7 @@ class SynchronizationCommandService:
                 | MoveScheduledRecipeResult
                 | ScheduledRecipeAttendanceResult
                 | ScheduledRecipeContextResult
+                | ScheduledRecipeLifecycleResult
                 | ScheduledIngredientOverrideResult
                 | ShoppingOperationResult
                 | ReceiptResult
@@ -739,6 +749,10 @@ class SynchronizationCommandService:
                 )
             elif isinstance(command, SetScheduledRecipeContextCommand):
                 result = await set_scheduled_recipe_context(
+                    self._session_factory, context, command
+                )
+            elif isinstance(command, SetScheduledRecipeLifecycleCommand):
+                result = await set_scheduled_recipe_lifecycle(
                     self._session_factory, context, command
                 )
             elif isinstance(command, SetScheduledIngredientOverrideCommand):
@@ -1821,11 +1835,13 @@ async def _bootstrap_records(
             .order_by(ScheduledRecipe.id)
         )
     ).scalars():
-        append(
-            *_scheduled_recipe_change_record(
-                item, clocks.get(("scheduled_recipe", item.id, "placement"))
-            )
+        kind, entity_id, record = _scheduled_recipe_change_record(
+            item, clocks.get(("scheduled_recipe", item.id, "placement"))
         )
+        field_clocks = record["field_clocks"]
+        assert isinstance(field_clocks, dict)
+        field_clocks.update(_clock_fields(clocks, kind, entity_id))
+        append(kind, entity_id, record)
     for item in (
         await session.execute(
             select(ScheduledIngredientOverride)

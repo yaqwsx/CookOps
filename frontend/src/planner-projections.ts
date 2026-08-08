@@ -14,6 +14,7 @@ export type PlannedRecipe = {
   consumptionPercentage: string;
   selectedScaleAmount: string;
   position: string;
+  retired: boolean;
   lines: { id: string; quantity: string; ingredientId?: string }[];
   localAddedIngredients: { id: string; name: string; quantity: string }[];
 };
@@ -74,7 +75,7 @@ export async function readEventPlanner(
     readVisibleRecords(userId, organizationId, "recipe"),
     readVisibleRecords(userId, organizationId, "recipe_version"),
     readVisibleRecords(userId, organizationId, "recipe_ingredient_line"),
-    readVisibleRecords(userId, organizationId, "scheduled_recipe"),
+    readVisibleRecords(userId, organizationId, "scheduled_recipe", true),
     readVisibleRecords(userId, organizationId, "ingredient"),
     readVisibleRecords(userId, organizationId, "ingredient_version"),
     readVisibleRecords(userId, organizationId, "scheduled_ingredient_override"),
@@ -273,6 +274,7 @@ export async function readEventPlanner(
       consumptionPercentage: value(record, "consumption_percentage"),
       selectedScaleAmount: value(record, "selected_scale_amount"),
       position: value(record, "position_key"),
+      retired: record.lifecycle === "retired",
     }))
     .filter((item): item is PlannedRecipe =>
       Boolean(

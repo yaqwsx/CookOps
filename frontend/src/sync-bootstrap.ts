@@ -10,6 +10,7 @@ import { replayRecipeCreate } from "./recipe-create";
 import {
   replayScheduledRecipeAttendance,
   replayScheduledRecipeContext,
+  replayScheduledRecipeLifecycle,
 } from "./scheduled-recipe";
 import { replayRecipeVersionPublish } from "./recipe-publish";
 import { replayIngredientCreate } from "./ingredient-create";
@@ -255,6 +256,9 @@ async function replayOptimisticCommands(
       await replayScheduledRecipeAttendance(userId, organizationId, command);
     if (command.commandType === "scheduled_recipe.context")
       await replayScheduledRecipeContext(userId, organizationId, command);
+    if (command.commandType === "scheduled_recipe.lifecycle") {
+      try { await replayScheduledRecipeLifecycle(userId, organizationId, command); } catch { /* remains recoverable */ }
+    }
     if (command.commandType === "scheduled_recipe.ingredient_override")
       await replayScheduledIngredientOverride(userId, organizationId, command);
     if (command.commandType.startsWith("receipt.")) {

@@ -18,6 +18,7 @@ import {
   queueRecipeSchedule,
   queueScheduledRecipeAttendance,
   queueScheduledRecipeContext,
+  queueScheduledRecipeLifecycle,
   queueScheduledRecipeMove,
 } from "./scheduled-recipe";
 import {
@@ -748,6 +749,9 @@ export function EventPlanner({
                         <li key={item.id}>
                           {item.name} ·{" "}
                           {t("planner.diners", { count: item.dinerCount })}
+                          {item.retired ? ` · ${t("planner.retired")}` : null}
+                          {planner.lifecycle === "active" ? <button onClick={() => void queueScheduledRecipeLifecycle(userId, organizationId, { scheduledRecipeId: item.id, eventId, operation: item.retired ? "restore" : "retire" })} type="button">{t(item.retired ? "planner.restoreRecipe" : "planner.retireRecipe")}</button> : null}
+                          {!item.retired && <>
                           <MoveRecipe
                             eventId={eventId}
                             organizationId={organizationId}
@@ -776,6 +780,7 @@ export function EventPlanner({
                             userId={userId}
                             scheduled={item}
                           />
+                          </>}
                           {(item.localAddedIngredients?.length ?? 0) ? (
                             <ul className="planner-local-ingredients">
                               {(item.localAddedIngredients ?? []).map((ingredient) => (

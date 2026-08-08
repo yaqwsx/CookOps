@@ -4,8 +4,10 @@ import { localDb } from "./local-db";
 import {
   queueScheduledRecipeAttendance,
   queueScheduledRecipeContext,
+  queueScheduledRecipeLifecycle,
   replayScheduledRecipeAttendance,
   replayScheduledRecipeContext,
+  replayScheduledRecipeLifecycle,
 } from "./scheduled-recipe";
 
 const user = "a6a58bd6-214e-49af-8fae-e5f974bf8e08";
@@ -15,6 +17,23 @@ const scheduled = "7ce17d2f-8365-4b1f-a80b-34d10425d51c";
 
 beforeEach(async () => {
   await Promise.all([localDb.canonicalRecords.clear(), localDb.optimisticOverlays.clear(), localDb.outbox.clear()]);
+});
+
+it("queues lifecycle intent atomically and does not revive a newer canonical lifecycle", async () => {
+  const base = { userId: user, organizationId: organization, recordSchemaVersion: 1, immutable: false, updatedAt: "2026-08-08T12:00:00.000Z" };
+  await localDb.canonicalRecords.bulkPut([
+    { ...base, entityType: "event", entityId: event, lifecycle: "active", fields: { id: event, organization_id: organization, lifecycle: "active" }, fieldClocks: {} },
+    { ...base, entityType: "scheduled_recipe", entityId: scheduled, lifecycle: "active", fields: { id: scheduled, organization_id: organization, event_id: event }, fieldClocks: {} },
+  ]);
+  await queueScheduledRecipeLifecycle(user, organization, { eventId: event, scheduledRecipeId: scheduled, operation: "retire" });
+  await expect(localDb.outbox.toArray()).resolves.toEqual([expect.objectContaining({ commandType: "scheduled_recipe.lifecycle" })]);
+  await expect(localDb.optimisticOverlays.get([user, organization, "scheduled_recipe", scheduled])).resolves.toMatchObject({ lifecycle: "retired" });
+  await localDb.optimisticOverlays.clear();
+  await localDb.canonicalRecords.put({ ...base, entityType: "scheduled_recipe", entityId: scheduled, lifecycle: "active", fields: { id: scheduled, organization_id: organization, event_id: event }, fieldClocks: { lifecycle: { winning_client_wall_time: "2999-01-01T00:00:00.000Z", winning_mutation_id: "ffffffff-ffff-4fff-8fff-ffffffffffff" } } });
+  await replayScheduledRecipeLifecycle(user, organization, { id: "00000000-0000-4000-8000-000000000000", actionAt: "2026-08-08T13:00:00.000Z", payload: { scheduled_recipe_id: scheduled, event_id: event, operation: "retire" } });
+  await expect(localDb.optimisticOverlays.count()).resolves.toBe(0);
+  await localDb.optimisticOverlays.put({ ...base, entityType: "event", entityId: event, lifecycle: "retired", fields: { id: event, organization_id: organization, lifecycle: "archived" }, fieldClocks: {} });
+  await expect(queueScheduledRecipeLifecycle(user, organization, { eventId: event, scheduledRecipeId: scheduled, operation: "retire" })).rejects.toThrow("selection");
 });
 
 it("does not let a stale attendance replay replace the visible LWW winner", async () => {
