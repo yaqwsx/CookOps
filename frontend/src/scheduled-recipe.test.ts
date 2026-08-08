@@ -89,6 +89,15 @@ describe("offline recipe scheduling", () => {
     ]);
   });
 
+  it("does not project a hidden event day", async () => {
+    await seed();
+    await localDb.canonicalRecords.update(
+      [ids.user, ids.organization, "event_day", ids.day],
+      { fields: { id: ids.day, event_id: ids.event, calendar_date: "2026-08-10", note: null, is_visible: false } },
+    );
+    await expect(readEventPlanner(ids.user, ids.organization, ids.event)).resolves.toMatchObject({ days: [] });
+  });
+
   it("writes one visible scheduled recipe and typed outbox command atomically", async () => {
     await seed();
     await queueRecipeSchedule(ids.user, ids.organization, {

@@ -106,7 +106,8 @@ export async function readEventPlanner(
       (record) =>
         hasId(record) &&
         belongsToOrganization(record, organizationId) &&
-        value(record, "event_id") === eventId,
+        value(record, "event_id") === eventId &&
+        record.fields.is_visible !== false,
     )
     .map((record) => ({
       id: record.entityId,
