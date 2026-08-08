@@ -224,6 +224,45 @@ describe("bootstrapOrganization", () => {
     ).resolves.toMatchObject({ fields: { base_expected_attendance: 9 } });
   });
 
+  it("replays a manual day after its pending event creator", async () => {
+    const eventId = "3d8b2b21-c378-4574-9e46-9338c81305ef";
+    const dayId = "4d8b2b21-c378-4574-9e46-9338c81305ef";
+    await localDb.outbox.bulkAdd([
+      {
+        id: "5d8b2b21-c378-4574-9e46-9338c81305ef",
+        userId,
+        organizationId,
+        commandType: "event.create",
+        payload: { event_id: eventId, name: "Offline event" },
+        actionAt: "2026-08-07T11:00:00.000Z",
+        createdAt: "2026-08-07T11:00:00.000Z",
+        sequence: 1,
+        state: "pending",
+      },
+      {
+        id: dayId,
+        userId,
+        organizationId,
+        commandType: "event_day.create",
+        payload: { event_day_id: dayId, event_id: eventId, calendar_date: "2026-08-11" },
+        actionAt: "2026-08-07T11:00:00.000Z",
+        createdAt: "2026-08-07T11:00:00.000Z",
+        sequence: 2,
+        state: "pending",
+      },
+    ]);
+
+    await bootstrapOrganization(userId, organizationId, {
+      fetch: vi.fn<typeof fetch>(async () => response([organizationRecord()])),
+    });
+
+    await expect(
+      readVisibleCanonicalRecord(userId, organizationId, "event_day", dayId),
+    ).resolves.toMatchObject({
+      fields: { event_id: eventId, calendar_date: "2026-08-11" },
+    });
+  });
+
   it("keeps the prior cache, user-owned work, and cursor when staging is interrupted", async () => {
     await localDb.canonicalRecords.add({
       userId,

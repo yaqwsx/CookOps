@@ -25,7 +25,7 @@ import {
   queueAddedOverride,
   queueReplacementOverride,
 } from "./scheduled-ingredient-override";
-import { queueEventDayVisibility } from "./event-day";
+import { queueEventDayCreate, queueEventDayVisibility } from "./event-day";
 import { pullOrganization, SyncRequestError } from "./sync-bootstrap";
 
 type PlannerState = "loading" | "ready" | "offline" | "error";
@@ -208,6 +208,14 @@ function DayVisibility({
     }
   }
   return <><button onClick={() => void setVisibility(!day.visible)} type="button">{t(day.visible ? "planner.hideDay" : "planner.restoreDay")}</button>{error ? <p role="alert">{t("planner.errors.unavailable")}</p> : null}</>;
+}
+
+function AddDay({ eventId, organizationId, userId, active }: { eventId: string; organizationId: string; userId: string; active: boolean }) {
+  const { t } = useTranslation();
+  const [calendarDate, setCalendarDate] = useState("");
+  const [error, setError] = useState(false);
+  if (!active) return null;
+  return <form onSubmit={(event) => { event.preventDefault(); void queueEventDayCreate(userId, organizationId, { eventId, calendarDate }).then(() => setError(false)).catch(() => setError(true)); }}><label>{t("planner.day")}<input type="date" required value={calendarDate} onChange={(event) => setCalendarDate(event.target.value)} /></label><button type="submit">{t("planner.addDay")}</button>{error ? <p role="alert">{t("planner.errors.unavailable")}</p> : null}</form>;
 }
 
 function AddRecipe({
@@ -748,6 +756,7 @@ export function EventPlanner({
         planner={planner}
         userId={userId}
       />
+      <AddDay eventId={eventId} organizationId={organizationId} userId={userId} active={planner.lifecycle === "active"} />
       <div className="planner-days">
         {planner.days.map((day) => (
           <section

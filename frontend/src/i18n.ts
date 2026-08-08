@@ -196,6 +196,7 @@ const resources = {
         role: "Chod",
         recipe: "Recept",
         add: "Přidat do plánu",
+        addDay: "Přidat den",
         saved: "Recept je uložen místně a bude synchronizován.",
         noAddOptions:
           "Pro přidání receptu je potřeba uložený den, chod a recept.",
@@ -572,6 +573,7 @@ const resources = {
         role: "Meal role",
         recipe: "Recipe",
         add: "Add to planner",
+        addDay: "Add day",
         saved: "The recipe is saved locally and will synchronize.",
         noAddOptions:
           "A stored day, meal role, and recipe are required to add a recipe.",

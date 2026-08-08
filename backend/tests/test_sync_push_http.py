@@ -273,6 +273,20 @@ def _event_day_visibility_command(
     return command
 
 
+def _event_day_create_command(
+    *, mutation_id: UUID, event_id: UUID, event_day_id: UUID, calendar_date: object
+) -> dict[str, object]:
+    command = _command(
+        mutation_id=mutation_id,
+        event_id=event_id,
+        kind="event_day.create",
+        event_day_id=str(event_day_id),
+        calendar_date=calendar_date,
+    )
+    cast(dict[str, object], command["payload"])["event_id"] = str(event_id)
+    return command
+
+
 def _scheduled_recipe_context_command(
     *, mutation_id: UUID, event_id: UUID, scheduled_recipe_id: UUID, **payload: object
 ) -> dict[str, object]:
@@ -1315,6 +1329,32 @@ def test_push_schedules_a_recipe_through_the_typed_shared_command(
             "/api/v1/sync/push",
             json=_body(sync_database, installation_id, [malformed_visibility]),
         ).json()["outcomes"][0]["error"]["code"] == "validation_failed"
+        created_day = _event_day_create_command(
+            mutation_id=uuid4(),
+            event_id=event_id,
+            event_day_id=uuid4(),
+            calendar_date="2026-08-11",
+        )
+        created_day_body = _body(sync_database, installation_id, [created_day])
+        assert (
+            client.post("/api/v1/sync/push", json=created_day_body).json()["outcomes"][0]["status"]
+            == "accepted"
+        )
+        assert client.post("/api/v1/sync/push", json=created_day_body).json()["outcomes"][0][
+            "replayed"
+        ]
+        malformed_day = _event_day_create_command(
+            mutation_id=uuid4(),
+            event_id=event_id,
+            event_day_id=uuid4(),
+            calendar_date="not-a-date",
+        )
+        assert (
+            client.post(
+                "/api/v1/sync/push", json=_body(sync_database, installation_id, [malformed_day])
+            ).json()["outcomes"][0]["error"]["code"]
+            == "validation_failed"
+        )
         event_meal_role_id = uuid4()
         with sync_database.engine.begin() as connection:
             connection.execute(

@@ -35,6 +35,11 @@ from cookops.application.catalog_configuration import (
     CatalogConfigurationResult,
     mutate_catalog_configuration,
 )
+from cookops.application.event_day_creation import (
+    CreateEventDayCommand,
+    EventDayCreationResult,
+    create_event_day,
+)
 from cookops.application.event_day_visibility import (
     EventDayVisibilityResult,
     SetEventDayVisibilityCommand,
@@ -300,6 +305,7 @@ SyncCommand = (
     | DuplicateEventCommand
     | UpdateEventPriceEstimatesCommand
     | SetEventDayVisibilityCommand
+    | CreateEventDayCommand
     | CreateShoppingListCommand
     | RefreshShoppingListCommand
     | CreateRecipeCommand
@@ -335,6 +341,7 @@ def _command_kind(
         | DuplicateEventCommand
         | UpdateEventPriceEstimatesCommand
         | SetEventDayVisibilityCommand
+        | CreateEventDayCommand
         | CreateShoppingListCommand
         | RefreshShoppingListCommand
         | CreateRecipeCommand
@@ -372,6 +379,8 @@ def _command_kind(
         return "event.update_price_estimates"
     if isinstance(command, SetEventDayVisibilityCommand):
         return "event_day.visibility"
+    if isinstance(command, CreateEventDayCommand):
+        return "event_day.create"
     if isinstance(command, RefreshShoppingListCommand):
         return "shopping_list.refresh"
     if isinstance(command, CreateRecipeCommand):
@@ -713,6 +722,7 @@ class SynchronizationCommandService:
                 | DuplicateEventResult
                 | UpdateEventPriceEstimatesResult
                 | EventDayVisibilityResult
+                | EventDayCreationResult
                 | CreateShoppingListResult
                 | RefreshShoppingListResult
                 | CreateAdHocShoppingItemResult
@@ -743,6 +753,8 @@ class SynchronizationCommandService:
                 result = await update_event_price_estimates(self._session_factory, context, command)
             elif isinstance(command, SetEventDayVisibilityCommand):
                 result = await set_event_day_visibility(self._session_factory, context, command)
+            elif isinstance(command, CreateEventDayCommand):
+                result = await create_event_day(self._session_factory, context, command)
             elif isinstance(command, RefreshShoppingListCommand):
                 result = await refresh_shopping_list(self._session_factory, context, command)
             elif isinstance(command, CreateRecipeCommand):
