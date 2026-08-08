@@ -11,6 +11,15 @@ import {
 
 const MAX_BODY_BYTES = 1_024;
 
+export interface PrivateInteractionDetails {
+  interactionUid: string;
+  clientId: string;
+  clientName: string;
+  resource: string;
+  scopes: string[];
+  prompt: "login" | "consent";
+}
+
 function send(response: ServerResponse, status: number): void {
   response.writeHead(status).end();
 }
@@ -51,13 +60,33 @@ async function grantForConsent(provider: Provider, interaction: Interaction, sub
   const grant =
     existing ??
     new provider.Grant({ accountId: subject, clientId: String(interaction.params.client_id) });
+  const missingOidcScope = interaction.prompt.details.missingOIDCScope as string[] | undefined;
+  if (missingOidcScope) grant.addOIDCScope(missingOidcScope.join(" "));
+  const missingOidcClaims = interaction.prompt.details.missingOIDCClaims as string[] | undefined;
+  if (missingOidcClaims) grant.addOIDCClaims(missingOidcClaims);
   const missingResourceScopes = interaction.prompt.details.missingResourceScopes as
     | Record<string, string[]>
     | undefined;
   for (const [resource, scopes] of Object.entries(missingResourceScopes ?? {})) {
-    grant.addResourceScope(resource, scopes);
+    grant.addResourceScope(resource, scopes.join(" "));
   }
   return grant;
+}
+
+async function detailsFor(provider: Provider, interactionUid: string): Promise<PrivateInteractionDetails | undefined> {
+  const interaction = await provider.Interaction.find(interactionUid);
+  if (!interaction) return undefined;
+  const binding = interactionBinding(interaction);
+  const client = await provider.Client.find(binding.clientId);
+  if (!client) throw new TypeError("interaction client is unavailable");
+  return {
+    interactionUid: binding.interactionUid,
+    clientId: binding.clientId,
+    clientName: client.clientName ?? binding.clientId,
+    resource: binding.resource,
+    scopes: binding.scope.split(" "),
+    prompt: binding.prompt,
+  };
 }
 
 /**
@@ -69,12 +98,31 @@ export async function handleInteractionBridgeRequest(
   provider: Provider,
   approvals: InteractionApprovalStore,
   credential: Uint8Array,
+  detailsCredential: Uint8Array,
   basePath: string,
   request: IncomingMessage,
   response: ServerResponse,
 ): Promise<boolean> {
   const url = new URL(request.url ?? "/", "http://localhost");
   const privatePath = `${basePath}/private/interactions/approval`;
+  const details = new RegExp(`^${basePath.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}/private/interactions/([A-Za-z0-9_-]{16,255})$`);
+  const detailsMatch = details.exec(url.pathname);
+  if (detailsMatch) {
+    if (request.method !== "GET" || !privateCredentialMatches(detailsCredential, request.headers.authorization)) {
+      send(response, 401);
+      return true;
+    }
+    try {
+      const interactionUid = detailsMatch[1];
+      if (!interactionUid) throw new TypeError("interaction UID is unavailable");
+      const detail = await detailsFor(provider, interactionUid);
+      if (!detail) send(response, 404);
+      else response.writeHead(200, { "content-type": "application/json", "cache-control": "no-store" }).end(JSON.stringify(detail));
+    } catch {
+      send(response, 400);
+    }
+    return true;
+  }
   if (url.pathname === privatePath) {
     if (request.method !== "POST" || !privateCredentialMatches(credential, request.headers.authorization)) {
       send(response, 401);

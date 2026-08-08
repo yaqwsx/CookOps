@@ -15,7 +15,7 @@ prohibited_proxy_route() {
     awk '
         $1 ~ /^ProxyPass(Match|Reverse)?$/ {
             route = $2
-            if (route ~ /(^|[^[:alnum:]_])\/?(oauth|mcp)(\/|[^[:alnum:]_]|$)/ ||
+            if (route ~ /(^|[^[:alnum:]_])\/?mcp(\/|[^[:alnum:]_]|$)/ ||
                 route ~ /^\/\.well-known\/(openid-configuration|oauth-authorization-server|oauth-protected-resource)(\/|$)/) {
                 prohibited = 1
                 exit
@@ -26,7 +26,6 @@ prohibited_proxy_route() {
 }
 for proxy_rule in \
     'ProxyPass /mcp http://127.0.0.1:8000/' \
-    'ProxyPass /oauth http://127.0.0.1:3000/' \
     'ProxyPass /.well-known/openid-configuration/oauth http://127.0.0.1:3000/' \
     'ProxyPassMatch ^/mcp http://127.0.0.1:8000/'; do
     if ! printf '%s\n' "$proxy_rule" | prohibited_proxy_route; then
@@ -39,9 +38,25 @@ if printf '%s\n' 'ProxyPass /api/ http://oauth-server:3000/health/' | prohibited
     exit 1
 fi
 if prohibited_proxy_route "$root/deploy/apache/cookops.conf.example"; then
-    echo 'OAuth or MCP routes must stay unmounted until their production boundaries exist' >&2
+    echo 'MCP routes must stay unmounted until the resource verifier exists' >&2
     exit 1
 fi
+if ! awk '$1 == "ProxyPass" && $2 == "/oauth/" && $3 == "http://127.0.0.1:3000/oauth/" { found = 1 } END { exit found ? 0 : 1 }' "$root/deploy/apache/cookops.conf.example"; then
+    echo 'OAuth must proxy only its public source path to loopback oauth-server' >&2
+    exit 1
+fi
+if ! awk '$1 == "ProxyPass" && $2 == "/oauth/private" && $3 == "!" { found = 1 } END { exit found ? 0 : 1 }' "$root/deploy/apache/cookops.conf.example"; then
+    echo 'OAuth private bridge must be excluded before the public OAuth proxy' >&2
+    exit 1
+fi
+for discovery in \
+    '/.well-known/openid-configuration/oauth' \
+    '/.well-known/oauth-authorization-server/oauth'; do
+    if ! awk -v path="$discovery" '$1 == "ProxyPass" && $2 == path && $3 == "http://127.0.0.1:3000" path { found = 1 } END { exit found ? 0 : 1 }' "$root/deploy/apache/cookops.conf.example"; then
+        echo "OAuth discovery proxy is missing or not loopback: $discovery" >&2
+        exit 1
+    fi
+done
 
 if docker run --rm --env 'COOKOPS_TRUSTED_PROXY_IPS=*' cookops-api-image-test; then
     echo 'wildcard proxy trust unexpectedly accepted' >&2

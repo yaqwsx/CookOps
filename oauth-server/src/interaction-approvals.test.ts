@@ -17,6 +17,7 @@ import { handleInteractionBridgeRequest } from "./interaction-bridge.js";
 
 const APPROVAL_SECRET = Buffer.alloc(32, 0x7a);
 const API_CREDENTIAL = Buffer.alloc(32, 0x6b);
+const DETAILS_CREDENTIAL = Buffer.alloc(32, 0x6c);
 const databaseUrl = process.env.TEST_DATABASE_URL;
 
 function interaction(overrides: Partial<Interaction> = {}): Interaction {
@@ -112,6 +113,7 @@ test(
     const finished: unknown[] = [];
     const fakeProvider = {
       Interaction: { find: async (uid: string) => (uid === original.uid ? original : undefined) },
+      Client: { find: async (id: string) => (id === "cookops-spike-client" ? { clientName: "CookOps test client" } : undefined) },
       interactionDetails: async () => original,
       interactionFinished: async (_request: unknown, response: { writeHead(status: number): { end(): void } }, result: unknown) => {
         finished.push(result);
@@ -124,6 +126,7 @@ test(
         fakeProvider as never,
         approvals,
         API_CREDENTIAL,
+        DETAILS_CREDENTIAL,
         "/oauth",
         request,
         response,
@@ -139,6 +142,24 @@ test(
       const address = server.address();
       assert(address && typeof address !== "string");
       const endpoint = `http://127.0.0.1:${address.port}/oauth/private/interactions/approval`;
+      const details = endpoint.replace("/approval", `/${original.uid}`);
+      assert.equal((await fetch(details)).status, 401);
+      assert.equal(
+        (await fetch(details, { headers: { authorization: `Bearer ${API_CREDENTIAL.toString("base64url")}` } })).status,
+        401,
+      );
+      const detail = await fetch(details, {
+        headers: { authorization: `Bearer ${DETAILS_CREDENTIAL.toString("base64url")}` },
+      });
+      assert.equal(detail.status, 200);
+      assert.deepEqual(await detail.json(), {
+        interactionUid: original.uid,
+        clientId: "cookops-spike-client",
+        clientName: "CookOps test client",
+        resource: "https://cookops.example/mcp",
+        scopes: ["cookops:mcp"],
+        prompt: "login",
+      });
       assert.equal((await fetch(endpoint, { method: "POST" })).status, 401);
       assert.equal(
         (
@@ -216,6 +237,7 @@ test(
         fakeProvider as never,
         approvals,
         API_CREDENTIAL,
+        DETAILS_CREDENTIAL,
         "/oauth",
         request,
         response,

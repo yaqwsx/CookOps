@@ -18,12 +18,24 @@ from cookops.application.human_authentication import HumanAuthenticationService
 InteractionDecision = Literal["approve", "deny"]
 
 
+@dataclass(frozen=True, slots=True)
+class OAuthInteractionDetails:
+    interaction_uid: str
+    client_name: str
+    resource: str
+    scopes: tuple[str, ...]
+
+
 class PrivateInteractionApprovalClient(Protocol):
     """Authenticated private call owned by the OAuth service boundary."""
 
     async def record_approval(
         self, *, interaction_uid: str, subject: UUID, decision: InteractionDecision
     ) -> bool: ...
+
+    async def interaction_details(
+        self, *, interaction_uid: str
+    ) -> OAuthInteractionDetails | None: ...
 
 
 @dataclass(frozen=True, slots=True)
@@ -33,6 +45,17 @@ class OAuthInteractionApprovalService:
     browser_sessions: BrowserSessionService
     human_authentication: HumanAuthenticationService
     private_client: PrivateInteractionApprovalClient
+
+    async def details(
+        self, *, browser_session_secret: str, interaction_uid: str
+    ) -> OAuthInteractionDetails | None:
+        session = await self.browser_sessions.authenticate(browser_session_secret)
+        if session is None:
+            return None
+        identity = await self.human_authentication.current_identity(session.user_id)
+        if identity is None:
+            return None
+        return await self.private_client.interaction_details(interaction_uid=interaction_uid)
 
     async def submit(
         self, *, browser_session_secret: str, interaction_uid: str, decision: InteractionDecision

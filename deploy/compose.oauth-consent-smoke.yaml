@@ -1,0 +1,30 @@
+services:
+  api-migrate:
+    environment:
+      COOKOPS_ENVIRONMENT: test
+      COOKOPS_HUMAN_AUTH_PROVIDER: dummy
+
+  api:
+    environment:
+      COOKOPS_ENVIRONMENT: test
+      COOKOPS_HUMAN_AUTH_PROVIDER: dummy
+
+  oauth-migrate:
+    environment:
+      PORT: "3000"
+
+  oauth-server:
+    environment:
+      PORT: "3000"
+
+  edge:
+    build:
+      context: ./apache
+      dockerfile: Dockerfile.oauth-consent-smoke
+    depends_on:
+      api: { condition: service_started }
+      oauth-server: { condition: service_started }
+    ports: ["127.0.0.1:${COOKOPS_EDGE_PORT}:443"]
+    volumes:
+      - ${SMOKE_TMP}/certificate.pem:/run/cookops-smoke/certificate.pem:ro
+      - ${SMOKE_TMP}/key.pem:/run/cookops-smoke/key.pem:ro

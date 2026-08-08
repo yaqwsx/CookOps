@@ -10,6 +10,7 @@ from cookops.application.browser_sessions import BrowserSessionService
 from cookops.application.dummy_identities import DummyIdentityProvider
 from cookops.application.google_identities import GoogleIdentityProvider, GoogleIdTokenVerifier
 from cookops.application.human_authentication import HumanAuthenticationService
+from cookops.application.oauth_interactions import OAuthInteractionApprovalService
 from cookops.application.shopping_lists import ShoppingListQueryService
 from cookops.application.synchronization import (
     SynchronizationCommandService,
@@ -25,9 +26,14 @@ from cookops.http_auth import (
 from cookops.http_events import EventHttpServices, create_events_router
 from cookops.http_media import MediaHttpServices, create_media_router
 from cookops.http_memberships import MembershipHttpServices, create_memberships_router
+from cookops.http_oauth_interactions import (
+    OAuthInteractionHttpServices,
+    create_oauth_interaction_router,
+)
 from cookops.http_shopping import ShoppingHttpServices, create_shopping_router
 from cookops.http_sync import SynchronizationHttpServices, create_sync_router
 from cookops.media_storage import LocalReceiptMediaStorage
+from cookops.oauth_interaction_client import OAuthPrivateInteractionClient
 
 ReadinessProbe = Callable[[], Awaitable[bool]]
 
@@ -140,6 +146,19 @@ def create_app(
         application.state.browser_authentication = browser_authentication_factory(
             app_settings, session_factory
         )
+        if app_settings.oauth_interaction_details_api_credential_base64url is not None:
+            application.state.oauth_interactions = OAuthInteractionHttpServices(
+                OAuthInteractionApprovalService(
+                    application.state.browser_authentication.browser_sessions,
+                    application.state.browser_authentication.human_authentication,
+                    OAuthPrivateInteractionClient(
+                        app_settings.oauth_interaction_private_base_url,
+                        app_settings.oauth_interaction_details_api_credential_base64url,
+                        f"{app_settings.oauth_interaction_private_base_url}/approval",
+                        app_settings.oauth_interaction_approval_api_credential_base64url or "",
+                    ),
+                )
+            )
         application.state.synchronization = SynchronizationHttpServices(
             browser_sessions=application.state.browser_authentication.browser_sessions,
             synchronization=SynchronizationQueryService(
@@ -179,6 +198,7 @@ def create_app(
     application.state.readiness_probe = readiness_probe or not_ready
     application.include_router(health_router)
     application.include_router(create_auth_router(app_settings))
+    application.include_router(create_oauth_interaction_router(app_settings))
     application.include_router(create_organization_access_router(app_settings))
     application.include_router(create_events_router(app_settings))
     application.include_router(create_memberships_router(app_settings))

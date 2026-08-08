@@ -23,8 +23,15 @@
     ProxyPassReverse /health/ http://127.0.0.1:8000/health/
     ProxyPass        /auth/ http://127.0.0.1:8000/auth/
     ProxyPassReverse /auth/ http://127.0.0.1:8000/auth/
-    # OAuth discovery/protocol and /mcp are deliberately absent until the
-    # separately versioned OAuth service and API token verifier are production-ready.
+    # The interaction completion flow needs the protocol service. MCP stays absent
+    # until FastAPI has the separately versioned resource-token verifier.
+    ProxyPass        /oauth/private !
+    ProxyPass        /.well-known/openid-configuration/oauth http://127.0.0.1:3000/.well-known/openid-configuration/oauth
+    ProxyPassReverse /.well-known/openid-configuration/oauth http://127.0.0.1:3000/.well-known/openid-configuration/oauth
+    ProxyPass        /.well-known/oauth-authorization-server/oauth http://127.0.0.1:3000/.well-known/oauth-authorization-server/oauth
+    ProxyPassReverse /.well-known/oauth-authorization-server/oauth http://127.0.0.1:3000/.well-known/oauth-authorization-server/oauth
+    ProxyPass        /oauth/ http://127.0.0.1:3000/oauth/
+    ProxyPassReverse /oauth/ http://127.0.0.1:3000/oauth/
     ProxyPass        /api/v1/sync/notifications http://127.0.0.1:8000/api/v1/sync/notifications upgrade=websocket
     ProxyPassReverse /api/v1/sync/notifications http://127.0.0.1:8000/api/v1/sync/notifications
     ProxyPass        /api/ http://127.0.0.1:8000/api/

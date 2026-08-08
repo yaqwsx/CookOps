@@ -21,6 +21,15 @@ def test_environment_allows_google_auth_in_production(monkeypatch: pytest.Monkey
         "COOKOPS_BROWSER_SESSION_HMAC_KEY",
         "MDEyMzQ1Njc4OWFiY2RlZjAxMjM0NTY3ODlhYmNkZWY",
     )
+    monkeypatch.setenv(
+        "COOKOPS_OAUTH_INTERACTION_DETAILS_API_CREDENTIAL_BASE64URL",
+        "MDEyMzQ1Njc4OWFiY2RlZjAxMjM0NTY3ODlhYmNkZWU",
+    )
+    monkeypatch.setenv(
+        "COOKOPS_OAUTH_INTERACTION_APPROVAL_API_CREDENTIAL_BASE64URL",
+        "MDEyMzQ1Njc4OWFiY2RlZjAxMjM0NTY3ODlhYmNkZWY",
+    )
+    monkeypatch.setenv("COOKOPS_OAUTH_INTERACTION_ORIGIN", "https://cookops.example")
 
     settings = Settings()
 
@@ -54,6 +63,12 @@ def test_production_accepts_exactly_the_key_parsed_by_session_service(
     monkeypatch.setenv("COOKOPS_HUMAN_AUTH_PROVIDER", "google")
     monkeypatch.setenv("COOKOPS_GOOGLE_CLIENT_ID", "test-client.apps.googleusercontent.com")
     monkeypatch.setenv("COOKOPS_BROWSER_SESSION_HMAC_KEY", key)
+    monkeypatch.setenv(
+        "COOKOPS_OAUTH_INTERACTION_DETAILS_API_CREDENTIAL_BASE64URL",
+        "MDEyMzQ1Njc4OWFiY2RlZjAxMjM0NTY3ODlhYmNkZWU",
+    )
+    monkeypatch.setenv("COOKOPS_OAUTH_INTERACTION_APPROVAL_API_CREDENTIAL_BASE64URL", key)
+    monkeypatch.setenv("COOKOPS_OAUTH_INTERACTION_ORIGIN", "https://cookops.example")
 
     assert (
         decode_browser_session_hmac_key(Settings().browser_session_hmac_key or "")

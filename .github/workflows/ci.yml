@@ -167,3 +167,10 @@ jobs:
           npm run check
           npm test
           npm run build
+      - name: Install browser smoke dependencies
+        working-directory: frontend
+        run: |
+          npm ci
+          npx playwright install --with-deps chromium
+      - name: Complete a real production OAuth consent interaction in a browser
+        run: deploy/test-oauth-consent-smoke.sh

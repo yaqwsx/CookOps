@@ -75,7 +75,13 @@ export function createProvider(profile: ProviderProfile): Provider {
         token_endpoint_auth_method: "client_secret_basic",
       },
     ],
-    cookies: { keys: profile.cookieKeys },
+    cookies: {
+      keys: profile.cookieKeys,
+      // The browser returns from FastAPI's /auth interaction page to the
+      // provider's /oauth completion route. Keep this short-lived signed cookie
+      // inside the provider's sole public path rather than the external page.
+      short: { httpOnly: true, path: basePath, sameSite: "lax" },
+    },
     features: {
       clientIdMetadataDocument: {
         enabled: true,

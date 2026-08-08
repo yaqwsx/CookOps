@@ -25,6 +25,7 @@ export interface OAuthRuntimeConfiguration {
   adapterSecret: Uint8Array;
   interactionApprovalSecret: Uint8Array;
   approvalApiCredential: Uint8Array;
+  interactionDetailsApiCredential: Uint8Array;
   host: string;
   port: number;
 }
@@ -75,6 +76,16 @@ export function decodeApprovalApiCredential(encoded: string): Uint8Array {
   } catch {
     throw new TypeError(
       "OAUTH_APPROVAL_API_CREDENTIAL_BASE64URL must canonically encode at least 32 bytes",
+    );
+  }
+}
+
+export function decodeInteractionDetailsApiCredential(encoded: string): Uint8Array {
+  try {
+    return decodeAdapterSecret(encoded);
+  } catch {
+    throw new TypeError(
+      "OAUTH_INTERACTION_DETAILS_API_CREDENTIAL_BASE64URL must canonically encode at least 32 bytes",
     );
   }
 }
@@ -148,6 +159,9 @@ export function runtimeConfigurationFromEnvironment(
   environment: NodeJS.ProcessEnv,
 ): OAuthRuntimeConfiguration {
   const issuer = publicHttpsUrl(required(environment, "OAUTH_ISSUER"), "OAUTH_ISSUER");
+  if (new URL(issuer).pathname !== "/oauth") {
+    throw new TypeError("OAUTH_ISSUER must use the canonical /oauth path");
+  }
   const resource = publicHttpsUrl(required(environment, "MCP_RESOURCE"), "MCP_RESOURCE");
   const interactionUrl = publicHttpsUrl(
     required(environment, "OAUTH_INTERACTION_URL"),
@@ -176,6 +190,15 @@ export function runtimeConfigurationFromEnvironment(
       "OAUTH_RESOURCE_SERVER_SECRET must be a trimmed secret of at least 32 characters",
     );
   }
+  const approvalApiCredential = decodeApprovalApiCredential(
+    required(environment, "OAUTH_APPROVAL_API_CREDENTIAL_BASE64URL"),
+  );
+  const interactionDetailsApiCredential = decodeInteractionDetailsApiCredential(
+    required(environment, "OAUTH_INTERACTION_DETAILS_API_CREDENTIAL_BASE64URL"),
+  );
+  if (Buffer.compare(approvalApiCredential, interactionDetailsApiCredential) === 0) {
+    throw new TypeError("OAuth private API credentials must be distinct");
+  }
   return {
     issuer,
     resource,
@@ -190,9 +213,8 @@ export function runtimeConfigurationFromEnvironment(
     interactionApprovalSecret: decodeInteractionApprovalSecret(
       required(environment, "OAUTH_INTERACTION_APPROVAL_SECRET_BASE64URL"),
     ),
-    approvalApiCredential: decodeApprovalApiCredential(
-      required(environment, "OAUTH_APPROVAL_API_CREDENTIAL_BASE64URL"),
-    ),
+    approvalApiCredential,
+    interactionDetailsApiCredential,
     host: bindHost(environment.OAUTH_BIND_HOST ?? "0.0.0.0"),
     port: serverPort(issuer, environment.PORT),
   };
@@ -270,6 +292,7 @@ export async function startOAuthServer(
       runtime.provider,
       runtime.approvals,
       configuration.approvalApiCredential,
+      configuration.interactionDetailsApiCredential,
       basePath,
       request,
       response,

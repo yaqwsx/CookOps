@@ -1,6 +1,7 @@
 from enum import StrEnum
 from pathlib import Path
 from typing import Literal, Self
+from urllib.parse import urlsplit
 
 from pydantic import Field, PostgresDsn, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -39,6 +40,10 @@ class Settings(BaseSettings):
     mcp_resource: str | None = None
     oauth_introspection_url: str | None = None
     oauth_resource_server_secret: str | None = None
+    oauth_interaction_details_api_credential_base64url: str | None = None
+    oauth_interaction_approval_api_credential_base64url: str | None = None
+    oauth_interaction_origin: str | None = None
+    oauth_interaction_private_base_url: str = "http://oauth-server:3000/oauth/private/interactions"
 
     @property
     def resolved_browser_session_hmac_key(self) -> str:
@@ -95,6 +100,59 @@ class Settings(BaseSettings):
             from cookops.application.browser_sessions import decode_browser_session_hmac_key
 
             decode_browser_session_hmac_key(self.browser_session_hmac_key)
+        oauth_values = (
+            self.oauth_interaction_details_api_credential_base64url,
+            self.oauth_interaction_approval_api_credential_base64url,
+            self.oauth_interaction_origin,
+        )
+        if any(value is not None for value in oauth_values) and any(
+            value is None for value in oauth_values
+        ):
+            raise ValueError("OAuth interaction configuration must be complete")
+        if self.environment is Environment.PRODUCTION and any(
+            value is None for value in oauth_values
+        ):
+            raise ValueError("OAuth interaction configuration must be set in production")
+        if self.oauth_interaction_origin is not None:
+            origin = urlsplit(self.oauth_interaction_origin)
+            if (
+                origin.scheme != "https"
+                or not origin.hostname
+                or origin.username
+                or origin.password
+                or origin.path
+                or origin.query
+                or origin.fragment
+            ):
+                raise ValueError("OAuth interaction origin must be a credential-free HTTPS origin")
+        private_base = urlsplit(self.oauth_interaction_private_base_url)
+        expected_private = "http://oauth-server:3000/oauth/private/interactions"
+        if (
+            self.environment is Environment.PRODUCTION
+            and self.oauth_interaction_private_base_url != expected_private
+        ):
+            raise ValueError(
+                "OAuth interaction private API must use the Compose oauth-server authority"
+            )
+        if (
+            not private_base.scheme
+            or not private_base.hostname
+            or private_base.query
+            or private_base.fragment
+        ):
+            raise ValueError("OAuth interaction private API URL is invalid")
+        if self.oauth_interaction_details_api_credential_base64url is not None:
+            from cookops.application.browser_sessions import decode_browser_session_hmac_key
+
+            decode_browser_session_hmac_key(self.oauth_interaction_details_api_credential_base64url)
+            decode_browser_session_hmac_key(
+                self.oauth_interaction_approval_api_credential_base64url or ""
+            )
+            if (
+                self.oauth_interaction_details_api_credential_base64url
+                == self.oauth_interaction_approval_api_credential_base64url
+            ):
+                raise ValueError("OAuth interaction credentials must be distinct")
         if not self.browser_session_cookie_name or self.browser_session_cookie_name.strip() != (
             self.browser_session_cookie_name
         ):

@@ -9,6 +9,7 @@ psql --username "$POSTGRES_USER" --dbname "$POSTGRES_DB" --set ON_ERROR_STOP=1 \
   --set oauth_password="$OAUTH_DB_PASSWORD" <<'SQL'
 CREATE ROLE cookops_api LOGIN PASSWORD :'api_password';
 CREATE ROLE cookops_oauth LOGIN PASSWORD :'oauth_password';
+CREATE EXTENSION IF NOT EXISTS btree_gist;
 REVOKE ALL ON SCHEMA public FROM PUBLIC;
 ALTER SCHEMA public OWNER TO cookops_api;
 GRANT USAGE, CREATE ON SCHEMA public TO cookops_api;
