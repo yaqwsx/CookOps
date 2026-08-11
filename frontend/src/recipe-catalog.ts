@@ -7,6 +7,7 @@ import { readVisibleRecords } from "./visible-records";
 
 export type CatalogRecipe = {
   id: string;
+  retired: boolean;
   versionId: string;
   name: string;
   description: string | null;
@@ -44,6 +45,7 @@ function text(record: CanonicalRecord, key: string) {
 export async function readRecipeCatalog(
   userId: string,
   organizationId: string,
+  includeRetired = false,
 ): Promise<RecipeCatalogProjection> {
   if (!uuid.test(userId) || !uuid.test(organizationId))
     return { recipes: [], scalingUnits: [], ingredients: [], tags: [] };
@@ -56,7 +58,7 @@ export async function readRecipeCatalog(
     lineRecords,
     versionTagRecords,
   ] = await Promise.all([
-    readVisibleRecords(userId, organizationId, "recipe"),
+    readVisibleRecords(userId, organizationId, "recipe", includeRetired),
     readVisibleRecords(userId, organizationId, "recipe_version"),
     readVisibleRecords(userId, organizationId, "unit_definition"),
     readVisibleRecords(userId, organizationId, "recipe_tag"),
@@ -125,6 +127,7 @@ export async function readRecipeCatalog(
         : [];
       return {
         id: record.entityId,
+        retired: record.lifecycle === "retired",
         versionId,
         name,
         scalingUnitId,

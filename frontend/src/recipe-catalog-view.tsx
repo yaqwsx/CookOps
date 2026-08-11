@@ -11,6 +11,7 @@ import {
   queueRecipeVersionPublish,
   type RecipeVersionInput,
 } from "./recipe-publish";
+import { queueRecipeLifecycle } from "./recipe-lifecycle";
 import { pullOrganization, SyncRequestError } from "./sync-bootstrap";
 
 type CatalogState =
@@ -351,6 +352,44 @@ function RecipeEditor({
   );
 }
 
+function RecipeLifecycleControl({
+  recipe,
+  organizationId,
+  userId,
+}: {
+  recipe: RecipeCatalogProjection["recipes"][number];
+  organizationId: string;
+  userId: string;
+}) {
+  const { t } = useTranslation();
+  const [error, setError] = useState(false);
+  const [pending, setPending] = useState(false);
+  const operation = recipe.retired ? "restore" : "retire";
+  async function submit() {
+    if (pending) return;
+    setPending(true);
+    setError(false);
+    try {
+      await queueRecipeLifecycle(userId, organizationId, {
+        recipeId: recipe.id,
+        operation,
+      });
+    } catch {
+      setError(true);
+    } finally {
+      setPending(false);
+    }
+  }
+  return (
+    <>
+      <button disabled={pending} onClick={() => void submit()} type="button">
+        {t(`recipesCatalog.${operation}`)}
+      </button>
+      {error ? <p role="alert">{t("recipesCatalog.errors.unavailable")}</p> : null}
+    </>
+  );
+}
+
 export function RecipeCatalog({
   organizationId,
   userId,
@@ -362,10 +401,11 @@ export function RecipeCatalog({
 }) {
   const { t } = useTranslation();
   const [state, setState] = useState<CatalogState>({ status: "loading" });
+  const [showRetired, setShowRetired] = useState(false);
 
   useEffect(() => {
     const subscription = liveQuery(() =>
-      readRecipeCatalog(userId, organizationId),
+      readRecipeCatalog(userId, organizationId, true),
     ).subscribe({
       next: (catalog) =>
         setState((current) => ({
@@ -412,6 +452,9 @@ export function RecipeCatalog({
         </button>
       </div>
     );
+  const recipes = state.catalog.recipes.filter(
+    (recipe) => showRetired || !recipe.retired,
+  );
   return (
     <div className="recipe-catalog">
       <p className="recipe-catalog__scope">{t("recipesCatalog.scope")}</p>
@@ -423,13 +466,22 @@ export function RecipeCatalog({
         organizationId={organizationId}
         userId={userId}
       />
-      {!state.catalog.recipes.length ? (
+      <label>
+        <input
+          checked={showRetired}
+          onChange={(event) => setShowRetired(event.target.checked)}
+          type="checkbox"
+        />
+        {t("recipesCatalog.showRetired")}
+      </label>
+      {!recipes.length ? (
         <p role="status">{t("recipesCatalog.empty")}</p>
       ) : (
         <ul className="recipe-list">
-          {state.catalog.recipes.map((recipe) => (
+          {recipes.map((recipe) => (
             <li key={recipe.id}>
               <h3>{recipe.name}</h3>
+              {recipe.retired ? <p>{t("recipesCatalog.retired")}</p> : null}
               <p>
                 {t("recipesCatalog.scaling", {
                   amount: recipe.baseScalingAmount,
@@ -438,6 +490,11 @@ export function RecipeCatalog({
               {recipe.description ? <p>{recipe.description}</p> : null}
               <RecipeEditor
                 catalog={state.catalog}
+                organizationId={organizationId}
+                recipe={recipe}
+                userId={userId}
+              />
+              <RecipeLifecycleControl
                 organizationId={organizationId}
                 recipe={recipe}
                 userId={userId}

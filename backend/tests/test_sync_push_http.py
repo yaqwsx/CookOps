@@ -26,6 +26,7 @@ from cookops.persistence.models import (
     Mutation,
     OrganizationChange,
     OrganizationMembership,
+    Recipe,
     RecipeVersion,
     RecipeVersionIngredientLine,
     ScheduledRecipe,
@@ -162,6 +163,19 @@ def _recipe_command(
         event_id=uuid4(),
         kind="recipe.create",
         **recipe_payload,
+    )
+
+
+def _recipe_lifecycle_command(
+    *, mutation_id: UUID, recipe_id: UUID, operation: str = "retire", **payload: object
+) -> dict[str, object]:
+    return _command(
+        mutation_id=mutation_id,
+        event_id=uuid4(),
+        kind="recipe.lifecycle",
+        recipe_id=str(recipe_id),
+        operation=operation,
+        **payload,
     )
 
 
@@ -1171,6 +1185,29 @@ def test_push_creates_a_recipe_through_the_typed_shared_command(
         assert outcome["replayed"] is False
         assert outcome["first_change_sequence"] is not None
         assert client.post("/api/v1/sync/push", json=body).json()["outcomes"][0]["replayed"] is True
+        lifecycle = _body(
+            sync_database,
+            installation_id,
+            [_recipe_lifecycle_command(mutation_id=uuid4(), recipe_id=recipe_id)],
+        )
+        retired = client.post("/api/v1/sync/push", json=lifecycle).json()["outcomes"][0]
+        assert retired["command_kind"] == "recipe.lifecycle"
+        assert retired["status"] == "accepted"
+        restored = _body(
+            sync_database,
+            installation_id,
+            [
+                _recipe_lifecycle_command(
+                    mutation_id=uuid4(), recipe_id=recipe_id, operation="restore"
+                )
+            ],
+        )
+        assert client.post("/api/v1/sync/push", json=restored).json()["outcomes"][0][
+            "status"
+        ] == "accepted"
+        assert client.post("/api/v1/sync/push", json=restored).json()["outcomes"][0][
+            "replayed"
+        ] is True
         changed = _body(
             sync_database,
             installation_id,
@@ -1205,6 +1242,7 @@ def test_push_creates_a_recipe_through_the_typed_shared_command(
             == "validation_failed"
         )
     with sync_database.engine.connect() as connection:
+        assert connection.scalar(select(Recipe.retired_at).where(Recipe.id == recipe_id)) is None
         assert (
             connection.scalar(
                 select(RecipeVersion.name).where(RecipeVersion.recipe_id == recipe_id)

@@ -150,6 +150,10 @@ const resources = {
         tags: "Štítky",
         saved: "Recept je uložen místně a bude synchronizován.",
         scaling: "Základ: {{amount}}",
+        showRetired: "Zobrazit vyřazené recepty",
+        retired: "Vyřazený recept",
+        retire: "Vyřadit recept",
+        restore: "Obnovit recept",
         errors: {
           name: "Zadejte název do 200 znaků.",
           description: "Popis může mít nejvýše 20 000 znaků.",
@@ -541,6 +545,10 @@ const resources = {
         tags: "Tags",
         saved: "The recipe is saved locally and will synchronize.",
         scaling: "Base: {{amount}}",
+        showRetired: "Show retired recipes",
+        retired: "Retired recipe",
+        retire: "Retire recipe",
+        restore: "Restore recipe",
         errors: {
           name: "Enter a name of at most 200 characters.",
           description: "The description can contain at most 20,000 characters.",

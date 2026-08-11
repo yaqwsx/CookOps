@@ -19,6 +19,10 @@ from cookops.application.organizations import (
     ExecutionContext,
     FieldViolation,
 )
+from cookops.application.recipe_lifecycle import (
+    SetRecipeLifecycleCommand,
+    set_recipe_lifecycle,
+)
 from cookops.application.recipes import (
     CreateRecipeCommand,
     PublishRecipeVersionCommand,
@@ -29,6 +33,7 @@ from cookops.application.recipes import (
 )
 from cookops.persistence.models import (
     ClientInstallation,
+    FieldClock,
     Ingredient,
     IngredientVersion,
     Mutation,
@@ -336,6 +341,56 @@ def test_member_creates_immutable_recipe_version_and_change_feed(
         assert changes[2].payload["record"]["id"] == str(tag_change_id)
         assert tag_change_id != recipe_version_tag_change_id(uuid4(), service_database.tag_id)
         assert changes[4].payload["record"]["include_in_portion_weight"] is False
+
+
+def test_member_retires_and_restores_recipe_without_mutating_immutable_version(
+    service_database: ServiceDatabase,
+) -> None:
+    created = asyncio.run(
+        create_recipe(
+            service_database.sessions, context(service_database), recipe_command(service_database)
+        )
+    )
+    retire = SetRecipeLifecycleCommand(
+        mutation_id=uuid4(),
+        recipe_id=created.recipe_id,
+        organization_id=service_database.organization_id,
+        operation="retire",
+        client_wall_time=datetime.now(UTC),
+    )
+    retired = asyncio.run(
+        set_recipe_lifecycle(service_database.sessions, context(service_database), retire)
+    )
+    restore = replace(
+        retire, mutation_id=uuid4(), operation="restore", client_wall_time=datetime.now(UTC)
+    )
+    restored = asyncio.run(
+        set_recipe_lifecycle(service_database.sessions, context(service_database), restore)
+    )
+    assert retired.replayed is False and restored.replayed is False
+    with service_database.sync_engine.connect() as connection:
+        recipe = connection.execute(
+            select(Recipe.current_version_id, Recipe.retired_at).where(
+                Recipe.id == created.recipe_id
+            )
+        ).one()
+        assert recipe == (created.recipe_version_id, None)
+        assert (
+            connection.scalar(
+                select(func.count())
+                .select_from(RecipeVersion)
+                .where(RecipeVersion.id == created.recipe_version_id)
+            )
+            == 1
+        )
+        clock = connection.execute(
+            select(FieldClock.winning_mutation_id).where(
+                FieldClock.entity_kind == "recipe",
+                FieldClock.entity_id == created.recipe_id,
+                FieldClock.field_name == "lifecycle",
+            )
+        ).scalar_one()
+        assert clock == restore.mutation_id
 
 
 def test_semantic_retry_replays_and_changed_input_is_rejected(

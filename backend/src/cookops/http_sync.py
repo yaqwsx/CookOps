@@ -45,6 +45,7 @@ from cookops.application.receipts import (
     SetReceiptLifecycleCommand,
     UpdateReceiptCommand,
 )
+from cookops.application.recipe_lifecycle import SetRecipeLifecycleCommand
 from cookops.application.recipes import (
     CreateRecipeCommand,
     PublishRecipeVersionCommand,
@@ -451,6 +452,14 @@ class CreateRecipePayload(BaseModel):
 
 class PublishRecipeVersionPayload(CreateRecipePayload):
     based_on_version_id: UUID
+
+
+class RecipeLifecyclePayload(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    recipe_id: UUID
+    operation: Literal["retire", "restore"]
+    logical_operation_id: UUID | None = None
 
 
 class InitialIngredientPricePayload(BaseModel):
@@ -1045,6 +1054,16 @@ def _push_command(command: PushCommandRequest, organization_id: UUID) -> SyncCom
                 recipe_tag_ids=recipe_payload.recipe_tag_ids,
                 estimated_diners_per_scaling_unit=recipe_payload.estimated_diners_per_scaling_unit,
                 round_suggestions_up=recipe_payload.round_suggestions_up,
+                logical_operation_id=recipe_payload.logical_operation_id,
+            )
+        if command.command_kind == "recipe.lifecycle":
+            recipe_payload = RecipeLifecyclePayload.model_validate(command.payload)
+            return SetRecipeLifecycleCommand(
+                mutation_id=command.mutation_id,
+                recipe_id=recipe_payload.recipe_id,
+                organization_id=organization_id,
+                operation=recipe_payload.operation,
+                client_wall_time=command.client_wall_time,
                 logical_operation_id=recipe_payload.logical_operation_id,
             )
         if command.command_kind == "ingredient.create":
