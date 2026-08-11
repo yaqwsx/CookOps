@@ -33,6 +33,10 @@ from cookops.application.event_meal_role_creation import CreateEventMealRoleComm
 from cookops.application.event_meal_role_lifecycle import SetEventMealRoleLifecycleCommand
 from cookops.application.event_meal_role_name import SetEventMealRoleNameCommand
 from cookops.application.event_meal_role_position import SetEventMealRolePositionCommand
+from cookops.application.event_metadata import (
+    UpdateEventMetadataCommand,
+    is_bounded_decimal_string,
+)
 from cookops.application.event_prices import UpdateEventPriceEstimatesCommand
 from cookops.application.events import CreateEventCommand, UpdateEventBaseAttendanceCommand
 from cookops.application.ingredients import CreateIngredientCommand, InitialPrice
@@ -222,7 +226,7 @@ class CreateEventPayload(BaseModel):
     @field_validator("budget_amount", mode="before")
     @classmethod
     def budget_amount_must_be_decimal_string(cls, value: object) -> object:
-        if not isinstance(value, str):
+        if not is_bounded_decimal_string(value):
             raise ValueError("must be a decimal string")
         return value
 
@@ -233,6 +237,24 @@ class UpdateEventBaseAttendancePayload(BaseModel):
     event_id: UUID
     base_expected_attendance: int
     logical_operation_id: UUID | None = None
+
+
+class UpdateEventMetadataPayload(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    event_id: UUID
+    name: str = Field(min_length=1, max_length=200)
+    location: str | None = Field(default=None, max_length=300)
+    budget_amount: Decimal
+    general_note: str | None = Field(default=None, max_length=4000)
+    logical_operation_id: UUID | None = None
+
+    @field_validator("budget_amount", mode="before")
+    @classmethod
+    def budget_amount_must_be_decimal_string(cls, value: object) -> object:
+        if not is_bounded_decimal_string(value):
+            raise ValueError("must be a decimal string")
+        return value
 
 
 class ScheduledRecipeContextPayload(BaseModel):
@@ -788,6 +810,19 @@ def _push_command(command: PushCommandRequest, organization_id: UUID) -> SyncCom
                 base_expected_attendance=attendance_payload.base_expected_attendance,
                 client_wall_time=command.client_wall_time,
                 logical_operation_id=attendance_payload.logical_operation_id,
+            )
+        if command.command_kind == "event.metadata":
+            metadata_payload = UpdateEventMetadataPayload.model_validate(command.payload)
+            return UpdateEventMetadataCommand(
+                mutation_id=command.mutation_id,
+                event_id=metadata_payload.event_id,
+                organization_id=organization_id,
+                name=metadata_payload.name,
+                location=metadata_payload.location,
+                budget_amount=metadata_payload.budget_amount,
+                general_note=metadata_payload.general_note,
+                client_wall_time=command.client_wall_time,
+                logical_operation_id=metadata_payload.logical_operation_id,
             )
         if command.command_kind == "event.lifecycle":
             event_lifecycle_payload = EventLifecyclePayload.model_validate(command.payload)

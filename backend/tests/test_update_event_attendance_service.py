@@ -18,6 +18,7 @@ from test_create_event_service import (
 )
 from test_recipe_catalog_migration import insert_ingredient, publish_recipe
 
+from cookops.application.event_metadata import UpdateEventMetadataCommand, update_event_metadata
 from cookops.application.events import (
     UpdateEventBaseAttendanceCommand,
     update_event_base_attendance,
@@ -251,6 +252,108 @@ def test_invalid_attendance_is_a_retained_rejection(
             connection.scalar(select(Mutation.outcome).where(Mutation.id == command.mutation_id))
             == "rejected"
         )
+
+
+def test_metadata_updates_independent_lww_fields_and_publishes_complete_event_record(
+    service_database: ServiceDatabase,
+) -> None:
+    event_id, _, _ = _create_event_and_scheduled_recipes(service_database)
+    first = UpdateEventMetadataCommand(
+        mutation_id=uuid4(),
+        event_id=event_id,
+        organization_id=service_database.organization_id,
+        name="Updated event",
+        location="Prague",
+        budget_amount=Decimal("55.25"),
+        general_note="Bring cups",
+        client_wall_time=datetime(2026, 8, 10, 12, 0, 0, 1, tzinfo=UTC),
+    )
+    result = asyncio.run(
+        update_event_metadata(service_database.sessions, context(service_database), first)
+    )
+    assert result.outcome == "accepted"
+    equivalent = UpdateEventMetadataCommand(
+        mutation_id=first.mutation_id,
+        event_id=event_id,
+        organization_id=service_database.organization_id,
+        name="  Updated event  ",
+        location=" Prague ",
+        budget_amount=Decimal("55.2500"),
+        general_note="Bring cups",
+        client_wall_time=first.client_wall_time,
+    )
+    assert (
+        asyncio.run(
+            update_event_metadata(service_database.sessions, context(service_database), equivalent)
+        )
+    ).replayed
+    whitespace_only = UpdateEventMetadataCommand(
+        mutation_id=uuid4(),
+        event_id=event_id,
+        organization_id=service_database.organization_id,
+        name="Updated event",
+        location="   ",
+        budget_amount=Decimal("55.25"),
+        general_note="Bring cups",
+        client_wall_time=datetime(2026, 8, 10, 12, 0, 0, 2, tzinfo=UTC),
+    )
+    asyncio.run(
+        update_event_metadata(service_database.sessions, context(service_database), whitespace_only)
+    )
+    null_retry = UpdateEventMetadataCommand(
+        mutation_id=whitespace_only.mutation_id,
+        event_id=event_id,
+        organization_id=service_database.organization_id,
+        name="Updated event",
+        location=None,
+        budget_amount=Decimal("55.2500"),
+        general_note="Bring cups",
+        client_wall_time=whitespace_only.client_wall_time,
+    )
+    assert (
+        asyncio.run(
+            update_event_metadata(service_database.sessions, context(service_database), null_retry)
+        )
+    ).replayed
+    with service_database.sync_engine.connect() as connection:
+        event = connection.execute(
+            select(Event.name, Event.location, Event.budget_amount, Event.general_note).where(
+                Event.id == event_id
+            )
+        ).one()
+        assert event == (
+            "Updated event",
+            None,
+            Decimal("55.25"),
+            "Bring cups",
+        )
+        change = connection.execute(
+            select(OrganizationChange.payload).where(
+                OrganizationChange.mutation_id == first.mutation_id
+            )
+        ).scalar_one()
+        assert set(change["record"]["field_clocks"]) >= {
+            "name",
+            "location",
+            "budget_amount",
+            "general_note",
+        }
+    stale = UpdateEventMetadataCommand(
+        mutation_id=uuid4(),
+        event_id=event_id,
+        organization_id=service_database.organization_id,
+        name="Stale",
+        location=None,
+        budget_amount=Decimal("1"),
+        general_note=None,
+        client_wall_time=datetime(2026, 8, 10, 12, 0, 0, tzinfo=UTC),
+    )
+    stale_result = asyncio.run(
+        update_event_metadata(service_database.sessions, context(service_database), stale)
+    )
+    assert stale_result.outcome == "partially_superseded"
+    with service_database.sync_engine.connect() as connection:
+        assert connection.scalar(select(Event.name).where(Event.id == event_id)) == "Updated event"
 
 
 def test_concurrent_attendance_updates_are_lww_and_create_complete_groups(

@@ -21,6 +21,7 @@ from cookops.persistence.models import (
     ClientInstallation,
     Event,
     ExternalIdentity,
+    FieldClock,
     Mutation,
     Organization,
     OrganizationChange,
@@ -289,6 +290,15 @@ def test_bootstrap_projects_current_state_without_retained_feed_history(
     _, head = _publish_changes(sync_database, count=1)
     with sync_database.engine.begin() as connection:
         creator_id = connection.execute(select(User.id).limit(1)).scalar_one()
+        metadata_mutation_id, metadata_clock_time = connection.execute(
+            select(Mutation.id, Mutation.client_wall_time)
+            .where(
+                Mutation.organization_id == sync_database.organization_id,
+                Mutation.outcome == "accepted",
+            )
+            .order_by(Mutation.server_received_at.desc())
+            .limit(1)
+        ).one()
         connection.execute(
             insert(Event).values(
                 id=event_id,
@@ -301,6 +311,20 @@ def test_bootstrap_projects_current_state_without_retained_feed_history(
                 currency="CZK",
                 created_by_user_id=creator_id,
             )
+        )
+        connection.execute(
+            insert(FieldClock),
+            [
+                {
+                    "organization_id": sync_database.organization_id,
+                    "entity_kind": "event",
+                    "entity_id": event_id,
+                    "field_name": field,
+                    "winning_client_wall_time": metadata_clock_time,
+                    "winning_mutation_id": metadata_mutation_id,
+                }
+                for field in ("name", "location", "budget_amount", "general_note")
+            ],
         )
         assert connection.execute(select(OrganizationChange.sequence)).scalars().all() == [head]
 
@@ -334,7 +358,25 @@ def test_bootstrap_projects_current_state_without_retained_feed_history(
                         "organization_id": str(sync_database.organization_id),
                         "name": "Projection only",
                         "lifecycle": "active",
-                        "field_clocks": {"base_expected_attendance": None},
+                        "field_clocks": {
+                            "base_expected_attendance": None,
+                            "name": {
+                                "winning_client_wall_time": metadata_clock_time.isoformat(),
+                                "winning_mutation_id": str(metadata_mutation_id),
+                            },
+                            "location": {
+                                "winning_client_wall_time": metadata_clock_time.isoformat(),
+                                "winning_mutation_id": str(metadata_mutation_id),
+                            },
+                            "budget_amount": {
+                                "winning_client_wall_time": metadata_clock_time.isoformat(),
+                                "winning_mutation_id": str(metadata_mutation_id),
+                            },
+                            "general_note": {
+                                "winning_client_wall_time": metadata_clock_time.isoformat(),
+                                "winning_mutation_id": str(metadata_mutation_id),
+                            },
+                        },
                         "base_expected_attendance": 0,
                         "budget_amount": "0",
                         "currency": "CZK",

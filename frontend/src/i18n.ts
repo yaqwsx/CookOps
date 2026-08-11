@@ -84,12 +84,19 @@ const resources = {
       },
       eventsEdit: {
         attendance: "Očekávaná účast",
+        name: "Název akce",
+        location: "Místo",
+        budget: "Rozpočet",
+        note: "Poznámka",
         submit: "Uložit účast",
         saved: "Účast je uložena místně a bude synchronizována.",
+        saveMetadata: "Uložit údaje akce",
+        metadataSaved: "Údaje akce jsou uloženy místně a budou synchronizovány.",
         errors: {
           attendance: "Účast musí být nezáporné celé číslo.",
           event: "Akci nelze místně upravit.",
           unavailable: "Účast se nepodařilo uložit místně. Zkuste to znovu.",
+          metadata: "Údaje akce se nepodařilo uložit místně. Zkuste to znovu.",
         },
       },
       eventLifecycle: {
@@ -467,13 +474,20 @@ const resources = {
       },
       eventsEdit: {
         attendance: "Expected attendance",
+        name: "Event name",
+        location: "Location",
+        budget: "Budget",
+        note: "Note",
         submit: "Save attendance",
         saved: "Attendance is saved locally and will synchronize.",
+        saveMetadata: "Save event details",
+        metadataSaved: "Event details are saved locally and will synchronize.",
         errors: {
           attendance: "Attendance must be a non-negative whole number.",
           event: "The event cannot be edited locally.",
           unavailable:
             "Attendance could not be saved locally. Please try again.",
+          metadata: "Event details could not be saved locally. Please try again.",
         },
       },
       eventLifecycle: {

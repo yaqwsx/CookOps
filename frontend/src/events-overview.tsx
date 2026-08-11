@@ -7,6 +7,7 @@ import { EventAttendance } from "./event-attendance-form";
 import { EventCreate } from "./event-create-form";
 import { EventLifecycle } from "./event-lifecycle-form";
 import { EventDuplicate } from "./event-duplicate-form";
+import { EventMetadata } from "./event-metadata-form";
 import {
   canCreateEvents,
   readVisibleEventSummaries,
@@ -71,6 +72,17 @@ function EventCard({
           <dd>{`${event.budgetAmount} ${event.currency}`}</dd>
         </div>
       </dl>
+      {event.lifecycle === "active" ? (
+        <EventMetadata
+          budgetAmount={event.budgetAmount}
+          eventId={event.id}
+          generalNote={event.generalNote ?? null}
+          location={event.location ?? null}
+          name={event.name}
+          organizationId={organizationId}
+          userId={userId}
+        />
+      ) : null}
       <span
         className={`event-card__lifecycle event-card__lifecycle--${event.lifecycle}`}
       >

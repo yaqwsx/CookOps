@@ -667,7 +667,10 @@ async def duplicate_event(
             for value in copied_overrides
         )
         records: list[tuple[str, UUID, dict[str, object]]] = [
-            _event_change_record(copied, clocks[0])
+            _event_change_record(
+                copied,
+                field_clocks=tuple(clock for clock in clocks if clock.entity_kind == "event"),
+            )
         ]
         records.extend(
             (

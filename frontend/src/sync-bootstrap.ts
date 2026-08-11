@@ -19,6 +19,7 @@ import { replayReceiptCommand } from "./receipt-metadata";
 import { replayCatalogConfiguration } from "./catalog-configuration";
 import { replayEventDayCreate, replayEventDayLifecycle, replayEventDayNote, replayEventDayVisibility } from "./event-day";
 import { replayEventMealRoleCreate, replayEventMealRoleLifecycle, replayEventMealRoleName, replayEventMealRolePosition } from "./event-meal-role";
+import { replayEventMetadataUpdate } from "./event-metadata";
 import {
   replayAdHocShoppingItem,
   replayAdHocShoppingItemFulfilment,
@@ -203,6 +204,8 @@ async function replayOptimisticCommands(
         updatedAt: command.actionAt,
       });
     }
+    if (command.commandType === "event.metadata")
+      await replayEventMetadataUpdate(userId, organizationId, command);
     if (
       command.commandType === "event.update_base_attendance" &&
       typeof eventId === "string" &&

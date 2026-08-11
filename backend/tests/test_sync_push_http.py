@@ -88,6 +88,15 @@ def _command(
         }
     elif kind == "event.update_base_attendance":
         payload = {"event_id": str(event_id), **payload}
+    elif kind == "event.metadata":
+        payload = {
+            "event_id": str(event_id),
+            "name": "Updated push event",
+            "location": "Prague",
+            "budget_amount": "25.50",
+            "general_note": "Bring cups",
+            **payload,
+        }
     elif kind == "shopping_list.create":
         payload = {
             "shopping_list_id": str(uuid4()),
@@ -1341,6 +1350,32 @@ def test_push_schedules_a_recipe_through_the_typed_shared_command(
             "accepted",
             "accepted",
         ]
+        metadata = _command(mutation_id=uuid4(), event_id=event_id, kind="event.metadata")
+        metadata_body = _body(sync_database, installation_id, [metadata])
+        metadata_outcome = client.post(
+            "/api/v1/sync/push", json=metadata_body
+        ).json()["outcomes"][0]
+        assert metadata_outcome["status"] == "accepted"
+        assert metadata_outcome["command_kind"] == "event.metadata"
+        assert client.post("/api/v1/sync/push", json=metadata_body).json()["outcomes"][0][
+            "replayed"
+        ]
+        malformed_metadata = _command(
+            mutation_id=uuid4(), event_id=event_id, kind="event.metadata", budget_amount=25.5
+        )
+        assert (
+            client.post(
+                "/api/v1/sync/push",
+                json=_body(sync_database, installation_id, [malformed_metadata]),
+            ).json()["outcomes"][0]["error"]["code"]
+            == "validation_failed"
+        )
+        with sync_database.engine.connect() as connection:
+            assert connection.execute(
+                select(Event.name, Event.location, Event.budget_amount, Event.general_note).where(
+                    Event.id == event_id
+                )
+            ).one() == ("Updated push event", "Prague", Decimal("25.50"), "Bring cups")
         with sync_database.engine.connect() as connection:
             event_day_id = connection.scalar(
                 select(EventDay.id).where(EventDay.event_id == event_id)

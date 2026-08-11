@@ -290,6 +290,7 @@ h1 {
   grid-template-areas:
     "summary open lifecycle"
     "details details details"
+    "metadata metadata metadata"
     "attendance attendance attendance";
   grid-template-columns: minmax(0, 1fr) auto auto;
   align-items: center;
@@ -362,6 +363,43 @@ h1 {
   min-width: 0;
   align-items: end;
   gap: 0.5rem;
+}
+
+.event-metadata {
+  grid-area: metadata;
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0.5rem;
+  min-width: 0;
+}
+
+.event-metadata label {
+  display: grid;
+  gap: 0.35rem;
+  min-width: 0;
+  font-weight: 700;
+}
+
+.event-metadata input,
+.event-metadata textarea {
+  width: 100%;
+  min-height: 2.5rem;
+  padding: 0.45rem 0.6rem;
+  border: 1px solid #9d9283;
+  border-radius: 0.5rem;
+  color: inherit;
+  background: white;
+  font: inherit;
+}
+
+.event-metadata textarea {
+  min-height: 4rem;
+  resize: vertical;
+}
+
+.event-metadata label:nth-of-type(4),
+.event-metadata p {
+  grid-column: 1 / -1;
 }
 
 .event-attendance label {
@@ -859,6 +897,7 @@ h1 {
       "open"
       "lifecycle"
       "details"
+      "metadata"
       "attendance";
     grid-template-columns: 1fr;
     gap: 0.75rem;
@@ -870,6 +909,15 @@ h1 {
 
   .event-create__fields {
     grid-template-columns: 1fr;
+  }
+
+  .event-metadata {
+    grid-template-columns: 1fr;
+  }
+
+  .event-metadata label:nth-of-type(4),
+  .event-metadata p {
+    grid-column: auto;
   }
 
   .recipe-create__fields {

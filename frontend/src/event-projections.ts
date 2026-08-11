@@ -15,6 +15,8 @@ function eventSummary(
   const endDate = text(fields.end_date);
   const budgetAmount = text(fields.budget_amount);
   const currency = text(fields.currency);
+  const location = fields.location === null || fields.location === undefined ? null : text(fields.location);
+  const generalNote = fields.general_note === null || fields.general_note === undefined ? null : text(fields.general_note);
   const attendance = fields.base_expected_attendance;
   const lifecycle = fields.lifecycle;
   const archivedAt = fields.archived_at;
@@ -28,6 +30,8 @@ function eventSummary(
     !endDate ||
     !budgetAmount ||
     !currency ||
+    (fields.location !== undefined && location === null) ||
+    (fields.general_note !== undefined && generalNote === null) ||
     typeof attendance !== "number" ||
     !Number.isSafeInteger(attendance) ||
     (lifecycle !== "active" && lifecycle !== "archived") ||
@@ -46,6 +50,8 @@ function eventSummary(
     endDate,
     baseExpectedAttendance: attendance,
     budgetAmount,
+    location,
+    generalNote,
     currency,
     lifecycle,
     archivedAt,

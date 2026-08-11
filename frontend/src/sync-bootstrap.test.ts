@@ -224,6 +224,81 @@ describe("bootstrapOrganization", () => {
     ).resolves.toMatchObject({ fields: { base_expected_attendance: 9 } });
   });
 
+  it("keeps bootstrap event metadata clocks when replaying stale pending metadata", async () => {
+    const eventId = "3d8b2b21-c378-4574-9e46-9338c81305ef";
+    const mutationId = "4d8b2b21-c378-4574-9e46-9338c81305ef";
+    await localDb.outbox.add({
+      id: mutationId,
+      userId,
+      organizationId,
+      commandType: "event.metadata",
+      payload: {
+        event_id: eventId,
+        name: "Stale name",
+        location: null,
+        budget_amount: "10",
+        general_note: null,
+      },
+      actionAt: "2026-08-07T11:00:00.000000Z",
+      createdAt: "2026-08-07T11:00:00.000000Z",
+      state: "pending",
+    });
+    await bootstrapOrganization(userId, organizationId, {
+      fetch: vi.fn<typeof fetch>(async () =>
+        response([
+          organizationRecord(),
+          {
+            organization_id: organizationId,
+            entity_id: eventId,
+            entity_kind: "event",
+            operation: "upsert",
+            payload: {
+              record_schema_version: 1,
+              record: {
+                id: eventId,
+                organization_id: organizationId,
+                name: "Canonical name",
+                start_date: "2026-08-10",
+                end_date: "2026-08-10",
+                location: null,
+                general_note: null,
+                base_expected_attendance: 2,
+                budget_amount: "10",
+                currency: "CZK",
+                lifecycle: "active",
+                archived_at: null,
+                field_clocks: {
+                  name: {
+                    winning_client_wall_time: "2026-08-07T11:00:00.000001Z",
+                    winning_mutation_id: "5d8b2b21-c378-4574-9e46-9338c81305ef",
+                  },
+                  location: {
+                    winning_client_wall_time: "2026-08-07T11:00:00.000001Z",
+                    winning_mutation_id: "5d8b2b21-c378-4574-9e46-9338c81305ef",
+                  },
+                  budget_amount: {
+                    winning_client_wall_time: "2026-08-07T11:00:00.000001Z",
+                    winning_mutation_id: "5d8b2b21-c378-4574-9e46-9338c81305ef",
+                  },
+                  general_note: {
+                    winning_client_wall_time: "2026-08-07T11:00:00.000001Z",
+                    winning_mutation_id: "5d8b2b21-c378-4574-9e46-9338c81305ef",
+                  },
+                },
+              },
+            },
+          },
+        ]),
+      ),
+    });
+    await expect(
+      readVisibleCanonicalRecord(userId, organizationId, "event", eventId),
+    ).resolves.toMatchObject({ fields: { name: "Canonical name" } });
+    await expect(
+      localDb.optimisticOverlays.get([userId, organizationId, "event", eventId]),
+    ).resolves.toBeUndefined();
+  });
+
   it("replays a manual day after its pending event creator", async () => {
     const eventId = "3d8b2b21-c378-4574-9e46-9338c81305ef";
     const dayId = "4d8b2b21-c378-4574-9e46-9338c81305ef";

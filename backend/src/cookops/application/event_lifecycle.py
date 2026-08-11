@@ -17,6 +17,7 @@ from sqlalchemy.inspection import inspect
 from cookops.application.events import (
     _authorize_and_lock_organization,
     _event_change_record,
+    _event_field_clocks,
     _reserve_change_range,
 )
 from cookops.application.organizations import (
@@ -608,28 +609,22 @@ async def _set_event_lifecycle(
             .with_for_update(of=FieldClock)
         )
         if clock is None:
-            session.add(
-                FieldClock(
-                    organization_id=event.organization_id,
-                    entity_kind="event",
-                    entity_id=event.id,
-                    field_name="lifecycle",
-                    winning_client_wall_time=command.client_wall_time,
-                    winning_mutation_id=command.mutation_id,
-                )
+            clock = FieldClock(
+                organization_id=event.organization_id,
+                entity_kind="event",
+                entity_id=event.id,
+                field_name="lifecycle",
+                winning_client_wall_time=command.client_wall_time,
+                winning_mutation_id=command.mutation_id,
             )
+            session.add(clock)
         else:
             clock.winning_client_wall_time = command.client_wall_time
             clock.winning_mutation_id = command.mutation_id
-        attendance_clock = await session.scalar(
-            select(FieldClock).where(
-                FieldClock.organization_id == event.organization_id,
-                FieldClock.entity_kind == "event",
-                FieldClock.entity_id == event.id,
-                FieldClock.field_name == "base_expected_attendance",
-            )
-        )
-        record = _event_change_record(event, attendance_clock)[2]
+        event_clocks = await _event_field_clocks(session, event.organization_id, event.id)
+        if clock not in event_clocks:
+            event_clocks.append(clock)
+        record = _event_change_record(event, field_clocks=event_clocks)[2]
         field_clocks = cast(dict[str, object], record["field_clocks"])
         field_clocks["lifecycle"] = {
             "winning_client_wall_time": command.client_wall_time.isoformat(),

@@ -908,8 +908,35 @@ def _field_clock_wins(clock: FieldClock | None, command: _PreparedAttendanceComm
 
 
 def _event_change_record(
-    event: Event, attendance_clock: FieldClock | None = None
+    event: Event,
+    attendance_clock: FieldClock | None = None,
+    *,
+    field_clocks: tuple[FieldClock, ...] | list[FieldClock] | None = None,
 ) -> tuple[str, UUID, dict[str, object]]:
+    if field_clocks is not None:
+        clocks = {
+            clock.field_name: {
+                "winning_client_wall_time": clock.winning_client_wall_time.isoformat(),
+                "winning_mutation_id": str(clock.winning_mutation_id),
+            }
+            for clock in field_clocks
+        }
+        # Keep the original wire shape for events created before an attendance
+        # clock exists (and for bootstrap fixtures without one).
+        clocks.setdefault("base_expected_attendance", None)
+    else:
+        clocks = {
+            "base_expected_attendance": (
+                {
+                    "winning_client_wall_time": (
+                        attendance_clock.winning_client_wall_time.isoformat()
+                    ),
+                    "winning_mutation_id": str(attendance_clock.winning_mutation_id),
+                }
+                if attendance_clock is not None
+                else None
+            )
+        }
     return (
         "event",
         event.id,
@@ -936,19 +963,24 @@ def _event_change_record(
                 str(event.archived_by_user_id) if event.archived_by_user_id is not None else None
             ),
             "created_by_user_id": str(event.created_by_user_id),
-            "field_clocks": {
-                "base_expected_attendance": (
-                    {
-                        "winning_client_wall_time": (
-                            attendance_clock.winning_client_wall_time.isoformat()
-                        ),
-                        "winning_mutation_id": str(attendance_clock.winning_mutation_id),
-                    }
-                    if attendance_clock is not None
-                    else None
-                )
-            },
+            "field_clocks": clocks,
         },
+    )
+
+
+async def _event_field_clocks(
+    session: AsyncSession, organization_id: UUID, event_id: UUID
+) -> list[FieldClock]:
+    return list(
+        (
+            await session.scalars(
+                select(FieldClock).where(
+                    FieldClock.organization_id == organization_id,
+                    FieldClock.entity_kind == "event",
+                    FieldClock.entity_id == event_id,
+                )
+            )
+        ).all()
     )
 
 
@@ -1445,6 +1477,9 @@ async def update_event_base_attendance(
                     ).scalars()
                 }
                 clock_wins = _field_clock_wins(clock, prepared)
+                event_clocks = await _event_field_clocks(
+                    session, prepared.organization_id, event.id
+                )
                 if clock_wins:
                     event.base_expected_attendance = prepared.base_expected_attendance
                     for scheduled_recipe in following_recipes:
@@ -1462,8 +1497,10 @@ async def update_event_base_attendance(
                     else:
                         clock.winning_client_wall_time = prepared.client_wall_time
                         clock.winning_mutation_id = prepared.mutation_id
+                    if clock not in event_clocks:
+                        event_clocks.append(clock)
                     change_records = (
-                        _event_change_record(event, clock),
+                        _event_change_record(event, field_clocks=event_clocks),
                         *(
                             _scheduled_recipe_change_record(recipe, placement_clocks.get(recipe.id))
                             for recipe in following_recipes
@@ -1474,7 +1511,7 @@ async def update_event_base_attendance(
                     # Publish the canonical event record so an outbox reconciliation has
                     # a concrete field value even though this action lost the LWW race.
                     following_recipes = ()
-                    change_records = (_event_change_record(event, clock),)
+                    change_records = (_event_change_record(event, field_clocks=event_clocks),)
                     outcome = "partially_superseded"
                 first_change_sequence, last_change_sequence = await _reserve_change_range(
                     session,

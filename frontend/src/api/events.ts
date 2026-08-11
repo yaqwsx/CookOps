@@ -6,6 +6,8 @@ export type EventSummary = {
   endDate: string;
   baseExpectedAttendance: number;
   budgetAmount: string;
+  location?: string | null;
+  generalNote?: string | null;
   currency: string;
   lifecycle: "active" | "archived";
   archivedAt: string | null;
@@ -43,6 +45,8 @@ function eventSummary(
   const endDate = string(value.end_date);
   const budgetAmount = string(value.budget_amount);
   const currency = string(value.currency);
+  const location = value.location === undefined || value.location === null ? null : string(value.location);
+  const generalNote = value.general_note === undefined || value.general_note === null ? null : string(value.general_note);
   const attendance = value.base_expected_attendance;
   const lifecycle = value.lifecycle;
   const archivedAt = value.archived_at;
@@ -55,6 +59,8 @@ function eventSummary(
     !endDate ||
     !budgetAmount ||
     !currency ||
+    (value.location !== undefined && location === null) ||
+    (value.general_note !== undefined && generalNote === null) ||
     typeof attendance !== "number" ||
     !Number.isSafeInteger(attendance) ||
     (lifecycle !== "active" && lifecycle !== "archived") ||
@@ -73,6 +79,8 @@ function eventSummary(
     endDate,
     baseExpectedAttendance: attendance,
     budgetAmount,
+    location,
+    generalNote,
     currency,
     lifecycle,
     archivedAt,

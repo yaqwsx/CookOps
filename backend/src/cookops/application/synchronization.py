@@ -85,6 +85,11 @@ from cookops.application.event_meal_role_position import (
     SetEventMealRolePositionCommand,
     set_event_meal_role_position,
 )
+from cookops.application.event_metadata import (
+    EventMetadataResult,
+    UpdateEventMetadataCommand,
+    update_event_metadata,
+)
 from cookops.application.event_prices import (
     UpdateEventPriceEstimatesCommand,
     UpdateEventPriceEstimatesResult,
@@ -331,6 +336,7 @@ class UnsupportedSyncCommand:
 SyncCommand = (
     CreateEventCommand
     | UpdateEventBaseAttendanceCommand
+    | UpdateEventMetadataCommand
     | SetEventLifecycleCommand
     | DuplicateEventCommand
     | UpdateEventPriceEstimatesCommand
@@ -373,6 +379,7 @@ def _command_kind(
     command: (
         CreateEventCommand
         | UpdateEventBaseAttendanceCommand
+        | UpdateEventMetadataCommand
         | SetEventLifecycleCommand
         | DuplicateEventCommand
         | UpdateEventPriceEstimatesCommand
@@ -413,6 +420,8 @@ def _command_kind(
         return "event.create"
     if isinstance(command, UpdateEventBaseAttendanceCommand):
         return "event.update_base_attendance"
+    if isinstance(command, UpdateEventMetadataCommand):
+        return "event.metadata"
     if isinstance(command, SetEventLifecycleCommand):
         return "event.lifecycle"
     if isinstance(command, DuplicateEventCommand):
@@ -772,6 +781,7 @@ class SynchronizationCommandService:
             result: (
                 CreateEventResult
                 | UpdateEventBaseAttendanceResult
+                | EventMetadataResult
                 | EventLifecycleResult
                 | DuplicateEventResult
                 | UpdateEventPriceEstimatesResult
@@ -805,6 +815,8 @@ class SynchronizationCommandService:
                 result = await create_event(self._session_factory, context, command)
             elif isinstance(command, UpdateEventBaseAttendanceCommand):
                 result = await update_event_base_attendance(self._session_factory, context, command)
+            elif isinstance(command, UpdateEventMetadataCommand):
+                result = await update_event_metadata(self._session_factory, context, command)
             elif isinstance(command, SetEventLifecycleCommand):
                 result = await set_event_lifecycle(self._session_factory, context, command)
             elif isinstance(command, DuplicateEventCommand):
@@ -1002,6 +1014,7 @@ class SynchronizationCommandService:
         result: (
             CreateEventResult
             | UpdateEventBaseAttendanceResult
+            | EventMetadataResult
             | EventLifecycleResult
             | DuplicateEventResult
             | UpdateEventPriceEstimatesResult
@@ -1036,6 +1049,8 @@ class SynchronizationCommandService:
                 if isinstance(result, CreateEventResult)
                 else "event.update_base_attendance"
                 if isinstance(result, UpdateEventBaseAttendanceResult)
+                else "event.metadata"
+                if isinstance(result, EventMetadataResult)
                 else "event.lifecycle"
                 if isinstance(result, EventLifecycleResult)
                 else "event.duplicate"
@@ -1889,9 +1904,12 @@ async def _bootstrap_records(
         ).scalars()
     }
     for item in events:
-        append(
-            *_event_change_record(item, clocks.get(("event", item.id, "base_expected_attendance")))
+        event_clocks = tuple(
+            clock
+            for (kind, entity_id, _), clock in clocks.items()
+            if kind == "event" and entity_id == item.id
         )
+        append(*_event_change_record(item, field_clocks=event_clocks))
     if not active_ids:
         return tuple(records)
 

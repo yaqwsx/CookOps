@@ -14,6 +14,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from cookops.application.events import (
     _authorize_member_and_lock_organization,
     _event_change_record,
+    _event_field_clocks,
     _reserve_change_range,
 )
 from cookops.application.organizations import (
@@ -26,7 +27,6 @@ from cookops.persistence.models import (
     Event,
     EventIngredientPrice,
     EventIngredientPriceSnapshot,
-    FieldClock,
     Ingredient,
     IngredientPriceEstimate,
     IngredientVersion,
@@ -724,16 +724,11 @@ async def update_event_price_estimates(
                             )
                         )
                 else:
-                    attendance_clock = await session.scalar(
-                        select(FieldClock).where(
-                            FieldClock.organization_id == prepared.organization_id,
-                            FieldClock.entity_kind == "event",
-                            FieldClock.entity_id == event.id,
-                            FieldClock.field_name == "base_expected_attendance",
-                        )
+                    event_clocks = await _event_field_clocks(
+                        session, prepared.organization_id, event.id
                     )
                     event_kind, event_entity_id, event_record = _event_change_record(
-                        event, attendance_clock
+                        event, field_clocks=event_clocks
                     )
                     session.add(
                         OrganizationChange(
