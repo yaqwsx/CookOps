@@ -62,6 +62,7 @@ from cookops.application.shopping_lists import (
     CreateAdHocShoppingItemCommand,
     CreateShoppingListCommand,
     RefreshShoppingListCommand,
+    RenameShoppingListCommand,
     SetAdHocShoppingItemFulfilmentCommand,
     SetAdHocShoppingItemLifecycleCommand,
     SetShoppingAvailableSupplyCommand,
@@ -330,6 +331,14 @@ class RefreshShoppingListPayload(BaseModel):
         if len(set(value)) != len(value):
             raise ValueError("scheduled recipe IDs must be unique")
         return value
+
+
+class RenameShoppingListPayload(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    shopping_list_id: UUID
+    name: str = Field(min_length=1, max_length=200)
+    logical_operation_id: UUID | None = None
 
 
 class SetShoppingQuantityPayload(BaseModel):
@@ -897,6 +906,16 @@ def _push_command(command: PushCommandRequest, organization_id: UUID) -> SyncCom
                 scheduled_recipe_ids=refresh_payload.scheduled_recipe_ids,
                 client_wall_time=command.client_wall_time,
                 logical_operation_id=refresh_payload.logical_operation_id,
+            )
+        if command.command_kind == "shopping_list.rename":
+            rename_payload = RenameShoppingListPayload.model_validate(command.payload)
+            return RenameShoppingListCommand(
+                mutation_id=command.mutation_id,
+                shopping_list_id=rename_payload.shopping_list_id,
+                organization_id=organization_id,
+                name=rename_payload.name,
+                client_wall_time=command.client_wall_time,
+                logical_operation_id=rename_payload.logical_operation_id,
             )
         if command.command_kind == "shopping_list.set_available_supply":
             supply_payload = SetShoppingSupplyPayload.model_validate(command.payload)

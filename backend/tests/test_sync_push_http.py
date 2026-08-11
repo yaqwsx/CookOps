@@ -87,6 +87,8 @@ def _command(
             "budget_amount": "0",
             **payload,
         }
+    elif kind == "event.lifecycle":
+        payload = {"event_id": str(event_id), "operation": "archive", **payload}
     elif kind == "event.update_base_attendance":
         payload = {"event_id": str(event_id), **payload}
     elif kind == "event.metadata":
@@ -113,6 +115,12 @@ def _command(
             "shopping_list_id": str(uuid4()),
             "parent_generation_revision_id": str(uuid4()),
             "scheduled_recipe_ids": [],
+            **payload,
+        }
+    elif kind == "shopping_list.rename":
+        payload = {
+            "shopping_list_id": str(uuid4()),
+            "name": "Renamed shopping",
             **payload,
         }
     elif kind == "shopping_list.create_ad_hoc_item":
@@ -1120,6 +1128,77 @@ def test_push_refreshes_shopping_list_through_the_typed_shared_command(
             "/api/v1/sync/push",
             json=_body(sync_database, installation_id, [duplicate_sources]),
         ).json()["outcomes"][0]["error"]["code"] == "validation_failed"
+
+
+def test_push_renames_shopping_list_through_typed_command_and_rejects_invalid_scope(
+    sync_database: SyncDatabase,
+) -> None:
+    installation_id = _installation(sync_database)
+    event_id, shopping_list_id = uuid4(), uuid4()
+    create = [
+        _command(mutation_id=uuid4(), event_id=event_id),
+        _command(
+            mutation_id=uuid4(),
+            event_id=event_id,
+            kind="shopping_list.create",
+            shopping_list_id=str(shopping_list_id),
+        ),
+    ]
+    rename = _command(
+        mutation_id=uuid4(),
+        event_id=event_id,
+        kind="shopping_list.rename",
+        shopping_list_id=str(shopping_list_id),
+        name="  Café  ",
+    )
+    with TestClient(create_app(_settings()), base_url="https://testserver") as client:
+        _sign_in(client, "dummy-member")
+        assert [item["status"] for item in client.post(
+            "/api/v1/sync/push", json=_body(sync_database, installation_id, create)
+        ).json()["outcomes"]] == ["accepted", "accepted"]
+        accepted = client.post(
+            "/api/v1/sync/push", json=_body(sync_database, installation_id, [rename])
+        ).json()["outcomes"][0]
+        assert accepted["command_kind"] == "shopping_list.rename"
+        assert accepted["status"] == "accepted" and not accepted["replayed"]
+        assert client.post(
+            "/api/v1/sync/push", json=_body(sync_database, installation_id, [rename])
+        ).json()["outcomes"][0]["replayed"] is True
+        malformed = _command(
+            mutation_id=uuid4(),
+            event_id=event_id,
+            kind="shopping_list.rename",
+            shopping_list_id=str(shopping_list_id),
+            name="x" * 201,
+        )
+        assert client.post(
+            "/api/v1/sync/push", json=_body(sync_database, installation_id, [malformed])
+        ).json()["outcomes"][0]["error"]["code"] == "validation_failed"
+        bootstrap = client.post(
+            "/api/v1/sync/bootstrap",
+            json={"organization_id": str(sync_database.organization_id)},
+        ).json()
+        record = next(
+            item["payload"]["record"]
+            for item in bootstrap["records"]
+            if item["entity_kind"] == "shopping_list"
+            and item["entity_id"] == str(shopping_list_id)
+        )
+        assert record["name"] == "Café"
+        assert set(record["field_clocks"]) == {"name", "current_generation_revision_id"}
+        archive = _command(mutation_id=uuid4(), event_id=event_id, kind="event.lifecycle")
+        assert client.post(
+            "/api/v1/sync/push", json=_body(sync_database, installation_id, [archive])
+        ).json()["outcomes"][0]["status"] == "accepted"
+        archived = _command(
+            mutation_id=uuid4(),
+            event_id=event_id,
+            kind="shopping_list.rename",
+            shopping_list_id=str(shopping_list_id),
+        )
+        assert client.post(
+            "/api/v1/sync/push", json=_body(sync_database, installation_id, [archived])
+        ).json()["outcomes"][0]["error"]["code"] == "archived_event"
 
 
 def test_push_creates_a_recipe_through_the_typed_shared_command(

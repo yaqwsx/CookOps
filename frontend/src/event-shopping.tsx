@@ -9,6 +9,7 @@ import {
 import {
   hasQueuedShoppingListRefresh,
   queueShoppingList,
+  queueShoppingListRename,
   queueShoppingListRefresh,
 } from "./shopping-list";
 import {
@@ -181,6 +182,13 @@ function ShoppingDetail({
       </button>
       <h3 id="shopping-detail-heading">{shoppingList.name}</h3>
       {editable ? (
+        <ShoppingListRename
+          organizationId={organizationId}
+          shoppingList={shoppingList}
+          userId={userId}
+        />
+      ) : null}
+      {editable ? (
         <ShoppingRefresh
           organizationId={organizationId}
           planner={planner}
@@ -278,6 +286,45 @@ function ShoppingDetail({
         </section>
       ) : null}
     </section>
+  );
+}
+
+function ShoppingListRename({
+  organizationId,
+  shoppingList,
+  userId,
+}: {
+  organizationId: string;
+  shoppingList: ShoppingListProjection;
+  userId: string;
+}) {
+  const { t } = useTranslation();
+  const [name, setName] = useState(shoppingList.name);
+  const [error, setError] = useState(false);
+  const [submitting, setSubmitting] = useState(false);
+  useEffect(() => setName(shoppingList.name), [shoppingList.name]);
+  async function submit(event: React.FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (submitting) return;
+    setSubmitting(true);
+    try {
+      await queueShoppingListRename(userId, organizationId, { shoppingListId: shoppingList.id, name });
+      setError(false);
+    } catch {
+      setError(true);
+    } finally {
+      setSubmitting(false);
+    }
+  }
+  return (
+    <form aria-label={t("shopping.renameHeading")} onSubmit={(event) => void submit(event)}>
+      <label>
+        {t("shopping.name")}
+        <input maxLength={200} onChange={(event) => setName(event.currentTarget.value)} required value={name} />
+      </label>
+      <button disabled={submitting} type="submit">{t("shopping.rename")}</button>
+      {error ? <p role="alert">{t("shopping.errors.unavailable")}</p> : null}
+    </form>
   );
 }
 

@@ -28,6 +28,7 @@ import {
   replayAdHocShoppingItemLifecycle,
   replayAdHocShoppingItemUpdate,
 } from "./ad-hoc-shopping-item";
+import { replayShoppingListRename } from "./shopping-list";
 
 const supportedEntityKinds = new Set([
   "organization",
@@ -302,6 +303,9 @@ async function replayOptimisticCommands(
       } catch {
         // A pending item targeting a now-archived list remains recoverable.
       }
+    }
+    if (command.commandType === "shopping_list.rename") {
+      await replayShoppingListRename(userId, organizationId, command);
     }
     if (command.commandType === "shopping_list.set_ad_hoc_item_fulfilment") {
       try {

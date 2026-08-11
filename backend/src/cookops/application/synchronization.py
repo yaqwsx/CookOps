@@ -182,6 +182,8 @@ from cookops.application.shopping_lists import (
     CreateShoppingListResult,
     RefreshShoppingListCommand,
     RefreshShoppingListResult,
+    RenameShoppingListCommand,
+    RenameShoppingListResult,
     SetAdHocShoppingItemFulfilmentCommand,
     SetAdHocShoppingItemFulfilmentResult,
     SetAdHocShoppingItemLifecycleCommand,
@@ -202,6 +204,7 @@ from cookops.application.shopping_lists import (
     create_ad_hoc_shopping_item,
     create_shopping_list,
     refresh_shopping_list,
+    rename_shopping_list,
     set_ad_hoc_shopping_item_fulfilment,
     set_ad_hoc_shopping_item_lifecycle,
     set_shopping_available_supply,
@@ -359,6 +362,7 @@ SyncCommand = (
     | SetEventMealRoleLifecycleCommand
     | SetEventDayNoteCommand
     | CreateShoppingListCommand
+    | RenameShoppingListCommand
     | RefreshShoppingListCommand
     | CreateRecipeCommand
     | PublishRecipeVersionCommand
@@ -404,6 +408,7 @@ def _command_kind(
         | SetEventMealRoleLifecycleCommand
         | SetEventDayNoteCommand
         | CreateShoppingListCommand
+        | RenameShoppingListCommand
         | RefreshShoppingListCommand
         | CreateRecipeCommand
         | PublishRecipeVersionCommand
@@ -460,6 +465,8 @@ def _command_kind(
         return "event_day.note"
     if isinstance(command, RefreshShoppingListCommand):
         return "shopping_list.refresh"
+    if isinstance(command, RenameShoppingListCommand):
+        return "shopping_list.rename"
     if isinstance(command, CreateRecipeCommand):
         return "recipe.create"
     if isinstance(command, PublishRecipeVersionCommand):
@@ -812,6 +819,7 @@ class SynchronizationCommandService:
                 | EventMealRoleLifecycleResult
                 | EventDayNoteResult
                 | CreateShoppingListResult
+                | RenameShoppingListResult
                 | RefreshShoppingListResult
                 | CreateAdHocShoppingItemResult
                 | SetAdHocShoppingItemFulfilmentResult
@@ -863,6 +871,8 @@ class SynchronizationCommandService:
                 result = await set_event_day_note(self._session_factory, context, command)
             elif isinstance(command, RefreshShoppingListCommand):
                 result = await refresh_shopping_list(self._session_factory, context, command)
+            elif isinstance(command, RenameShoppingListCommand):
+                result = await rename_shopping_list(self._session_factory, context, command)
             elif isinstance(command, CreateRecipeCommand):
                 result = await create_recipe(self._session_factory, context, command)
             elif isinstance(command, PublishRecipeVersionCommand):
@@ -1043,6 +1053,7 @@ class SynchronizationCommandService:
             | DuplicateEventResult
             | UpdateEventPriceEstimatesResult
             | CreateShoppingListResult
+            | RenameShoppingListResult
             | RefreshShoppingListResult
             | CreateAdHocShoppingItemResult
             | CreateRecipeResult
@@ -1085,6 +1096,8 @@ class SynchronizationCommandService:
                 if isinstance(result, UpdateEventPriceEstimatesResult)
                 else "shopping_list.refresh"
                 if isinstance(result, RefreshShoppingListResult)
+                else "shopping_list.rename"
+                if isinstance(result, RenameShoppingListResult)
                 else "recipe.create"
                 if isinstance(result, CreateRecipeResult)
                 else "recipe.lifecycle"

@@ -59,6 +59,7 @@ COMMAND_KIND = "shopping_list.create"
 COMMAND_SCHEMA_VERSION = 1
 MAX_SERIALIZED_NAME_BYTES = 800
 REFRESH_COMMAND_KIND = "shopping_list.refresh"
+RENAME_COMMAND_KIND = "shopping_list.rename"
 _REVISION_SOURCE_ID_NAMESPACE = UUID("df740018-c0d2-4790-a314-cf4180a1c2c9")
 
 
@@ -283,6 +284,26 @@ class CreateShoppingListResult:
     last_change_sequence: int
     replayed: bool
     outcome: Literal["accepted"] = "accepted"
+
+
+@dataclass(frozen=True, slots=True)
+class RenameShoppingListCommand:
+    mutation_id: UUID
+    shopping_list_id: UUID
+    organization_id: UUID
+    name: str
+    client_wall_time: datetime
+    logical_operation_id: UUID | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class RenameShoppingListResult:
+    mutation_id: UUID
+    shopping_list_id: UUID
+    first_change_sequence: int
+    last_change_sequence: int
+    replayed: bool
+    outcome: Literal["accepted", "partially_superseded"] = "accepted"
 
 
 @dataclass(frozen=True, slots=True)
@@ -988,6 +1009,238 @@ async def create_shopping_list(
     return result
 
 
+def _rename_hash(command: RenameShoppingListCommand) -> bytes:
+    value = {
+        "command_kind": RENAME_COMMAND_KIND,
+        "command_schema_version": COMMAND_SCHEMA_VERSION,
+        "mutation_id": _raw_uuid(command.mutation_id),
+        "shopping_list_id": _raw_uuid(command.shopping_list_id),
+        "organization_id": _raw_uuid(command.organization_id),
+        "name": (
+            _canonical_name(command.name)
+            if isinstance(command.name, str)
+            else _invalid(command.name)
+        ),
+        "client_wall_time": _raw_time(command.client_wall_time),
+        "logical_operation_id": _raw_uuid(command.logical_operation_id)
+        if command.logical_operation_id is not None
+        else None,
+    }
+    return hashlib.sha256(
+        json.dumps(value, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode()
+    ).digest()
+
+
+async def rename_shopping_list(
+    session_factory: async_sessionmaker[AsyncSession],
+    context: ExecutionContext,
+    command: RenameShoppingListCommand,
+) -> RenameShoppingListResult:
+    """Rename an active shopping list through its LWW name field."""
+    request_hash = _rename_hash(command)
+    name = _canonical_name(command.name) if isinstance(command.name, str) else ""
+    violations = [
+        FieldViolation(field, "must_be_uuid")
+        for field in ("mutation_id", "shopping_list_id", "organization_id")
+        if not isinstance(getattr(command, field), UUID)
+    ]
+    if (
+        not isinstance(command.name, str)
+        or not name
+        or len(name) > 200
+        or len(json.dumps(name, ensure_ascii=False).encode()) > MAX_SERIALIZED_NAME_BYTES
+    ):
+        violations.append(FieldViolation("name", "must_be_nonblank_and_at_most_200_characters"))
+    if (
+        not isinstance(command.client_wall_time, datetime)
+        or command.client_wall_time.tzinfo is None
+        or command.client_wall_time.utcoffset() is None
+    ):
+        violations.append(FieldViolation("client_wall_time", "must_include_timezone"))
+    if command.logical_operation_id is not None and not isinstance(
+        command.logical_operation_id, UUID
+    ):
+        violations.append(FieldViolation("logical_operation_id", "must_be_uuid_or_null"))
+    mutation_id = command.mutation_id if isinstance(command.mutation_id, UUID) else UUID(int=0)
+    organization_id = (
+        command.organization_id if isinstance(command.organization_id, UUID) else UUID(int=0)
+    )
+    when = (
+        command.client_wall_time.astimezone(UTC)
+        if not violations
+        else datetime(1970, 1, 1, tzinfo=UTC)
+    )
+    error: ApplicationServiceError | None = None
+    result: RenameShoppingListResult | None = None
+    async with session_factory() as session, session.begin():
+        role = await _authorize_member_and_lock_organization(
+            session, context, organization_id
+        )
+        await session.execute(
+            text("SELECT pg_advisory_xact_lock(:key)"),
+            {"key": _advisory_lock_key("mutation", mutation_id)},
+        )
+        retained = await session.get(Mutation, mutation_id)
+        if retained is not None:
+            if (
+                retained.actor_user_id != context.actor_user_id
+                or retained.command_kind != RENAME_COMMAND_KIND
+                or retained.request_hash != request_hash
+            ):
+                raise ApplicationServiceError("idempotency_mismatch", retry_same_identity=False)
+            if retained.outcome == "rejected":
+                error = _retained_error(retained)
+            elif (
+                retained.first_change_sequence is not None
+                and retained.last_change_sequence is not None
+            ):
+                return RenameShoppingListResult(
+                    command.mutation_id,
+                    command.shopping_list_id,
+                    retained.first_change_sequence,
+                    retained.last_change_sequence,
+                    True,
+                    retained.outcome,
+                )
+            else:
+                raise RuntimeError("Invalid retained shopping-list rename outcome")
+        elif violations:
+            error = _error(tuple(violations))
+        elif when > datetime.now(UTC) + timedelta(hours=24):
+            error = ApplicationServiceError("client_time_too_far_ahead", retry_same_identity=False)
+        else:
+            await session.execute(
+                text("SELECT pg_advisory_xact_lock(:key)"),
+                {"key": _advisory_lock_key("shopping_list", command.shopping_list_id)},
+            )
+            shopping_list = await session.scalar(
+                select(ShoppingList)
+                .join(Event, Event.id == ShoppingList.event_id)
+                .where(
+                    ShoppingList.id == command.shopping_list_id,
+                    ShoppingList.organization_id == command.organization_id,
+                    Event.organization_id == command.organization_id,
+                    Event.lifecycle == "active",
+                )
+                .with_for_update(of=(ShoppingList, Event))
+            )
+            if shopping_list is None:
+                error = ApplicationServiceError("archived_event", retry_same_identity=False)
+            else:
+                clock = await session.scalar(
+                    select(FieldClock)
+                    .where(
+                        FieldClock.organization_id == command.organization_id,
+                        FieldClock.entity_kind == "shopping_list",
+                        FieldClock.entity_id == shopping_list.id,
+                        FieldClock.field_name == "name",
+                    )
+                    .with_for_update(of=FieldClock)
+                )
+                wins = clock is None or (when, command.mutation_id) > (
+                    clock.winning_client_wall_time,
+                    clock.winning_mutation_id,
+                )
+                if wins:
+                    shopping_list.name = name
+                    if clock is None:
+                        session.add(
+                            FieldClock(
+                                organization_id=command.organization_id,
+                                entity_kind="shopping_list",
+                                entity_id=shopping_list.id,
+                                field_name="name",
+                                winning_client_wall_time=when,
+                                winning_mutation_id=command.mutation_id,
+                            )
+                        )
+                    else:
+                        clock.winning_client_wall_time, clock.winning_mutation_id = (
+                            when,
+                            command.mutation_id,
+                        )
+                outcome = "accepted" if wins else "partially_superseded"
+                await session.flush()
+                first, last = await _reserve_change_range(
+                    session, command.organization_id, command.mutation_id, 1
+                )
+                session.add(
+                    OrganizationChange(
+                        organization_id=command.organization_id,
+                        sequence=first,
+                        mutation_id=command.mutation_id,
+                        entity_id=shopping_list.id,
+                        entity_kind="shopping_list",
+                        operation="upsert",
+                        payload={
+                            "record_schema_version": 1,
+                            "record": await _shopping_list_record(session, shopping_list),
+                        },
+                    )
+                )
+                session.add(
+                    Mutation(
+                        id=mutation_id,
+                        logical_operation_id=command.logical_operation_id
+                        if isinstance(command.logical_operation_id, UUID)
+                        else None,
+                        organization_id=organization_id,
+                        is_system_administration_scope=False,
+                        actor_user_id=context.actor_user_id,
+                        actor_role=role,
+                        client_installation_id=context.client_installation_id,
+                        oauth_client_id=context.oauth_client_id,
+                        oauth_grant_id=context.oauth_grant_id,
+                        client_wall_time=when,
+                        command_schema_version=COMMAND_SCHEMA_VERSION,
+                        command_kind=RENAME_COMMAND_KIND,
+                        target_identities=[
+                            {"entity_kind": "shopping_list", "entity_id": str(shopping_list.id)}
+                        ],
+                        request_hash=request_hash,
+                        outcome=outcome,
+                        outcome_payload={"outcome": outcome},
+                        first_change_sequence=first,
+                        last_change_sequence=last,
+                    )
+                )
+                result = RenameShoppingListResult(
+                    command.mutation_id, shopping_list.id, first, last, False, outcome
+                )
+        if error is not None and retained is None:
+            session.add(
+                Mutation(
+                    id=mutation_id,
+                    logical_operation_id=command.logical_operation_id
+                    if isinstance(command.logical_operation_id, UUID)
+                    else None,
+                    organization_id=organization_id,
+                    is_system_administration_scope=False,
+                    actor_user_id=context.actor_user_id,
+                    actor_role=role,
+                    client_installation_id=context.client_installation_id,
+                    oauth_client_id=context.oauth_client_id,
+                    oauth_grant_id=context.oauth_grant_id,
+                    client_wall_time=when,
+                    command_schema_version=COMMAND_SCHEMA_VERSION,
+                    command_kind=RENAME_COMMAND_KIND,
+                    target_identities=[
+                        {"entity_kind": "shopping_list", "entity_id": str(command.shopping_list_id)}
+                    ],
+                    request_hash=request_hash,
+                    outcome="rejected",
+                    outcome_payload=_error_payload(error),
+                    first_change_sequence=None,
+                    last_change_sequence=None,
+                )
+            )
+    if error is not None:
+        raise error
+    if result is None:
+        raise RuntimeError("Shopping-list rename produced no outcome")
+    return result
+
+
 @dataclass(frozen=True, slots=True)
 class RefreshShoppingListCommand:
     """Replace the generated projection of one list without touching its operations."""
@@ -1197,7 +1450,7 @@ async def _shopping_list_record(
         shopping_list.organization_id,
         "shopping_list",
         shopping_list.id,
-        ("current_generation_revision_id",),
+        ("name", "current_generation_revision_id"),
         preloaded_clocks,
     )
     return {
