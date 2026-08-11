@@ -8,6 +8,32 @@ function positiveDecimal(value: unknown) {
   return typeof value === "string" && decimal.test(value) && Number(value) > 0;
 }
 
+function wellFormedName(value: string) {
+  for (let index = 0; index < value.length; index += 1) {
+    const code = value.charCodeAt(index);
+    if (code >= 0xd800 && code <= 0xdbff) {
+      const next = value.charCodeAt(index + 1);
+      if (!(next >= 0xdc00 && next <= 0xdfff)) return false;
+      index += 1;
+    } else if (code >= 0xdc00 && code <= 0xdfff) return false;
+  }
+  return !value.includes("\u0000");
+}
+
+function validName(value: unknown) {
+  if (typeof value !== "string" || !wellFormedName(value)) return false;
+  const name = value.normalize("NFC").trim();
+  return name.length > 0 && name.length <= 200;
+}
+
+function canonicalName(value: unknown) {
+  return (
+    typeof value === "string" &&
+    validName(value) &&
+    value === value.normalize("NFC").trim()
+  );
+}
+
 export type IngredientCreateInput = {
   name: string;
   canonicalUnitId: string;
@@ -19,8 +45,7 @@ export type IngredientCreateValidationError = "name" | "unit" | "mass" | "tag";
 export function validateIngredientCreate(
   input: IngredientCreateInput,
 ): IngredientCreateValidationError | undefined {
-  const name = input.name.normalize("NFC").trim();
-  if (!name || name.length > 200) return "name";
+  if (!validName(input.name)) return "name";
   if (!uuid.test(input.canonicalUnitId)) return "unit";
   if (!positiveDecimal(input.massPerCanonicalQuantity)) return "mass";
   if (
@@ -184,9 +209,20 @@ export async function replayIngredientCreate(
   const payload = command.payload;
   const dietaryTagIds = payload.dietary_tag_ids;
   if (
+    Object.keys(payload).length !== 6 ||
+    !Object.keys(payload).every((key) =>
+      [
+        "ingredient_id",
+        "ingredient_version_id",
+        "name",
+        "canonical_unit_id",
+        "mass_per_canonical_quantity",
+        "dietary_tag_ids",
+      ].includes(key),
+    ) ||
     typeof payload.ingredient_id !== "string" ||
     typeof payload.ingredient_version_id !== "string" ||
-    typeof payload.name !== "string" ||
+    !canonicalName(payload.name) ||
     typeof payload.canonical_unit_id !== "string" ||
     typeof payload.mass_per_canonical_quantity !== "string" ||
     ![
@@ -197,6 +233,18 @@ export async function replayIngredientCreate(
     !Array.isArray(dietaryTagIds) ||
     !dietaryTagIds.every((id) => typeof id === "string") ||
     !positiveDecimal(payload.mass_per_canonical_quantity)
+  )
+    return;
+  const unit = await localDb.canonicalRecords.get([
+    userId,
+    organizationId,
+    "unit_definition",
+    payload.canonical_unit_id,
+  ]);
+  if (!unit || !availableUnit(unit, organizationId)) return;
+  if (
+    unit.fields.dimension === "mass" &&
+    unit.fields.base_unit_factor !== payload.mass_per_canonical_quantity
   )
     return;
   if (!(await availableDietaryTags(userId, organizationId, dietaryTagIds))) return;

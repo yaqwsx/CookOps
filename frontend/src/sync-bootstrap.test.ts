@@ -130,13 +130,35 @@ describe("bootstrapOrganization", () => {
         name: "Pending tomatoes",
         canonical_unit_id: unitId,
         mass_per_canonical_quantity: "1",
+        dietary_tag_ids: [],
       },
       actionAt: "2026-08-07T11:00:00.000Z",
       createdAt: "2026-08-07T11:00:00.000Z",
       state: "pending",
     });
     await bootstrapOrganization(userId, organizationId, {
-      fetch: vi.fn<typeof fetch>(async () => response([organizationRecord()])),
+      fetch: vi.fn<typeof fetch>(async () =>
+        response([
+          organizationRecord(),
+          {
+            organization_id: organizationId,
+            entity_id: unitId,
+            entity_kind: "unit_definition",
+            operation: "upsert",
+            payload: {
+              record_schema_version: 1,
+              record: {
+                id: unitId,
+                organization_id: null,
+                code: "g",
+                dimension: "mass",
+                base_unit_factor: "1",
+                allows_ingredient_quantity: true,
+              },
+            },
+          },
+        ]),
+      ),
     });
     await expect(
       readVisibleCanonicalRecord(
@@ -159,6 +181,30 @@ describe("bootstrapOrganization", () => {
     });
   });
 
+  it("does not replay an ingredient create without an active usable unit", async () => {
+    await localDb.outbox.add({
+      id: "ingredient-without-unit",
+      userId,
+      organizationId,
+      commandType: "ingredient.create",
+      payload: {
+        ingredient_id: "3d8b2b21-c378-4574-9e46-9338c81305ef",
+        ingredient_version_id: "4d8b2b21-c378-4574-9e46-9338c81305ef",
+        name: "Pending tomatoes",
+        canonical_unit_id: "5d8b2b21-c378-4574-9e46-9338c81305ef",
+        mass_per_canonical_quantity: "1",
+        dietary_tag_ids: [],
+      },
+      actionAt: "2026-08-07T11:00:00.000Z",
+      createdAt: "2026-08-07T11:00:00.000Z",
+      state: "pending",
+    });
+    await bootstrapOrganization(userId, organizationId, {
+      fetch: vi.fn<typeof fetch>(async () => response([organizationRecord()])),
+    });
+    await expect(localDb.optimisticOverlays.count()).resolves.toBe(0);
+  });
+
   it("does not replay an invalid ingredient mass as a false optimistic projection", async () => {
     await localDb.outbox.add({
       id: "invalid-ingredient",
@@ -171,6 +217,7 @@ describe("bootstrapOrganization", () => {
         name: "Invalid",
         canonical_unit_id: "5d8b2b21-c378-4574-9e46-9338c81305ef",
         mass_per_canonical_quantity: "0",
+        dietary_tag_ids: [],
       },
       actionAt: "2026-08-07T11:00:00.000Z",
       createdAt: "2026-08-07T11:00:00.000Z",

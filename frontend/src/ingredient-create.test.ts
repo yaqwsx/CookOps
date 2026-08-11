@@ -199,6 +199,32 @@ describe("offline ingredient creation", () => {
     await expect(localDb.optimisticOverlays.count()).resolves.toBe(0);
   });
 
+  it("fails closed for extra keys and non-canonical persisted names", async () => {
+    await addUnit();
+    const payload = {
+      ingredient_id: "9ce17d2f-8365-4b1f-a80b-34d10425d51c",
+      ingredient_version_id: "ace17d2f-8365-4b1f-a80b-34d10425d51c",
+      name: "Tomatoes",
+      canonical_unit_id: unitId,
+      mass_per_canonical_quantity: "1",
+      dietary_tag_ids: [],
+    };
+    const command = (name: string, extra = {}) => ({
+      id: "8ce17d2f-8365-4b1f-a80b-34d10425d51c",
+      actionAt: "2026-08-08T00:00:00Z",
+      payload: { ...payload, name, ...extra },
+    });
+    await replayIngredientCreate(
+      userId,
+      organizationId,
+      command("Tomatoes", { unexpected: true }),
+    );
+    await replayIngredientCreate(userId, organizationId, command(" Tomatoes"));
+    await replayIngredientCreate(userId, organizationId, command("\u0000"));
+    await replayIngredientCreate(userId, organizationId, command("\ud800"));
+    await expect(localDb.optimisticOverlays.count()).resolves.toBe(0);
+  });
+
   it("does not optimistically publish an impossible mass-unit conversion", async () => {
     await addUnit();
     await expect(
