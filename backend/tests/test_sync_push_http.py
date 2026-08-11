@@ -198,6 +198,19 @@ def _ingredient_command(
     )
 
 
+def _ingredient_lifecycle_command(
+    *, mutation_id: UUID, ingredient_id: UUID, operation: str = "retire", **payload: object
+) -> dict[str, object]:
+    return _command(
+        mutation_id=mutation_id,
+        event_id=uuid4(),
+        kind="ingredient.lifecycle",
+        ingredient_id=str(ingredient_id),
+        operation=operation,
+        **payload,
+    )
+
+
 def _schedule_recipe_command(
     *,
     mutation_id: UUID,
@@ -2048,6 +2061,33 @@ def test_push_creates_an_ingredient_through_the_typed_sync_adapter(
         assert outcome["command_kind"] == "ingredient.create"
         assert outcome["status"] == "accepted"
         assert client.post("/api/v1/sync/push", json=body).json()["outcomes"][0]["replayed"]
+        ingredient_id = UUID(
+            cast(dict[str, object], body["commands"][0])["payload"]["ingredient_id"]
+        )
+        retire = _body(
+            sync_database,
+            installation_id,
+            [_ingredient_lifecycle_command(mutation_id=uuid4(), ingredient_id=ingredient_id)],
+        )
+        retired = client.post("/api/v1/sync/push", json=retire).json()["outcomes"][0]
+        assert (retired["command_kind"], retired["status"]) == (
+            "ingredient.lifecycle",
+            "accepted",
+        )
+        restore = _body(
+            sync_database,
+            installation_id,
+            [
+                _ingredient_lifecycle_command(
+                    mutation_id=uuid4(), ingredient_id=ingredient_id, operation="restore"
+                )
+            ],
+        )
+        restored = client.post("/api/v1/sync/push", json=restore).json()["outcomes"][0]
+        assert (restored["command_kind"], restored["status"]) == (
+            "ingredient.lifecycle",
+            "accepted",
+        )
         invalid = _body(
             sync_database,
             installation_id,

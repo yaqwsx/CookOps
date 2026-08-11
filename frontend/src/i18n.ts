@@ -184,6 +184,10 @@ const resources = {
         create: "Uložit surovinu",
         saved: "Surovina je uložena místně a bude synchronizována.",
         canonical: "{{mass}} g / {{unit}}",
+        showRetired: "Zobrazit vyřazené suroviny",
+        retired: "Vyřazená surovina",
+        retire: "Vyřadit surovinu",
+        restore: "Obnovit surovinu",
         errors: {
           name: "Zadejte název do 200 znaků.",
           unit: "Vyberte uloženou jednotku.",
@@ -581,6 +585,10 @@ const resources = {
         create: "Save ingredient",
         saved: "The ingredient is saved locally and will synchronize.",
         canonical: "{{mass}} g / {{unit}}",
+        showRetired: "Show retired ingredients",
+        retired: "Retired ingredient",
+        retire: "Retire ingredient",
+        restore: "Restore ingredient",
         errors: {
           name: "Enter a name of at most 200 characters.",
           unit: "Select a stored unit.",

@@ -11,6 +11,7 @@ import {
   queueIngredientCreate,
   type IngredientCreateInput,
 } from "./ingredient-create";
+import { queueIngredientLifecycle } from "./ingredient-lifecycle";
 import { pullOrganization, SyncRequestError } from "./sync-bootstrap";
 
 type CatalogState =
@@ -179,6 +180,46 @@ function IngredientCreateForm({
   );
 }
 
+function IngredientLifecycleControl({
+  ingredient,
+  organizationId,
+  userId,
+}: {
+  ingredient: IngredientCatalogProjection["ingredients"][number];
+  organizationId: string;
+  userId: string;
+}) {
+  const { t } = useTranslation();
+  const [error, setError] = useState(false);
+  const [pending, setPending] = useState(false);
+  const operation = ingredient.retired ? "restore" : "retire";
+  async function submit() {
+    if (pending) return;
+    setPending(true);
+    setError(false);
+    try {
+      await queueIngredientLifecycle(userId, organizationId, {
+        ingredientId: ingredient.id,
+        operation,
+      });
+    } catch {
+      setError(true);
+    } finally {
+      setPending(false);
+    }
+  }
+  return (
+    <>
+      <button disabled={pending} onClick={() => void submit()} type="button">
+        {t(`ingredientsCatalog.${operation}`)}
+      </button>
+      {error ? (
+        <p role="alert">{t("ingredientsCatalog.errors.unavailable")}</p>
+      ) : null}
+    </>
+  );
+}
+
 export function IngredientCatalog({
   organizationId,
   userId,
@@ -190,9 +231,10 @@ export function IngredientCatalog({
 }) {
   const { t } = useTranslation();
   const [state, setState] = useState<CatalogState>({ status: "loading" });
+  const [showRetired, setShowRetired] = useState(false);
   useEffect(() => {
     const subscription = liveQuery(() =>
-      readIngredientCatalog(userId, organizationId),
+      readIngredientCatalog(userId, organizationId, true),
     ).subscribe({
       next: (catalog) =>
         setState((current) => ({
@@ -232,6 +274,9 @@ export function IngredientCatalog({
         </button>
       </div>
     );
+  const ingredients = state.catalog.ingredients.filter(
+    (ingredient) => showRetired || !ingredient.retired,
+  );
   return (
     <div className="ingredient-catalog">
       <p className="ingredient-catalog__scope">
@@ -245,19 +290,35 @@ export function IngredientCatalog({
         organizationId={organizationId}
         userId={userId}
       />
-      {!state.catalog.ingredients.length ? (
+      <label>
+        <input
+          checked={showRetired}
+          onChange={(event) => setShowRetired(event.target.checked)}
+          type="checkbox"
+        />
+        {t("ingredientsCatalog.showRetired")}
+      </label>
+      {!ingredients.length ? (
         <p role="status">{t("ingredientsCatalog.empty")}</p>
       ) : (
         <ul className="ingredient-list">
-          {state.catalog.ingredients.map((ingredient) => (
+          {ingredients.map((ingredient) => (
             <li key={ingredient.id}>
               <h3>{ingredient.name}</h3>
+              {ingredient.retired ? (
+                <p>{t("ingredientsCatalog.retired")}</p>
+              ) : null}
               <p>
                 {t("ingredientsCatalog.canonical", {
                   unit: ingredient.canonicalUnitName,
                   mass: ingredient.massPerCanonicalQuantity,
                 })}
               </p>
+              <IngredientLifecycleControl
+                ingredient={ingredient}
+                organizationId={organizationId}
+                userId={userId}
+              />
             </li>
           ))}
         </ul>

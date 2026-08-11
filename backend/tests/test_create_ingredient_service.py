@@ -17,6 +17,10 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_asyn
 from sqlalchemy.pool import NullPool
 
 from alembic import command as alembic_command
+from cookops.application.ingredient_lifecycle import (
+    SetIngredientLifecycleCommand,
+    set_ingredient_lifecycle,
+)
 from cookops.application.ingredients import (
     CreateIngredientCommand,
     InitialPrice,
@@ -26,6 +30,7 @@ from cookops.application.organizations import ApplicationServiceError, Execution
 from cookops.persistence.models import (
     ClientInstallation,
     DietaryTag,
+    FieldClock,
     Ingredient,
     IngredientPriceEstimate,
     IngredientVersion,
@@ -237,6 +242,69 @@ def test_member_publishes_atomic_ingredient_version_price_and_change_feed(
             .all()
         )
         assert changes == ["ingredient", "ingredient_version", "ingredient_price_estimate"]
+
+
+def test_member_retires_and_restores_ingredient_root_without_mutating_version(
+    database: Database,
+) -> None:
+    created = asyncio.run(
+        create_ingredient(database.sessions, context(database), command(database))
+    )
+    version_before = created.ingredient_version_id
+    retired = SetIngredientLifecycleCommand(
+        mutation_id=uuid4(),
+        ingredient_id=created.ingredient_id,
+        organization_id=database.organization_id,
+        operation="retire",
+        client_wall_time=datetime(2026, 8, 10, 12, 0, tzinfo=UTC),
+    )
+    first = asyncio.run(set_ingredient_lifecycle(database.sessions, context(database), retired))
+    replay = asyncio.run(set_ingredient_lifecycle(database.sessions, context(database), retired))
+    restored = SetIngredientLifecycleCommand(
+        mutation_id=uuid4(),
+        ingredient_id=created.ingredient_id,
+        organization_id=database.organization_id,
+        operation="restore",
+        client_wall_time=datetime(2026, 8, 10, 12, 0, 0, 1, tzinfo=UTC),
+    )
+    second = asyncio.run(set_ingredient_lifecycle(database.sessions, context(database), restored))
+    with database.sync.connect() as connection:
+        assert (
+            connection.scalar(
+                select(Ingredient.retired_at).where(Ingredient.id == created.ingredient_id)
+            )
+            is None
+        )
+        assert (
+            connection.scalar(
+                select(Ingredient.current_version_id).where(Ingredient.id == created.ingredient_id)
+            )
+            == version_before
+        )
+        assert (
+            connection.scalar(
+                select(FieldClock.winning_mutation_id).where(
+                    FieldClock.entity_kind == "ingredient",
+                    FieldClock.entity_id == created.ingredient_id,
+                    FieldClock.field_name == "lifecycle",
+                )
+            )
+            == restored.mutation_id
+        )
+        records = (
+            connection.execute(
+                select(OrganizationChange.payload)
+                .where(OrganizationChange.entity_kind == "ingredient")
+                .order_by(OrganizationChange.sequence)
+            )
+            .scalars()
+            .all()
+        )
+        assert records[-2]["record"]["lifecycle"] == "retired"
+        assert records[-1]["record"]["lifecycle"] == "active"
+    assert first.replayed is False
+    assert replay.replayed is True
+    assert second.outcome == "accepted"
 
 
 def test_member_may_publish_an_ingredient_without_an_initial_price(database: Database) -> None:

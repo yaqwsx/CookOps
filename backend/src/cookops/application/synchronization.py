@@ -107,6 +107,11 @@ from cookops.application.events import (
     create_event,
     update_event_base_attendance,
 )
+from cookops.application.ingredient_lifecycle import (
+    IngredientLifecycleResult,
+    SetIngredientLifecycleCommand,
+    set_ingredient_lifecycle,
+)
 from cookops.application.ingredients import (
     CreateIngredientCommand,
     CreateIngredientResult,
@@ -359,6 +364,7 @@ SyncCommand = (
     | PublishRecipeVersionCommand
     | SetRecipeLifecycleCommand
     | CreateIngredientCommand
+    | SetIngredientLifecycleCommand
     | ScheduleRecipeCommand
     | MoveScheduledRecipeCommand
     | SetScheduledRecipeAttendanceCommand
@@ -403,6 +409,7 @@ def _command_kind(
         | PublishRecipeVersionCommand
         | SetRecipeLifecycleCommand
         | CreateIngredientCommand
+        | SetIngredientLifecycleCommand
         | ScheduleRecipeCommand
         | MoveScheduledRecipeCommand
         | SetScheduledRecipeAttendanceCommand
@@ -461,6 +468,8 @@ def _command_kind(
         return "recipe.lifecycle"
     if isinstance(command, CreateIngredientCommand):
         return "ingredient.create"
+    if isinstance(command, SetIngredientLifecycleCommand):
+        return "ingredient.lifecycle"
     if isinstance(command, ScheduleRecipeCommand):
         return "scheduled_recipe.schedule"
     if isinstance(command, MoveScheduledRecipeCommand):
@@ -811,6 +820,7 @@ class SynchronizationCommandService:
                 | CreateRecipeResult
                 | RecipeLifecycleResult
                 | CreateIngredientResult
+                | IngredientLifecycleResult
                 | ScheduleRecipeResult
                 | MoveScheduledRecipeResult
                 | ScheduledRecipeAttendanceResult
@@ -861,6 +871,8 @@ class SynchronizationCommandService:
                 result = await set_recipe_lifecycle(self._session_factory, context, command)
             elif isinstance(command, CreateIngredientCommand):
                 result = await create_ingredient(self._session_factory, context, command)
+            elif isinstance(command, SetIngredientLifecycleCommand):
+                result = await set_ingredient_lifecycle(self._session_factory, context, command)
             elif isinstance(command, ScheduleRecipeCommand):
                 result = await schedule_recipe(self._session_factory, context, command)
             elif isinstance(command, MoveScheduledRecipeCommand):
@@ -1036,6 +1048,7 @@ class SynchronizationCommandService:
             | CreateRecipeResult
             | RecipeLifecycleResult
             | CreateIngredientResult
+            | IngredientLifecycleResult
             | ScheduleRecipeResult
             | MoveScheduledRecipeResult
             | ScheduledRecipeAttendanceResult
@@ -1078,6 +1091,8 @@ class SynchronizationCommandService:
                 if isinstance(result, RecipeLifecycleResult)
                 else "ingredient.create"
                 if isinstance(result, CreateIngredientResult)
+                else "ingredient.lifecycle"
+                if isinstance(result, IngredientLifecycleResult)
                 else "scheduled_recipe.schedule"
                 if isinstance(result, ScheduleRecipeResult)
                 else "scheduled_recipe.move"
@@ -1549,6 +1564,17 @@ async def _bootstrap_records(
             )
         ).all()
     }
+    ingredient_clocks = {
+        (clock.entity_id, clock.field_name): clock
+        for clock in (
+            await session.scalars(
+                select(FieldClock).where(
+                    FieldClock.organization_id == organization_id,
+                    FieldClock.entity_kind == "ingredient",
+                )
+            )
+        ).all()
+    }
 
     def configuration_clock_record(kind: str, entity_id: UUID) -> dict[str, object]:
         return {
@@ -1750,6 +1776,17 @@ async def _bootstrap_records(
                 "created_by_user_id": str(item.created_by_user_id),
                 "retired_at": _time(item.retired_at),
                 "retired_by_user_id": _uuid(item.retired_by_user_id),
+                "lifecycle": "retired" if item.retired_at else "active",
+                "field_clocks": {
+                    "lifecycle": (
+                        {
+                            "winning_client_wall_time": clock.winning_client_wall_time.isoformat(),
+                            "winning_mutation_id": str(clock.winning_mutation_id),
+                        }
+                        if (clock := ingredient_clocks.get((item.id, "lifecycle")))
+                        else None
+                    )
+                },
             },
         )
     for item in (

@@ -7,6 +7,7 @@ export type CatalogIngredient = {
   name: string;
   canonicalUnitName: string;
   massPerCanonicalQuantity: string;
+  retired?: boolean;
 };
 export type IngredientUnit = {
   id: string;
@@ -32,11 +33,12 @@ function text(record: CanonicalRecord, key: string) {
 export async function readIngredientCatalog(
   userId: string,
   organizationId: string,
+  includeRetired = false,
 ): Promise<IngredientCatalogProjection> {
   if (!uuid.test(userId) || !uuid.test(organizationId))
     return { ingredients: [], units: [], dietaryTags: [] };
   const [roots, versions, records, tags] = await Promise.all([
-    readVisibleRecords(userId, organizationId, "ingredient"),
+    readVisibleRecords(userId, organizationId, "ingredient", includeRetired),
     readVisibleRecords(userId, organizationId, "ingredient_version"),
     readVisibleRecords(userId, organizationId, "unit_definition"),
     readVisibleRecords(userId, organizationId, "dietary_tag"),
@@ -100,6 +102,7 @@ export async function readIngredientCatalog(
         canonicalUnitId: version && text(version, "canonical_unit_id"),
         massPerCanonicalQuantity:
           version && text(version, "mass_per_canonical_quantity"),
+        ...(includeRetired ? { retired: root.lifecycle === "retired" } : {}),
       };
     })
     .filter(

@@ -39,6 +39,7 @@ from cookops.application.event_metadata import (
 )
 from cookops.application.event_prices import UpdateEventPriceEstimatesCommand
 from cookops.application.events import CreateEventCommand, UpdateEventBaseAttendanceCommand
+from cookops.application.ingredient_lifecycle import SetIngredientLifecycleCommand
 from cookops.application.ingredients import CreateIngredientCommand, InitialPrice
 from cookops.application.receipts import (
     CreateReceiptCommand,
@@ -458,6 +459,14 @@ class RecipeLifecyclePayload(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     recipe_id: UUID
+    operation: Literal["retire", "restore"]
+    logical_operation_id: UUID | None = None
+
+
+class IngredientLifecyclePayload(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    ingredient_id: UUID
     operation: Literal["retire", "restore"]
     logical_operation_id: UUID | None = None
 
@@ -1091,6 +1100,16 @@ def _push_command(command: PushCommandRequest, organization_id: UUID) -> SyncCom
                     if price
                     else None
                 ),
+                logical_operation_id=ingredient_payload.logical_operation_id,
+            )
+        if command.command_kind == "ingredient.lifecycle":
+            ingredient_payload = IngredientLifecyclePayload.model_validate(command.payload)
+            return SetIngredientLifecycleCommand(
+                mutation_id=command.mutation_id,
+                ingredient_id=ingredient_payload.ingredient_id,
+                organization_id=organization_id,
+                operation=ingredient_payload.operation,
+                client_wall_time=command.client_wall_time,
                 logical_operation_id=ingredient_payload.logical_operation_id,
             )
         if command.command_kind == "scheduled_recipe.schedule":
