@@ -25,7 +25,7 @@ import {
   queueAddedOverride,
   queueReplacementOverride,
 } from "./scheduled-ingredient-override";
-import { queueEventDayCreate, queueEventDayNote, queueEventDayVisibility } from "./event-day";
+import { queueEventDayCreate, queueEventDayLifecycle, queueEventDayNote, queueEventDayVisibility } from "./event-day";
 import { queueEventMealRoleCreate, queueEventMealRoleLifecycle, queueEventMealRolePosition } from "./event-meal-role";
 import { pullOrganization, SyncRequestError } from "./sync-bootstrap";
 
@@ -209,6 +209,21 @@ function DayVisibility({
     }
   }
   return <><button onClick={() => void setVisibility(!day.visible)} type="button">{t(day.visible ? "planner.hideDay" : "planner.restoreDay")}</button>{error ? <p role="alert">{t("planner.errors.unavailable")}</p> : null}</>;
+}
+
+function DayLifecycle({ day, eventId, organizationId, userId }: { day: EventPlannerProjection["days"][number]; eventId: string; organizationId: string; userId: string }) {
+  const { t } = useTranslation();
+  const [error, setError] = useState(false);
+  return <><button onClick={() => void queueEventDayLifecycle(userId, organizationId, { eventDayId: day.id, eventId, operation: "retire" }).then(() => setError(false)).catch(() => setError(true))} type="button">{t("planner.retireDay")}</button>{error ? <p role="alert">{t("planner.errors.unavailable")}</p> : null}</>;
+}
+
+function RestoreDay({ planner, eventId, organizationId, userId }: { planner: EventPlannerProjection; eventId: string; organizationId: string; userId: string }) {
+  const { t } = useTranslation();
+  const [dayId, setDayId] = useState(planner.retiredDays[0]?.id ?? "");
+  const [error, setError] = useState(false);
+  useEffect(() => setDayId((current) => planner.retiredDays.some((day) => day.id === current) ? current : (planner.retiredDays[0]?.id ?? "")), [planner.retiredDays]);
+  if (planner.lifecycle !== "active" || !dayId) return null;
+  return <form onSubmit={(event) => { event.preventDefault(); void queueEventDayLifecycle(userId, organizationId, { eventDayId: dayId, eventId, operation: "restore" }).then(() => setError(false)).catch(() => setError(true)); }}><label>{t("planner.day")}<select value={dayId} onChange={(event) => setDayId(event.target.value)}>{planner.retiredDays.map((day) => <option key={day.id} value={day.id}>{day.date}</option>)}</select></label><button type="submit">{t("planner.restoreDay")}</button>{error ? <p role="alert">{t("planner.errors.unavailable")}</p> : null}</form>;
 }
 
 function DayNote({ day, eventId, organizationId, userId }: { day: EventPlannerProjection["days"][number]; eventId: string; organizationId: string; userId: string }) {
@@ -817,6 +832,7 @@ export function EventPlanner({
         userId={userId}
       />
       <AddDay eventId={eventId} organizationId={organizationId} userId={userId} active={planner.lifecycle === "active"} />
+      <RestoreDay eventId={eventId} organizationId={organizationId} planner={planner} userId={userId} />
       <AddMealRole eventId={eventId} organizationId={organizationId} userId={userId} active={planner.lifecycle === "active"} />
       <OrderMealRoles eventId={eventId} organizationId={organizationId} planner={planner} userId={userId} />
       <MealRoleLifecycle eventId={eventId} organizationId={organizationId} planner={planner} userId={userId} />
@@ -830,6 +846,7 @@ export function EventPlanner({
             <h3 id={`day-${day.id}`}>{day.date}</h3>
             {day.note ? <p>{day.note}</p> : null}
             {planner.lifecycle === "active" ? <DayVisibility day={day} eventId={eventId} organizationId={organizationId} userId={userId} /> : null}
+            {planner.lifecycle === "active" ? <DayLifecycle day={day} eventId={eventId} organizationId={organizationId} userId={userId} /> : null}
             {planner.lifecycle === "active" ? <DayNote day={day} eventId={eventId} organizationId={organizationId} userId={userId} /> : null}
             {planner.roles.map((role) => {
               const scheduled = planner.scheduled.filter(

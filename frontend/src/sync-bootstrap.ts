@@ -17,7 +17,7 @@ import { replayIngredientCreate } from "./ingredient-create";
 import { replayScheduledIngredientOverride } from "./scheduled-ingredient-override";
 import { replayReceiptCommand } from "./receipt-metadata";
 import { replayCatalogConfiguration } from "./catalog-configuration";
-import { replayEventDayCreate, replayEventDayNote, replayEventDayVisibility } from "./event-day";
+import { replayEventDayCreate, replayEventDayLifecycle, replayEventDayNote, replayEventDayVisibility } from "./event-day";
 import { replayEventMealRoleCreate, replayEventMealRoleLifecycle, replayEventMealRolePosition } from "./event-meal-role";
 import {
   replayAdHocShoppingItem,
@@ -269,6 +269,8 @@ async function replayOptimisticCommands(
       await replayEventDayNote(userId, organizationId, command);
     if (command.commandType === "event_day.create")
       await replayEventDayCreate(userId, organizationId, command);
+    if (command.commandType === "event_day.lifecycle")
+      await replayEventDayLifecycle(userId, organizationId, command);
     if (command.commandType === "event_meal_role.create")
       await replayEventMealRoleCreate(userId, organizationId, command);
     if (command.commandType === "event_meal_role.position")

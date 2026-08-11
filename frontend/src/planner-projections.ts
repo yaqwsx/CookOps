@@ -3,7 +3,7 @@ import { readVisibleRecords } from "./visible-records";
 
 export type PlannerRecipe = { id: string; versionId: string; name: string };
 export type PlannerIngredient = { id: string; versionId: string; name: string };
-export type PlannerDay = { id: string; date: string; note: string | null; visible: boolean };
+export type PlannerDay = { id: string; date: string; note: string | null; visible: boolean; retired: boolean };
 export type PlannerRole = { id: string; name: string; position: string; retired: boolean };
 export type PlannedRecipe = {
   id: string;
@@ -26,6 +26,7 @@ export type EventPlannerProjection = {
   lifecycle: "active" | "archived";
   days: PlannerDay[];
   hiddenDays: PlannerDay[];
+  retiredDays: PlannerDay[];
   roles: PlannerRole[];
   retiredRoles: PlannerRole[];
   recipes: PlannerRecipe[];
@@ -72,7 +73,7 @@ export async function readEventPlanner(
     overrideRecords,
   ] = await Promise.all([
     readVisibleRecords(userId, organizationId, "event", true),
-    readVisibleRecords(userId, organizationId, "event_day"),
+    readVisibleRecords(userId, organizationId, "event_day", true),
     readVisibleRecords(userId, organizationId, "event_meal_role", true),
     readVisibleRecords(userId, organizationId, "recipe"),
     readVisibleRecords(userId, organizationId, "recipe_version"),
@@ -115,6 +116,7 @@ export async function readEventPlanner(
       date: value(record, "calendar_date"),
       note: record.fields.note,
       visible: record.fields.is_visible !== false,
+      retired: record.lifecycle === "retired",
     }))
     .filter(
       (day): day is PlannerDay =>
@@ -304,8 +306,9 @@ export async function readEventPlanner(
     endDate,
     attendance,
     lifecycle,
-    days: projectedDays.filter((day) => day.visible),
-    hiddenDays: projectedDays.filter((day) => !day.visible),
+    days: projectedDays.filter((day) => !day.retired && day.visible),
+    hiddenDays: projectedDays.filter((day) => !day.retired && !day.visible),
+    retiredDays: projectedDays.filter((day) => day.retired),
     roles: roles.filter((role) => !role.retired),
     retiredRoles: roles.filter((role) => role.retired),
     recipes,

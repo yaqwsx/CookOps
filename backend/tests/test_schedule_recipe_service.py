@@ -17,6 +17,10 @@ from sqlalchemy.pool import NullPool
 
 from alembic import command as alembic_command
 from cookops.application.event_day_creation import CreateEventDayCommand, create_event_day
+from cookops.application.event_day_lifecycle import (
+    SetEventDayLifecycleCommand,
+    set_event_day_lifecycle,
+)
 from cookops.application.event_day_note import SetEventDayNoteCommand, set_event_day_note
 from cookops.application.event_day_visibility import (
     SetEventDayVisibilityCommand,
@@ -817,6 +821,46 @@ def test_member_creates_a_manual_event_day_once(service_database: ServiceDatabas
         )
     assert accepted.event_day_id == command.event_day_id
     assert record is not None and record["record"]["provenance"] == "manually_added"
+
+
+def test_member_retires_and_restores_an_event_day(service_database: ServiceDatabase) -> None:
+    retired = SetEventDayLifecycleCommand(
+        mutation_id=uuid4(),
+        event_day_id=service_database.event_day_id,
+        organization_id=service_database.organization_id,
+        event_id=service_database.event_id,
+        operation="retire",
+        client_wall_time=datetime.now(UTC),
+    )
+    assert (
+        asyncio.run(
+            set_event_day_lifecycle(service_database.sessions, context(service_database), retired)
+        ).outcome
+        == "accepted"
+    )
+    assert asyncio.run(
+        set_event_day_lifecycle(service_database.sessions, context(service_database), retired)
+    ).replayed
+    restored = replace(
+        retired, mutation_id=uuid4(), operation="restore", client_wall_time=datetime.now(UTC)
+    )
+    assert (
+        asyncio.run(
+            set_event_day_lifecycle(service_database.sessions, context(service_database), restored)
+        ).outcome
+        == "accepted"
+    )
+    with service_database.sync_engine.connect() as connection:
+        payload = connection.scalar(
+            select(OrganizationChange.payload).where(
+                OrganizationChange.mutation_id == restored.mutation_id
+            )
+        )
+    assert payload is not None
+    assert payload["record"]["retired_at"] is None
+    assert payload["record"]["field_clocks"]["lifecycle"]["winning_mutation_id"] == str(
+        restored.mutation_id
+    )
 
 
 def test_stale_attendance_keeps_the_winning_clock_in_the_change_feed(

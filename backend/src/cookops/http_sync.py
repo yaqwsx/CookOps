@@ -24,6 +24,7 @@ from pydantic import (
 from cookops.application.browser_sessions import BrowserSessionService
 from cookops.application.catalog_configuration import CatalogConfigurationCommand
 from cookops.application.event_day_creation import CreateEventDayCommand
+from cookops.application.event_day_lifecycle import SetEventDayLifecycleCommand
 from cookops.application.event_day_note import SetEventDayNoteCommand
 from cookops.application.event_day_visibility import SetEventDayVisibilityCommand
 from cookops.application.event_duplication import DuplicateEventCommand
@@ -543,6 +544,15 @@ class CreateEventDayPayload(BaseModel):
     event_day_id: UUID
     event_id: UUID
     calendar_date: date
+    logical_operation_id: UUID | None = None
+
+
+class EventDayLifecyclePayload(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    event_day_id: UUID
+    event_id: UUID
+    operation: Literal["retire", "restore"]
     logical_operation_id: UUID | None = None
 
 
@@ -1093,6 +1103,17 @@ def _push_command(command: PushCommandRequest, organization_id: UUID) -> SyncCom
                 calendar_date=create_day_payload.calendar_date,
                 client_wall_time=command.client_wall_time,
                 logical_operation_id=create_day_payload.logical_operation_id,
+            )
+        if command.command_kind == "event_day.lifecycle":
+            lifecycle_payload = EventDayLifecyclePayload.model_validate(command.payload)
+            return SetEventDayLifecycleCommand(
+                mutation_id=command.mutation_id,
+                event_day_id=lifecycle_payload.event_day_id,
+                organization_id=organization_id,
+                event_id=lifecycle_payload.event_id,
+                operation=lifecycle_payload.operation,
+                client_wall_time=command.client_wall_time,
+                logical_operation_id=lifecycle_payload.logical_operation_id,
             )
         if command.command_kind == "event_day.note":
             note_payload = EventDayNotePayload.model_validate(command.payload)

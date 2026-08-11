@@ -1478,6 +1478,29 @@ def test_push_schedules_a_recipe_through_the_typed_shared_command(
         assert client.post("/api/v1/sync/push", json=created_day_body).json()["outcomes"][0][
             "replayed"
         ]
+        day_lifecycle = _command(
+            mutation_id=uuid4(),
+            event_id=event_id,
+            kind="event_day.lifecycle",
+            event_day_id=str(created_day["payload"]["event_day_id"]),
+            operation="retire",
+        )
+        cast(dict[str, object], day_lifecycle["payload"])["event_id"] = str(event_id)
+        lifecycle_body = _body(sync_database, installation_id, [day_lifecycle])
+        assert client.post("/api/v1/sync/push", json=lifecycle_body).json()["outcomes"][0][
+            "status"
+        ] == "accepted"
+        assert client.post("/api/v1/sync/push", json=lifecycle_body).json()["outcomes"][0][
+            "replayed"
+        ]
+        invalid_lifecycle = {
+            **day_lifecycle,
+            "mutation_id": str(uuid4()),
+            "payload": {**day_lifecycle["payload"], "operation": "hide"},
+        }
+        assert client.post(
+            "/api/v1/sync/push", json=_body(sync_database, installation_id, [invalid_lifecycle])
+        ).json()["outcomes"][0]["error"]["code"] == "validation_failed"
         malformed_day = _event_day_create_command(
             mutation_id=uuid4(),
             event_id=event_id,

@@ -1,7 +1,8 @@
 import { beforeEach, expect, it } from "vitest";
 
-import { queueEventDayCreate, queueEventDayNote, queueEventDayVisibility, replayEventDayNote, replayEventDayVisibility } from "./event-day";
+import { queueEventDayCreate, queueEventDayLifecycle, queueEventDayNote, queueEventDayVisibility, replayEventDayLifecycle, replayEventDayNote, replayEventDayVisibility } from "./event-day";
 import { localDb } from "./local-db";
+import { readVisibleRecords } from "./visible-records";
 
 const user = "a6a58bd6-214e-49af-8fae-e5f974bf8e08";
 const organization = "5ce17d2f-8365-4b1f-a80b-34d10425d51c";
@@ -28,6 +29,12 @@ it("queues visibility atomically and keeps a newer canonical visibility winner",
   await expect(localDb.optimisticOverlays.count()).resolves.toBe(0);
 });
 
+it("keeps a microsecond-newer canonical lifecycle winner", async () => {
+  await localDb.canonicalRecords.put({ ...base, entityType: "event_day", entityId: day, lifecycle: "retired", fields: { id: day, event_id: event, is_visible: true, retired_at: "2026-08-08T13:00:00.000001+00:00" }, fieldClocks: { lifecycle: { winning_client_wall_time: "2026-08-08T13:00:00.000001+00:00", winning_mutation_id: "8ce17d2f-8365-4b1f-a80b-34d10425d51c" } } });
+  await replayEventDayLifecycle(user, organization, { id: "fce17d2f-8365-4b1f-a80b-34d10425d51c", actionAt: "2026-08-08T13:00:00.000Z", payload: { event_day_id: day, event_id: event, operation: "restore" } });
+  await expect(localDb.optimisticOverlays.count()).resolves.toBe(0);
+});
+
 it("queues a normalized note and keeps a newer canonical note winner", async () => {
   await queueEventDayNote(user, organization, { eventDayId: day, eventId: event, note: "Menu\r\npro hosty" });
   await expect(localDb.outbox.toArray()).resolves.toEqual([expect.objectContaining({ commandType: "event_day.note", payload: expect.objectContaining({ note: "Menu\npro hosty" }) })]);
@@ -47,4 +54,13 @@ it("creates one visible manual day locally and refuses a duplicate date", async 
   await expect(queueEventDayCreate(user, organization, { eventId: event, calendarDate: "2026-08-11" })).rejects.toThrow("selection");
   await localDb.canonicalRecords.put({ ...base, entityType: "event_day", entityId: "8ce17d2f-8365-4b1f-a80b-34d10425d51c", fields: { id: "8ce17d2f-8365-4b1f-a80b-34d10425d51c", event_id: event, calendar_date: "2026-08-12" }, fieldClocks: {} });
   await expect(queueEventDayCreate(user, organization, { eventId: event, calendarDate: "2026-08-12" })).rejects.toThrow("selection");
+});
+
+it("retires a day and renders an optimistic restore", async () => {
+  await queueEventDayLifecycle(user, organization, { eventDayId: day, eventId: event, operation: "retire" });
+  await expect(localDb.optimisticOverlays.get([user, organization, "event_day", day])).resolves.toMatchObject({ lifecycle: "retired" });
+  await localDb.optimisticOverlays.clear();
+  await localDb.canonicalRecords.put({ ...base, entityType: "event_day", entityId: day, lifecycle: "retired", fields: { id: day, event_id: event, is_visible: true, retired_at: "2026-08-08T13:00:00.000Z" }, fieldClocks: {} });
+  await queueEventDayLifecycle(user, organization, { eventDayId: day, eventId: event, operation: "restore" });
+  await expect(readVisibleRecords(user, organization, "event_day", true)).resolves.toEqual([expect.objectContaining({ entityId: day, lifecycle: "active" })]);
 });
