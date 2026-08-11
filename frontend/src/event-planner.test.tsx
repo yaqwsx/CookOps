@@ -15,6 +15,7 @@ const {
   queueEventDayNote,
   queueEventDayVisibility,
   queueEventMealRoleCreate,
+  queueEventMealRoleName,
   pullOrganization,
 } = vi.hoisted(() => ({
   readEventPlanner: vi.fn(),
@@ -26,6 +27,7 @@ const {
   queueEventDayNote: vi.fn(),
   queueEventDayVisibility: vi.fn(),
   queueEventMealRoleCreate: vi.fn(),
+  queueEventMealRoleName: vi.fn(),
   pullOrganization: vi.fn(),
 }));
 vi.mock("./planner-projections", () => ({ readEventPlanner }));
@@ -36,7 +38,7 @@ vi.mock("./scheduled-recipe", () => ({
 }));
 vi.mock("./scheduled-ingredient-override", () => ({ queueAddedOverride }));
 vi.mock("./event-day", () => ({ queueEventDayCreate, queueEventDayNote, queueEventDayVisibility }));
-vi.mock("./event-meal-role", () => ({ queueEventMealRoleCreate }));
+vi.mock("./event-meal-role", () => ({ queueEventMealRoleCreate, queueEventMealRoleName }));
 vi.mock("./sync-bootstrap", () => ({
   pullOrganization,
   SyncRequestError: class SyncRequestError extends Error {},
@@ -48,6 +50,12 @@ const ids = {
   day: "4d8b2b21-c378-4574-9e46-9338c81305ef",
   role: "5d8b2b21-c378-4574-9e46-9338c81305ef",
   recipe: "6d8b2b21-c378-4574-9e46-9338c81305ef",
+};
+const emptyPlannerCollections = {
+  hiddenDays: [],
+  retiredDays: [],
+  retiredRoles: [],
+  ingredients: [],
 };
 
 describe("EventPlanner", () => {
@@ -62,7 +70,7 @@ describe("EventPlanner", () => {
       attendance: 12,
       lifecycle: "active",
       days: [{ id: ids.day, date: "2026-08-10", note: "Připravit zeleninu" }],
-      roles: [{ id: ids.role, name: "Večeře", position: "a" }],
+      roles: [{ id: ids.role, name: "Večeře", position: "a", custom: false }],
       recipes: [
         {
           id: ids.recipe,
@@ -71,7 +79,7 @@ describe("EventPlanner", () => {
         },
       ],
       scheduled: [],
-      hiddenDays: [],
+      ...emptyPlannerCollections,
     });
     pullOrganization.mockResolvedValue(false);
     const user = userEvent.setup();
@@ -85,7 +93,7 @@ describe("EventPlanner", () => {
     );
     await screen.findByRole("heading", { name: "Plán akce" });
     expect(screen.getByRole("combobox", { name: "Den" })).toBeVisible();
-    expect(screen.getByLabelText("Chod")).toBeVisible();
+    expect(screen.getAllByLabelText("Chod")[0]).toBeVisible();
     expect(screen.getByLabelText("Recept")).toBeVisible();
     await user.click(screen.getByRole("button", { name: "Přidat do plánu" }));
     expect(queueRecipeSchedule).toHaveBeenCalledWith(
@@ -104,7 +112,7 @@ describe("EventPlanner", () => {
     await i18n.changeLanguage(defaultLocale);
     readEventPlanner.mockResolvedValue({
       name: "Letní vaření", startDate: "2026-08-10", endDate: "2026-08-10", attendance: 12,
-      lifecycle: "active", days: [{ id: ids.day, date: "2026-08-10", note: "Původní" }], roles: [], recipes: [], scheduled: [], hiddenDays: [],
+      lifecycle: "active", days: [{ id: ids.day, date: "2026-08-10", note: "Původní" }], roles: [], recipes: [], scheduled: [], ...emptyPlannerCollections,
     });
     pullOrganization.mockResolvedValue(false);
     const user = userEvent.setup();
@@ -120,7 +128,7 @@ describe("EventPlanner", () => {
     await i18n.changeLanguage(defaultLocale);
     readEventPlanner.mockResolvedValue({
       name: "Letní vaření", startDate: "2026-08-10", endDate: "2026-08-10", attendance: 12,
-      lifecycle: "active", days: [], hiddenDays: [], roles: [], recipes: [], scheduled: [],
+      lifecycle: "active", days: [], ...emptyPlannerCollections, roles: [], recipes: [], scheduled: [],
     });
     pullOrganization.mockResolvedValue(false);
     const user = userEvent.setup();
@@ -128,6 +136,24 @@ describe("EventPlanner", () => {
     await user.type(await screen.findByLabelText("Název chodu"), "Pozdní večeře");
     await user.click(screen.getByRole("button", { name: "Přidat chod" }));
     expect(queueEventMealRoleCreate).toHaveBeenCalledWith("a6a58bd6-214e-49af-8fae-e5f974bf8e08", ids.organization, { eventId: ids.event, customName: "Pozdní večeře" });
+  });
+
+  it("renames a custom meal role through an accessible native input", async () => {
+    await i18n.changeLanguage(defaultLocale);
+    readEventPlanner.mockResolvedValue({
+      name: "Letní vaření", startDate: "2026-08-10", endDate: "2026-08-10", attendance: 12,
+      lifecycle: "active", days: [], ...emptyPlannerCollections,
+      roles: [{ id: ids.role, name: "Večeře", position: "a", custom: true }], recipes: [], scheduled: [],
+    });
+    pullOrganization.mockResolvedValue(false);
+    queueEventMealRoleName.mockResolvedValue(undefined);
+    const user = userEvent.setup();
+    render(<EventPlanner eventId={ids.event} onUnauthenticated={vi.fn()} organizationId={ids.organization} userId="a6a58bd6-214e-49af-8fae-e5f974bf8e08" />);
+    const nameInputs = await screen.findAllByLabelText("Název chodu");
+    await user.clear(nameInputs[1]);
+    await user.type(nameInputs[1], "Pozdní večeře");
+    await user.click(screen.getByRole("button", { name: "Uložit název chodu" }));
+    expect(queueEventMealRoleName).toHaveBeenCalledWith("a6a58bd6-214e-49af-8fae-e5f974bf8e08", ids.organization, { eventId: ids.event, eventMealRoleId: ids.role, customName: "Pozdní večeře" });
   });
 
   it("moves a card through labelled controls without drag precision", async () => {
@@ -139,7 +165,7 @@ describe("EventPlanner", () => {
       attendance: 12,
       lifecycle: "active",
       days: [{ id: ids.day, date: "2026-08-10", note: null }],
-      roles: [{ id: ids.role, name: "Večeře", position: "a" }],
+      roles: [{ id: ids.role, name: "Večeře", position: "a", custom: false }],
       recipes: [],
       scheduled: [
         {
@@ -153,7 +179,7 @@ describe("EventPlanner", () => {
           position: "a",
         },
       ],
-      hiddenDays: [],
+      ...emptyPlannerCollections,
     });
     pullOrganization.mockResolvedValue(false);
     const user = userEvent.setup();
@@ -191,7 +217,7 @@ describe("EventPlanner", () => {
       attendance: 12,
       lifecycle: "active",
       days: [{ id: ids.day, date: "2026-08-10", note: null }],
-      roles: [{ id: ids.role, name: "Večeře", position: "a" }],
+      roles: [{ id: ids.role, name: "Večeře", position: "a", custom: false }],
       recipes: [],
       scheduled: [
         {
@@ -206,7 +232,7 @@ describe("EventPlanner", () => {
           lines: [],
         },
       ],
-      hiddenDays: [],
+      ...emptyPlannerCollections,
     });
     pullOrganization.mockResolvedValue(false);
     const user = userEvent.setup();
@@ -240,7 +266,7 @@ describe("EventPlanner", () => {
       attendance: 12,
       lifecycle: "archived",
       days: [{ id: ids.day, date: "2026-08-10", note: null }],
-      roles: [{ id: ids.role, name: "Večeře", position: "a" }],
+      roles: [{ id: ids.role, name: "Večeře", position: "a", custom: false }],
       recipes: [],
       scheduled: [
         {
@@ -252,7 +278,7 @@ describe("EventPlanner", () => {
           position: "a",
         },
       ],
-      hiddenDays: [],
+      ...emptyPlannerCollections,
     });
     pullOrganization.mockResolvedValue(false);
     render(
@@ -281,8 +307,9 @@ describe("EventPlanner", () => {
       attendance: 12,
       lifecycle: "active",
       days: [{ id: ids.day, date: "2026-08-10", note: null }],
-      roles: [{ id: ids.role, name: "Večeře", position: "a" }],
+      roles: [{ id: ids.role, name: "Večeře", position: "a", custom: false }],
       recipes: [],
+      ...emptyPlannerCollections,
       ingredients: [
         { id: ingredientId, versionId: ingredientVersionId, name: "Paprika" },
         {
@@ -311,7 +338,6 @@ describe("EventPlanner", () => {
           ],
         },
       ],
-      hiddenDays: [],
     });
     pullOrganization.mockResolvedValue(false);
     const user = userEvent.setup();

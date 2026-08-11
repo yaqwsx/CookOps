@@ -301,6 +301,20 @@ def _event_meal_role_command(
     return command
 
 
+def _event_meal_role_name_command(
+    *, mutation_id: UUID, event_id: UUID, event_meal_role_id: UUID, custom_name: object
+) -> dict[str, object]:
+    command = _command(
+        mutation_id=mutation_id,
+        event_id=event_id,
+        kind="event_meal_role.name",
+        event_meal_role_id=str(event_meal_role_id),
+        custom_name=custom_name,
+    )
+    cast(dict[str, object], command["payload"])["event_id"] = str(event_id)
+    return command
+
+
 def _event_day_create_command(
     *, mutation_id: UUID, event_id: UUID, event_day_id: UUID, calendar_date: object
 ) -> dict[str, object]:
@@ -1388,6 +1402,21 @@ def test_push_schedules_a_recipe_through_the_typed_shared_command(
         assert client.post("/api/v1/sync/push", json=meal_role_body).json()["outcomes"][0][
             "replayed"
         ]
+        role_name = _event_meal_role_name_command(
+            mutation_id=uuid4(),
+            event_id=event_id,
+            event_meal_role_id=UUID(meal_role["payload"]["event_meal_role_id"]),
+            custom_name="Late dinner",
+        )
+        role_name_body = _body(sync_database, installation_id, [role_name])
+        role_name_outcome = client.post(
+            "/api/v1/sync/push", json=role_name_body
+        ).json()["outcomes"][0]
+        assert role_name_outcome["status"] == "accepted"
+        assert role_name_outcome["command_kind"] == "event_meal_role.name"
+        assert client.post("/api/v1/sync/push", json=role_name_body).json()["outcomes"][0][
+            "replayed"
+        ]
         role_position = _command(
             mutation_id=uuid4(),
             event_id=event_id,
@@ -1441,6 +1470,10 @@ def test_push_schedules_a_recipe_through_the_typed_shared_command(
             and item["entity_id"] == meal_role["payload"]["event_meal_role_id"]
         )
         assert role_record["position_key"] == "z9"
+        assert role_record["custom_name"] == "Late dinner"
+        assert role_record["field_clocks"]["custom_name"]["winning_mutation_id"] == role_name[
+            "mutation_id"
+        ]
         assert role_record["field_clocks"]["position_key"]["winning_mutation_id"] == role_position[
             "mutation_id"
         ]
@@ -1453,6 +1486,16 @@ def test_push_schedules_a_recipe_through_the_typed_shared_command(
         )
         assert client.post(
             "/api/v1/sync/push", json=_body(sync_database, installation_id, [malformed_role])
+        ).json()["outcomes"][0]["error"]["code"] == "validation_failed"
+        malformed_role_name = _event_meal_role_name_command(
+            mutation_id=uuid4(),
+            event_id=event_id,
+            event_meal_role_id=UUID(meal_role["payload"]["event_meal_role_id"]),
+            custom_name="bad\0name",
+        )
+        assert client.post(
+            "/api/v1/sync/push",
+            json=_body(sync_database, installation_id, [malformed_role_name]),
         ).json()["outcomes"][0]["error"]["code"] == "validation_failed"
         malformed_visibility = _event_day_visibility_command(
             mutation_id=uuid4(),

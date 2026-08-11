@@ -31,6 +31,7 @@ from cookops.application.event_duplication import DuplicateEventCommand
 from cookops.application.event_lifecycle import SetEventLifecycleCommand
 from cookops.application.event_meal_role_creation import CreateEventMealRoleCommand
 from cookops.application.event_meal_role_lifecycle import SetEventMealRoleLifecycleCommand
+from cookops.application.event_meal_role_name import SetEventMealRoleNameCommand
 from cookops.application.event_meal_role_position import SetEventMealRolePositionCommand
 from cookops.application.event_prices import UpdateEventPriceEstimatesCommand
 from cookops.application.events import CreateEventCommand, UpdateEventBaseAttendanceCommand
@@ -571,6 +572,15 @@ class EventMealRolePositionPayload(BaseModel):
     event_meal_role_id: UUID
     event_id: UUID
     position_key: str = Field(min_length=1, max_length=255, pattern=r"^[0-9A-Za-z]+$")
+    logical_operation_id: UUID | None = None
+
+
+class EventMealRoleNamePayload(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    event_meal_role_id: UUID
+    event_id: UUID
+    custom_name: str = Field(min_length=1, max_length=200)
     logical_operation_id: UUID | None = None
 
 
@@ -1147,6 +1157,17 @@ def _push_command(command: PushCommandRequest, organization_id: UUID) -> SyncCom
                 position_key=position_payload.position_key,
                 client_wall_time=command.client_wall_time,
                 logical_operation_id=position_payload.logical_operation_id,
+            )
+        if command.command_kind == "event_meal_role.name":
+            name_payload = EventMealRoleNamePayload.model_validate(command.payload)
+            return SetEventMealRoleNameCommand(
+                mutation_id=command.mutation_id,
+                event_meal_role_id=name_payload.event_meal_role_id,
+                organization_id=organization_id,
+                event_id=name_payload.event_id,
+                custom_name=name_payload.custom_name,
+                client_wall_time=command.client_wall_time,
+                logical_operation_id=name_payload.logical_operation_id,
             )
         if command.command_kind == "event_meal_role.lifecycle":
             lifecycle_payload = EventMealRoleLifecyclePayload.model_validate(command.payload)

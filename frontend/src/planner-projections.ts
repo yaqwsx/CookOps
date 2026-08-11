@@ -4,7 +4,7 @@ import { readVisibleRecords } from "./visible-records";
 export type PlannerRecipe = { id: string; versionId: string; name: string };
 export type PlannerIngredient = { id: string; versionId: string; name: string };
 export type PlannerDay = { id: string; date: string; note: string | null; visible: boolean; retired: boolean };
-export type PlannerRole = { id: string; name: string; position: string; retired: boolean };
+export type PlannerRole = { id: string; name: string; position: string; retired: boolean; custom: boolean };
 export type PlannedRecipe = {
   id: string;
   dayId: string;
@@ -138,6 +138,7 @@ export async function readEventPlanner(
       id: record.entityId,
       position: value(record, "position_key"),
       retired: record.lifecycle === "retired",
+      custom: record.fields.built_in_translation_key === null,
       name:
         value(record, "custom_name") ??
         value(record, "built_in_translation_key"),

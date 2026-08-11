@@ -34,6 +34,10 @@ from cookops.application.event_meal_role_lifecycle import (
     SetEventMealRoleLifecycleCommand,
     set_event_meal_role_lifecycle,
 )
+from cookops.application.event_meal_role_name import (
+    SetEventMealRoleNameCommand,
+    set_event_meal_role_name,
+)
 from cookops.application.event_meal_role_position import (
     SetEventMealRolePositionCommand,
     set_event_meal_role_position,
@@ -763,6 +767,72 @@ def test_member_reorders_an_event_meal_role_once(service_database: ServiceDataba
             select(EventMealRole.position_key).where(EventMealRole.id == command.event_meal_role_id)
         ) == "z9"
     assert accepted.outcome == "accepted"
+
+
+def test_member_renames_a_custom_event_meal_role_once(service_database: ServiceDatabase) -> None:
+    created = CreateEventMealRoleCommand(
+        mutation_id=uuid4(),
+        event_meal_role_id=uuid4(),
+        organization_id=service_database.organization_id,
+        event_id=service_database.event_id,
+        custom_name="Supper",
+        client_wall_time=datetime.now(UTC),
+    )
+    asyncio.run(
+        create_event_meal_role(service_database.sessions, context(service_database), created)
+    )
+    command = SetEventMealRoleNameCommand(
+        mutation_id=uuid4(),
+        event_meal_role_id=created.event_meal_role_id,
+        organization_id=service_database.organization_id,
+        event_id=service_database.event_id,
+        custom_name="Late supper",
+        client_wall_time=datetime(2026, 8, 8, 14, tzinfo=UTC),
+    )
+    accepted = asyncio.run(
+        set_event_meal_role_name(service_database.sessions, context(service_database), command)
+    )
+    assert not accepted.replayed
+    assert asyncio.run(
+        set_event_meal_role_name(service_database.sessions, context(service_database), command)
+    ).replayed
+    stale = replace(
+        command,
+        mutation_id=uuid4(),
+        custom_name="Older supper",
+        client_wall_time=datetime(2026, 8, 8, 13, tzinfo=UTC),
+    )
+    assert asyncio.run(
+        set_event_meal_role_name(service_database.sessions, context(service_database), stale)
+    ).outcome == "partially_superseded"
+    with service_database.sync_engine.connect() as connection:
+        assert connection.scalar(
+            select(EventMealRole.custom_name).where(EventMealRole.id == created.event_meal_role_id)
+        ) == "Late supper"
+        payload = connection.scalar(
+            select(OrganizationChange.payload).where(
+                OrganizationChange.mutation_id == stale.mutation_id
+            )
+        )
+    assert payload is not None
+    assert payload["record"]["custom_name"] == "Late supper"
+    assert payload["record"]["field_clocks"]["custom_name"]["winning_mutation_id"] == str(
+        command.mutation_id
+    )
+    with pytest.raises(ApplicationServiceError, match="validation_failed"):
+        asyncio.run(
+            set_event_meal_role_name(
+                service_database.sessions,
+                context(service_database),
+                replace(
+                    command,
+                    mutation_id=uuid4(),
+                    event_meal_role_id=service_database.event_role_id,
+                    custom_name="Dinner",
+                    client_wall_time=datetime.now(UTC),
+                ),
+            )
+        )
 
 
 def test_member_retires_and_restores_an_event_meal_role(service_database: ServiceDatabase) -> None:
