@@ -7,6 +7,7 @@ import {
   queueShoppingContributionFulfilment,
   queueShoppingManualPurchaseTarget,
   queueShoppingRowFulfilment,
+  queueShoppingStoreSectionOverride,
   replayShoppingOperation,
 } from "./shopping-operations";
 import { readShoppingList, readShoppingLists } from "./shopping-projections";
@@ -794,5 +795,75 @@ describe("offline shopping-list creation", () => {
         }),
       ).rejects.toThrow("shopping_operation");
     await expect(localDb.outbox.count()).resolves.toBe(before);
+  });
+
+  it("queues, clears, and replays a valid active store-section override fail closed", async () => {
+    const record = (entityType: string, entityId: string, fields: Record<string, unknown>, lifecycle: "active" | "retired" = "active") => ({
+      userId: ids.user, organizationId: ids.organization, entityType, entityId,
+      recordSchemaVersion: 1, lifecycle, fields, fieldClocks: {}, immutable: false,
+      updatedAt: "2026-08-07T12:00:00.000Z",
+    });
+    await localDb.canonicalRecords.bulkAdd([
+      record("event", ids.event, { id: ids.event, lifecycle: "active" }),
+      record("shopping_list", ids.list, { id: ids.list, organization_id: ids.organization, event_id: ids.event }),
+      record("shopping_ingredient_row", ids.row, { id: ids.row, organization_id: ids.organization, shopping_list_id: ids.list, store_section_override_id: null }),
+      record("store_section", ids.section, { id: ids.section, organization_id: ids.organization, name: "Produce" }),
+      record("store_section", ids.retiredContribution, { id: ids.retiredContribution, organization_id: ids.organization, name: "Retired" }, "retired"),
+      record("store_section", ids.contribution, { id: ids.contribution, organization_id: ids.user, name: "Foreign" }),
+    ]);
+    const input = { shoppingListId: ids.list, shoppingIngredientRowId: ids.row };
+    await queueShoppingStoreSectionOverride(ids.user, ids.organization, { ...input, storeSectionId: ids.section });
+    const queued = await localDb.outbox.toArray();
+    expect(queued).toHaveLength(1);
+    expect(queued[0]).toMatchObject({ commandType: "shopping_list.set_store_section_override", payload: { shopping_list_id: ids.list, shopping_ingredient_row_id: ids.row, store_section_id: ids.section } });
+    expect((await localDb.canonicalRecords.get([ids.user, ids.organization, "shopping_ingredient_row", ids.row]))?.fields.store_section_override_id).toBeNull();
+    await queueShoppingStoreSectionOverride(ids.user, ids.organization, { ...input, storeSectionId: null });
+    expect((await localDb.optimisticOverlays.get([ids.user, ids.organization, "shopping_ingredient_row", ids.row]))?.fields.store_section_override_id).toBeNull();
+    await expect(queueShoppingStoreSectionOverride(ids.user, ids.organization, { ...input, storeSectionId: ids.retiredContribution })).rejects.toThrow("shopping_operation");
+    await expect(queueShoppingStoreSectionOverride(ids.user, ids.organization, { ...input, storeSectionId: ids.contribution })).rejects.toThrow("shopping_operation");
+    await localDb.optimisticOverlays.clear();
+    await replayShoppingOperation(ids.user, ids.organization, queued[0]);
+    expect((await localDb.optimisticOverlays.get([ids.user, ids.organization, "shopping_ingredient_row", ids.row]))?.fields.store_section_override_id).toBe(ids.section);
+    await localDb.optimisticOverlays.clear();
+    await replayShoppingOperation(ids.user, ids.organization, { ...queued[0], payload: { ...queued[0].payload, unexpected: true } });
+    await expect(localDb.optimisticOverlays.count()).resolves.toBe(0);
+    const section = await localDb.canonicalRecords.get([ids.user, ids.organization, "store_section", ids.section]);
+    if (!section) throw new Error("missing section");
+    await localDb.canonicalRecords.put({ ...section, lifecycle: "retired" });
+    await replayShoppingOperation(ids.user, ids.organization, queued[0]);
+    await expect(localDb.optimisticOverlays.count()).resolves.toBe(0);
+    await localDb.canonicalRecords.put({ ...section, fields: { ...section.fields, organization_id: ids.user } });
+    await replayShoppingOperation(ids.user, ids.organization, queued[0]);
+    await expect(localDb.optimisticOverlays.count()).resolves.toBe(0);
+    await localDb.canonicalRecords.put(section);
+    const canonicalRow = await localDb.canonicalRecords.get([ids.user, ids.organization, "shopping_ingredient_row", ids.row]);
+    if (!canonicalRow) throw new Error("missing row");
+    await localDb.canonicalRecords.put({
+      ...canonicalRow,
+      fieldClocks: {
+        ...canonicalRow.fieldClocks,
+        store_section_override_id: {
+          winning_client_wall_time: "2026-08-07T12:00:00.000002Z",
+          winning_mutation_id: "00000000-0000-0000-0000-000000000001",
+        },
+      },
+    });
+    await replayShoppingOperation(ids.user, ids.organization, {
+      ...queued[0],
+      id: "ffffffff-ffff-ffff-ffff-ffffffffffff",
+      actionAt: "2026-08-07T12:00:00.000001Z",
+    });
+    await expect(localDb.optimisticOverlays.count()).resolves.toBe(0);
+    const event = await localDb.canonicalRecords.get([ids.user, ids.organization, "event", ids.event]);
+    const list = await localDb.canonicalRecords.get([ids.user, ids.organization, "shopping_list", ids.list]);
+    if (!event || !list) throw new Error("missing shopping scope");
+    await localDb.canonicalRecords.put({ ...event, fields: { ...event.fields, lifecycle: "archived" } });
+    await expect(queueShoppingStoreSectionOverride(ids.user, ids.organization, { ...input, storeSectionId: ids.section })).rejects.toThrow("shopping_operation");
+    await localDb.canonicalRecords.put(event);
+    await localDb.canonicalRecords.put({ ...list, lifecycle: "retired" });
+    await expect(queueShoppingStoreSectionOverride(ids.user, ids.organization, { ...input, storeSectionId: ids.section })).rejects.toThrow("shopping_operation");
+    await localDb.canonicalRecords.put(list);
+    await localDb.canonicalRecords.put({ ...canonicalRow, lifecycle: "retired" });
+    await expect(queueShoppingStoreSectionOverride(ids.user, ids.organization, { ...input, storeSectionId: ids.section })).rejects.toThrow("shopping_operation");
   });
 });

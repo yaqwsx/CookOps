@@ -23,6 +23,7 @@ import {
   queueShoppingContributionFulfilment,
   queueShoppingManualPurchaseTarget,
   queueShoppingRowFulfilment,
+  queueShoppingStoreSectionOverride,
 } from "./shopping-operations";
 import {
   readShoppingList,
@@ -215,6 +216,7 @@ function ShoppingDetail({
                   key={row.id}
                   organizationId={organizationId}
                   row={row}
+                  shoppingList={shoppingList}
                   shoppingListId={shoppingList.id}
                   userId={userId}
                 />
@@ -590,12 +592,14 @@ function ShoppingRowControls({
   editable,
   organizationId,
   row,
+  shoppingList,
   shoppingListId,
   userId,
 }: {
   editable: boolean;
   organizationId: string;
   row: ShoppingListProjection["rows"][number];
+  shoppingList: ShoppingListProjection;
   shoppingListId: string;
   userId: string;
 }) {
@@ -605,6 +609,7 @@ function ShoppingRowControls({
   const [manualTarget, setManualTarget] = useState(
     row.manualPurchaseTarget ?? row.target,
   );
+  const [sectionId, setSectionId] = useState(row.storeSectionOverrideId ?? "");
   useEffect(
     () => setAvailableSupply(row.availableSupply),
     [row.availableSupply],
@@ -613,6 +618,7 @@ function ShoppingRowControls({
     () => setManualTarget(row.manualPurchaseTarget ?? row.target),
     [row.manualPurchaseTarget, row.target],
   );
+  useEffect(() => setSectionId(row.storeSectionOverrideId ?? ""), [row.storeSectionOverrideId]);
   const input = { shoppingListId, shoppingIngredientRowId: row.id };
   async function run(work: () => Promise<void>) {
     try {
@@ -691,6 +697,28 @@ function ShoppingRowControls({
               type="number"
               value={manualTarget}
             />
+          </label>
+          <label>
+            {t("shopping.storeSection")}
+            <select
+              onChange={(event) => {
+                const next = event.currentTarget.value;
+                setSectionId(next);
+                if (next !== sectionId)
+                  void run(() =>
+                    queueShoppingStoreSectionOverride(userId, organizationId, {
+                      ...input,
+                      storeSectionId: next || null,
+                    }),
+                  );
+              }}
+              value={sectionId}
+            >
+              <option value="">{t("shopping.defaultStoreSection")}</option>
+              {shoppingList.storeSections.map((section) => (
+                <option key={section.id} value={section.id}>{section.name}</option>
+              ))}
+            </select>
           </label>
           <label className="shopping-row-controls__fulfilled">
             <input

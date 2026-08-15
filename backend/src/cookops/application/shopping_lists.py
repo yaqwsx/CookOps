@@ -2036,6 +2036,17 @@ class SetShoppingManualPurchaseTargetCommand:
 
 
 @dataclass(frozen=True, slots=True)
+class SetShoppingStoreSectionOverrideCommand:
+    mutation_id: UUID
+    organization_id: UUID
+    shopping_list_id: UUID
+    shopping_ingredient_row_id: UUID
+    store_section_id: UUID | None
+    client_wall_time: datetime
+    logical_operation_id: UUID | None = None
+
+
+@dataclass(frozen=True, slots=True)
 class SetShoppingContributionFulfilmentCommand:
     mutation_id: UUID
     organization_id: UUID
@@ -2060,12 +2071,14 @@ class SetShoppingRowFulfilmentCommand:
 ShoppingOperationCommand = (
     SetShoppingAvailableSupplyCommand
     | SetShoppingManualPurchaseTargetCommand
+    | SetShoppingStoreSectionOverrideCommand
     | SetShoppingContributionFulfilmentCommand
     | SetShoppingRowFulfilmentCommand
 )
 _OPERATION_KIND = {
     SetShoppingAvailableSupplyCommand: "shopping_list.set_available_supply",
     SetShoppingManualPurchaseTargetCommand: "shopping_list.set_manual_purchase_target",
+    SetShoppingStoreSectionOverrideCommand: "shopping_list.set_store_section_override",
     SetShoppingContributionFulfilmentCommand: "shopping_list.set_contribution_fulfilment",
     SetShoppingRowFulfilmentCommand: "shopping_list.set_row_fulfilment",
 }
@@ -2090,6 +2103,7 @@ def _operation_kind(command: ShoppingOperationCommand) -> str:
 def _operation_hash(command: ShoppingOperationCommand) -> bytes:
     raw_quantity = getattr(command, "quantity", None)
     raw_fulfilled = getattr(command, "fulfilled", None)
+    raw_section_id = getattr(command, "store_section_id", None)
     value: object
     if isinstance(raw_quantity, Decimal):
         value = (
@@ -2097,6 +2111,8 @@ def _operation_hash(command: ShoppingOperationCommand) -> bytes:
         )
     elif raw_quantity is None and isinstance(command, SetShoppingManualPurchaseTargetCommand):
         value = None
+    elif isinstance(command, SetShoppingStoreSectionOverrideCommand):
+        value = _raw_uuid(raw_section_id) if raw_section_id is not None else None
     elif isinstance(raw_fulfilled, bool):
         value = raw_fulfilled
     else:
@@ -2151,6 +2167,9 @@ def _operation_violations(command: ShoppingOperationCommand) -> tuple[FieldViola
             )
         if isinstance(command, SetShoppingAvailableSupplyCommand) and command.quantity is None:
             violations.append(FieldViolation("quantity", "must_be_nonnegative_finite_decimal"))
+    elif isinstance(command, SetShoppingStoreSectionOverrideCommand):
+        if command.store_section_id is not None and not isinstance(command.store_section_id, UUID):
+            violations.append(FieldViolation("store_section_id", "must_be_uuid_or_null"))
     else:
         if not isinstance(command.fulfilled, bool):
             violations.append(FieldViolation("fulfilled", "must_be_boolean"))
@@ -2581,17 +2600,56 @@ async def _apply_shopping_operation(
                         )
                     )
                 else:
+                    if (
+                        isinstance(command, SetShoppingStoreSectionOverrideCommand)
+                        and command.store_section_id is not None
+                    ):
+                        section = await session.get(
+                            StoreSection, command.store_section_id, with_for_update=True
+                        )
+                        if (
+                            section is None
+                            or section.organization_id != command.organization_id
+                            or section.retired_at is not None
+                        ):
+                            error = _error(
+                                (
+                                    FieldViolation(
+                                        "store_section_id", "not_available_in_organization"
+                                    ),
+                                )
+                            )
+                            session.add(
+                                _operation_mutation(
+                                    command,
+                                    context,
+                                    request_hash=request_hash,
+                                    role=role,
+                                    outcome="rejected",
+                                    payload=_error_payload(error),
+                                )
+                            )
                     records: list[tuple[str, UUID, dict[str, object]]] = []
                     affected: tuple[UUID, ...] = ()
                     outcome: Literal["accepted", "partially_superseded"] = "accepted"
-                    if isinstance(
+                    if error is not None:
+                        pass
+                    elif isinstance(
                         command,
-                        (SetShoppingAvailableSupplyCommand, SetShoppingManualPurchaseTargetCommand),
+                        (
+                            SetShoppingAvailableSupplyCommand,
+                            SetShoppingManualPurchaseTargetCommand,
+                            SetShoppingStoreSectionOverrideCommand,
+                        ),
                     ):
                         field = (
                             "available_supply_quantity"
                             if isinstance(command, SetShoppingAvailableSupplyCommand)
-                            else "manual_purchase_target"
+                            else (
+                                "manual_purchase_target"
+                                if isinstance(command, SetShoppingManualPurchaseTargetCommand)
+                                else "store_section_override_id"
+                            )
                         )
                         clock = await session.scalar(
                             select(FieldClock)
@@ -2610,7 +2668,7 @@ async def _apply_shopping_operation(
                         if wins:
                             if isinstance(command, SetShoppingAvailableSupplyCommand):
                                 row.available_supply_quantity = command.quantity
-                            else:
+                            elif isinstance(command, SetShoppingManualPurchaseTargetCommand):
                                 automatic_value = (
                                     max(
                                         Decimal(0),
@@ -2631,6 +2689,8 @@ async def _apply_shopping_operation(
                                     if command.quantity is not None
                                     else None
                                 )
+                            else:
+                                row.store_section_override_id = command.store_section_id
                             if clock is None:
                                 session.add(
                                     FieldClock(
@@ -2944,6 +3004,14 @@ async def set_shopping_manual_purchase_target(
     session_factory: async_sessionmaker[AsyncSession],
     context: ExecutionContext,
     command: SetShoppingManualPurchaseTargetCommand,
+) -> ShoppingOperationResult:
+    return await _apply_shopping_operation(session_factory, context, command)
+
+
+async def set_shopping_store_section_override(
+    session_factory: async_sessionmaker[AsyncSession],
+    context: ExecutionContext,
+    command: SetShoppingStoreSectionOverrideCommand,
 ) -> ShoppingOperationResult:
     return await _apply_shopping_operation(session_factory, context, command)
 

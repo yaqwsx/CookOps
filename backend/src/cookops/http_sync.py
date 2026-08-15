@@ -69,6 +69,7 @@ from cookops.application.shopping_lists import (
     SetShoppingContributionFulfilmentCommand,
     SetShoppingManualPurchaseTargetCommand,
     SetShoppingRowFulfilmentCommand,
+    SetShoppingStoreSectionOverrideCommand,
     UpdateAdHocShoppingItemCommand,
 )
 from cookops.application.synchronization import (
@@ -358,6 +359,14 @@ class SetShoppingQuantityPayload(BaseModel):
 
 class SetShoppingSupplyPayload(SetShoppingQuantityPayload):
     quantity: Decimal
+
+
+class SetShoppingStoreSectionOverridePayload(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    shopping_list_id: UUID
+    shopping_ingredient_row_id: UUID
+    store_section_id: UUID | None = None
+    logical_operation_id: UUID | None = None
 
 
 class SetShoppingContributionFulfilmentPayload(BaseModel):
@@ -938,6 +947,17 @@ def _push_command(command: PushCommandRequest, organization_id: UUID) -> SyncCom
                 target_payload.quantity,
                 command.client_wall_time,
                 target_payload.logical_operation_id,
+            )
+        if command.command_kind == "shopping_list.set_store_section_override":
+            section_payload = SetShoppingStoreSectionOverridePayload.model_validate(command.payload)
+            return SetShoppingStoreSectionOverrideCommand(
+                command.mutation_id,
+                organization_id,
+                section_payload.shopping_list_id,
+                section_payload.shopping_ingredient_row_id,
+                section_payload.store_section_id,
+                command.client_wall_time,
+                section_payload.logical_operation_id,
             )
         if command.command_kind == "shopping_list.set_contribution_fulfilment":
             fulfilment_payload = SetShoppingContributionFulfilmentPayload.model_validate(

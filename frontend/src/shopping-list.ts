@@ -21,7 +21,7 @@ export type RefreshShoppingListInput = {
 
 type ShoppingCommand = { id: string; actionAt: string; payload: Record<string, unknown> };
 
-function timestampMicros(value: string): bigint | undefined {
+export function timestampMicros(value: string): bigint | undefined {
   const match = /^(.*?)(?:\.(\d+))?(Z|[+-]\d\d:\d\d)$/.exec(value);
   if (!match) return undefined;
   const milliseconds = Date.parse(`${match[1]}${match[3]}`);

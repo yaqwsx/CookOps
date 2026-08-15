@@ -1,5 +1,6 @@
 import { appendOutboxCommand, localDb, type OutboxCommand } from "./local-db";
 import { add, decimal, maxZeroSubtract, print } from "./shopping-projections";
+import { timestampMicros } from "./shopping-list";
 import { readVisibleRecords } from "./visible-records";
 
 const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -7,6 +8,19 @@ const quantity = /^\d+(?:\.\d+)?$/;
 type RowInput = { shoppingListId: string; shoppingIngredientRowId: string };
 type ContributionInput = RowInput & { shoppingContributionId: string };
 let lastActionMilliseconds = 0;
+
+function wins(record: { fieldClocks: Record<string, unknown> }, field: string, id: string, actionAt: string) {
+  const clock = record.fieldClocks[field];
+  if (clock === undefined || clock === null) return true;
+  if (typeof clock !== "object" || Array.isArray(clock)) return false;
+  const value = clock as Record<string, unknown>;
+  const at = value.actionAt ?? value.winning_client_wall_time;
+  const mutation = value.mutationId ?? value.winning_mutation_id;
+  const candidate = timestampMicros(actionAt);
+  const current = typeof at === "string" ? timestampMicros(at) : undefined;
+  return typeof mutation === "string" && candidate !== undefined && current !== undefined &&
+    (candidate > current || (candidate === current && id > mutation));
+}
 
 async function nextActionAt(): Promise<string> {
   const previous = await localDb.outbox.orderBy("createdAt").last();
@@ -58,7 +72,7 @@ async function activeRow(
           list.fields.event_id,
         ])
       : undefined;
-  if (!list || !row || event?.lifecycle !== "active")
+  if (!list || !row || event?.lifecycle !== "active" || event.fields.lifecycle !== "active")
     throw new Error("shopping_operation");
   return { row, list };
 }
@@ -68,11 +82,13 @@ async function queueRow(
   input: RowInput,
   commandType:
     | "shopping_list.set_available_supply"
-    | "shopping_list.set_manual_purchase_target",
+    | "shopping_list.set_manual_purchase_target"
+    | "shopping_list.set_store_section_override",
   quantityValue: string | null,
 ) {
   checkedInput(input);
   if (
+    commandType !== "shopping_list.set_store_section_override" &&
     quantityValue !== null &&
     (!quantity.test(quantityValue) || quantityValue.length > 100)
   )
@@ -90,7 +106,19 @@ async function queueRow(
       const field =
         commandType === "shopping_list.set_available_supply"
           ? "available_supply_quantity"
-          : "manual_purchase_target";
+          : commandType === "shopping_list.set_manual_purchase_target"
+            ? "manual_purchase_target"
+            : "store_section_override_id";
+      if (!wins(row, field, mutationId, actionAt)) throw new Error("shopping_operation");
+      if (commandType === "shopping_list.set_store_section_override" && quantityValue !== null) {
+        const section = (await readVisibleRecords(userId, organizationId, "store_section", true)).find(
+          (record) =>
+            record.entityId === quantityValue &&
+            record.lifecycle === "active" &&
+            record.fields.organization_id === organizationId,
+        );
+        if (!section) throw new Error("shopping_operation");
+      }
       await localDb.optimisticOverlays.put({
         ...row,
         fields: { ...row.fields, [field]: quantityValue },
@@ -102,11 +130,17 @@ async function queueRow(
         userId,
         organizationId,
         commandType,
-        payload: {
-          shopping_list_id: input.shoppingListId,
-          shopping_ingredient_row_id: input.shoppingIngredientRowId,
-          quantity: quantityValue,
-        },
+        payload: commandType === "shopping_list.set_store_section_override"
+          ? {
+              shopping_list_id: input.shoppingListId,
+              shopping_ingredient_row_id: input.shoppingIngredientRowId,
+              store_section_id: quantityValue,
+            }
+          : {
+              shopping_list_id: input.shoppingListId,
+              shopping_ingredient_row_id: input.shoppingIngredientRowId,
+              quantity: quantityValue,
+            },
         actionAt,
         createdAt: actionAt,
         state: "pending",
@@ -138,6 +172,22 @@ export function queueShoppingManualPurchaseTarget(
     input,
     "shopping_list.set_manual_purchase_target",
     input.quantity,
+  );
+}
+
+export function queueShoppingStoreSectionOverride(
+  userId: string,
+  organizationId: string,
+  input: RowInput & { storeSectionId: string | null },
+) {
+  if (input.storeSectionId !== null && !uuid.test(input.storeSectionId))
+    throw new Error("shopping_operation");
+  return queueRow(
+    userId,
+    organizationId,
+    input,
+    "shopping_list.set_store_section_override",
+    input.storeSectionId,
   );
 }
 
@@ -403,20 +453,40 @@ export async function replayShoppingOperation(
   }
   if (typeof rowId !== "string") return;
   const input = { shoppingListId: listId, shoppingIngredientRowId: rowId };
-  if (
+  const sectionOverride =
+    command.commandType === "shopping_list.set_store_section_override" &&
+    Object.keys(payload).length === 3 &&
+    (payload.store_section_id === null ||
+      (typeof payload.store_section_id === "string" && uuid.test(payload.store_section_id)));
+  const quantityOperation =
     (command.commandType === "shopping_list.set_available_supply" ||
       command.commandType === "shopping_list.set_manual_purchase_target") &&
     (typeof payload.quantity === "string" || payload.quantity === null) &&
-    (payload.quantity === null || quantity.test(payload.quantity))
-  ) {
+    (payload.quantity === null || quantity.test(payload.quantity));
+  if (sectionOverride && payload.store_section_id !== null) {
+    const section = (await readVisibleRecords(userId, organizationId, "store_section", true)).find(
+      (record) =>
+        record.entityId === payload.store_section_id &&
+        record.lifecycle === "active" &&
+        record.fields.organization_id === organizationId,
+    );
+    if (!section) return;
+  }
+  if (quantityOperation || sectionOverride) {
     const { row } = await activeRow(userId, organizationId, input);
     const field =
       command.commandType === "shopping_list.set_available_supply"
         ? "available_supply_quantity"
-        : "manual_purchase_target";
+        : command.commandType === "shopping_list.set_manual_purchase_target"
+          ? "manual_purchase_target"
+          : "store_section_override_id";
+    if (!wins(row, field, command.id, command.actionAt)) return;
     await localDb.optimisticOverlays.put({
       ...row,
-      fields: { ...row.fields, [field]: payload.quantity },
+      fields: {
+        ...row.fields,
+        [field]: sectionOverride ? payload.store_section_id : payload.quantity,
+      },
       fieldClocks: {
         ...row.fieldClocks,
         [field]: { mutationId: command.id, actionAt: command.actionAt },

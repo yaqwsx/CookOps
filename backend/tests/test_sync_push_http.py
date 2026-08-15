@@ -12,6 +12,7 @@ from sqlalchemy import insert, select, update
 from test_sync_pull_http import SyncDatabase, _settings, _sign_in
 from test_sync_pull_http import sync_database as _sync_database_fixture
 
+from cookops.http_sync import PushCommandRequest, _push_command
 from cookops.main import create_app
 from cookops.persistence.models import (
     AdHocShoppingItem,
@@ -121,6 +122,13 @@ def _command(
         payload = {
             "shopping_list_id": str(uuid4()),
             "name": "Renamed shopping",
+            **payload,
+        }
+    elif kind == "shopping_list.set_store_section_override":
+        payload = {
+            "shopping_list_id": str(uuid4()),
+            "shopping_ingredient_row_id": str(uuid4()),
+            "store_section_id": str(uuid4()),
             **payload,
         }
     elif kind == "shopping_list.create_ad_hoc_item":
@@ -433,6 +441,8 @@ def _shopping_operation_command(
         values["quantity"] = "1.25"
     elif kind == "shopping_list.set_manual_purchase_target":
         values["quantity"] = None
+    elif kind == "shopping_list.set_store_section_override":
+        values["store_section_id"] = str(uuid4())
     elif kind == "shopping_list.set_row_fulfilment":
         values["fulfilled"] = True
     else:
@@ -603,6 +613,7 @@ def test_push_queues_typed_event_price_refresh_and_rejects_extra_payload(
     [
         ("shopping_list.set_available_supply", {"quantity": 1}),
         ("shopping_list.set_manual_purchase_target", {"quantity": {"bad": "input"}}),
+        ("shopping_list.set_store_section_override", {"store_section_id": 1}),
         ("shopping_list.set_contribution_fulfilment", {"fulfilled": "true"}),
         ("shopping_list.set_row_fulfilment", {"fulfilled": 1}),
     ],
@@ -730,6 +741,151 @@ def test_push_accepts_supply_and_replays_then_pulls_the_authoritative_field_cloc
         record["field_clocks"]["available_supply_quantity"]["winning_mutation_id"]
         == command["mutation_id"]
     )
+
+
+def test_push_sets_clears_and_rejects_scoped_store_section_overrides(
+    sync_database: SyncDatabase,
+) -> None:
+    installation_id = _installation(sync_database)
+    event_id, list_id, revision_id, row_id = uuid4(), uuid4(), uuid4(), uuid4()
+    ingredient_id, version_id = uuid4(), uuid4()
+    valid_section_id, retired_section_id, foreign_section_id = uuid4(), uuid4(), uuid4()
+    with sync_database.engine.begin() as connection:
+        actor_id = connection.scalar(
+            select(OrganizationMembership.user_id).where(
+                OrganizationMembership.organization_id == sync_database.organization_id
+            )
+        )
+        grams_id = connection.scalar(
+            select(UnitDefinition.id).where(
+                UnitDefinition.organization_id.is_(None), UnitDefinition.code == "g"
+            )
+        )
+        assert isinstance(actor_id, UUID) and isinstance(grams_id, UUID)
+        connection.execute(
+            insert(Ingredient).values(
+                id=ingredient_id,
+                organization_id=sync_database.organization_id,
+                current_version_id=version_id,
+                created_by_user_id=actor_id,
+            )
+        )
+        connection.execute(
+            insert(IngredientVersion).values(
+                id=version_id,
+                organization_id=sync_database.organization_id,
+                ingredient_id=ingredient_id,
+                name="Tomatoes",
+                normalized_name="tomatoes",
+                canonical_unit_id=grams_id,
+                mass_per_canonical_quantity=Decimal("1"),
+                published_by_user_id=actor_id,
+            )
+        )
+        connection.execute(
+            insert(StoreSection),
+            [
+                {
+                    "id": valid_section_id,
+                    "organization_id": sync_database.organization_id,
+                    "name": "Produce",
+                    "normalized_name": "produce",
+                    "position_key": "a",
+                    "created_by_user_id": actor_id,
+                    "retired_at": None,
+                    "retired_by_user_id": None,
+                },
+                {
+                    "id": retired_section_id,
+                    "organization_id": sync_database.organization_id,
+                    "name": "Retired",
+                    "normalized_name": "retired",
+                    "position_key": "b",
+                    "created_by_user_id": actor_id,
+                    "retired_at": datetime.now(UTC),
+                    "retired_by_user_id": actor_id,
+                },
+                {
+                    "id": foreign_section_id,
+                    "organization_id": sync_database.other_organization_id,
+                    "name": "Foreign",
+                    "normalized_name": "foreign",
+                    "position_key": "a",
+                    "created_by_user_id": actor_id,
+                    "retired_at": None,
+                    "retired_by_user_id": None,
+                },
+            ],
+        )
+    with TestClient(create_app(_settings()), base_url="https://testserver") as client:
+        _sign_in(client, "dummy-member")
+        setup = client.post(
+            "/api/v1/sync/push",
+            json=_body(
+                sync_database,
+                installation_id,
+                [
+                    _command(mutation_id=uuid4(), event_id=event_id),
+                    _command(
+                        mutation_id=uuid4(),
+                        event_id=event_id,
+                        kind="shopping_list.create",
+                        shopping_list_id=str(list_id),
+                        generation_revision_id=str(revision_id),
+                    ),
+                ],
+            ),
+        )
+        assert [item["status"] for item in setup.json()["outcomes"]] == ["accepted", "accepted"]
+        with sync_database.engine.begin() as connection:
+            connection.execute(
+                insert(ShoppingIngredientRow).values(
+                    id=row_id,
+                    organization_id=sync_database.organization_id,
+                    event_id=event_id,
+                    shopping_list_id=list_id,
+                    ingredient_id=ingredient_id,
+                    ingredient_name="Tomatoes",
+                    calculation_unit_id=grams_id,
+                    created_by_user_id=actor_id,
+                )
+            )
+        def command(section_id: UUID | None) -> dict[str, object]:
+            return _shopping_operation_command(
+                mutation_id=uuid4(),
+                kind="shopping_list.set_store_section_override",
+                shopping_list_id=str(list_id),
+                shopping_ingredient_row_id=str(row_id),
+                store_section_id=str(section_id) if section_id else None,
+            )
+
+        valid = command(valid_section_id)
+        parsed_valid = _push_command(
+            PushCommandRequest.model_validate(valid), sync_database.organization_id
+        )
+        assert getattr(parsed_valid, "store_section_id", None) == valid_section_id
+        valid_body = _body(sync_database, installation_id, [valid])
+        assert client.post("/api/v1/sync/push", json=valid_body).json()["outcomes"][0]["status"] == "accepted"
+        assert client.post("/api/v1/sync/push", json=valid_body).json()["outcomes"][0]["replayed"]
+        clear = command(None)
+        assert client.post(
+            "/api/v1/sync/push", json=_body(sync_database, installation_id, [clear])
+        ).json()["outcomes"][0]["status"] == "accepted"
+        for rejected in (command(foreign_section_id), command(retired_section_id)):
+            outcome = client.post(
+                "/api/v1/sync/push", json=_body(sync_database, installation_id, [rejected])
+            ).json()["outcomes"][0]
+            assert outcome["status"] == "rejected"
+            assert outcome["error"]["code"] == "validation_failed"
+        archive = _command(mutation_id=uuid4(), event_id=event_id, kind="event.lifecycle")
+        assert client.post(
+            "/api/v1/sync/push", json=_body(sync_database, installation_id, [archive])
+        ).json()["outcomes"][0]["status"] == "accepted"
+        archived = client.post(
+            "/api/v1/sync/push", json=_body(sync_database, installation_id, [command(valid_section_id)])
+        ).json()["outcomes"][0]
+    assert archived["status"] == "rejected"
+    assert archived["error"]["code"] == "archived_event"
 
 
 def test_push_applies_ordered_commands_and_replays_a_retained_outcome(

@@ -192,6 +192,7 @@ from cookops.application.shopping_lists import (
     SetShoppingContributionFulfilmentCommand,
     SetShoppingManualPurchaseTargetCommand,
     SetShoppingRowFulfilmentCommand,
+    SetShoppingStoreSectionOverrideCommand,
     ShoppingOperationResult,
     UpdateAdHocShoppingItemCommand,
     UpdateAdHocShoppingItemResult,
@@ -211,6 +212,7 @@ from cookops.application.shopping_lists import (
     set_shopping_contribution_fulfilment,
     set_shopping_manual_purchase_target,
     set_shopping_row_fulfilment,
+    set_shopping_store_section_override,
     update_ad_hoc_shopping_item,
 )
 from cookops.persistence.models import (
@@ -377,6 +379,7 @@ SyncCommand = (
     | SetScheduledIngredientOverrideCommand
     | SetShoppingAvailableSupplyCommand
     | SetShoppingManualPurchaseTargetCommand
+    | SetShoppingStoreSectionOverrideCommand
     | SetShoppingContributionFulfilmentCommand
     | SetShoppingRowFulfilmentCommand
     | CreateAdHocShoppingItemCommand
@@ -423,6 +426,7 @@ def _command_kind(
         | SetScheduledIngredientOverrideCommand
         | SetShoppingAvailableSupplyCommand
         | SetShoppingManualPurchaseTargetCommand
+        | SetShoppingStoreSectionOverrideCommand
         | SetShoppingContributionFulfilmentCommand
         | SetShoppingRowFulfilmentCommand
         | CreateAdHocShoppingItemCommand
@@ -493,6 +497,8 @@ def _command_kind(
         return "shopping_list.set_available_supply"
     if isinstance(command, SetShoppingManualPurchaseTargetCommand):
         return "shopping_list.set_manual_purchase_target"
+    if isinstance(command, SetShoppingStoreSectionOverrideCommand):
+        return "shopping_list.set_store_section_override"
     if isinstance(command, SetShoppingContributionFulfilmentCommand):
         return "shopping_list.set_contribution_fulfilment"
     if isinstance(command, SetShoppingRowFulfilmentCommand):
@@ -909,6 +915,10 @@ class SynchronizationCommandService:
                 )
             elif isinstance(command, SetShoppingManualPurchaseTargetCommand):
                 result = await set_shopping_manual_purchase_target(
+                    self._session_factory, context, command
+                )
+            elif isinstance(command, SetShoppingStoreSectionOverrideCommand):
+                result = await set_shopping_store_section_override(
                     self._session_factory, context, command
                 )
             elif isinstance(command, SetShoppingContributionFulfilmentCommand):

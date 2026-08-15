@@ -13,6 +13,7 @@ export type ShoppingListSummary = {
 export type ShoppingRow = {
   id: string;
   ingredientName: string;
+  storeSectionOverrideId: string | null;
   sectionName: string | null;
   availableSupply: string;
   manualPurchaseTarget: string | null;
@@ -378,6 +379,7 @@ export async function readShoppingList(
         return {
           id: row.entityId,
           ingredientName: value(row, "ingredient_name"),
+          storeSectionOverrideId: override ?? null,
           sectionName:
             (override && sectionNames.get(override)) ??
             value(row, "default_store_section_name") ??
