@@ -881,6 +881,9 @@ export function EventPlanner({
                           {item.name} ·{" "}
                           {t("planner.diners", { count: item.dinerCount })}
                           {item.retired ? ` · ${t("planner.retired")}` : null}
+                          {item.catalogUpdateAvailable ? (
+                            <span role="status"> · {t("planner.catalogUpdateAvailable")}</span>
+                          ) : null}
                           {planner.lifecycle === "active" ? <button onClick={() => void queueScheduledRecipeLifecycle(userId, organizationId, { scheduledRecipeId: item.id, eventId, operation: item.retired ? "restore" : "retire" })} type="button">{t(item.retired ? "planner.restoreRecipe" : "planner.retireRecipe")}</button> : null}
                           {!item.retired && <>
                           <MoveRecipe

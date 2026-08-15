@@ -36,6 +36,7 @@ vi.mock("./recipe-catalog", () => ({
           },
         ],
         hasRetiredIngredientReference: true,
+        catalogUpdateAvailable: true,
         recipeTagIds: [],
       },
     ],
@@ -82,6 +83,7 @@ describe("recipe retired ingredient warning", () => {
     expect(await screen.findByRole("alert")).toHaveTextContent(
       "Tento recept obsahuje vyřazenou surovinu",
     );
+    expect(screen.getByText("Je dostupná aktualizace verzí surovin v katalogu.")).toBeVisible();
   });
 
   it("keeps historical options readable but excludes them from new lines", async () => {

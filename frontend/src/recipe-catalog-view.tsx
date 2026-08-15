@@ -498,6 +498,9 @@ export function RecipeCatalog({
               {recipe.hasRetiredIngredientReference ? (
                 <p role="alert">{t("recipesCatalog.retiredIngredientWarning")}</p>
               ) : null}
+              {recipe.catalogUpdateAvailable ? (
+                <p role="status">{t("recipesCatalog.catalogUpdateAvailable")}</p>
+              ) : null}
               <p>
                 {t("recipesCatalog.scaling", {
                   amount: recipe.baseScalingAmount,

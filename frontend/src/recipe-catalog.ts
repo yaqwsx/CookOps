@@ -22,6 +22,7 @@ export type CatalogRecipe = {
     note: string;
   }[];
   hasRetiredIngredientReference: boolean;
+  catalogUpdateAvailable: boolean;
   recipeTagIds: string[];
 };
 type ValidCatalogRecipeCandidate = CatalogRecipe & { versionId: string };
@@ -94,6 +95,29 @@ export async function readRecipeCatalog(
       )
       .map((record) => record.entityId),
   );
+  const currentIngredientVersionByIngredientId = new Map(
+    ingredientRootRecords
+      .filter(
+        (record) =>
+          record.lifecycle === "active" &&
+          uuid.test(record.entityId) &&
+          text(record, "id") === record.entityId &&
+          text(record, "organization_id") === organizationId,
+      )
+      .map((record) => [record.entityId, text(record, "current_version_id")]),
+  );
+  const ingredientVersionIngredientIds = new Map(
+    ingredientVersionRecords
+      .filter(
+        (record) =>
+          record.immutable === true &&
+          uuid.test(record.entityId) &&
+          text(record, "id") === record.entityId &&
+          text(record, "organization_id") === organizationId &&
+          uuid.test(text(record, "ingredient_id") ?? ""),
+      )
+      .map((record) => [record.entityId, text(record, "ingredient_id") as string]),
+  );
   const versions = new Map(
     versionRecords
       .filter(
@@ -127,13 +151,15 @@ export async function readRecipeCatalog(
       const ingredientLines = version
         ? lineRecords
             .filter(
-              (line) =>
-                text(line, "recipe_version_id") === versionId &&
-                typeof text(line, "ingredient_version_id") === "string" &&
-                decimal.test(text(line, "base_quantity") ?? "") &&
-                (line.fields.scaling_behavior === "proportional" ||
-                  line.fields.scaling_behavior === "fixed") &&
-                typeof line.fields.include_in_portion_weight === "boolean",
+                (line) =>
+                  (text(line, "organization_id") === undefined ||
+                    text(line, "organization_id") === organizationId) &&
+                  text(line, "recipe_version_id") === versionId &&
+                  typeof text(line, "ingredient_version_id") === "string" &&
+                  decimal.test(text(line, "base_quantity") ?? "") &&
+                  (line.fields.scaling_behavior === "proportional" ||
+                    line.fields.scaling_behavior === "fixed") &&
+                  typeof line.fields.include_in_portion_weight === "boolean",
             )
             .map((line) => ({
               id: line.entityId,
@@ -150,6 +176,18 @@ export async function readRecipeCatalog(
       const hasRetiredIngredientReference = ingredientLines.some((line) =>
         retiredIngredientVersionIds.has(line.ingredientVersionId),
       );
+      const catalogUpdateAvailable = ingredientLines.some((line) => {
+        const ingredientId = ingredientVersionIngredientIds.get(line.ingredientVersionId);
+        const currentVersionId = ingredientId
+          ? currentIngredientVersionByIngredientId.get(ingredientId)
+          : undefined;
+        return Boolean(
+          ingredientId &&
+            currentVersionId &&
+            currentVersionId !== line.ingredientVersionId &&
+            ingredientVersionIngredientIds.get(currentVersionId) === ingredientId,
+        );
+      });
       const recipeTagIds = version
         ? versionTagRecords
             .filter((tag) => text(tag, "recipe_version_id") === versionId)
@@ -166,6 +204,7 @@ export async function readRecipeCatalog(
         description,
         ingredientLines,
         hasRetiredIngredientReference,
+        catalogUpdateAvailable,
         recipeTagIds,
       };
     })

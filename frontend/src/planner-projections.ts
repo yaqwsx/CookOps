@@ -15,6 +15,7 @@ export type PlannedRecipe = {
   selectedScaleAmount: string;
   position: string;
   retired: boolean;
+  catalogUpdateAvailable: boolean;
   lines: { id: string; quantity: string; ingredientId?: string }[];
   localAddedIngredients: { id: string; name: string; quantity: string }[];
 };
@@ -53,6 +54,36 @@ function belongsToOrganization(
   return owner === undefined || owner === organizationId;
 }
 
+function hasCatalogIngredientUpdate(
+  line: CanonicalRecord,
+  ingredientVersions: Map<string, CanonicalRecord>,
+  currentVersionByIngredientId: Map<string, string | undefined>,
+  organizationId: string,
+): boolean {
+  const ingredientVersionId = value(line, "ingredient_version_id");
+  const version = ingredientVersionId
+    ? ingredientVersions.get(ingredientVersionId)
+    : undefined;
+  const ingredientId = version ? value(version, "ingredient_id") : undefined;
+  const currentVersionId = ingredientId
+    ? currentVersionByIngredientId.get(ingredientId)
+    : undefined;
+  const currentVersion = currentVersionId
+    ? ingredientVersions.get(currentVersionId)
+    : undefined;
+  return Boolean(
+    version?.immutable === true &&
+      value(version, "organization_id") === organizationId &&
+      ingredientId &&
+      uuid.test(ingredientId) &&
+      currentVersionId &&
+      currentVersionId !== ingredientVersionId &&
+      currentVersion?.immutable === true &&
+      value(currentVersion, "organization_id") === organizationId &&
+      value(currentVersion, "ingredient_id") === ingredientId,
+  );
+}
+
 /** Read only valid cached records, keeping malformed remote data out of the UI and outbox. */
 export async function readEventPlanner(
   userId: string,
@@ -79,7 +110,7 @@ export async function readEventPlanner(
     readVisibleRecords(userId, organizationId, "recipe_version"),
     readVisibleRecords(userId, organizationId, "recipe_ingredient_line"),
     readVisibleRecords(userId, organizationId, "scheduled_recipe", true),
-    readVisibleRecords(userId, organizationId, "ingredient"),
+    readVisibleRecords(userId, organizationId, "ingredient", true),
     readVisibleRecords(userId, organizationId, "ingredient_version"),
     readVisibleRecords(userId, organizationId, "scheduled_ingredient_override"),
   ]);
@@ -189,13 +220,39 @@ export async function readEventPlanner(
     ingredientVersionRecords
       .filter(
         (record) =>
-          hasId(record) && belongsToOrganization(record, organizationId),
+          hasId(record) &&
+          record.immutable === true &&
+          value(record, "organization_id") === organizationId &&
+          uuid.test(value(record, "ingredient_id") ?? ""),
       )
       .map((record) => [record.entityId, record]),
   );
+  const currentIngredientVersionByIngredientId = new Map(
+    ingredientRecords
+      .filter(
+        (record) =>
+          record.lifecycle === "active" &&
+          hasId(record) &&
+          value(record, "organization_id") === organizationId &&
+          (() => {
+            const versionId = value(record, "current_version_id");
+            const version = versionId ? ingredientVersions.get(versionId) : undefined;
+            return Boolean(
+              versionId &&
+                version?.immutable === true &&
+                value(version, "organization_id") === organizationId &&
+                value(version, "ingredient_id") === record.entityId,
+            );
+          })(),
+      )
+      .map((record) => [record.entityId, value(record, "current_version_id")]),
+  );
   const ingredients = ingredientRecords
     .filter(
-      (record) => hasId(record) && belongsToOrganization(record, organizationId),
+      (record) =>
+        record.lifecycle === "active" &&
+        hasId(record) &&
+        belongsToOrganization(record, organizationId),
     )
     .map((record) => {
       const versionId = value(record, "current_version_id");
@@ -221,6 +278,23 @@ export async function readEventPlanner(
       (left, right) =>
         left.name.localeCompare(right.name) || left.id.localeCompare(right.id),
     );
+  const catalogUpdateRecipeVersionIds = new Set(
+    lineRecords
+      .filter((line) => {
+        if (!belongsToOrganization(line, organizationId)) return false;
+        return Boolean(
+          value(line, "recipe_version_id") &&
+            hasCatalogIngredientUpdate(
+              line,
+              ingredientVersions,
+              currentIngredientVersionByIngredientId,
+              organizationId,
+            ),
+        );
+      })
+      .map((line) => value(line, "recipe_version_id"))
+      .filter((id): id is string => Boolean(id)),
+  );
   const lines = new Map<
     string,
     { id: string; quantity: string; ingredientId?: string }[]
@@ -275,6 +349,9 @@ export async function readEventPlanner(
       dayId: value(record, "event_day_id"),
       roleId: value(record, "event_meal_role_id"),
       name: names.get(value(record, "recipe_id") ?? ""),
+      catalogUpdateAvailable: catalogUpdateRecipeVersionIds.has(
+        value(record, "recipe_version_id") ?? "",
+      ),
       lines: lines.get(value(record, "recipe_version_id") ?? "") ?? [],
       localAddedIngredients: localAddedIngredients.get(record.entityId) ?? [],
       dinerCount: record.fields.diner_count,

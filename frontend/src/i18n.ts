@@ -154,6 +154,8 @@ const resources = {
         retired: "Vyřazený recept",
         retiredIngredientWarning:
           "Tento recept obsahuje vyřazenou surovinu. Historická verze zůstává čitelná.",
+        catalogUpdateAvailable:
+          "Je dostupná aktualizace verzí surovin v katalogu.",
         retire: "Vyřadit recept",
         restore: "Obnovit recept",
         errors: {
@@ -231,6 +233,8 @@ const resources = {
         retireDay: "Vyřadit den",
         hiddenDays: "Skryté dny",
         emptyRole: "Pro tento chod zatím není naplánovaný recept.",
+        catalogUpdateAvailable:
+          "Je dostupná aktualizace verzí surovin v katalogu.",
         diners: "Strávníci: {{count}}",
         retired: "vyřazeno",
         retireRecipe: "Vyřadit recept",
@@ -561,6 +565,8 @@ const resources = {
         retired: "Retired recipe",
         retiredIngredientWarning:
           "This recipe references a retired ingredient. The historical version remains readable.",
+        catalogUpdateAvailable:
+          "An ingredient version update is available in the catalog.",
         retire: "Retire recipe",
         restore: "Restore recipe",
         errors: {
@@ -641,6 +647,8 @@ const resources = {
         retireDay: "Retire day",
         hiddenDays: "Hidden days",
         emptyRole: "No recipe is scheduled for this meal role yet.",
+        catalogUpdateAvailable:
+          "An ingredient version update is available in the catalog.",
         diners: "Diners: {{count}}",
         retired: "retired",
         retireRecipe: "Retire recipe",
