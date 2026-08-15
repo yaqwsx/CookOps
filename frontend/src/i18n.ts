@@ -152,6 +152,8 @@ const resources = {
         scaling: "Základ: {{amount}}",
         showRetired: "Zobrazit vyřazené recepty",
         retired: "Vyřazený recept",
+        retiredIngredientWarning:
+          "Tento recept obsahuje vyřazenou surovinu. Historická verze zůstává čitelná.",
         retire: "Vyřadit recept",
         restore: "Obnovit recept",
         errors: {
@@ -557,6 +559,8 @@ const resources = {
         scaling: "Base: {{amount}}",
         showRetired: "Show retired recipes",
         retired: "Retired recipe",
+        retiredIngredientWarning:
+          "This recipe references a retired ingredient. The historical version remains readable.",
         retire: "Retire recipe",
         restore: "Restore recipe",
         errors: {

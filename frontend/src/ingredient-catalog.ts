@@ -8,6 +8,7 @@ export type CatalogIngredient = {
   canonicalUnitName: string;
   massPerCanonicalQuantity: string;
   retired?: boolean;
+  historical?: boolean;
 };
 export type IngredientUnit = {
   id: string;

@@ -21,6 +21,7 @@ export type CatalogRecipe = {
     includeInPortionWeight: boolean;
     note: string;
   }[];
+  hasRetiredIngredientReference: boolean;
   recipeTagIds: string[];
 };
 type ValidCatalogRecipeCandidate = CatalogRecipe & { versionId: string };
@@ -57,15 +58,42 @@ export async function readRecipeCatalog(
     ingredientCatalog,
     lineRecords,
     versionTagRecords,
+    ingredientRootRecords,
+    ingredientVersionRecords,
   ] = await Promise.all([
     readVisibleRecords(userId, organizationId, "recipe", includeRetired),
     readVisibleRecords(userId, organizationId, "recipe_version"),
     readVisibleRecords(userId, organizationId, "unit_definition"),
     readVisibleRecords(userId, organizationId, "recipe_tag"),
-    readIngredientCatalog(userId, organizationId),
+    readIngredientCatalog(userId, organizationId, true),
     readVisibleRecords(userId, organizationId, "recipe_ingredient_line"),
     readVisibleRecords(userId, organizationId, "recipe_version_tag"),
+    readVisibleRecords(userId, organizationId, "ingredient", true),
+    readVisibleRecords(userId, organizationId, "ingredient_version"),
   ]);
+  const retiredIngredientIds = new Set(
+    ingredientRootRecords
+      .filter(
+        (record) =>
+          uuid.test(record.entityId) &&
+          text(record, "id") === record.entityId &&
+          text(record, "organization_id") === organizationId &&
+          record.lifecycle === "retired",
+      )
+      .map((record) => record.entityId),
+  );
+  const retiredIngredientVersionIds = new Set(
+    ingredientVersionRecords
+      .filter(
+        (record) =>
+          record.immutable === true &&
+          uuid.test(record.entityId) &&
+          text(record, "id") === record.entityId &&
+          text(record, "organization_id") === organizationId &&
+          retiredIngredientIds.has(text(record, "ingredient_id") ?? ""),
+      )
+      .map((record) => record.entityId),
+  );
   const versions = new Map(
     versionRecords
       .filter(
@@ -119,6 +147,9 @@ export async function readRecipeCatalog(
               note: text(line, "note") ?? "",
             }))
         : [];
+      const hasRetiredIngredientReference = ingredientLines.some((line) =>
+        retiredIngredientVersionIds.has(line.ingredientVersionId),
+      );
       const recipeTagIds = version
         ? versionTagRecords
             .filter((tag) => text(tag, "recipe_version_id") === versionId)
@@ -134,6 +165,7 @@ export async function readRecipeCatalog(
         baseScalingAmount,
         description,
         ingredientLines,
+        hasRetiredIngredientReference,
         recipeTagIds,
       };
     })
@@ -184,10 +216,59 @@ export async function readRecipeCatalog(
     .filter((tag): tag is { id: string; name: string } =>
       Boolean(uuid.test(tag.id) && tag.name),
     );
+  const currentIngredientVersionIds = new Set(
+    ingredientCatalog.ingredients.map((ingredient) => ingredient.versionId),
+  );
+  const ingredientRoots = new Map(
+    ingredientRootRecords
+      .filter(
+        (record) =>
+          uuid.test(record.entityId) &&
+          text(record, "id") === record.entityId &&
+          text(record, "organization_id") === organizationId,
+      )
+      .map((record) => [record.entityId, record]),
+  );
+  const referencedVersionIds = new Set(
+    recipes.flatMap((recipe) =>
+      recipe.ingredientLines.map((line) => line.ingredientVersionId),
+    ),
+  );
+  const historicalIngredients = ingredientVersionRecords
+    .filter((record) => {
+      const ingredientId = text(record, "ingredient_id");
+      return Boolean(
+        record.immutable === true &&
+          uuid.test(record.entityId) &&
+          text(record, "id") === record.entityId &&
+          text(record, "organization_id") === organizationId &&
+          ingredientId &&
+          ingredientRoots.has(ingredientId) &&
+          referencedVersionIds.has(record.entityId) &&
+          !currentIngredientVersionIds.has(record.entityId) &&
+          text(record, "name") &&
+          text(record, "canonical_unit_id") &&
+          decimal.test(text(record, "mass_per_canonical_quantity") ?? ""),
+      );
+    })
+    .map((record) => {
+      const ingredientId = text(record, "ingredient_id") ?? "";
+      const root = ingredientRoots.get(ingredientId);
+      return {
+        id: ingredientId,
+        versionId: record.entityId,
+        name: text(record, "name") ?? "",
+        canonicalUnitName: text(record, "canonical_unit_id") ?? "",
+        massPerCanonicalQuantity:
+          text(record, "mass_per_canonical_quantity") ?? "",
+        historical: true,
+        ...(root?.lifecycle === "retired" ? { retired: true } : {}),
+      } satisfies CatalogIngredient;
+    });
   return {
     recipes,
     scalingUnits,
-    ingredients: ingredientCatalog.ingredients,
+    ingredients: [...ingredientCatalog.ingredients, ...historicalIngredients],
     tags,
   };
 }

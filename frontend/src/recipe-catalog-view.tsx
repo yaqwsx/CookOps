@@ -160,6 +160,10 @@ function RecipeEditor({
   userId: string;
 }) {
   const { t } = useTranslation();
+  const activeIngredients = catalog.ingredients.filter(
+    (ingredient) =>
+      ingredient.retired !== true && ingredient.historical !== true,
+  );
   const [open, setOpen] = useState(false);
   const [input, setInput] = useState<RecipeVersionInput>(() => ({
     recipeId: recipe.id,
@@ -262,11 +266,20 @@ function RecipeEditor({
               }
               value={line.ingredientVersionId}
             >
-              {catalog.ingredients.map((ingredient) => (
-                <option key={ingredient.id} value={ingredient.versionId}>
-                  {ingredient.name}
-                </option>
-              ))}
+              {catalog.ingredients
+                .filter(
+                  (ingredient) =>
+                    ingredient.retired !== true ||
+                    ingredient.versionId === line.ingredientVersionId,
+                )
+                .map((ingredient) => (
+                  <option
+                    key={ingredient.versionId}
+                    value={ingredient.versionId}
+                  >
+                    {ingredient.name}
+                  </option>
+                ))}
             </select>
             <input
               aria-label={t("recipesCatalog.quantity")}
@@ -301,7 +314,7 @@ function RecipeEditor({
         ))}
       </fieldset>
       <button
-        disabled={!catalog.ingredients.length}
+        disabled={!activeIngredients.length}
         onClick={() =>
           setInput((current) => ({
             ...current,
@@ -309,7 +322,7 @@ function RecipeEditor({
               ...current.ingredientLines,
               {
                 id: crypto.randomUUID(),
-                ingredientVersionId: catalog.ingredients[0]?.versionId ?? "",
+                ingredientVersionId: activeIngredients[0]?.versionId ?? "",
                 baseQuantity: "0",
                 scalingBehavior: "proportional",
                 includeInPortionWeight: true,
@@ -482,6 +495,9 @@ export function RecipeCatalog({
             <li key={recipe.id}>
               <h3>{recipe.name}</h3>
               {recipe.retired ? <p>{t("recipesCatalog.retired")}</p> : null}
+              {recipe.hasRetiredIngredientReference ? (
+                <p role="alert">{t("recipesCatalog.retiredIngredientWarning")}</p>
+              ) : null}
               <p>
                 {t("recipesCatalog.scaling", {
                   amount: recipe.baseScalingAmount,

@@ -11,6 +11,10 @@ const userId = "a6a58bd6-214e-49af-8fae-e5f974bf8e08";
 const organizationId = "5ce17d2f-8365-4b1f-a80b-34d10425d51c";
 const recipeId = "6ce17d2f-8365-4b1f-a80b-34d10425d51c";
 const versionId = "7ce17d2f-8365-4b1f-a80b-34d10425d51c";
+const ingredientId = "9ce17d2f-8365-4b1f-a80b-34d10425d51c";
+const ingredientVersionId = "ace17d2f-8365-4b1f-a80b-34d10425d51c";
+const newerIngredientVersionId = "bde17d2f-8365-4b1f-a80b-34d10425d51c";
+const unitId = "bce17d2f-8365-4b1f-a80b-34d10425d51c";
 
 beforeEach(async () => {
   await Promise.all([
@@ -60,6 +64,163 @@ beforeEach(async () => {
 });
 
 describe("offline recipe lifecycle", () => {
+  async function addIngredient(retired: boolean, organization = organizationId) {
+    await localDb.canonicalRecords.bulkAdd([
+      {
+        userId,
+        organizationId: organization,
+        entityType: "unit_definition",
+        entityId: unitId,
+        recordSchemaVersion: 1,
+        lifecycle: "active",
+        fields: {
+          id: unitId,
+          organization_id: organization,
+          code: "g",
+          dimension: "mass",
+          base_unit_factor: "1",
+          allows_ingredient_quantity: true,
+        },
+        fieldClocks: {},
+        immutable: true,
+        updatedAt: "2026-08-10T12:00:00.000000Z",
+      },
+      {
+        userId,
+        organizationId: organization,
+        entityType: "ingredient",
+        entityId: ingredientId,
+        recordSchemaVersion: 1,
+        lifecycle: retired ? "retired" : "active",
+        fields: {
+          id: ingredientId,
+          organization_id: organization,
+          current_version_id: ingredientVersionId,
+          retired_at: retired ? "2026-08-10T12:00:00.000000Z" : null,
+        },
+        fieldClocks: {},
+        immutable: false,
+        updatedAt: "2026-08-10T12:00:00.000000Z",
+      },
+      {
+        userId,
+        organizationId: organization,
+        entityType: "ingredient_version",
+        entityId: ingredientVersionId,
+        recordSchemaVersion: 1,
+        lifecycle: "active",
+        fields: {
+          id: ingredientVersionId,
+          organization_id: organization,
+          ingredient_id: ingredientId,
+          name: "Carrot",
+          canonical_unit_id: unitId,
+          mass_per_canonical_quantity: "1",
+        },
+        fieldClocks: {},
+        immutable: true,
+        updatedAt: "2026-08-10T12:00:00.000000Z",
+      },
+      {
+        userId,
+        organizationId,
+        entityType: "recipe_ingredient_line",
+        entityId: crypto.randomUUID(),
+        recordSchemaVersion: 1,
+        lifecycle: "active",
+        fields: {
+          recipe_version_id: versionId,
+          ingredient_version_id: ingredientVersionId,
+          base_quantity: "1",
+          scaling_behavior: "proportional",
+          include_in_portion_weight: true,
+          note: "",
+        },
+        fieldClocks: {},
+        immutable: true,
+        updatedAt: "2026-08-10T12:00:00.000000Z",
+      },
+    ]);
+  }
+
+  it("warns only when the current recipe version references a retired ingredient", async () => {
+    await addIngredient(true);
+    await expect(readRecipeCatalog(userId, organizationId)).resolves.toMatchObject({
+      recipes: [expect.objectContaining({ hasRetiredIngredientReference: true })],
+    });
+
+    await localDb.canonicalRecords.update(
+      [userId, organizationId, "ingredient", ingredientId],
+      { lifecycle: "active", fields: { retired_at: null } },
+    );
+    await expect(readRecipeCatalog(userId, organizationId)).resolves.toMatchObject({
+      recipes: [expect.objectContaining({ hasRetiredIngredientReference: false })],
+    });
+  });
+
+  it("warns for an old immutable version retained by a retired ingredient", async () => {
+    await addIngredient(true);
+    await localDb.canonicalRecords.update(
+      [userId, organizationId, "ingredient", ingredientId],
+      {
+        fields: {
+          id: ingredientId,
+          organization_id: organizationId,
+          current_version_id: newerIngredientVersionId,
+          retired_at: "2026-08-10T12:00:00.000000Z",
+        },
+      },
+    );
+    await localDb.canonicalRecords.add({
+      userId,
+      organizationId,
+      entityType: "ingredient_version",
+      entityId: newerIngredientVersionId,
+      recordSchemaVersion: 1,
+      lifecycle: "active",
+      fields: {
+        id: newerIngredientVersionId,
+        organization_id: organizationId,
+        ingredient_id: ingredientId,
+        name: "Carrot updated",
+        canonical_unit_id: unitId,
+        mass_per_canonical_quantity: "1",
+      },
+      fieldClocks: {},
+      immutable: true,
+      updatedAt: "2026-08-10T12:00:00.000000Z",
+    });
+    await expect(readRecipeCatalog(userId, organizationId)).resolves.toMatchObject({
+      recipes: [expect.objectContaining({ hasRetiredIngredientReference: true })],
+      ingredients: expect.arrayContaining([
+        expect.objectContaining({
+          versionId: ingredientVersionId,
+          historical: true,
+          retired: true,
+        }),
+      ]),
+    });
+  });
+
+  it("fails closed for wrong-organization and invalid ingredient records", async () => {
+    await addIngredient(true, "cce17d2f-8365-4b1f-a80b-34d10425d51c");
+    await localDb.canonicalRecords.add({
+      userId,
+      organizationId,
+      entityType: "ingredient",
+      entityId: "dce17d2f-8365-4b1f-a80b-34d10425d51c",
+      recordSchemaVersion: 1,
+      lifecycle: "retired",
+      fields: { organization_id: organizationId, current_version_id: ingredientVersionId },
+      fieldClocks: {},
+      immutable: false,
+      updatedAt: "2026-08-10T12:00:00.000000Z",
+    });
+    await expect(readRecipeCatalog(userId, organizationId)).resolves.toMatchObject({
+      recipes: [expect.objectContaining({ hasRetiredIngredientReference: false })],
+    });
+  });
+
   it("queues a retirement and keeps it visible only in the explicit retired view", async () => {
     await queueRecipeLifecycle(userId, organizationId, {
       recipeId,
