@@ -8,6 +8,7 @@ import {
   queueShoppingManualPurchaseTarget,
   queueShoppingRowFulfilment,
   queueShoppingStoreSectionOverride,
+  queueShoppingRowNote,
   replayShoppingOperation,
 } from "./shopping-operations";
 import { readShoppingList, readShoppingLists } from "./shopping-projections";
@@ -865,5 +866,54 @@ describe("offline shopping-list creation", () => {
     await localDb.canonicalRecords.put(list);
     await localDb.canonicalRecords.put({ ...canonicalRow, lifecycle: "retired" });
     await expect(queueShoppingStoreSectionOverride(ids.user, ids.organization, { ...input, storeSectionId: ids.section })).rejects.toThrow("shopping_operation");
+  });
+
+  it("canonicalizes and replays scoped row notes", async () => {
+    const record = (entityType: string, entityId: string, fields: Record<string, unknown>) => ({
+      userId: ids.user, organizationId: ids.organization, entityType, entityId,
+      recordSchemaVersion: 1, lifecycle: "active" as const, fields, fieldClocks: {}, immutable: false,
+      updatedAt: "2026-08-07T12:00:00.000Z",
+    });
+    await localDb.canonicalRecords.bulkAdd([
+      record("event", ids.event, { id: ids.event, lifecycle: "active" }),
+      record("shopping_list", ids.list, { id: ids.list, organization_id: ids.organization, event_id: ids.event }),
+      record("shopping_ingredient_row", ids.row, { id: ids.row, organization_id: ids.organization, shopping_list_id: ids.list, note: null }),
+    ]);
+    const input = { shoppingListId: ids.list, shoppingIngredientRowId: ids.row };
+    await queueShoppingRowNote(ids.user, ids.organization, { ...input, note: "  e\u0301\r\nnote  " });
+    const queued = await localDb.outbox.toArray();
+    expect(queued[0]?.payload).toMatchObject({ note: "é\nnote" });
+    await localDb.optimisticOverlays.clear();
+    await replayShoppingOperation(ids.user, ids.organization, queued[0]);
+    await expect(localDb.optimisticOverlays.get([ids.user, ids.organization, "shopping_ingredient_row", ids.row])).resolves.toMatchObject({ fields: { note: "é\nnote" } });
+    const canonicalRetry = {
+      ...queued[0],
+      payload: { ...queued[0].payload, note: "é\nnote" },
+    };
+    await localDb.optimisticOverlays.clear();
+    await replayShoppingOperation(ids.user, ids.organization, canonicalRetry);
+    await expect(localDb.optimisticOverlays.get([ids.user, ids.organization, "shopping_ingredient_row", ids.row])).resolves.toMatchObject({ fields: { note: "é\nnote" } });
+    const row = await localDb.canonicalRecords.get([ids.user, ids.organization, "shopping_ingredient_row", ids.row]);
+    if (!row) throw new Error("missing row");
+    await localDb.canonicalRecords.put({
+      ...row,
+      fieldClocks: {
+        note: {
+          winning_client_wall_time: "2026-08-07T12:00:00.000002Z",
+          winning_mutation_id: "00000000-0000-0000-0000-000000000001",
+        },
+      },
+    });
+    await localDb.optimisticOverlays.clear();
+    await replayShoppingOperation(ids.user, ids.organization, {
+      ...queued[0],
+      id: "ffffffff-ffff-ffff-ffff-ffffffffffff",
+      actionAt: "2026-08-07T12:00:00.000001Z",
+    });
+    await expect(localDb.optimisticOverlays.count()).resolves.toBe(0);
+    await expect(queueShoppingRowNote(ids.user, ids.organization, { ...input, note: "\0" })).rejects.toThrow("shopping_operation");
+    await expect(queueShoppingRowNote(ids.user, ids.organization, { ...input, note: "x".repeat(4001) })).rejects.toThrow("shopping_operation");
+    await queueShoppingRowNote(ids.user, ids.organization, { ...input, note: "   " });
+    await expect(localDb.optimisticOverlays.get([ids.user, ids.organization, "shopping_ingredient_row", ids.row])).resolves.toMatchObject({ fields: { note: null } });
   });
 });

@@ -131,6 +131,13 @@ def _command(
             "store_section_id": str(uuid4()),
             **payload,
         }
+    elif kind == "shopping_list.set_row_note":
+        payload = {
+            "shopping_list_id": str(uuid4()),
+            "shopping_ingredient_row_id": str(uuid4()),
+            "note": "  default note  ",
+            **payload,
+        }
     elif kind == "shopping_list.create_ad_hoc_item":
         payload = {
             "shopping_list_id": str(uuid4()),
@@ -443,6 +450,8 @@ def _shopping_operation_command(
         values["quantity"] = None
     elif kind == "shopping_list.set_store_section_override":
         values["store_section_id"] = str(uuid4())
+    elif kind == "shopping_list.set_row_note":
+        values["note"] = "default note"
     elif kind == "shopping_list.set_row_fulfilment":
         values["fulfilled"] = True
     else:
@@ -886,6 +895,173 @@ def test_push_sets_clears_and_rejects_scoped_store_section_overrides(
         ).json()["outcomes"][0]
     assert archived["status"] == "rejected"
     assert archived["error"]["code"] == "archived_event"
+
+
+def test_push_sets_clears_and_rejects_scoped_row_notes(
+    sync_database: SyncDatabase,
+) -> None:
+    installation_id = _installation(sync_database)
+    event_id, list_id, revision_id, row_id = uuid4(), uuid4(), uuid4(), uuid4()
+    ingredient_id, version_id = uuid4(), uuid4()
+    with sync_database.engine.begin() as connection:
+        actor_id = connection.scalar(
+            select(OrganizationMembership.user_id).where(
+                OrganizationMembership.organization_id == sync_database.organization_id
+            )
+        )
+        grams_id = connection.scalar(
+            select(UnitDefinition.id).where(
+                UnitDefinition.organization_id.is_(None), UnitDefinition.code == "g"
+            )
+        )
+        assert isinstance(actor_id, UUID) and isinstance(grams_id, UUID)
+        connection.execute(
+            insert(Ingredient).values(
+                id=ingredient_id,
+                organization_id=sync_database.organization_id,
+                current_version_id=version_id,
+                created_by_user_id=actor_id,
+            )
+        )
+        connection.execute(
+            insert(IngredientVersion).values(
+                id=version_id,
+                organization_id=sync_database.organization_id,
+                ingredient_id=ingredient_id,
+                name="Tomatoes",
+                normalized_name="tomatoes",
+                canonical_unit_id=grams_id,
+                mass_per_canonical_quantity=Decimal("1"),
+                published_by_user_id=actor_id,
+            )
+        )
+    with TestClient(create_app(_settings()), base_url="https://testserver") as client:
+        _sign_in(client, "dummy-member")
+        setup = client.post(
+            "/api/v1/sync/push",
+            json=_body(
+                sync_database,
+                installation_id,
+                [
+                    _command(mutation_id=uuid4(), event_id=event_id),
+                    _command(
+                        mutation_id=uuid4(),
+                        event_id=event_id,
+                        kind="shopping_list.create",
+                        shopping_list_id=str(list_id),
+                        generation_revision_id=str(revision_id),
+                    ),
+                ],
+            ),
+        )
+        assert [item["status"] for item in setup.json()["outcomes"]] == [
+            "accepted",
+            "accepted",
+        ]
+        with sync_database.engine.begin() as connection:
+            connection.execute(
+                insert(ShoppingIngredientRow).values(
+                    id=row_id,
+                    organization_id=sync_database.organization_id,
+                    event_id=event_id,
+                    shopping_list_id=list_id,
+                    ingredient_id=ingredient_id,
+                    ingredient_name="Tomatoes",
+                    calculation_unit_id=grams_id,
+                    created_by_user_id=actor_id,
+                )
+            )
+
+        def command(note: str | None, mutation_id: UUID | None = None) -> dict[str, object]:
+            return _shopping_operation_command(
+                mutation_id=mutation_id or uuid4(),
+                kind="shopping_list.set_row_note",
+                shopping_list_id=str(list_id),
+                shopping_ingredient_row_id=str(row_id),
+                note=note,
+            )
+
+        set_note = command("  e\u0301\r\nnote  ")
+        parsed = _push_command(
+            PushCommandRequest.model_validate(set_note), sync_database.organization_id
+        )
+        assert getattr(parsed, "note", None) == "  e\u0301\r\nnote  "
+        accepted = client.post(
+            "/api/v1/sync/push", json=_body(sync_database, installation_id, [set_note])
+        ).json()["outcomes"][0]
+        assert accepted["status"] == "accepted"
+        canonical_retry = {
+            **set_note,
+            "payload": {**set_note["payload"], "note": "é\nnote"},
+        }
+        equivalent = client.post(
+            "/api/v1/sync/push",
+            json=_body(sync_database, installation_id, [canonical_retry]),
+        ).json()["outcomes"][0]
+        assert equivalent["error"] is None
+        assert equivalent["replayed"] is True
+        replayed = client.post(
+            "/api/v1/sync/push", json=_body(sync_database, installation_id, [set_note])
+        ).json()["outcomes"][0]
+        assert replayed["replayed"] is True
+        clear = command("   ")
+        assert client.post(
+            "/api/v1/sync/push", json=_body(sync_database, installation_id, [clear])
+        ).json()["outcomes"][0]["status"] == "accepted"
+        null_clear = command(None)
+        assert client.post(
+            "/api/v1/sync/push", json=_body(sync_database, installation_id, [null_clear])
+        ).json()["outcomes"][0]["status"] == "accepted"
+        for invalid_note in ("bad\x00note", "x" * 4001):
+            rejected_command = command(invalid_note)
+            rejected = client.post(
+                "/api/v1/sync/push",
+                json=_body(sync_database, installation_id, [rejected_command]),
+            ).json()["outcomes"][0]
+            retained = client.post(
+                "/api/v1/sync/push",
+                json=_body(sync_database, installation_id, [rejected_command]),
+            ).json()["outcomes"][0]
+            assert rejected["status"] == "rejected"
+            assert rejected["error"]["code"] == "validation_failed"
+            # Typed application-service rejections are re-raised through the
+            # adapter, so the transport replay flag remains false.
+            assert retained["replayed"] is False
+            assert retained["error"] == rejected["error"]
+        bootstrap = client.post(
+            "/api/v1/sync/bootstrap",
+            json={"organization_id": str(sync_database.organization_id)},
+        ).json()
+        record = next(
+            item["payload"]["record"]
+            for item in bootstrap["records"]
+            if item["entity_kind"] == "shopping_ingredient_row"
+            and item["entity_id"] == str(row_id)
+        )
+        assert record["note"] is None
+        assert record["field_clocks"]["note"]["winning_mutation_id"] == null_clear["mutation_id"]
+        missing_row = _shopping_operation_command(
+            mutation_id=uuid4(),
+            kind="shopping_list.set_row_note",
+            shopping_list_id=str(list_id),
+            shopping_ingredient_row_id=str(uuid4()),
+            note="missing",
+        )
+        missing = client.post(
+            "/api/v1/sync/push", json=_body(sync_database, installation_id, [missing_row])
+        ).json()["outcomes"][0]
+        assert missing["status"] == "rejected"
+        assert missing["error"]["code"] == "validation_failed"
+        archive = _command(mutation_id=uuid4(), event_id=event_id, kind="event.lifecycle")
+        assert client.post(
+            "/api/v1/sync/push", json=_body(sync_database, installation_id, [archive])
+        ).json()["outcomes"][0]["status"] == "accepted"
+        archived = client.post(
+            "/api/v1/sync/push",
+            json=_body(sync_database, installation_id, [command("archived")]),
+        ).json()["outcomes"][0]
+        assert archived["status"] == "rejected"
+        assert archived["error"]["code"] == "archived_event"
 
 
 def test_push_applies_ordered_commands_and_replays_a_retained_outcome(

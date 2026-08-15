@@ -69,6 +69,7 @@ from cookops.application.shopping_lists import (
     SetShoppingContributionFulfilmentCommand,
     SetShoppingManualPurchaseTargetCommand,
     SetShoppingRowFulfilmentCommand,
+    SetShoppingRowNoteCommand,
     SetShoppingStoreSectionOverrideCommand,
     UpdateAdHocShoppingItemCommand,
 )
@@ -383,6 +384,21 @@ class SetShoppingRowFulfilmentPayload(BaseModel):
     shopping_ingredient_row_id: UUID
     fulfilled: StrictBool
     logical_operation_id: UUID | None = None
+
+
+class SetShoppingRowNotePayload(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    shopping_list_id: UUID
+    shopping_ingredient_row_id: UUID
+    note: str | None = None
+    logical_operation_id: UUID | None = None
+
+    @field_validator("note", mode="before")
+    @classmethod
+    def note_must_be_string_or_null(cls, value: object) -> object:
+        if value is not None and not isinstance(value, str):
+            raise ValueError("must be a string or null")
+        return value
 
 
 class SetAdHocShoppingItemFulfilmentPayload(BaseModel):
@@ -982,6 +998,17 @@ def _push_command(command: PushCommandRequest, organization_id: UUID) -> SyncCom
                 row_fulfilment_payload.fulfilled,
                 command.client_wall_time,
                 row_fulfilment_payload.logical_operation_id,
+            )
+        if command.command_kind == "shopping_list.set_row_note":
+            note_payload = SetShoppingRowNotePayload.model_validate(command.payload)
+            return SetShoppingRowNoteCommand(
+                command.mutation_id,
+                organization_id,
+                note_payload.shopping_list_id,
+                note_payload.shopping_ingredient_row_id,
+                note_payload.note,
+                command.client_wall_time,
+                note_payload.logical_operation_id,
             )
         if command.command_kind == "shopping_list.create_ad_hoc_item":
             ad_hoc_payload = CreateAdHocShoppingItemPayload.model_validate(command.payload)

@@ -58,6 +58,30 @@ from cookops.persistence.models import (
 COMMAND_KIND = "shopping_list.create"
 COMMAND_SCHEMA_VERSION = 1
 MAX_SERIALIZED_NAME_BYTES = 800
+
+
+def _canonical_row_note(value: str | None) -> str | None:
+    if value is None:
+        return None
+    note = unicodedata.normalize("NFC", value).replace("\r\n", "\n").replace("\r", "\n").strip()
+    return note or None
+
+
+def _row_note_hash_value(value: object) -> object:
+    if value is None:
+        return None
+    if not isinstance(value, str):
+        return _invalid(value)
+    note = _canonical_row_note(value)
+    if note is None:
+        return None
+    if "\x00" in note or any(0xD800 <= ord(char) <= 0xDFFF for char in note):
+        return _invalid(note)
+    if len(note) > 4000:
+        return _invalid(note)
+    return note
+
+
 REFRESH_COMMAND_KIND = "shopping_list.refresh"
 RENAME_COMMAND_KIND = "shopping_list.rename"
 _REVISION_SOURCE_ID_NAMESPACE = UUID("df740018-c0d2-4790-a314-cf4180a1c2c9")
@@ -2047,6 +2071,17 @@ class SetShoppingStoreSectionOverrideCommand:
 
 
 @dataclass(frozen=True, slots=True)
+class SetShoppingRowNoteCommand:
+    mutation_id: UUID
+    organization_id: UUID
+    shopping_list_id: UUID
+    shopping_ingredient_row_id: UUID
+    note: str | None
+    client_wall_time: datetime
+    logical_operation_id: UUID | None = None
+
+
+@dataclass(frozen=True, slots=True)
 class SetShoppingContributionFulfilmentCommand:
     mutation_id: UUID
     organization_id: UUID
@@ -2072,6 +2107,7 @@ ShoppingOperationCommand = (
     SetShoppingAvailableSupplyCommand
     | SetShoppingManualPurchaseTargetCommand
     | SetShoppingStoreSectionOverrideCommand
+    | SetShoppingRowNoteCommand
     | SetShoppingContributionFulfilmentCommand
     | SetShoppingRowFulfilmentCommand
 )
@@ -2079,6 +2115,7 @@ _OPERATION_KIND = {
     SetShoppingAvailableSupplyCommand: "shopping_list.set_available_supply",
     SetShoppingManualPurchaseTargetCommand: "shopping_list.set_manual_purchase_target",
     SetShoppingStoreSectionOverrideCommand: "shopping_list.set_store_section_override",
+    SetShoppingRowNoteCommand: "shopping_list.set_row_note",
     SetShoppingContributionFulfilmentCommand: "shopping_list.set_contribution_fulfilment",
     SetShoppingRowFulfilmentCommand: "shopping_list.set_row_fulfilment",
 }
@@ -2104,6 +2141,7 @@ def _operation_hash(command: ShoppingOperationCommand) -> bytes:
     raw_quantity = getattr(command, "quantity", None)
     raw_fulfilled = getattr(command, "fulfilled", None)
     raw_section_id = getattr(command, "store_section_id", None)
+    raw_note = getattr(command, "note", None)
     value: object
     if isinstance(raw_quantity, Decimal):
         value = (
@@ -2113,6 +2151,8 @@ def _operation_hash(command: ShoppingOperationCommand) -> bytes:
         value = None
     elif isinstance(command, SetShoppingStoreSectionOverrideCommand):
         value = _raw_uuid(raw_section_id) if raw_section_id is not None else None
+    elif isinstance(command, SetShoppingRowNoteCommand):
+        value = _row_note_hash_value(raw_note)
     elif isinstance(raw_fulfilled, bool):
         value = raw_fulfilled
     else:
@@ -2170,6 +2210,17 @@ def _operation_violations(command: ShoppingOperationCommand) -> tuple[FieldViola
     elif isinstance(command, SetShoppingStoreSectionOverrideCommand):
         if command.store_section_id is not None and not isinstance(command.store_section_id, UUID):
             violations.append(FieldViolation("store_section_id", "must_be_uuid_or_null"))
+    elif isinstance(command, SetShoppingRowNoteCommand):
+        if command.note is not None and not isinstance(command.note, str):
+            violations.append(FieldViolation("note", "must_be_string_or_null"))
+        elif isinstance(command.note, str):
+            note = _canonical_row_note(command.note)
+            if note is not None and (
+                "\x00" in note or any(0xD800 <= ord(char) <= 0xDFFF for char in note)
+            ):
+                violations.append(FieldViolation("note", "must_be_valid_unicode_text"))
+            elif note is not None and len(note) > 4000:
+                violations.append(FieldViolation("note", "must_fit_change_record"))
     else:
         if not isinstance(command.fulfilled, bool):
             violations.append(FieldViolation("fulfilled", "must_be_boolean"))
@@ -2640,6 +2691,7 @@ async def _apply_shopping_operation(
                             SetShoppingAvailableSupplyCommand,
                             SetShoppingManualPurchaseTargetCommand,
                             SetShoppingStoreSectionOverrideCommand,
+                            SetShoppingRowNoteCommand,
                         ),
                     ):
                         field = (
@@ -2649,6 +2701,8 @@ async def _apply_shopping_operation(
                                 "manual_purchase_target"
                                 if isinstance(command, SetShoppingManualPurchaseTargetCommand)
                                 else "store_section_override_id"
+                                if isinstance(command, SetShoppingStoreSectionOverrideCommand)
+                                else "note"
                             )
                         )
                         clock = await session.scalar(
@@ -2690,7 +2744,10 @@ async def _apply_shopping_operation(
                                     else None
                                 )
                             else:
-                                row.store_section_override_id = command.store_section_id
+                                if isinstance(command, SetShoppingStoreSectionOverrideCommand):
+                                    row.store_section_override_id = command.store_section_id
+                                else:
+                                    row.note = _canonical_row_note(command.note)
                             if clock is None:
                                 session.add(
                                     FieldClock(
@@ -3012,6 +3069,14 @@ async def set_shopping_store_section_override(
     session_factory: async_sessionmaker[AsyncSession],
     context: ExecutionContext,
     command: SetShoppingStoreSectionOverrideCommand,
+) -> ShoppingOperationResult:
+    return await _apply_shopping_operation(session_factory, context, command)
+
+
+async def set_shopping_row_note(
+    session_factory: async_sessionmaker[AsyncSession],
+    context: ExecutionContext,
+    command: SetShoppingRowNoteCommand,
 ) -> ShoppingOperationResult:
     return await _apply_shopping_operation(session_factory, context, command)
 

@@ -40,14 +40,26 @@ function checkedInput(input: RowInput) {
   )
     throw new Error("shopping_operation");
 }
+function canonicalRowNote(value: unknown): string | null {
+  if (value !== null && typeof value !== "string") throw new Error("shopping_operation");
+  if (value === null) return null;
+  const note = value.normalize("NFC").replace(/\r\n?/g, "\n").trim();
+  if ([...note].length > 4000 || note.includes("\0") || [...note].some((char) => {
+    const code = char.charCodeAt(0);
+    return code >= 0xd800 && code <= 0xdfff;
+  }))
+    throw new Error("shopping_operation");
+  return note || null;
+}
 async function activeRow(
   userId: string,
   organizationId: string,
   input: RowInput,
 ) {
-  const [lists, rows] = await Promise.all([
+  const [lists, rows, events] = await Promise.all([
     readVisibleRecords(userId, organizationId, "shopping_list", true),
     readVisibleRecords(userId, organizationId, "shopping_ingredient_row", true),
+    readVisibleRecords(userId, organizationId, "event", true),
   ]);
   const list = lists.find(
     (record) =>
@@ -65,12 +77,7 @@ async function activeRow(
   );
   const event =
     typeof list?.fields.event_id === "string"
-      ? await localDb.canonicalRecords.get([
-          userId,
-          organizationId,
-          "event",
-          list.fields.event_id,
-        ])
+      ? events.find((record) => record.entityId === list.fields.event_id)
       : undefined;
   if (!list || !row || event?.lifecycle !== "active" || event.fields.lifecycle !== "active")
     throw new Error("shopping_operation");
@@ -188,6 +195,47 @@ export function queueShoppingStoreSectionOverride(
     input,
     "shopping_list.set_store_section_override",
     input.storeSectionId,
+  );
+}
+
+export async function queueShoppingRowNote(
+  userId: string,
+  organizationId: string,
+  input: RowInput & { note: string | null },
+) {
+  checkedInput(input);
+  const note = canonicalRowNote(input.note);
+  const mutationId = crypto.randomUUID();
+  await localDb.transaction(
+    "rw",
+    localDb.canonicalRecords,
+    localDb.optimisticOverlays,
+    localDb.outbox,
+    async () => {
+      const actionAt = await nextActionAt();
+      const { row } = await activeRow(userId, organizationId, input);
+      if (!wins(row, "note", mutationId, actionAt)) throw new Error("shopping_operation");
+      await localDb.optimisticOverlays.put({
+        ...row,
+        fields: { ...row.fields, note },
+        fieldClocks: { ...row.fieldClocks, note: { mutationId, actionAt } },
+        updatedAt: actionAt,
+      });
+      await appendOutboxCommand({
+        id: mutationId,
+        userId,
+        organizationId,
+        commandType: "shopping_list.set_row_note",
+        payload: {
+          shopping_list_id: input.shoppingListId,
+          shopping_ingredient_row_id: input.shoppingIngredientRowId,
+          note,
+        },
+        actionAt,
+        createdAt: actionAt,
+        state: "pending",
+      });
+    },
   );
 }
 
@@ -463,6 +511,22 @@ export async function replayShoppingOperation(
       command.commandType === "shopping_list.set_manual_purchase_target") &&
     (typeof payload.quantity === "string" || payload.quantity === null) &&
     (payload.quantity === null || quantity.test(payload.quantity));
+  const noteOperation =
+    command.commandType === "shopping_list.set_row_note" &&
+    Object.keys(payload).length === 3 &&
+    (typeof payload.note === "string" || payload.note === null);
+  if (noteOperation) {
+    const note = canonicalRowNote(payload.note);
+    const { row } = await activeRow(userId, organizationId, input);
+    if (!wins(row, "note", command.id, command.actionAt)) return;
+    await localDb.optimisticOverlays.put({
+      ...row,
+      fields: { ...row.fields, note },
+      fieldClocks: { ...row.fieldClocks, note: { mutationId: command.id, actionAt: command.actionAt } },
+      updatedAt: command.actionAt,
+    });
+    return;
+  }
   if (sectionOverride && payload.store_section_id !== null) {
     const section = (await readVisibleRecords(userId, organizationId, "store_section", true)).find(
       (record) =>

@@ -18,12 +18,14 @@ from cookops.application.shopping_lists import (
     SetShoppingContributionFulfilmentCommand,
     SetShoppingManualPurchaseTargetCommand,
     SetShoppingRowFulfilmentCommand,
+    SetShoppingRowNoteCommand,
     ShoppingOperationResult,
     create_shopping_list,
     set_shopping_available_supply,
     set_shopping_contribution_fulfilment,
     set_shopping_manual_purchase_target,
     set_shopping_row_fulfilment,
+    set_shopping_row_note,
 )
 from cookops.persistence.models import (
     Event,
@@ -459,3 +461,64 @@ def test_finite_decimal_supply_inputs_survive_without_float_rounding(
             )
             == amount
         )
+
+
+def test_lone_surrogate_row_note_is_retained_as_validation_rejection(
+    service_database: ServiceDatabase,
+) -> None:
+    result, row_id, _ = _list(service_database)
+    command = SetShoppingRowNoteCommand(
+        uuid4(),
+        service_database.organization_id,
+        result.shopping_list_id,
+        row_id,
+        "\ud800",
+        datetime.now(UTC),
+    )
+    for _ in range(2):
+        with pytest.raises(ApplicationServiceError) as error:
+            asyncio.run(
+                set_shopping_row_note(
+                    service_database.sessions, _context(service_database), command
+                )
+            )
+        assert error.value.code == "validation_failed"
+        assert error.value.retry_same_identity is False
+        assert error.value.field_violations
+
+    for first_note, second_note in (
+        ("\ud800", "\ud801"),
+        ("x" * 4001, "y" * 4001),
+        (123, None),
+    ):
+        mutation_id = uuid4()
+        first = SetShoppingRowNoteCommand(
+            mutation_id,
+            service_database.organization_id,
+            result.shopping_list_id,
+            row_id,
+            first_note,  # type: ignore[arg-type]
+            datetime.now(UTC),
+        )
+        with pytest.raises(ApplicationServiceError) as first_error:
+            asyncio.run(
+                set_shopping_row_note(
+                    service_database.sessions, _context(service_database), first
+                )
+            )
+        assert first_error.value.code == "validation_failed"
+        second = SetShoppingRowNoteCommand(
+            mutation_id,
+            service_database.organization_id,
+            result.shopping_list_id,
+            row_id,
+            second_note,  # type: ignore[arg-type]
+            first.client_wall_time,
+        )
+        with pytest.raises(ApplicationServiceError) as mismatch:
+            asyncio.run(
+                set_shopping_row_note(
+                    service_database.sessions, _context(service_database), second
+                )
+            )
+        assert mismatch.value.code == "idempotency_mismatch"

@@ -23,6 +23,7 @@ import {
   queueShoppingContributionFulfilment,
   queueShoppingManualPurchaseTarget,
   queueShoppingRowFulfilment,
+  queueShoppingRowNote,
   queueShoppingStoreSectionOverride,
 } from "./shopping-operations";
 import {
@@ -610,6 +611,7 @@ function ShoppingRowControls({
     row.manualPurchaseTarget ?? row.target,
   );
   const [sectionId, setSectionId] = useState(row.storeSectionOverrideId ?? "");
+  const [note, setNote] = useState(row.note ?? "");
   useEffect(
     () => setAvailableSupply(row.availableSupply),
     [row.availableSupply],
@@ -619,6 +621,7 @@ function ShoppingRowControls({
     [row.manualPurchaseTarget, row.target],
   );
   useEffect(() => setSectionId(row.storeSectionOverrideId ?? ""), [row.storeSectionOverrideId]);
+  useEffect(() => setNote(row.note ?? ""), [row.note]);
   const input = { shoppingListId, shoppingIngredientRowId: row.id };
   async function run(work: () => Promise<void>) {
     try {
@@ -720,6 +723,40 @@ function ShoppingRowControls({
               ))}
             </select>
           </label>
+          <label>
+            {t("shopping.note")}
+            <textarea
+              aria-label={t("shopping.note")}
+              onChange={(event) => setNote(event.currentTarget.value)}
+              onBlur={() =>
+                note !== (row.note ?? "")
+                  ? void run(() =>
+                      queueShoppingRowNote(userId, organizationId, {
+                        ...input,
+                        note,
+                      }),
+                    )
+                  : undefined
+              }
+              value={note}
+            />
+          </label>
+          {row.note !== null ? (
+            <button
+              onClick={() => {
+                setNote("");
+                void run(() =>
+                  queueShoppingRowNote(userId, organizationId, {
+                    ...input,
+                    note: null,
+                  }),
+                );
+              }}
+              type="button"
+            >
+              {t("shopping.clearNote")}
+            </button>
+          ) : null}
           <label className="shopping-row-controls__fulfilled">
             <input
               checked={row.fulfilled}

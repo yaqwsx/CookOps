@@ -192,6 +192,7 @@ from cookops.application.shopping_lists import (
     SetShoppingContributionFulfilmentCommand,
     SetShoppingManualPurchaseTargetCommand,
     SetShoppingRowFulfilmentCommand,
+    SetShoppingRowNoteCommand,
     SetShoppingStoreSectionOverrideCommand,
     ShoppingOperationResult,
     UpdateAdHocShoppingItemCommand,
@@ -212,6 +213,7 @@ from cookops.application.shopping_lists import (
     set_shopping_contribution_fulfilment,
     set_shopping_manual_purchase_target,
     set_shopping_row_fulfilment,
+    set_shopping_row_note,
     set_shopping_store_section_override,
     update_ad_hoc_shopping_item,
 )
@@ -382,6 +384,7 @@ SyncCommand = (
     | SetShoppingStoreSectionOverrideCommand
     | SetShoppingContributionFulfilmentCommand
     | SetShoppingRowFulfilmentCommand
+    | SetShoppingRowNoteCommand
     | CreateAdHocShoppingItemCommand
     | SetAdHocShoppingItemFulfilmentCommand
     | SetAdHocShoppingItemLifecycleCommand
@@ -429,6 +432,7 @@ def _command_kind(
         | SetShoppingStoreSectionOverrideCommand
         | SetShoppingContributionFulfilmentCommand
         | SetShoppingRowFulfilmentCommand
+        | SetShoppingRowNoteCommand
         | CreateAdHocShoppingItemCommand
         | SetAdHocShoppingItemFulfilmentCommand
         | SetAdHocShoppingItemLifecycleCommand
@@ -503,6 +507,8 @@ def _command_kind(
         return "shopping_list.set_contribution_fulfilment"
     if isinstance(command, SetShoppingRowFulfilmentCommand):
         return "shopping_list.set_row_fulfilment"
+    if isinstance(command, SetShoppingRowNoteCommand):
+        return "shopping_list.set_row_note"
     if isinstance(command, CreateAdHocShoppingItemCommand):
         return "shopping_list.create_ad_hoc_item"
     if isinstance(command, SetAdHocShoppingItemFulfilmentCommand):
@@ -927,6 +933,8 @@ class SynchronizationCommandService:
                 )
             elif isinstance(command, SetShoppingRowFulfilmentCommand):
                 result = await set_shopping_row_fulfilment(self._session_factory, context, command)
+            elif isinstance(command, SetShoppingRowNoteCommand):
+                result = await set_shopping_row_note(self._session_factory, context, command)
             elif isinstance(command, CreateAdHocShoppingItemCommand):
                 result = await create_ad_hoc_shopping_item(self._session_factory, context, command)
             elif isinstance(command, SetAdHocShoppingItemFulfilmentCommand):
