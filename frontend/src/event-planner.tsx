@@ -58,7 +58,7 @@ function EventSummary({ planner }: { planner: EventPlannerProjection }) {
   );
 }
 
-function EventCosts({
+export function EventCosts({
   planner,
   eventId,
   organizationId,
@@ -70,20 +70,26 @@ function EventCosts({
   userId: string;
 }) {
   const { t } = useTranslation();
-  const [costs, setCosts] = useState<EventCostsProjection>();
-  const [pending, setPending] = useState(false);
-  const [error, setError] = useState(false);
+  const identity = `${userId}:${organizationId}:${eventId}`;
+  const [costsState, setCostsState] = useState<{
+    identity: string;
+    costs?: EventCostsProjection;
+  }>();
+  const [pendingState, setPendingState] = useState({ identity, pending: false });
+  const [errorState, setErrorState] = useState({ identity, error: false });
   const refreshing = useRef(false);
+  // biome-ignore lint/correctness/useExhaustiveDependencies: identity is derived from the listed route dependencies.
   useEffect(() => {
+    const effectIdentity = identity;
     const subscription = liveQuery(async () => ({
       costs: await readEventCosts(userId, organizationId, eventId),
       pending: await eventPriceRefreshPending(userId, organizationId, eventId),
     })).subscribe({
       next: (next) => {
-        setCosts(next.costs);
-        setPending(next.pending);
+        setCostsState({ identity: effectIdentity, costs: next.costs });
+        setPendingState({ identity: effectIdentity, pending: next.pending });
       },
-      error: () => setError(true),
+      error: () => setErrorState({ identity: effectIdentity, error: true }),
     });
     return () => subscription.unsubscribe();
   }, [eventId, organizationId, userId]);
@@ -92,13 +98,16 @@ function EventCosts({
     refreshing.current = true;
     try {
       await queueEventPriceRefresh(userId, organizationId, eventId);
-      setError(false);
+      setErrorState({ identity, error: false });
     } catch {
-      setError(true);
+      setErrorState({ identity, error: true });
     } finally {
       refreshing.current = false;
     }
   }
+  const costs = costsState?.identity === identity ? costsState.costs : undefined;
+  const pending = pendingState.identity === identity && pendingState.pending;
+  const error = errorState.identity === identity && errorState.error;
   if (!costs) return null;
   return (
     <section className="event-costs" aria-labelledby="event-costs-heading">
@@ -757,6 +766,7 @@ export function EventPlanner({
   onUnauthenticated,
   onOpenShopping,
   onOpenReceipts,
+  onOpenCosts,
 }: {
   eventId: string;
   organizationId: string;
@@ -764,6 +774,7 @@ export function EventPlanner({
   onUnauthenticated: () => void;
   onOpenShopping?: () => void;
   onOpenReceipts?: () => void;
+  onOpenCosts?: () => void;
 }) {
   const { t } = useTranslation();
   const [state, setState] = useState<PlannerState>("loading");
@@ -831,6 +842,11 @@ export function EventPlanner({
       {onOpenReceipts ? (
         <button onClick={onOpenReceipts} type="button">
           {t("planner.receipts")}
+        </button>
+      ) : null}
+      {onOpenCosts ? (
+        <button onClick={onOpenCosts} type="button">
+          {t("planner.costs")}
         </button>
       ) : null}
       <EventCosts

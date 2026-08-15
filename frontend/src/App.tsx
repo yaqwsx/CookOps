@@ -22,6 +22,7 @@ import { EventShopping } from "./event-shopping";
 import { RecipeCatalog } from "./recipe-catalog-view";
 import { IngredientCatalog } from "./ingredient-catalog-view";
 import { EventReceipts } from "./event-receipts";
+import { EventCostsPage } from "./event-costs-page";
 import { OrganizationMemberships } from "./organization-membership";
 import { CatalogAdministration } from "./catalog-administration";
 import type { SupportedLocale } from "./i18n";
@@ -35,7 +36,7 @@ const sections = ["events", "recipes", "ingredients", "settings"] as const;
 const organizationPath =
   /^\/organizations\/([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})(?:\/|$)/i;
 const eventSectionPath =
-  /^\/organizations\/([0-9a-f-]{36})\/events\/([0-9a-f-]{36})\/(planner|shopping|receipts)(?:\/([0-9a-f-]{36}))?$/i;
+  /^\/organizations\/([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})\/events\/([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})\/(planner|shopping|costs|receipts)(?:\/([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}))?$/i;
 const recipeCatalogPath = /^\/organizations\/[0-9a-f-]{36}\/recipes$/i;
 const ingredientCatalogPath = /^\/organizations\/[0-9a-f-]{36}\/ingredients$/i;
 const settingsPath = /^\/organizations\/[0-9a-f-]{36}\/settings$/i;
@@ -420,6 +421,12 @@ function AuthenticatedShell({
     setPathname(nextPath);
   }
 
+  function openCosts(eventId: string) {
+    const nextPath = `/organizations/${organizationId}/events/${eventId}/costs`;
+    window.history.pushState(null, "", nextPath);
+    setPathname(nextPath);
+  }
+
   async function signOut() {
     setLogoutError(false);
     try {
@@ -544,6 +551,7 @@ function AuthenticatedShell({
                 eventId && eventSectionName === "planner" ? (
                   <EventPlanner
                     eventId={eventId}
+                    onOpenCosts={() => openCosts(eventId)}
                     onOpenReceipts={() => openReceipts(eventId)}
                     onOpenShopping={() => openShopping(eventId)}
                     onUnauthenticated={onUnauthenticated}
@@ -566,6 +574,17 @@ function AuthenticatedShell({
                     eventId={eventId}
                     onBack={() => openEvent(eventId)}
                     onUnauthenticated={onUnauthenticated}
+                    organizationId={organizationId}
+                    userId={identity.id}
+                  />
+                ) :
+                  eventId &&
+                    eventSectionName === "costs" &&
+                    !shoppingListId ? (
+                  <EventCostsPage
+                    eventId={eventId}
+                    onBack={() => openEvent(eventId)}
+                    onOpenReceipts={() => openReceipts(eventId)}
                     organizationId={organizationId}
                     userId={identity.id}
                   />

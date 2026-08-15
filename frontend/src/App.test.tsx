@@ -1,9 +1,24 @@
-import { render, screen, waitFor } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { App } from "./App";
 import i18n, { defaultLocale } from "./i18n";
+
+vi.mock("./event-costs-page", () => ({
+  EventCostsPage: ({
+    onBack,
+    onOpenReceipts,
+  }: {
+    onBack: () => void;
+    onOpenReceipts: () => void;
+  }) => (
+    <section aria-label="costs-route">
+      <button onClick={onBack} type="button">Back to planner</button>
+      <button onClick={onOpenReceipts} type="button">Receipts</button>
+    </section>
+  ),
+}));
 
 const alice = {
   id: "a6a58bd6-214e-49af-8fae-e5f974bf8e08",
@@ -312,6 +327,40 @@ describe("development authentication", () => {
     await screen.findByRole("combobox", { name: "Organizace" });
     expect(window.location.pathname).toBe(
       `/organizations/${primaryOrganization.id.toUpperCase()}/recipes`,
+    );
+  });
+
+  it("renders a bookmarked costs route and navigates to receipts or planner", async () => {
+    const user = userEvent.setup();
+    const eventId = "6ce17d2f-8365-4b1f-a80b-34d10425d51c";
+    window.history.replaceState(
+      null,
+      "",
+      `/organizations/${primaryOrganization.id}/events/${eventId}/costs`,
+    );
+    mockAnonymousDevelopmentSession();
+    render(<App />);
+
+    await user.click(
+      await screen.findByRole("button", {
+        name: "Přihlásit se jako Alice Member",
+      }),
+    );
+    await screen.findByRole("region", { name: "costs-route" });
+    await user.click(screen.getByRole("button", { name: "Back to planner" }));
+    expect(window.location.pathname).toBe(
+      `/organizations/${primaryOrganization.id}/events/${eventId}/planner`,
+    );
+    window.history.pushState(
+      null,
+      "",
+      `/organizations/${primaryOrganization.id}/events/${eventId}/costs`,
+    );
+    fireEvent(window, new PopStateEvent("popstate"));
+    await screen.findByRole("region", { name: "costs-route" });
+    await user.click(screen.getByRole("button", { name: "Receipts" }));
+    expect(window.location.pathname).toBe(
+      `/organizations/${primaryOrganization.id}/events/${eventId}/receipts`,
     );
   });
 
