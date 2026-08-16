@@ -1,6 +1,11 @@
 import { liveQuery } from "dexie";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
+import { defaultValueCtx, Editor, rootCtx } from "@milkdown/kit/core";
+import { editorViewCtx, parserCtx, serializerCtx } from "@milkdown/kit/core";
+import { commonmark } from "@milkdown/kit/preset/commonmark";
+import { Milkdown, MilkdownProvider, useEditor, useInstance } from "@milkdown/react";
+import { listener, listenerCtx } from "@milkdown/plugin-listener";
 
 import {
   readRecipeCatalog,
@@ -278,6 +283,43 @@ function IngredientCombobox({
   );
 }
 
+function MarkdownVisualEditor({ value, onChange, onUnsupported, onSupported }: { value: string; onChange: (value: string) => void; onUnsupported: () => void; onSupported: () => void }) {
+  const onChangeRef = useRef(onChange);
+  const lastMarkdownRef = useRef(value);
+  onChangeRef.current = onChange;
+  const [loading, getEditor] = useInstance();
+  useEditor((root) =>
+    Editor.make()
+      .config((ctx) => {
+        ctx.set(rootCtx, root);
+        ctx.set(defaultValueCtx, value);
+        const source = value;
+        ctx.get(listenerCtx).mounted((mountedCtx) => {
+          const serialized = mountedCtx.get(serializerCtx)(mountedCtx.get(parserCtx)(source));
+          if (serialized.trimEnd() !== source.trimEnd() || /<[^>]+>|^\s*\|.*\|/m.test(source)) onUnsupported();
+          else onSupported();
+        });
+        ctx.get(listenerCtx).markdownUpdated((_, markdown) => {
+          lastMarkdownRef.current = markdown;
+          if (markdown.trimEnd() === source.trimEnd()) return;
+          onChangeRef.current(markdown);
+        });
+      })
+      .use(commonmark)
+      .use(listener),
+  []);
+  useEffect(() => {
+    if (loading || value === lastMarkdownRef.current) return;
+    getEditor()?.action((ctx) => {
+      const view = ctx.get(editorViewCtx);
+      const document = ctx.get(parserCtx)(value);
+      view.dispatch(view.state.tr.replaceWith(0, view.state.doc.content.size, document.content));
+    });
+    lastMarkdownRef.current = value;
+  }, [getEditor, loading, value]);
+  return <Milkdown />;
+}
+
 function RecipeEditor({
   catalog,
   recipe,
@@ -315,8 +357,11 @@ function RecipeEditor({
   }));
   const [error, setError] = useState<string>();
   const [saved, setSaved] = useState(false);
+  const [descriptionMode, setDescriptionMode] = useState<"visual" | "markdown">("visual");
+  const [unsupportedDescription, setUnsupportedDescription] = useState(false);
+  const descriptionId = `recipe-description-${recipe.id}`;
   const previousDiscardToken = useRef(discardToken);
-  const initialInput = {
+  const initialInput = useMemo(() => ({
     recipeId: recipe.id,
     basedOnVersionId: recipe.versionId,
     name: recipe.name,
@@ -327,17 +372,14 @@ function RecipeEditor({
     recipeTagIds: recipe.recipeTagIds,
     estimatedDinersPerScalingUnit: recipe.estimatedDinersPerScalingUnit,
     roundSuggestionsUp: recipe.roundSuggestionsUp,
-  } satisfies RecipeVersionInput;
+  } satisfies RecipeVersionInput), [recipe]);
   const dirty = JSON.stringify(input) !== JSON.stringify(initialInput);
-  useEffect(
-    () =>
-      setInput((current) => ({
-        ...current,
-        recipeId: recipe.id,
-        basedOnVersionId: recipe.versionId,
-      })),
-    [recipe.id, recipe.versionId],
-  );
+  useEffect(() => {
+    if (!dirty) {
+      setInput(initialInput);
+      setUnsupportedDescription(false);
+    }
+  }, [initialInput, dirty]);
   useEffect(() => {
     setOpen(initiallyOpen);
   }, [initiallyOpen]);
@@ -370,6 +412,15 @@ function RecipeEditor({
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : "unavailable");
     }
+  }
+  function changeDescriptionMode(event: React.KeyboardEvent<HTMLButtonElement>) {
+    const tabs = Array.from(event.currentTarget.parentElement?.querySelectorAll<HTMLButtonElement>("[role=tab]") ?? []);
+    const index = tabs.indexOf(event.currentTarget);
+    const next = event.key === "ArrowRight" || event.key === "ArrowDown" ? (index + 1) % tabs.length : event.key === "ArrowLeft" || event.key === "ArrowUp" ? (index - 1 + tabs.length) % tabs.length : event.key === "Home" ? 0 : event.key === "End" ? tabs.length - 1 : -1;
+    if (next < 0) return;
+    event.preventDefault();
+    tabs[next]?.focus();
+    setDescriptionMode(next === 0 ? "visual" : "markdown");
   }
   return (
     <form className="recipe-create" onSubmit={(event) => void submit(event)}>
@@ -407,10 +458,38 @@ function RecipeEditor({
       </label>
       <label className="recipe-create__description">
         {t("recipesCatalog.description")}
-        <textarea
-          onChange={(event) => change("description", event.target.value)}
-          value={input.description}
-        />
+        <div aria-label={t("recipesCatalog.descriptionMode")} className="recipe-description-mode" role="tablist">
+          <button aria-controls={`${descriptionId}-visual`} aria-selected={descriptionMode === "visual"} id={`${descriptionId}-visual-tab`} onClick={() => setDescriptionMode("visual")} onKeyDown={changeDescriptionMode} role="tab" tabIndex={descriptionMode === "visual" ? 0 : -1} type="button">
+            {t("recipesCatalog.descriptionVisual")}
+          </button>
+          <button aria-controls={`${descriptionId}-markdown`} aria-selected={descriptionMode === "markdown"} id={`${descriptionId}-markdown-tab`} onClick={() => setDescriptionMode("markdown")} onKeyDown={changeDescriptionMode} role="tab" tabIndex={descriptionMode === "markdown" ? 0 : -1} type="button">
+            {t("recipesCatalog.descriptionMarkdown")}
+          </button>
+        </div>
+        {unsupportedDescription ? <p role="status">{t("recipesCatalog.descriptionUnsupported")}</p> : null}
+        {descriptionMode === "markdown" ? (
+          <div aria-labelledby={`${descriptionId}-markdown-tab`} id={`${descriptionId}-markdown`} role="tabpanel">
+            <textarea
+              aria-label={t("recipesCatalog.descriptionMarkdown")}
+              onChange={(event) => change("description", event.target.value)}
+              value={input.description}
+            />
+          </div>
+        ) : (
+          <div aria-labelledby={`${descriptionId}-visual-tab`} className="recipe-description-preview" id={`${descriptionId}-visual`} role="tabpanel">
+            <MilkdownProvider key={recipe.versionId}>
+              <MarkdownVisualEditor
+                onChange={(description) => change("description", description)}
+                onUnsupported={() => {
+                  setUnsupportedDescription(true);
+                  setDescriptionMode("markdown");
+                }}
+                onSupported={() => setUnsupportedDescription(false)}
+                value={input.description}
+              />
+            </MilkdownProvider>
+          </div>
+        )}
       </label>
       <fieldset>
         <legend>{t("recipesCatalog.ingredients")}</legend>

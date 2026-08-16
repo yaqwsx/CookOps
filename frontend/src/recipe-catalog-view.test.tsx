@@ -1,4 +1,4 @@
-import { render, screen } from "@testing-library/react";
+import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -147,6 +147,7 @@ vi.mock("./ingredient-create", () => ({
 
 describe("recipe retired ingredient warning", () => {
   beforeEach(async () => {
+    vi.clearAllMocks();
     await i18n.changeLanguage(defaultLocale);
   });
 
@@ -162,6 +163,68 @@ describe("recipe retired ingredient warning", () => {
       "Tento recept obsahuje vyřazenou surovinu",
     );
     expect(screen.getByText("Je dostupná aktualizace verzí surovin v katalogu.")).toBeVisible();
+  });
+
+  it("keeps one Markdown buffer across the safe visual preview", async () => {
+    const user = userEvent.setup();
+    render(
+      <RecipeCatalog
+        editRecipeId="6ce17d2f-8365-4b1f-a80b-34d10425d51c"
+        onUnauthenticated={() => undefined}
+        organizationId="5ce17d2f-8365-4b1f-a80b-34d10425d51c"
+        selectedRecipeId="6ce17d2f-8365-4b1f-a80b-34d10425d51c"
+        userId="a6a58bd6-214e-49af-8fae-e5f974bf8e08"
+      />,
+    );
+    await screen.findByRole("tablist");
+    Object.defineProperty(document, "elementFromPoint", {
+      configurable: true,
+      value: () => document.querySelector("[contenteditable=true]"),
+    });
+    const visual = await waitFor(() => {
+      const editor = document.querySelector<HTMLElement>("[contenteditable=true]");
+      if (!editor) throw new Error("Milkdown editor is not mounted");
+      return editor;
+    });
+    expect(visual).toHaveAttribute("contenteditable", "true");
+    await user.click(screen.getAllByRole("tab")[1]);
+    const markdown = await screen.findByRole("textbox", { name: "Markdown" });
+    await user.clear(markdown);
+    await user.type(markdown, "# Soup\n<script>alert(1)</script>");
+    await user.click(screen.getAllByRole("tab")[0]);
+    expect(screen.getByText("Tento Markdown nelze bezpečně převést", { exact: false })).toBeVisible();
+    expect(screen.queryByRole("script")).not.toBeInTheDocument();
+    await user.click(screen.getAllByRole("tab")[1]);
+    expect(screen.getByRole("textbox", { name: "Markdown" })).toHaveValue(
+      "# Soup\n<script>alert(1)</script>",
+    );
+    await user.click(screen.getByRole("button", { name: "Publikovat verzi" }));
+    expect(queueRecipeVersionPublish).toHaveBeenCalledWith(
+      expect.any(String),
+      expect.any(String),
+      expect.objectContaining({ description: "# Soup\n<script>alert(1)</script>" }),
+    );
+  });
+
+  it("preserves unsupported Markdown when visual mode cannot round-trip it", async () => {
+    const user = userEvent.setup();
+    render(<RecipeCatalog editRecipeId="6ce17d2f-8365-4b1f-a80b-34d10425d51c" onUnauthenticated={() => undefined} organizationId="5ce17d2f-8365-4b1f-a80b-34d10425d51c" selectedRecipeId="6ce17d2f-8365-4b1f-a80b-34d10425d51c" userId="a6a58bd6-214e-49af-8fae-e5f974bf8e08" />);
+    await screen.findByRole("tablist");
+    await user.click(screen.getAllByRole("tab")[1]);
+    const source = "| A | B |\n|---|---|\n| 1 | 2 |";
+    const raw = await screen.findByRole("textbox", { name: "Markdown" });
+    await user.clear(raw);
+    await user.type(raw, source);
+    await user.click(screen.getAllByRole("tab")[0]);
+    expect(await screen.findByText("Tento Markdown nelze bezpečně převést", { exact: false })).toBeVisible();
+    await user.click(screen.getAllByRole("tab")[1]);
+    const repaired = screen.getByRole("textbox", { name: "Markdown" });
+    expect(repaired).toHaveValue(source);
+    await user.clear(repaired);
+    await user.type(repaired, "Supported **source**");
+    await user.click(screen.getAllByRole("tab")[0]);
+    expect(screen.queryByText("Tento Markdown nelze bezpečně převést", { exact: false })).not.toBeInTheDocument();
+    expect(document.getElementById("recipe-description-6ce17d2f-8365-4b1f-a80b-34d10425d51c-visual")).toBeVisible();
   });
 
   it("previews and confirms one atomic ingredient update", async () => {
