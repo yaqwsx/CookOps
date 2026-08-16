@@ -20,8 +20,10 @@ from cookops.config import HumanAuthProvider, Settings
 from cookops.database import create_database_runtime
 from cookops.http_auth import (
     BrowserAuthenticationServices,
+    OrganizationAdministrationHttpServices,
     create_auth_router,
     create_organization_access_router,
+    create_organization_administration_router,
 )
 from cookops.http_events import EventHttpServices, create_events_router
 from cookops.http_media import MediaHttpServices, create_media_router
@@ -146,6 +148,10 @@ def create_app(
         application.state.browser_authentication = browser_authentication_factory(
             app_settings, session_factory
         )
+        application.state.organization_administration = OrganizationAdministrationHttpServices(
+            browser_sessions=application.state.browser_authentication.browser_sessions,
+            session_factory=session_factory,
+        )
         if app_settings.oauth_interaction_details_api_credential_base64url is not None:
             application.state.oauth_interactions = OAuthInteractionHttpServices(
                 OAuthInteractionApprovalService(
@@ -200,6 +206,7 @@ def create_app(
     application.include_router(create_auth_router(app_settings))
     application.include_router(create_oauth_interaction_router(app_settings))
     application.include_router(create_organization_access_router(app_settings))
+    application.include_router(create_organization_administration_router(app_settings))
     application.include_router(create_events_router(app_settings))
     application.include_router(create_memberships_router(app_settings))
     application.include_router(create_shopping_router(app_settings))

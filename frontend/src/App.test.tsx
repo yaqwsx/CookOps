@@ -120,6 +120,7 @@ function mockAnonymousDevelopmentSession({
         accessRevoked = true;
         return response({ detail: "not authenticated" }, 401);
       }
+      if (path === "/api/v1/system/organizations/access") return response(null, 403);
       if (path === "/auth/dummy/identities") {
         return response({
           identities: [
@@ -155,6 +156,7 @@ function mockAnonymousGoogleSession() {
           : response({ detail: "not authenticated" }, 401);
       }
       if (path === "/api/v1/organizations") return response(organizations);
+      if (path === "/api/v1/system/organizations/access") return response(null, 403);
       if (path === "/auth/google/session" && init?.method === "POST") {
         signedIn = true;
         return response(null, 204);
@@ -776,5 +778,70 @@ describe("development authentication", () => {
         screen.getByRole("heading", { name: "Development sign-in" }),
       ).toBeInTheDocument();
     });
+  });
+
+  it("shows the system organization route only to a system administrator and refreshes the switcher after creation", async () => {
+    const user = userEvent.setup();
+    window.history.replaceState(null, "", "/system/organizations");
+    window.COOKOPS_RUNTIME_CONFIG = { authentication: { provider: "dummy" } };
+    let signedIn = false;
+    let organizationReads = 0;
+    const createdId = "8c4c9065-0fb3-490f-8c31-bef5103c1b1b";
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+        const path = String(input);
+        if (path === "/auth/session") {
+          return signedIn ? response({ ...alice }) : response(null, 401);
+        }
+        if (path === "/auth/dummy/identities") {
+          return response({ identities: [{ subject: "dummy-admin", display_name: "Admin" }] });
+        }
+        if (path === "/auth/dummy/session" && init?.method === "POST") {
+          signedIn = true;
+          return response(null, 204);
+        }
+        if (path === "/api/v1/system/organizations/access") return response(null, 204);
+        if (path === "/api/v1/organizations") {
+          organizationReads += 1;
+          return response({
+            organizations:
+              organizationReads > 1
+                ? [...organizations.organizations, { id: createdId, name: "New kitchen" }]
+                : organizations.organizations,
+          });
+        }
+        if (path === "/api/v1/system/organizations" && init?.method === "POST") {
+          return response({ id: createdId, name: "New kitchen" }, 201);
+        }
+        throw new Error(`Unexpected request: ${path}`);
+      }),
+    );
+
+    render(<App />);
+    await user.click(await screen.findByRole("button", { name: "Přihlásit se jako Admin" }));
+    expect(await screen.findByRole("heading", { name: "Nová organizace" })).toBeInTheDocument();
+    await user.type(screen.getByLabelText("Název"), "New kitchen");
+    await user.click(screen.getByRole("button", { name: "Vytvořit organizaci" }));
+    expect(await screen.findByText("Organizace byla vytvořena.")).toBeInTheDocument();
+    await waitFor(() =>
+      expect(
+        screen.getByRole("option", { name: "New kitchen" }),
+      ).toBeInTheDocument(),
+    );
+  });
+
+  it("does not expose the system organization surface to a non-admin", async () => {
+    const user = userEvent.setup();
+    window.history.replaceState(null, "", "/system/organizations");
+    mockAnonymousDevelopmentSession();
+    render(<App />);
+    await user.click(
+      await screen.findByRole("button", { name: "Přihlásit se jako Alice Member" }),
+    );
+    expect(
+      await screen.findByText("Tato stránka je dostupná jen systémovým administrátorům."),
+    ).toBeInTheDocument();
+    expect(screen.queryByRole("heading", { name: "Nová organizace" })).toBeNull();
   });
 });

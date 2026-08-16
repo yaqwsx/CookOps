@@ -8,6 +8,7 @@ from uuid import UUID, uuid4
 
 from iso4217 import Currency
 from sqlalchemy import select, text
+from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from cookops.persistence.models import (
@@ -191,30 +192,40 @@ def _advisory_lock_key(namespace: str, identity: UUID) -> int:
     return int.from_bytes(digest[:8], byteorder="big", signed=True)
 
 
-async def _authorize(session: AsyncSession, context: ExecutionContext) -> None:
+async def _authorize(
+    session: AsyncSession, context: ExecutionContext, *, require_installation: bool = True
+) -> None:
     expected_installation_kind = "agent" if context.oauth_client_id is not None else "browser"
-    authorized_actor = await session.scalar(
+    statement = (
         select(User.id)
         .join(
             SystemRoleAssignment,
             SystemRoleAssignment.user_id == User.id,
-        )
-        .join(
-            ClientInstallation,
-            (ClientInstallation.user_id == User.id)
-            & (ClientInstallation.id == context.client_installation_id),
         )
         .where(
             User.id == context.actor_user_id,
             User.disabled_at.is_(None),
             SystemRoleAssignment.role == "system_admin",
             SystemRoleAssignment.revoked_at.is_(None),
+        )
+    )
+    if require_installation:
+        statement = statement.join(
+            ClientInstallation,
+            (ClientInstallation.user_id == User.id)
+            & (ClientInstallation.id == context.client_installation_id),
+        ).where(
             ClientInstallation.disabled_at.is_(None),
             ClientInstallation.installation_kind == expected_installation_kind,
         )
-        .with_for_update(
+    lock_targets = (User, SystemRoleAssignment, ClientInstallation) if require_installation else (
+        User,
+        SystemRoleAssignment,
+    )
+    authorized_actor = await session.scalar(
+        statement.with_for_update(
             read=True,
-            of=(User, SystemRoleAssignment, ClientInstallation),
+            of=lock_targets,
         )
     )
     if authorized_actor is None:
@@ -395,7 +406,19 @@ async def create_organization(
     result: CreateOrganizationResult | None = None
 
     async with session_factory() as session, session.begin():
-        await _authorize(session, context)
+        if not prepared.violations:
+            await session.execute(
+                insert(ClientInstallation)
+                .values(
+                    id=context.client_installation_id,
+                    user_id=context.actor_user_id,
+                    installation_kind=(
+                        "agent" if context.oauth_client_id is not None else "browser"
+                    ),
+                )
+                .on_conflict_do_nothing(index_elements=("id",))
+            )
+        await _authorize(session, context, require_installation=not prepared.violations)
 
         # The lock is acquired before a separate SELECT. Under PostgreSQL's default
         # READ COMMITTED isolation, a waiter therefore observes the winner's commit.

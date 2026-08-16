@@ -7,10 +7,13 @@ future Google adapter; they do not bypass authorization.
 """
 
 from dataclasses import dataclass
+from datetime import datetime
 from uuid import UUID
 
 from fastapi import APIRouter, HTTPException, Request, Response, status
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator
+from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from cookops.application.browser_sessions import BrowserSessionService
 from cookops.application.dummy_identities import DummyIdentityProvider
@@ -19,7 +22,14 @@ from cookops.application.human_authentication import (
     HumanAuthenticationDenied,
     HumanAuthenticationService,
 )
+from cookops.application.organizations import (
+    ApplicationServiceError,
+    CreateOrganizationCommand,
+    ExecutionContext,
+    create_organization,
+)
 from cookops.config import Environment, Settings
+from cookops.persistence.models import SystemRoleAssignment, User
 
 
 @dataclass(frozen=True, slots=True)
@@ -30,6 +40,12 @@ class BrowserAuthenticationServices:
     human_authentication: HumanAuthenticationService
     dummy_identities: DummyIdentityProvider | None
     google_identities: GoogleIdentityProvider | None
+
+
+@dataclass(frozen=True, slots=True)
+class OrganizationAdministrationHttpServices:
+    browser_sessions: BrowserSessionService
+    session_factory: async_sessionmaker[AsyncSession]
 
 
 class DummyIdentityResponse(BaseModel):
@@ -66,6 +82,48 @@ class AvailableOrganizationResponse(BaseModel):
 
 class AvailableOrganizationListResponse(BaseModel):
     organizations: tuple[AvailableOrganizationResponse, ...]
+
+
+class CreateOrganizationRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    mutation_id: UUID
+    organization_id: UUID
+    client_installation_id: UUID
+    client_wall_time: datetime
+    name: str = Field(min_length=1, max_length=200)
+    description: str | None = Field(default=None, max_length=10_000)
+    default_currency: str = Field(default="CZK", min_length=3, max_length=3)
+
+    @field_validator("name")
+    @classmethod
+    def canonical_name(cls, value: str) -> str:
+        if not value.strip() or len(value.strip()) > 200:
+            raise ValueError("must be nonblank and at most 200 characters")
+        return value
+
+    @field_validator("default_currency")
+    @classmethod
+    def iso_currency(cls, value: str) -> str:
+        from iso4217 import Currency
+
+        if value.strip().upper() not in Currency.__members__:
+            raise ValueError("must be an ISO 4217 currency code")
+        return value
+
+    @field_validator("client_wall_time")
+    @classmethod
+    def timezone_required(cls, value: datetime) -> datetime:
+        if value.tzinfo is None or value.utcoffset() is None:
+            raise ValueError("must include a timezone")
+        return value
+
+
+class CreatedOrganizationResponse(BaseModel):
+    id: UUID
+    name: str
+    description: str | None
+    default_currency: str
 
 
 def _services(request: Request) -> BrowserAuthenticationServices:
@@ -226,6 +284,90 @@ def create_auth_router(settings: Settings) -> APIRouter:
         _delete_cookie(response, settings)
         response.status_code = status.HTTP_204_NO_CONTENT
         return response
+
+    return router
+
+
+def create_organization_administration_router(settings: Settings) -> APIRouter:
+    router = APIRouter(prefix="/api/v1/system", tags=["system administration"])
+
+    def services(request: Request) -> OrganizationAdministrationHttpServices:
+        value = getattr(request.app.state, "organization_administration", None)
+        if not isinstance(value, OrganizationAdministrationHttpServices):
+            raise HTTPException(
+                status_code=503, detail="organization administration is not available"
+            )
+        return value
+
+    async def actor(request: Request, value: OrganizationAdministrationHttpServices) -> UUID:
+        secret = request.cookies.get(settings.browser_session_cookie_name)
+        authenticated = await value.browser_sessions.authenticate(secret) if secret else None
+        if authenticated is None:
+            raise _unauthenticated()
+        return authenticated.user_id
+
+    async def require_system_admin(
+        actor_id: UUID, value: OrganizationAdministrationHttpServices
+    ) -> None:
+        async with value.session_factory() as session:
+            allowed = await session.scalar(
+                select(SystemRoleAssignment.id)
+                .join(User, User.id == SystemRoleAssignment.user_id)
+                .where(
+                    SystemRoleAssignment.user_id == actor_id,
+                    SystemRoleAssignment.role == "system_admin",
+                    SystemRoleAssignment.revoked_at.is_(None),
+                    User.disabled_at.is_(None),
+                )
+            )
+        if allowed is None:
+            raise HTTPException(status_code=403, detail={"code": "forbidden"})
+
+    @router.get("/organizations/access", status_code=204)
+    async def access(request: Request) -> Response:
+        value = services(request)
+        actor_id = await actor(request, value)
+        await require_system_admin(actor_id, value)
+        return Response(status_code=204)
+
+    @router.post(
+        "/organizations", response_model=CreatedOrganizationResponse, status_code=201
+    )
+    async def create(
+        body: CreateOrganizationRequest, request: Request
+    ) -> CreatedOrganizationResponse:
+        value = services(request)
+        actor_id = await actor(request, value)
+        try:
+            result = await create_organization(
+                value.session_factory,
+                ExecutionContext(actor_id, body.client_installation_id),
+                CreateOrganizationCommand(
+                    mutation_id=body.mutation_id,
+                    organization_id=body.organization_id,
+                    name=body.name,
+                    description=body.description,
+                    default_currency=body.default_currency,
+                    client_wall_time=body.client_wall_time,
+                ),
+            )
+        except ApplicationServiceError as error:
+            if error.code == "forbidden":
+                raise HTTPException(status_code=403, detail={"code": "forbidden"}) from error
+            if error.code == "validation_failed":
+                raise HTTPException(
+                    status_code=422,
+                    detail={"code": error.code, "field_violations": [
+                        {"path": item.path, "code": item.code} for item in error.field_violations
+                    ]},
+                ) from error
+            raise HTTPException(status_code=409, detail={"code": error.code}) from error
+        return CreatedOrganizationResponse(
+            id=result.organization_id,
+            name=result.name,
+            description=result.description,
+            default_currency=result.default_currency,
+        )
 
     return router
 

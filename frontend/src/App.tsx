@@ -30,6 +30,8 @@ import { RecipeCatalog } from "./recipe-catalog-view";
 import { runtimeAuthentication } from "./runtime-config";
 import { useOutboxSynchronization } from "./sync-lifecycle";
 import { SynchronizationStatus } from "./synchronization-status";
+import { SystemOrganizationCreate } from "./system-organization-create";
+import { getSystemAdministrationAccess } from "./api/system-organizations";
 import "./app.css";
 
 const sections = ["events", "recipes", "ingredients", "settings"] as const;
@@ -44,6 +46,7 @@ const recipeRoutePrefixPath =
   /^\/organizations\/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\/recipes(?:\/|$)/i;
 const ingredientCatalogPath = /^\/organizations\/[0-9a-f-]{36}\/ingredients$/i;
 const settingsPath = /^\/organizations\/[0-9a-f-]{36}\/settings$/i;
+const systemOrganizationsPath = /^\/system\/organizations$/i;
 
 function eventOverviewPathFor(organizationId: string) {
   return `/organizations/${organizationId}/events`;
@@ -317,6 +320,7 @@ function AuthenticatedShell({
 }) {
   const { i18n, t } = useTranslation();
   const [logoutError, setLogoutError] = useState(false);
+  const [systemAdmin, setSystemAdmin] = useState(false);
   const [organizations, setOrganizations] = useState<OrganizationState>({
     status: "loading",
   });
@@ -368,6 +372,10 @@ function AuthenticatedShell({
     void loadOrganizations();
   }, [loadOrganizations]);
 
+  useEffect(() => {
+    void getSystemAdministrationAccess().then(setSystemAdmin).catch(() => setSystemAdmin(false));
+  }, []);
+
   const pathOrganizationId = pathname
     .match(organizationPath)?.[1]
     ?.toLowerCase();
@@ -384,13 +392,14 @@ function AuthenticatedShell({
       organizations.organizations.length === 0
     )
       return;
+    if (systemOrganizationsPath.test(pathname)) return;
     if (organizationId) return;
     const firstOrganization = organizations.organizations[0];
     if (!firstOrganization) return;
     const nextPath = eventOverviewPathFor(firstOrganization.id);
     window.history.replaceState(null, "", nextPath);
     setPathname(nextPath);
-  }, [organizationId, organizations]);
+  }, [organizationId, organizations, pathname]);
 
   function selectOrganization(nextOrganizationId: string) {
     const nextPath = eventOverviewPathFor(nextOrganizationId);
@@ -455,6 +464,7 @@ function AuthenticatedShell({
   const editRecipeId = recipeRoute?.[3] ? selectedRecipeId : undefined;
   const ingredientCatalogOpen = ingredientCatalogPath.test(pathname);
   const settingsOpen = settingsPath.test(pathname);
+  const systemOrganizationsOpen = systemOrganizationsPath.test(pathname);
 
   function openShopping(eventId: string, listId?: string) {
     const nextPath = `/organizations/${organizationId}/events/${eventId}/shopping${listId ? `/${listId}` : ""}`;
@@ -546,6 +556,9 @@ function AuthenticatedShell({
             {logoutError ? (
               <span role="alert">{t("shell.logoutError")}</span>
             ) : null}
+            {systemAdmin ? (
+              <a href="/system/organizations">{t("systemOrganizations.navigation")}</a>
+            ) : null}
           </div>
         </div>
       </header>
@@ -574,7 +587,18 @@ function AuthenticatedShell({
           <p>{t("shell.introduction")}</p>
         </section>
 
-        <div className="section-grid">
+        {systemOrganizationsOpen ? (
+          systemAdmin ? (
+            <SystemOrganizationCreate
+              onCreated={() => void loadOrganizations()}
+              userId={identity.id}
+            />
+          ) : (
+            <p role="alert">{t("systemOrganizations.routeForbidden")}</p>
+          )
+        ) : null}
+
+        <div className="section-grid" hidden={systemOrganizationsOpen}>
           {sections.map((section) => (
             <section id={section} className="section-card" key={section}>
               <h2 id={section === "events" ? "events-heading" : undefined}>
