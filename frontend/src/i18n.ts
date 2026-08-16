@@ -189,6 +189,10 @@ const resources = {
         incompleteCost: "Cena není úplná ({{count}} surovin bez platné ceny).",
         showRetired: "Zobrazit vyřazené recepty",
         retired: "Vyřazený recept",
+        versionHistory: "Historie verzí",
+        currentVersion: "Aktuální verze:",
+        noVersionHistory: "Historie verzí není k dispozici.",
+        publishedBy: "publikoval uživatel",
         retiredIngredientWarning:
           "Tento recept obsahuje vyřazenou surovinu. Historická verze zůstává čitelná.",
         catalogUpdateAvailable:
@@ -724,6 +728,10 @@ const resources = {
         incompleteCost: "Cost incomplete ({{count}} ingredients lack a valid price).",
         showRetired: "Show retired recipes",
         retired: "Retired recipe",
+        versionHistory: "Version history",
+        currentVersion: "Current version:",
+        noVersionHistory: "No version history is available.",
+        publishedBy: "published by user",
         retiredIngredientWarning:
           "This recipe references a retired ingredient. The historical version remains readable.",
         catalogUpdateAvailable:

@@ -908,6 +908,25 @@ export function RecipeCatalog({
               {recipe.catalogUpdateAvailable ? (
                 <p role="status">{t("recipesCatalog.catalogUpdateAvailable")}</p>
               ) : null}
+              <details>
+                <summary>{t("recipesCatalog.versionHistory")}</summary>
+                {(() => {
+                  const history = recipe.versionHistory;
+                  const current = history.find((version) => version.id === recipe.versionId);
+                  const previous = history.filter((version) => version.id !== recipe.versionId);
+                  const metadata = (version: typeof history[number]) => <>{version.id}{version.publishedAt ? <> · <time dateTime={version.publishedAt}>{version.publishedAt}</time></> : null}{version.publishedByUserId ? ` · ${t("recipesCatalog.publishedBy")}: ${version.publishedByUserId}` : ""}</>;
+                  return <>
+                    <p><strong>{t("recipesCatalog.currentVersion")}</strong> {current?.name ?? recipe.name} · {current ? metadata(current) : recipe.versionId}</p>
+                    {previous.length ? (
+                  <ul aria-label={t("recipesCatalog.versionHistory")}>
+                    {previous.map((version) => (
+                      <li key={version.id}>{version.name ? `${version.name} · ` : ""}{metadata(version)}</li>
+                    ))}
+                  </ul>
+                    ) : <p>{t("recipesCatalog.noVersionHistory")}</p>}
+                  </>;
+                })()}
+              </details>
               <RecipeCatalogUpdate
                 catalog={state.catalog}
                 organizationId={organizationId}

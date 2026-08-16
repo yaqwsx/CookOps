@@ -11,6 +11,7 @@ export type CatalogRecipe = {
   id: string;
   retired: boolean;
   versionId: string;
+  versionHistory: RecipeVersionHistoryEntry[];
   name: string;
   description: string | null;
   estimatedDinersPerScalingUnit?: string;
@@ -32,6 +33,7 @@ export type CatalogRecipe = {
   catalogUpdateAvailable: boolean;
   recipeTagIds: string[];
 };
+export type RecipeVersionHistoryEntry = { id: string; publishedAt?: string; publishedByUserId?: string; name?: string };
 type ValidCatalogRecipeCandidate = CatalogRecipe & { versionId: string };
 
 export type RecipeScalingUnit = { id: string; name: string };
@@ -180,6 +182,15 @@ function text(record: CanonicalRecord, key: string) {
   return typeof value === "string" ? value : undefined;
 }
 
+export function projectRecipeVersionHistory(recipeId: string, organizationId: string, records: CanonicalRecord[]): RecipeVersionHistoryEntry[] {
+  return records.filter((record) => record.immutable === true && uuid.test(record.entityId) && text(record, "id") === record.entityId && text(record, "organization_id") === organizationId && text(record, "recipe_id") === recipeId).map((record) => {
+    const publishedAt = text(record, "published_at");
+    const publishedByUserId = text(record, "published_by_user_id");
+    const name = text(record, "name");
+    return { id: record.entityId, ...(publishedAt && Number.isFinite(Date.parse(publishedAt)) ? { publishedAt } : {}), ...(publishedByUserId && uuid.test(publishedByUserId) ? { publishedByUserId } : {}), ...(name ? { name } : {}) };
+  }).sort((left, right) => (left.publishedAt ? Date.parse(left.publishedAt) : Number.POSITIVE_INFINITY) - (right.publishedAt ? Date.parse(right.publishedAt) : Number.POSITIVE_INFINITY) || left.id.localeCompare(right.id));
+}
+
 /** Return only cached, organization-scoped recipe data that is safe to display or select. */
 export async function readRecipeCatalog(
   userId: string,
@@ -259,6 +270,7 @@ export async function readRecipeCatalog(
     versionRecords
       .filter(
         (record) =>
+          record.immutable === true &&
           uuid.test(record.entityId) &&
           text(record, "id") === record.entityId &&
           text(record, "organization_id") === organizationId,
@@ -340,6 +352,7 @@ export async function readRecipeCatalog(
         id: record.entityId,
         retired: record.lifecycle === "retired",
         versionId,
+        versionHistory: projectRecipeVersionHistory(record.entityId, organizationId, versionRecords),
         name,
         scalingUnitId,
         baseScalingAmount,

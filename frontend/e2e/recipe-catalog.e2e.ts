@@ -6,6 +6,7 @@ const ids = {
   unit: "6ce17d2f-8365-4b1f-a80b-34d10425d51c",
   recipe: "7ce17d2f-8365-4b1f-a80b-34d10425d51c",
   version: "8ce17d2f-8365-4b1f-a80b-34d10425d51c",
+  historicalVersion: "9ce17d2f-8365-4b1f-a80b-34d10425d51c",
 };
 
 function record(entity_id: string, entity_kind: string, value: object) {
@@ -116,10 +117,15 @@ test("edits recipe Markdown through the visual editor without executing unsafe s
     record(ids.organization, "organization", { id: ids.organization, default_currency: "CZK", retired_at: null }),
     record(ids.unit, "unit_definition", { id: ids.unit, organization_id: null, code: "person", allows_recipe_scaling: true, retired_at: null }),
     record(ids.recipe, "recipe", { id: ids.recipe, organization_id: ids.organization, current_version_id: ids.version, retired_at: null }),
-    record(ids.version, "recipe_version", { id: ids.version, organization_id: ids.organization, recipe_id: ids.recipe, name: "Soup", description: "Original", scaling_unit_id: ids.unit, base_scaling_amount: "1" }),
+    record(ids.version, "recipe_version", { id: ids.version, organization_id: ids.organization, recipe_id: ids.recipe, name: "Soup", description: "Original", scaling_unit_id: ids.unit, base_scaling_amount: "1", published_at: "2026-02-01T00:00:00Z", published_by_user_id: ids.user, immutable: true }),
+    record(ids.historicalVersion, "recipe_version", { id: ids.historicalVersion, organization_id: ids.organization, recipe_id: ids.recipe, name: "Older soup", description: "Before", scaling_unit_id: ids.unit, base_scaling_amount: "1", published_at: "2026-01-01T00:00:00Z", published_by_user_id: ids.user, immutable: true }),
   ] }) }));
   await page.route("**/api/v1/sync/pull", async (route) => await route.fulfill({ contentType: "application/json", body: JSON.stringify({ sync_schema_version: 1, server_time: "2026-08-07T12:00:00.000Z", status: "ok", next_cursor: "opaque-cursor", transaction_groups: [] }) }));
   await page.goto(`/organizations/${ids.organization}/recipes/${ids.recipe}/edit`);
+  await page.getByText("Historie verzí").click();
+  await expect(page.getByText("Aktuální verze:")).toBeVisible();
+  await expect(page.getByText(/Soup · .*8ce17d2f/)).toBeVisible();
+  await expect(page.getByText(/Older soup/)).toBeVisible();
   const visual = page.locator("[contenteditable=true]");
   await expect(visual).toBeVisible();
   await visual.focus();
