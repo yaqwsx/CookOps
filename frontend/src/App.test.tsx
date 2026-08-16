@@ -47,6 +47,34 @@ vi.mock("./event-shopping", () => ({
   EventShopping: () => <section aria-label="shopping-route" />,
 }));
 
+vi.mock("./recipe-catalog-view", () => ({
+  RecipeCatalog: ({
+    editRecipeId,
+    onBackToCatalog,
+    onDirtyChange,
+    selectedRecipeId,
+  }: {
+    editRecipeId?: string;
+    onBackToCatalog?: () => void;
+    onDirtyChange?: (dirty: boolean) => void;
+    selectedRecipeId?: string;
+  }) => (
+    <section aria-label="recipe-route">
+      <span>{selectedRecipeId ?? "catalog"}</span>
+      {editRecipeId ? (
+        <button onClick={() => onDirtyChange?.(true)} type="button">
+          Make dirty
+        </button>
+      ) : null}
+      {onBackToCatalog ? (
+        <button onClick={onBackToCatalog} type="button">
+          Back to catalog
+        </button>
+      ) : null}
+    </section>
+  ),
+}));
+
 const alice = {
   id: "a6a58bd6-214e-49af-8fae-e5f974bf8e08",
   display_name: "Alice Member",
@@ -355,6 +383,117 @@ describe("development authentication", () => {
     expect(window.location.pathname).toBe(
       `/organizations/${primaryOrganization.id.toUpperCase()}/recipes`,
     );
+  });
+
+  it("routes direct recipe detail and edit URLs without opening events", async () => {
+    const user = userEvent.setup();
+    const recipeId = "6ce17d2f-8365-4b1f-a80b-34d10425d51c";
+    window.history.replaceState(
+      null,
+      "",
+      `/organizations/${primaryOrganization.id}/recipes/${recipeId}/edit`,
+    );
+    mockAnonymousDevelopmentSession();
+    render(<App />);
+    await user.click(
+      await screen.findByRole("button", {
+        name: "Přihlásit se jako Alice Member",
+      }),
+    );
+    expect(await screen.findByRole("region", { name: "recipe-route" })).toHaveTextContent(recipeId);
+    expect(screen.getByRole("button", { name: "Make dirty" })).toBeVisible();
+    expect(screen.queryByRole("heading", { name: "Přehled akcí" })).not.toBeInTheDocument();
+  });
+
+  it("keeps malformed recipe ids in the recipe route and rejects a non-UUID organization", async () => {
+    const user = userEvent.setup();
+    window.history.replaceState(
+      null,
+      "",
+      `/organizations/${primaryOrganization.id}/recipes/not-a-uuid`,
+    );
+    mockAnonymousDevelopmentSession();
+    render(<App />);
+    await user.click(
+      await screen.findByRole("button", {
+        name: "Přihlásit se jako Alice Member",
+      }),
+    );
+    expect(await screen.findByRole("region", { name: "recipe-route" })).toHaveTextContent("not-a-uuid");
+    window.history.replaceState(null, "", "/organizations/not-an-id/recipes");
+    fireEvent(window, new PopStateEvent("popstate"));
+    await waitFor(() =>
+      expect(window.location.pathname).toBe(
+        `/organizations/${primaryOrganization.id}/events`,
+      ),
+    );
+  });
+
+  it("requires discarding an edit before browser back leaves the route", async () => {
+    const user = userEvent.setup();
+    const recipeId = "6ce17d2f-8365-4b1f-a80b-34d10425d51c";
+    window.history.replaceState(
+      null,
+      "",
+      `/organizations/${primaryOrganization.id}/recipes/${recipeId}/edit`,
+    );
+    mockAnonymousDevelopmentSession();
+    const confirmMock = vi.spyOn(window, "confirm");
+    render(<App />);
+    await user.click(
+      await screen.findByRole("button", {
+        name: "Přihlásit se jako Alice Member",
+      }),
+    );
+    await user.click(await screen.findByRole("button", { name: "Make dirty" }));
+    confirmMock.mockReturnValue(false);
+    window.history.pushState(null, "", `/organizations/${primaryOrganization.id}/recipes`);
+    fireEvent(window, new PopStateEvent("popstate"));
+    expect(window.location.pathname).toContain(`/recipes/${recipeId}/edit`);
+    confirmMock.mockReturnValue(true);
+    window.history.pushState(null, "", `/organizations/${primaryOrganization.id}/recipes`);
+    fireEvent(window, new PopStateEvent("popstate"));
+    await waitFor(() =>
+      expect(window.location.pathname).toBe(
+        `/organizations/${primaryOrganization.id}/recipes`,
+      ),
+    );
+    confirmMock.mockRestore();
+  });
+
+  it("synchronizes a confirmed real browser back from edit to catalog", async () => {
+    const user = userEvent.setup();
+    const recipeId = "6ce17d2f-8365-4b1f-a80b-34d10425d51c";
+    window.history.replaceState(
+      null,
+      "",
+      `/organizations/${primaryOrganization.id}/recipes`,
+    );
+    mockAnonymousDevelopmentSession();
+    const confirmMock = vi.spyOn(window, "confirm").mockReturnValue(true);
+    render(<App />);
+    await user.click(
+      await screen.findByRole("button", {
+        name: "Přihlásit se jako Alice Member",
+      }),
+    );
+    await screen.findByText("catalog");
+    window.history.pushState(
+      null,
+      "",
+      `/organizations/${primaryOrganization.id}/recipes/${recipeId}/edit`,
+    );
+    fireEvent(window, new PopStateEvent("popstate"));
+    await user.click(await screen.findByRole("button", { name: "Make dirty" }));
+    window.history.back();
+    await waitFor(() => {
+      expect(window.location.pathname).toBe(
+        `/organizations/${primaryOrganization.id}/recipes`,
+      );
+      expect(screen.getByText("catalog")).toBeVisible();
+    });
+    expect(confirmMock).toHaveBeenCalled();
+    confirmMock.mockRestore();
   });
 
   it("renders a bookmarked costs route and navigates to receipts or planner", async () => {

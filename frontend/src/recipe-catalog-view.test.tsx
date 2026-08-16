@@ -215,4 +215,122 @@ describe("recipe retired ingredient warning", () => {
       screen.getByRole("heading", { name: "Archived cake" }),
     ).toBeVisible();
   });
+
+  it("shows only the selected recipe and returns to the catalog", async () => {
+    const user = userEvent.setup();
+    const onBack = vi.fn();
+    render(
+      <RecipeCatalog
+        onBackToCatalog={onBack}
+        onUnauthenticated={() => undefined}
+        organizationId="5ce17d2f-8365-4b1f-a80b-34d10425d51c"
+        selectedRecipeId="7ce17d2f-8365-4b1f-a80b-34d10425d51c"
+        userId="a6a58bd6-214e-49af-8fae-e5f974bf8e08"
+      />,
+    );
+    expect(await screen.findByRole("heading", { name: "Pasta" })).toBeVisible();
+    expect(screen.queryByRole("heading", { name: "Soup" })).not.toBeInTheDocument();
+    await user.click(screen.getByRole("link", { name: "Zpět do katalogu" }));
+    expect(onBack).toHaveBeenCalledOnce();
+  });
+
+  it("reports an unavailable direct recipe and opens edit mode from the URL", async () => {
+    const recipeId = "6ce17d2f-8365-4b1f-a80b-34d10425d51c";
+    const { rerender } = render(
+      <RecipeCatalog
+        onBackToCatalog={() => undefined}
+        onUnauthenticated={() => undefined}
+        organizationId="5ce17d2f-8365-4b1f-a80b-34d10425d51c"
+        selectedRecipeId="missing-recipe"
+        userId="a6a58bd6-214e-49af-8fae-e5f974bf8e08"
+      />,
+    );
+    expect(await screen.findByText("Tento recept není v této organizaci dostupný.")).toBeVisible();
+    rerender(
+      <RecipeCatalog
+        onBackToCatalog={() => undefined}
+        editRecipeId={recipeId}
+        onUnauthenticated={() => undefined}
+        organizationId="5ce17d2f-8365-4b1f-a80b-34d10425d51c"
+        selectedRecipeId={recipeId}
+        userId="a6a58bd6-214e-49af-8fae-e5f974bf8e08"
+      />,
+    );
+    expect(await screen.findByRole("heading", { name: "Nová verze receptu" })).toBeVisible();
+  });
+
+  it("resets a discarded edit to the current recipe snapshot", async () => {
+    const user = userEvent.setup();
+    const recipeId = "6ce17d2f-8365-4b1f-a80b-34d10425d51c";
+    const { rerender } = render(
+      <RecipeCatalog
+        discardToken={0}
+        editRecipeId={recipeId}
+        onDirtyChange={() => undefined}
+        onUnauthenticated={() => undefined}
+        organizationId="5ce17d2f-8365-4b1f-a80b-34d10425d51c"
+        selectedRecipeId={recipeId}
+        userId="a6a58bd6-214e-49af-8fae-e5f974bf8e08"
+      />,
+    );
+    const name = (await screen.findAllByRole("textbox", { name: "Název" }))[1];
+    await user.clear(name);
+    await user.type(name, "Changed locally");
+    rerender(
+      <RecipeCatalog
+        discardToken={1}
+        editRecipeId={recipeId}
+        onDirtyChange={() => undefined}
+        onUnauthenticated={() => undefined}
+        organizationId="5ce17d2f-8365-4b1f-a80b-34d10425d51c"
+        selectedRecipeId={recipeId}
+        userId="a6a58bd6-214e-49af-8fae-e5f974bf8e08"
+      />,
+    );
+    expect(await screen.findByRole("button", { name: "Upravit recept" })).toBeVisible();
+    rerender(
+      <RecipeCatalog
+        discardToken={1}
+        editRecipeId={recipeId}
+        onDirtyChange={() => undefined}
+        onUnauthenticated={() => undefined}
+        organizationId="5ce17d2f-8365-4b1f-a80b-34d10425d51c"
+        selectedRecipeId={recipeId}
+        userId="a6a58bd6-214e-49af-8fae-e5f974bf8e08"
+      />,
+    );
+    await user.click(screen.getByRole("button", { name: "Upravit recept" }));
+    expect((screen.getAllByRole("textbox", { name: "Název" })[1])).toHaveValue("Soup");
+  });
+
+  it("removes a dirty recipe when direct navigation unmounts its editor", async () => {
+    const user = userEvent.setup();
+    const recipeA = "6ce17d2f-8365-4b1f-a80b-34d10425d51c";
+    const recipeB = "7ce17d2f-8365-4b1f-a80b-34d10425d51c";
+    const dirtyStates: boolean[] = [];
+    const { rerender } = render(
+      <RecipeCatalog
+        editRecipeId={recipeA}
+        onDirtyChange={(dirty) => dirtyStates.push(dirty)}
+        onUnauthenticated={() => undefined}
+        organizationId="5ce17d2f-8365-4b1f-a80b-34d10425d51c"
+        selectedRecipeId={recipeA}
+        userId="a6a58bd6-214e-49af-8fae-e5f974bf8e08"
+      />,
+    );
+    const name = (await screen.findAllByRole("textbox", { name: "Název" }))[1];
+    await user.type(name, " changed");
+    rerender(
+      <RecipeCatalog
+        editRecipeId={recipeB}
+        onDirtyChange={(dirty) => dirtyStates.push(dirty)}
+        onUnauthenticated={() => undefined}
+        organizationId="5ce17d2f-8365-4b1f-a80b-34d10425d51c"
+        selectedRecipeId={recipeB}
+        userId="a6a58bd6-214e-49af-8fae-e5f974bf8e08"
+      />,
+    );
+    await screen.findByRole("heading", { name: "Pasta" });
+    expect(dirtyStates.at(-1)).toBe(false);
+  });
 });

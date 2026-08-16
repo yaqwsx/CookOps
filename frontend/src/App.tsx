@@ -38,12 +38,19 @@ const organizationPath =
   /^\/organizations\/([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})(?:\/|$)/i;
 const eventSectionPath =
   /^\/organizations\/([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})\/events\/([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})\/(planner|shopping|costs|receipts|settings)(?:\/([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}))?$/i;
-const recipeCatalogPath = /^\/organizations\/[0-9a-f-]{36}\/recipes$/i;
+const recipeRoutePath =
+  /^\/organizations\/([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})\/recipes(?:\/([^/]+)(?:\/(edit))?)?$/i;
+const recipeRoutePrefixPath =
+  /^\/organizations\/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\/recipes(?:\/|$)/i;
 const ingredientCatalogPath = /^\/organizations\/[0-9a-f-]{36}\/ingredients$/i;
 const settingsPath = /^\/organizations\/[0-9a-f-]{36}\/settings$/i;
 
 function eventOverviewPathFor(organizationId: string) {
   return `/organizations/${organizationId}/events`;
+}
+
+function isRecipeEditRoute(pathname: string) {
+  return Boolean(pathname.match(recipeRoutePath)?.[3]);
 }
 
 type AuthenticationState =
@@ -314,7 +321,11 @@ function AuthenticatedShell({
     status: "loading",
   });
   const [pathname, setPathname] = useState(window.location.pathname);
+  const [recipeEditorDiscardToken, setRecipeEditorDiscardToken] = useState(0);
+  const currentPathnameRef = useRef(pathname);
+  const recipeEditorDirtyRef = useRef(false);
   useOutboxSynchronization(identity.id);
+  currentPathnameRef.current = pathname;
 
   const loadOrganizations = useCallback(async () => {
     setOrganizations({ status: "loading" });
@@ -332,11 +343,26 @@ function AuthenticatedShell({
 
   useEffect(() => {
     function updatePathname() {
-      setPathname(window.location.pathname);
+      const nextPath = window.location.pathname;
+      const previousPath = currentPathnameRef.current;
+      if (
+        recipeEditorDirtyRef.current &&
+        isRecipeEditRoute(previousPath) &&
+        previousPath !== nextPath
+      ) {
+        if (!window.confirm(t("recipesCatalog.discardChanges"))) {
+          window.history.pushState(null, "", previousPath);
+          return;
+        }
+        recipeEditorDirtyRef.current = false;
+        setRecipeEditorDiscardToken((token) => token + 1);
+      }
+      currentPathnameRef.current = nextPath;
+      setPathname(nextPath);
     }
     window.addEventListener("popstate", updatePathname);
     return () => window.removeEventListener("popstate", updatePathname);
-  }, []);
+  }, [t]);
 
   useEffect(() => {
     void loadOrganizations();
@@ -378,12 +404,25 @@ function AuthenticatedShell({
     setPathname(nextPath);
   }
 
-  function openRecipes(event: React.MouseEvent<HTMLAnchorElement>) {
+  function goToRecipeCatalog() {
     if (!organizationId) return;
-    event.preventDefault();
     const nextPath = `/organizations/${organizationId}/recipes`;
+    if (
+      recipeEditorDirtyRef.current &&
+      isRecipeEditRoute(currentPathnameRef.current) &&
+      !window.confirm(t("recipesCatalog.discardChanges"))
+    )
+      return;
+    recipeEditorDirtyRef.current = false;
+    setRecipeEditorDiscardToken((token) => token + 1);
+    currentPathnameRef.current = nextPath;
     window.history.pushState(null, "", nextPath);
     setPathname(nextPath);
+  }
+
+  function openRecipes(event: React.MouseEvent<HTMLAnchorElement>) {
+    event.preventDefault();
+    goToRecipeCatalog();
   }
 
   function openIngredients(event: React.MouseEvent<HTMLAnchorElement>) {
@@ -407,7 +446,13 @@ function AuthenticatedShell({
   const eventSectionName = eventSection?.[3]?.toLowerCase();
   const shoppingListId = eventSection?.[4]?.toLowerCase();
   const validEventRoute = !shoppingListId || eventSectionName === "shopping";
-  const recipeCatalogOpen = recipeCatalogPath.test(pathname);
+  const recipeRoute = pathname.match(recipeRoutePath);
+  const recipeRoutePrefix = recipeRoutePrefixPath.test(pathname);
+  const recipeCatalogOpen = Boolean(recipeRoute || recipeRoutePrefix);
+  const selectedRecipeId =
+    recipeRoute?.[2]?.toLowerCase() ??
+    (recipeRoutePrefix && !recipeRoute ? "__invalid__" : undefined);
+  const editRecipeId = recipeRoute?.[3] ? selectedRecipeId : undefined;
   const ingredientCatalogOpen = ingredientCatalogPath.test(pathname);
   const settingsOpen = settingsPath.test(pathname);
 
@@ -539,6 +584,15 @@ function AuthenticatedShell({
                 <RecipeCatalog
                   onUnauthenticated={onUnauthenticated}
                   organizationId={organizationId}
+                  onBackToCatalog={
+                    selectedRecipeId ? goToRecipeCatalog : undefined
+                  }
+                  selectedRecipeId={selectedRecipeId}
+                  editRecipeId={editRecipeId}
+                  discardToken={recipeEditorDiscardToken}
+                  onDirtyChange={(dirty) => {
+                    recipeEditorDirtyRef.current = dirty;
+                  }}
                   userId={identity.id}
                 />
               ) : section === "ingredients" &&

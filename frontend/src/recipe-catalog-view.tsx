@@ -153,18 +153,24 @@ function RecipeEditor({
   recipe,
   organizationId,
   userId,
+  initiallyOpen = false,
+  onDirtyChange,
+  discardToken = 0,
 }: {
   catalog: RecipeCatalogProjection;
   recipe: RecipeCatalogProjection["recipes"][number];
   organizationId: string;
   userId: string;
+  initiallyOpen?: boolean;
+  onDirtyChange?: (recipeId: string, dirty: boolean) => void;
+  discardToken?: number;
 }) {
   const { t } = useTranslation();
   const activeIngredients = catalog.ingredients.filter(
     (ingredient) =>
       ingredient.retired !== true && ingredient.historical !== true,
   );
-  const [open, setOpen] = useState(false);
+  const [open, setOpen] = useState(initiallyOpen);
   const [input, setInput] = useState<RecipeVersionInput>(() => ({
     recipeId: recipe.id,
     basedOnVersionId: recipe.versionId,
@@ -177,6 +183,18 @@ function RecipeEditor({
   }));
   const [error, setError] = useState<string>();
   const [saved, setSaved] = useState(false);
+  const previousDiscardToken = useRef(discardToken);
+  const initialInput = {
+    recipeId: recipe.id,
+    basedOnVersionId: recipe.versionId,
+    name: recipe.name,
+    description: recipe.description ?? "",
+    scalingUnitId: recipe.scalingUnitId,
+    baseScalingAmount: recipe.baseScalingAmount,
+    ingredientLines: recipe.ingredientLines,
+    recipeTagIds: recipe.recipeTagIds,
+  } satisfies RecipeVersionInput;
+  const dirty = JSON.stringify(input) !== JSON.stringify(initialInput);
   useEffect(
     () =>
       setInput((current) => ({
@@ -186,6 +204,19 @@ function RecipeEditor({
       })),
     [recipe.id, recipe.versionId],
   );
+  useEffect(() => {
+    setOpen(initiallyOpen);
+  }, [initiallyOpen]);
+  useEffect(() => {
+    if (previousDiscardToken.current === discardToken) return;
+    previousDiscardToken.current = discardToken;
+    setInput(initialInput);
+    setOpen(false);
+  }, [discardToken, initialInput]);
+  useEffect(() => {
+    onDirtyChange?.(recipe.id, open && dirty);
+    return () => onDirtyChange?.(recipe.id, false);
+  }, [dirty, onDirtyChange, open, recipe.id]);
   if (!open)
     return (
       <button onClick={() => setOpen(true)} type="button">
@@ -358,7 +389,14 @@ function RecipeEditor({
       {error ? <p role="alert">{t(`recipesCatalog.errors.${error}`)}</p> : null}
       {saved ? <p role="status">{t("recipesCatalog.saved")}</p> : null}
       <button type="submit">{t("recipesCatalog.publish")}</button>
-      <button onClick={() => setOpen(false)} type="button">
+      <button
+        onClick={() => {
+          if (dirty && !window.confirm(t("recipesCatalog.discardChanges"))) return;
+          setInput(initialInput);
+          setOpen(false);
+        }}
+        type="button"
+      >
         {t("recipesCatalog.cancel")}
       </button>
     </form>
@@ -407,15 +445,39 @@ export function RecipeCatalog({
   organizationId,
   userId,
   onUnauthenticated,
+  onBackToCatalog,
+  selectedRecipeId,
+  editRecipeId,
+  onDirtyChange,
+  discardToken,
 }: {
   organizationId: string;
   userId: string;
   onUnauthenticated: () => void;
+  onBackToCatalog?: () => void;
+  selectedRecipeId?: string;
+  editRecipeId?: string;
+  onDirtyChange?: (dirty: boolean) => void;
+  discardToken?: number;
 }) {
   const { t } = useTranslation();
   const [state, setState] = useState<CatalogState>({ status: "loading" });
   const [showRetired, setShowRetired] = useState(false);
   const [query, setQuery] = useState("");
+  const [dirtyRecipeIds, setDirtyRecipeIds] = useState<Set<string>>(
+    () => new Set(),
+  );
+  const reportRecipeDirty = useCallback((recipeId: string, dirty: boolean) => {
+    setDirtyRecipeIds((current) => {
+      const next = new Set(current);
+      if (dirty) next.add(recipeId);
+      else next.delete(recipeId);
+      return next;
+    });
+  }, []);
+  useEffect(() => {
+    onDirtyChange?.(dirtyRecipeIds.size > 0);
+  }, [dirtyRecipeIds, onDirtyChange]);
 
   useEffect(() => {
     const subscription = liveQuery(() =>
@@ -467,7 +529,8 @@ export function RecipeCatalog({
       </div>
     );
   const visibleRecipes = state.catalog.recipes.filter(
-    (recipe) => showRetired || !recipe.retired,
+    (recipe) =>
+      (showRetired || !recipe.retired) || recipe.id === selectedRecipeId,
   );
   const normalizedQuery = query.normalize("NFC").trim().toLocaleLowerCase();
   const tagNameById = new Map(
@@ -480,6 +543,7 @@ export function RecipeCatalog({
     ]),
   );
   const recipes = visibleRecipes.filter((recipe) => {
+    if (selectedRecipeId && recipe.id !== selectedRecipeId) return false;
     if (!normalizedQuery) return true;
     const tagNames = recipe.recipeTagIds
       .map((id) => tagNameById.get(id))
@@ -500,6 +564,17 @@ export function RecipeCatalog({
   });
   return (
     <div className="recipe-catalog">
+      {onBackToCatalog ? (
+        <a
+          href={`/organizations/${organizationId}/recipes`}
+          onClick={(event) => {
+            event.preventDefault();
+            onBackToCatalog();
+          }}
+        >
+          {t("recipesCatalog.backToCatalog")}
+        </a>
+      ) : null}
       <p className="recipe-catalog__scope">{t("recipesCatalog.scope")}</p>
       {state.status === "offline" ? (
         <p role="status">{t("recipesCatalog.offline")}</p>
@@ -532,7 +607,9 @@ export function RecipeCatalog({
           {t("recipesCatalog.clearSearch")}
         </button>
       ) : null}
-      {!recipes.length ? (
+      {selectedRecipeId && !state.catalog.recipes.some((recipe) => recipe.id === selectedRecipeId) ? (
+        <p role="status">{t("recipesCatalog.unavailable")}</p>
+      ) : !recipes.length ? (
         <p role="status">
           {visibleRecipes.length
             ? t("recipesCatalog.searchEmpty")
@@ -576,6 +653,9 @@ export function RecipeCatalog({
                 catalog={state.catalog}
                 organizationId={organizationId}
                 recipe={recipe}
+                initiallyOpen={recipe.id === editRecipeId}
+                discardToken={discardToken}
+                onDirtyChange={reportRecipeDirty}
                 userId={userId}
               />
               <RecipeLifecycleControl
