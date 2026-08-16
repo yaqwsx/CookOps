@@ -182,6 +182,12 @@ const resources = {
         catalogUpdateAvailable:
           "Je dostupná aktualizace verzí surovin v katalogu.",
         catalogUpdatePreview: "Náhled aktualizace katalogu",
+        catalogUpdateConfirm: "Použít aktualizace surovin",
+        catalogUpdateSaved: "Aktualizace receptu je uložena místně.",
+        catalogUpdateMissing: "chybí metadata",
+        catalogUpdateBlocked: "nelze bezpečně převést",
+        catalogUpdateBlockedHelp:
+          "Aktualizaci nelze potvrdit: chybí jednotka nebo kompatibilní převod. Množství nebylo odhadnuto.",
         catalogUpdateChoice: "Zvolte zachování nebo vyřazení místních úprav.",
         catalogUpdateDiff: "Přidané: {{added}}, odebrané: {{removed}}, změněné množství: {{changed}}.",
         catalogUpdateScaleReset: "Jednotka škálování se mění z {{current}} na {{target}}; množství se nastaví na návrh podle účasti {{suggestion}}.",
@@ -683,6 +689,12 @@ const resources = {
         catalogUpdateAvailable:
           "An ingredient version update is available in the catalog.",
         catalogUpdatePreview: "Catalog update preview",
+        catalogUpdateConfirm: "Apply ingredient updates",
+        catalogUpdateSaved: "The recipe update was saved locally.",
+        catalogUpdateMissing: "metadata missing",
+        catalogUpdateBlocked: "cannot convert safely",
+        catalogUpdateBlockedHelp:
+          "This update cannot be confirmed because unit metadata or a compatible conversion is missing. No quantity was guessed.",
         catalogUpdateChoice: "Choose whether to preserve or discard local overrides.",
         catalogUpdateDiff: "Added: {{added}}, removed: {{removed}}, changed quantities: {{changed}}.",
         catalogUpdateScaleReset: "The scaling unit changes from {{current}} to {{target}}; attendance suggests amount {{suggestion}}.",

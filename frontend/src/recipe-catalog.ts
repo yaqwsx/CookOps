@@ -2,9 +2,10 @@ import type { CanonicalRecord } from "./local-db";
 import {
   readIngredientCatalog,
   type CatalogIngredient,
+  type IngredientUnit,
 } from "./ingredient-catalog";
 import { readVisibleRecords } from "./visible-records";
-import { add, decimal, divide, money, multiply, zeroFraction } from "./event-cost-projections";
+import { add, decimal, divide, money, multiply, zeroFraction, type Fraction } from "./event-cost-projections";
 
 export type CatalogRecipe = {
   id: string;
@@ -12,10 +13,15 @@ export type CatalogRecipe = {
   versionId: string;
   name: string;
   description: string | null;
+  estimatedDinersPerScalingUnit?: string;
+  roundSuggestionsUp?: boolean;
   scalingUnitId: string;
   baseScalingAmount: string;
   ingredientLines: {
     id: string;
+    lineKey?: string;
+    positionKey?: string;
+    preferredDisplayUnitId?: string;
     ingredientVersionId: string;
     baseQuantity: string;
     scalingBehavior: "proportional" | "fixed";
@@ -33,11 +39,116 @@ export type RecipeCatalogProjection = {
   recipes: CatalogRecipe[];
   scalingUnits: RecipeScalingUnit[];
   ingredients: CatalogIngredient[];
+  units: IngredientUnit[];
   tags: { id: string; name: string }[];
   costs: Record<string, RecipeCostProjection>;
 };
-type RecipeCostUnit = { id: string; dimension: string; baseUnitFactor?: string };
+export type RecipeCostUnit = { id: string; name?: string; dimension: string; baseUnitFactor?: string };
 export type RecipeCostProjection = { currency: string; total: string | null; missingCount: number };
+
+export type RecipeCatalogUpdateLine = {
+  lineId: string;
+  lineKey?: string;
+  positionKey?: string;
+  oldIngredient: CatalogIngredient | undefined;
+  newIngredient: CatalogIngredient | undefined;
+  oldQuantity: string;
+  newQuantity: string | null;
+  oldUnitName: string;
+  newUnitName: string;
+  compatible: boolean;
+  reason?: "missing" | "incompatible";
+};
+
+export type RecipeCatalogUpdateProjection = {
+  lines: RecipeCatalogUpdateLine[];
+  blocked: boolean;
+};
+
+function fractionText(value: Fraction): string | undefined {
+  const sign = value.numerator < 0n ? "-" : "";
+  const numerator = value.numerator < 0n ? -value.numerator : value.numerator;
+  const integer = numerator / value.denominator;
+  let remainder = numerator % value.denominator;
+  if (remainder === 0n) return `${sign}${integer}`;
+  let digits = "";
+  for (let index = 0; remainder !== 0n && index < 12; index += 1) {
+    remainder *= 10n;
+    digits += (remainder / value.denominator).toString();
+    remainder %= value.denominator;
+  }
+  if (remainder !== 0n) return undefined;
+  return `${sign}${integer}.${digits.replace(/0+$/, "") || "0"}`;
+}
+
+function conversionFactor(
+  sourceUnitId: string | undefined,
+  targetUnitId: string | undefined,
+  byId: Map<string, RecipeCostUnit>,
+): Fraction | undefined {
+  if (!sourceUnitId || !targetUnitId) return undefined;
+  const sourceUnit = byId.get(sourceUnitId);
+  const targetUnit = byId.get(targetUnitId);
+  if (!sourceUnit || !targetUnit || sourceUnit.dimension !== targetUnit.dimension)
+    return undefined;
+  if (sourceUnit.id === targetUnit.id) return decimal("1");
+  const sourceFactor = sourceUnit.baseUnitFactor && decimal(sourceUnit.baseUnitFactor);
+  const targetFactor = targetUnit.baseUnitFactor && decimal(targetUnit.baseUnitFactor);
+  return sourceFactor && targetFactor ? divide(sourceFactor, targetFactor) : undefined;
+}
+
+/** Preview one atomic recipe version update; incompatible cached metadata blocks confirmation. */
+export function projectRecipeCatalogUpdate(
+  recipe: CatalogRecipe,
+  ingredients: CatalogIngredient[],
+  units: RecipeCostUnit[],
+): RecipeCatalogUpdateProjection {
+  const byVersion = new Map(ingredients.map((ingredient) => [ingredient.versionId, ingredient]));
+  const byUnit = new Map(units.map((unit) => [unit.id, unit]));
+  const currentByIngredient = new Map(
+    ingredients.filter((ingredient) => !ingredient.historical).map((ingredient) => [ingredient.id, ingredient]),
+  );
+  const lines = recipe.ingredientLines.flatMap<RecipeCatalogUpdateLine>((line) => {
+    const oldIngredient = byVersion.get(line.ingredientVersionId);
+    const newIngredient = oldIngredient ? currentByIngredient.get(oldIngredient.id) : undefined;
+    if (oldIngredient && newIngredient && oldIngredient.versionId === newIngredient.versionId) return [];
+    if (!oldIngredient || !newIngredient) {
+      return [{
+        lineId: line.id,
+        ...(line.lineKey ? { lineKey: line.lineKey } : {}),
+        ...(line.positionKey ? { positionKey: line.positionKey } : {}),
+        oldIngredient,
+        newIngredient,
+        oldQuantity: line.baseQuantity,
+        newQuantity: null,
+        oldUnitName: oldIngredient?.canonicalUnitName ?? "—",
+        newUnitName: newIngredient?.canonicalUnitName ?? "—",
+        compatible: false,
+        reason: "missing" as const,
+      }];
+    }
+    const factor = conversionFactor(oldIngredient.canonicalUnitId, newIngredient.canonicalUnitId, byUnit);
+    const quantity = decimal(line.baseQuantity);
+    const convertedQuantity = factor && quantity ? fractionText(multiply(quantity, factor)) : undefined;
+    const metadataComplete = uuid.test(line.lineKey ?? "") && positionPattern.test(line.positionKey ?? "");
+    const sourceUnit = oldIngredient.canonicalUnitId ? byUnit.get(oldIngredient.canonicalUnitId) : undefined;
+    const targetUnit = newIngredient.canonicalUnitId ? byUnit.get(newIngredient.canonicalUnitId) : undefined;
+    return [{
+      lineId: line.id,
+      ...(line.lineKey ? { lineKey: line.lineKey } : {}),
+      ...(line.positionKey ? { positionKey: line.positionKey } : {}),
+      oldIngredient,
+      newIngredient,
+      oldQuantity: line.baseQuantity,
+      newQuantity: convertedQuantity && metadataComplete ? convertedQuantity : null,
+      oldUnitName: sourceUnit?.name ?? oldIngredient.canonicalUnitName,
+      newUnitName: targetUnit?.name ?? newIngredient.canonicalUnitName,
+      compatible: Boolean(factor && quantity && convertedQuantity && metadataComplete),
+      ...(factor && quantity && convertedQuantity && metadataComplete ? {} : { reason: oldIngredient.canonicalUnitId && newIngredient.canonicalUnitId && metadataComplete ? "incompatible" as const : "missing" as const }),
+    }];
+  });
+  return { lines, blocked: lines.some((line) => !line.compatible) };
+}
 
 export function projectRecipeCost(recipe: CatalogRecipe, ingredients: CatalogIngredient[], units: RecipeCostUnit[], currency: string): RecipeCostProjection {
   const byVersion = new Map(ingredients.map((ingredient) => [ingredient.versionId, ingredient]));
@@ -50,15 +161,7 @@ export function projectRecipeCost(recipe: CatalogRecipe, ingredients: CatalogIng
     const quantity = decimal(line.baseQuantity);
     const amount = price && decimal(price.amount);
     const pricedQuantity = price && decimal(price.quantity);
-    const source = ingredient?.canonicalUnitId ? byUnit.get(ingredient.canonicalUnitId) : undefined;
-    const target = price ? byUnit.get(price.unitId) : undefined;
-    const sourceFactor = source?.baseUnitFactor && decimal(source.baseUnitFactor);
-    const targetFactor = target?.baseUnitFactor && decimal(target.baseUnitFactor);
-    const factor = source && target && source.id === target.id
-      ? decimal("1")
-      : sourceFactor && targetFactor && source.dimension === target.dimension
-        ? divide(sourceFactor, targetFactor)
-        : undefined;
+    const factor = conversionFactor(ingredient?.canonicalUnitId, price?.unitId, byUnit);
     const cost = quantity && amount && pricedQuantity && price?.currency === currency && factor
       ? divide(multiply(amount, multiply(quantity, factor)), pricedQuantity)
       : undefined;
@@ -70,6 +173,7 @@ export function projectRecipeCost(recipe: CatalogRecipe, ingredients: CatalogIng
 
 const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const decimalPattern = /^(?:0|[1-9]\d*)(?:\.\d+)?$/;
+const positionPattern = /^[0-9A-Za-z]+$/;
 
 function text(record: CanonicalRecord, key: string) {
   const value = record.fields[key];
@@ -83,7 +187,7 @@ export async function readRecipeCatalog(
   includeRetired = false,
 ): Promise<RecipeCatalogProjection> {
   if (!uuid.test(userId) || !uuid.test(organizationId))
-    return { recipes: [], scalingUnits: [], ingredients: [], tags: [], costs: {} };
+    return { recipes: [], scalingUnits: [], ingredients: [], units: [], tags: [], costs: {} };
   const [
     recipeRecords,
     versionRecords,
@@ -181,6 +285,8 @@ export async function readRecipeCatalog(
       const scalingUnitId = text(version ?? record, "scaling_unit_id");
       const baseScalingAmount = text(version ?? record, "base_scaling_amount");
       const description = (version ?? record).fields.description;
+      const estimatedDinersPerScalingUnit = text(version ?? record, "estimated_diners_per_scaling_unit");
+      const roundSuggestionsUp = (version ?? record).fields.round_suggestions_up;
       const ingredientLines = version
         ? lineRecords
             .filter(
@@ -196,6 +302,8 @@ export async function readRecipeCatalog(
             )
             .map((line) => ({
               id: line.entityId,
+              ...(text(line, "line_key") ? { lineKey: text(line, "line_key") } : {}),
+              ...(text(line, "position_key") ? { positionKey: text(line, "position_key") } : {}),
               ingredientVersionId: text(line, "ingredient_version_id") ?? "",
               baseQuantity: text(line, "base_quantity") ?? "0",
               scalingBehavior: line.fields.scaling_behavior as
@@ -204,6 +312,7 @@ export async function readRecipeCatalog(
               includeInPortionWeight: line.fields
                 .include_in_portion_weight as boolean,
               note: text(line, "note") ?? "",
+              ...(text(line, "preferred_display_unit_id") ? { preferredDisplayUnitId: text(line, "preferred_display_unit_id") } : {}),
             }))
         : [];
       const hasRetiredIngredientReference = ingredientLines.some((line) =>
@@ -235,6 +344,10 @@ export async function readRecipeCatalog(
         scalingUnitId,
         baseScalingAmount,
         description,
+        ...(estimatedDinersPerScalingUnit !== undefined
+          ? { estimatedDinersPerScalingUnit }
+          : {}),
+        ...(typeof roundSuggestionsUp === "boolean" ? { roundSuggestionsUp } : {}),
         ingredientLines,
         hasRetiredIngredientReference,
         catalogUpdateAvailable,
@@ -353,6 +466,7 @@ export async function readRecipeCatalog(
     recipes,
     scalingUnits,
     ingredients,
+    units: ingredientCatalog.units,
     tags,
     costs,
   };

@@ -1016,7 +1016,7 @@ class SynchronizationCommandService:
                 mutation_id=command.mutation_id,
                 command_kind=_command_kind(command),
                 status="rejected",
-                replayed=False,
+                replayed=error.replayed,
                 first_change_sequence=None,
                 last_change_sequence=None,
                 error_code=error.code,

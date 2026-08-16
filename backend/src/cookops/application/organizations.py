@@ -111,11 +111,13 @@ class ApplicationServiceError(Exception):
         *,
         field_violations: tuple[FieldViolation, ...] = (),
         retry_same_identity: bool,
+        replayed: bool = False,
     ) -> None:
         super().__init__(code)
         self.code = code
         self.field_violations = field_violations
         self.retry_same_identity = retry_same_identity
+        self.replayed = replayed
 
 
 @dataclass(frozen=True, slots=True)

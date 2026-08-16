@@ -4,6 +4,7 @@ import { useTranslation } from "react-i18next";
 
 import {
   readRecipeCatalog,
+  projectRecipeCatalogUpdate,
   type RecipeCatalogProjection,
 } from "./recipe-catalog";
 import { queueRecipeCreate, type RecipeCreateInput } from "./recipe-create";
@@ -180,6 +181,8 @@ function RecipeEditor({
     baseScalingAmount: recipe.baseScalingAmount,
     ingredientLines: recipe.ingredientLines,
     recipeTagIds: recipe.recipeTagIds,
+    estimatedDinersPerScalingUnit: recipe.estimatedDinersPerScalingUnit,
+    roundSuggestionsUp: recipe.roundSuggestionsUp,
   }));
   const [error, setError] = useState<string>();
   const [saved, setSaved] = useState(false);
@@ -193,6 +196,8 @@ function RecipeEditor({
     baseScalingAmount: recipe.baseScalingAmount,
     ingredientLines: recipe.ingredientLines,
     recipeTagIds: recipe.recipeTagIds,
+    estimatedDinersPerScalingUnit: recipe.estimatedDinersPerScalingUnit,
+    roundSuggestionsUp: recipe.roundSuggestionsUp,
   } satisfies RecipeVersionInput;
   const dirty = JSON.stringify(input) !== JSON.stringify(initialInput);
   useEffect(
@@ -400,6 +405,94 @@ function RecipeEditor({
         {t("recipesCatalog.cancel")}
       </button>
     </form>
+  );
+}
+
+function RecipeCatalogUpdate({
+  catalog,
+  recipe,
+  organizationId,
+  userId,
+}: {
+  catalog: RecipeCatalogProjection;
+  recipe: RecipeCatalogProjection["recipes"][number];
+  organizationId: string;
+  userId: string;
+}) {
+  const { t } = useTranslation();
+  const preview = projectRecipeCatalogUpdate(
+    recipe,
+    catalog.ingredients,
+    catalog.units,
+  );
+  const [pending, setPending] = useState(false);
+  const [saved, setSaved] = useState(false);
+  const [error, setError] = useState(false);
+  if (!recipe.catalogUpdateAvailable || !preview.lines.length) return null;
+  async function confirmUpdate() {
+    if (pending || preview.blocked || !window.confirm(t("recipesCatalog.catalogUpdateConfirm"))) return;
+    const updates = new Map(preview.lines.map((line) => [line.lineId, line]));
+    const ingredientLines = recipe.ingredientLines.map((line) => {
+      const update = updates.get(line.id);
+      return update?.compatible && update.newIngredient && update.newQuantity
+        ? { ...line, ingredientVersionId: update.newIngredient.versionId, baseQuantity: update.newQuantity }
+        : line;
+    });
+    setPending(true);
+    setError(false);
+    try {
+      await queueRecipeVersionPublish(userId, organizationId, {
+        recipeId: recipe.id,
+        basedOnVersionId: recipe.versionId,
+        name: recipe.name,
+        description: recipe.description ?? "",
+        scalingUnitId: recipe.scalingUnitId,
+        baseScalingAmount: recipe.baseScalingAmount,
+        ingredientLines,
+        recipeTagIds: recipe.recipeTagIds,
+        estimatedDinersPerScalingUnit: recipe.estimatedDinersPerScalingUnit,
+        roundSuggestionsUp: recipe.roundSuggestionsUp,
+        catalogUpdate: true,
+        expectedCurrentIngredientVersions: [
+          ...new Map(
+            preview.lines
+              .filter((line) => line.compatible && line.newIngredient)
+              .map((line) => [
+                line.newIngredient?.id ?? "",
+                { ingredientId: line.newIngredient?.id ?? "", versionId: line.newIngredient?.versionId ?? "" },
+              ] as const),
+          ).values(),
+        ],
+      });
+      setSaved(true);
+    } catch {
+      setError(true);
+    } finally {
+      setPending(false);
+    }
+  }
+  return (
+    <details>
+      <summary>{t("recipesCatalog.catalogUpdatePreview")}</summary>
+      <ul>
+        {preview.lines.map((line) => (
+          <li key={line.lineId}>
+            <span>{line.oldIngredient?.name ?? t("recipesCatalog.catalogUpdateMissing")}</span>
+            {" → "}
+            <span>{line.newIngredient?.name ?? t("recipesCatalog.catalogUpdateMissing")}</span>
+            {": "}{line.oldQuantity}{" → "}{line.newQuantity ?? t("recipesCatalog.catalogUpdateBlocked")}
+            {" "}{line.oldUnitName}{" → "}{line.newUnitName}
+            {!line.compatible ? <strong> ({t("recipesCatalog.catalogUpdateBlocked")})</strong> : null}
+          </li>
+        ))}
+      </ul>
+      {preview.blocked ? <p role="alert">{t("recipesCatalog.catalogUpdateBlockedHelp")}</p> : null}
+      {error ? <p role="alert">{t("recipesCatalog.errors.unavailable")}</p> : null}
+      {saved ? <p role="status">{t("recipesCatalog.catalogUpdateSaved")}</p> : null}
+      <button disabled={pending || preview.blocked} onClick={() => void confirmUpdate()} type="button">
+        {t("recipesCatalog.catalogUpdateConfirm")}
+      </button>
+    </details>
   );
 }
 
@@ -627,6 +720,12 @@ export function RecipeCatalog({
               {recipe.catalogUpdateAvailable ? (
                 <p role="status">{t("recipesCatalog.catalogUpdateAvailable")}</p>
               ) : null}
+              <RecipeCatalogUpdate
+                catalog={state.catalog}
+                organizationId={organizationId}
+                recipe={recipe}
+                userId={userId}
+              />
               <p>
                 {t("recipesCatalog.scaling", {
                   amount: recipe.baseScalingAmount,

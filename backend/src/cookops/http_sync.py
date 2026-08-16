@@ -499,6 +499,8 @@ class CreateRecipePayload(BaseModel):
 
 class PublishRecipeVersionPayload(CreateRecipePayload):
     based_on_version_id: UUID
+    catalog_update: StrictBool = False
+    expected_current_ingredient_versions: tuple[tuple[UUID, UUID], ...] = ()
 
 
 class RecipeLifecyclePayload(BaseModel):
@@ -1191,6 +1193,8 @@ def _push_command(command: PushCommandRequest, organization_id: UUID) -> SyncCom
                 estimated_diners_per_scaling_unit=recipe_payload.estimated_diners_per_scaling_unit,
                 round_suggestions_up=recipe_payload.round_suggestions_up,
                 logical_operation_id=recipe_payload.logical_operation_id,
+                catalog_update=recipe_payload.catalog_update,
+                expected_current_ingredient_versions=recipe_payload.expected_current_ingredient_versions,
             )
         if command.command_kind == "recipe.lifecycle":
             recipe_payload = RecipeLifecyclePayload.model_validate(command.payload)

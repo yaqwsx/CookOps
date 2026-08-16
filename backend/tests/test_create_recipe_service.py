@@ -608,6 +608,180 @@ def test_publish_recipe_version_advances_only_the_current_pointer(
         )
 
 
+def test_update_ingredients_publish_checks_expected_current_versions_atomically(
+    service_database: ServiceDatabase,
+) -> None:
+    created = asyncio.run(
+        create_recipe(
+            service_database.sessions, context(service_database), recipe_command(service_database)
+        )
+    )
+    with service_database.sync_engine.connect() as connection:
+        ingredient_id = connection.scalar(
+            select(Ingredient.id).where(
+                Ingredient.current_version_id == service_database.ingredient_version_id
+            )
+        )
+    assert ingredient_id is not None
+    empty_guarded_version_id = uuid4()
+    with pytest.raises(ApplicationServiceError) as empty_guarded_error:
+        asyncio.run(
+            publish_recipe_version(
+                service_database.sessions,
+                context(service_database),
+                PublishRecipeVersionCommand(
+                    mutation_id=uuid4(),
+                    recipe_id=created.recipe_id,
+                    recipe_version_id=empty_guarded_version_id,
+                    based_on_version_id=created.recipe_version_id,
+                    organization_id=service_database.organization_id,
+                    name="Empty guarded update",
+                    scaling_unit_id=service_database.person_id,
+                    base_scaling_amount=Decimal("12"),
+                    client_wall_time=datetime.now(UTC),
+                    ingredient_lines=tuple(
+                        RecipeIngredientLineInput(
+                            id=uuid4(),
+                            line_key=line.line_key,
+                            ingredient_version_id=line.ingredient_version_id,
+                            base_quantity=line.base_quantity,
+                            position_key=line.position_key,
+                            scaling_behavior=line.scaling_behavior,
+                            include_in_portion_weight=line.include_in_portion_weight,
+                        )
+                        for line in created.ingredient_lines
+                    ),
+                    catalog_update=True,
+                ),
+            )
+        )
+    assert empty_guarded_error.value.code == "validation_failed"
+    base_lines = created.ingredient_lines
+    newer_ingredient_version_id = uuid4()
+    with service_database.sync_engine.begin() as connection:
+        connection.execute(
+            insert(IngredientVersion).values(
+                id=newer_ingredient_version_id,
+                organization_id=service_database.organization_id,
+                ingredient_id=ingredient_id,
+                name="New tomatoes",
+                normalized_name="new tomatoes",
+                canonical_unit_id=service_database.grams_id,
+                mass_per_canonical_quantity=Decimal("1"),
+                published_by_user_id=service_database.actor_id,
+            )
+        )
+        connection.execute(
+            update(Ingredient)
+            .where(Ingredient.id == ingredient_id)
+            .values(current_version_id=newer_ingredient_version_id)
+        )
+    first_update_id = uuid4()
+    accepted = asyncio.run(
+        publish_recipe_version(
+            service_database.sessions,
+            context(service_database),
+            PublishRecipeVersionCommand(
+                mutation_id=first_update_id,
+                recipe_id=created.recipe_id,
+                recipe_version_id=uuid4(),
+                based_on_version_id=created.recipe_version_id,
+                organization_id=service_database.organization_id,
+                name="Updated tomato soup",
+                scaling_unit_id=service_database.person_id,
+                base_scaling_amount=Decimal("12"),
+                client_wall_time=datetime.now(UTC),
+                ingredient_lines=tuple(
+                    RecipeIngredientLineInput(
+                        id=uuid4(),
+                        line_key=line.line_key,
+                        ingredient_version_id=newer_ingredient_version_id,
+                        base_quantity=line.base_quantity,
+                        position_key=line.position_key,
+                        scaling_behavior=line.scaling_behavior,
+                        include_in_portion_weight=line.include_in_portion_weight,
+                    )
+                    for line in base_lines
+                ),
+                catalog_update=True,
+                expected_current_ingredient_versions=(
+                    (ingredient_id, newer_ingredient_version_id),
+                ),
+            ),
+        )
+    )
+    latest_ingredient_version_id = uuid4()
+    with service_database.sync_engine.begin() as connection:
+        connection.execute(
+            insert(IngredientVersion).values(
+                id=latest_ingredient_version_id,
+                organization_id=service_database.organization_id,
+                ingredient_id=ingredient_id,
+                name="New tomatoes",
+                normalized_name="new tomatoes",
+                canonical_unit_id=service_database.grams_id,
+                mass_per_canonical_quantity=Decimal("1"),
+                published_by_user_id=service_database.actor_id,
+            )
+        )
+        connection.execute(
+            update(Ingredient)
+            .where(Ingredient.id == ingredient_id)
+            .values(current_version_id=latest_ingredient_version_id)
+        )
+    rejected_version_id = uuid4()
+    with pytest.raises(ApplicationServiceError) as error:
+        asyncio.run(
+            publish_recipe_version(
+                service_database.sessions,
+                context(service_database),
+                PublishRecipeVersionCommand(
+                    mutation_id=uuid4(),
+                    recipe_id=created.recipe_id,
+                    recipe_version_id=rejected_version_id,
+                    based_on_version_id=accepted.recipe_version_id,
+                    organization_id=service_database.organization_id,
+                    name="Stale update",
+                    scaling_unit_id=service_database.person_id,
+                    base_scaling_amount=Decimal("12"),
+                    client_wall_time=datetime.now(UTC),
+                    ingredient_lines=tuple(
+                        RecipeIngredientLineInput(
+                            id=uuid4(),
+                            line_key=line.line_key,
+                            ingredient_version_id=newer_ingredient_version_id,
+                            base_quantity=line.base_quantity,
+                            position_key=line.position_key,
+                            scaling_behavior=line.scaling_behavior,
+                            include_in_portion_weight=line.include_in_portion_weight,
+                        )
+                        for line in base_lines
+                    ),
+                    catalog_update=True,
+                    expected_current_ingredient_versions=(
+                        (ingredient_id, newer_ingredient_version_id),
+                    ),
+                ),
+            )
+        )
+    assert error.value.code == "stale_precondition"
+    with service_database.sync_engine.connect() as connection:
+        assert (
+            connection.scalar(
+                select(Recipe.current_version_id).where(Recipe.id == created.recipe_id)
+            )
+            == accepted.recipe_version_id
+        )
+        assert (
+            connection.scalar(
+                select(func.count())
+                .select_from(RecipeVersion)
+                .where(RecipeVersion.id == rejected_version_id)
+            )
+            == 0
+        )
+
+
 def test_publish_preserves_recipe_root_author_for_a_different_member(
     service_database: ServiceDatabase,
 ) -> None:

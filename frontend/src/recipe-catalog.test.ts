@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { projectRecipeCost, type CatalogRecipe } from "./recipe-catalog";
+import { projectRecipeCatalogUpdate, projectRecipeCost, type CatalogRecipe } from "./recipe-catalog";
 
 const recipe: CatalogRecipe = {
   id: "11111111-1111-4111-8111-111111111111",
@@ -82,5 +82,43 @@ describe("projectRecipeCost", () => {
       total: "1.00",
       missingCount: 0,
     });
+  });
+});
+
+describe("projectRecipeCatalogUpdate", () => {
+  it("previews every stale line and converts compatible canonical units", () => {
+    const old = { ...ingredient("2", "g"), versionId: "old-version", name: "Old flour", historical: true };
+    const current = { ...ingredient("2", "g"), versionId: "new-version", name: "Flour" };
+    const projection = projectRecipeCatalogUpdate(
+      { ...recipe, ingredientLines: [{ ...recipe.ingredientLines[0], lineKey: "66666666-6666-4666-8666-666666666666", positionKey: "a", ingredientVersionId: "old-version", baseQuantity: "1000" }] },
+      [old, current],
+      units,
+    );
+    expect(projection).toMatchObject({ blocked: false, lines: [{ oldQuantity: "1000", newQuantity: "1000", oldIngredient: { name: "Old flour" }, newIngredient: { name: "Flour" } }] });
+  });
+
+  it("blocks missing and incompatible metadata instead of guessing quantities", () => {
+    const old = { ...ingredient("2", "g"), versionId: "old-version", historical: true };
+    const current = { ...ingredient("2", "piece"), versionId: "new-version", canonicalUnitId: "piece" };
+    const projection = projectRecipeCatalogUpdate(
+      { ...recipe, ingredientLines: [{ ...recipe.ingredientLines[0], lineKey: "66666666-6666-4666-8666-666666666666", positionKey: "a", ingredientVersionId: "old-version" }] },
+      [old, current],
+      units,
+    );
+    expect(projection).toMatchObject({ blocked: true, lines: [{ compatible: false, newQuantity: null, reason: "incompatible" }] });
+  });
+
+  it("blocks a conversion that cannot be represented exactly", () => {
+    const old = { ...ingredient("2", "third"), versionId: "old-version", historical: true, canonicalUnitId: "third" };
+    const current = { ...ingredient("2", "g"), versionId: "new-version", canonicalUnitId: "g" };
+    const projection = projectRecipeCatalogUpdate(
+      { ...recipe, ingredientLines: [{ ...recipe.ingredientLines[0], lineKey: "66666666-6666-4666-8666-666666666666", positionKey: "a", ingredientVersionId: "old-version" }] },
+      [old, current],
+      [
+        ...units,
+        { id: "third", name: "third", dimension: "mass", baseUnitFactor: "0.333333333333333333333333333333" },
+      ],
+    );
+    expect(projection).toMatchObject({ blocked: true, lines: [{ compatible: false, newQuantity: null }] });
   });
 });

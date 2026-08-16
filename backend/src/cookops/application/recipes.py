@@ -6,6 +6,7 @@ import unicodedata
 from dataclasses import dataclass, replace
 from datetime import UTC, datetime
 from decimal import Decimal
+from fractions import Fraction
 from typing import Literal, cast
 from uuid import UUID, uuid5
 
@@ -21,6 +22,7 @@ from cookops.application.organizations import (
 )
 from cookops.persistence.models import (
     ClientInstallation,
+    Ingredient,
     IngredientVersion,
     Mutation,
     Organization,
@@ -90,6 +92,8 @@ class PublishRecipeVersionCommand:
     estimated_diners_per_scaling_unit: Decimal | None = None
     round_suggestions_up: bool = False
     logical_operation_id: UUID | None = None
+    catalog_update: bool = False
+    expected_current_ingredient_versions: tuple[tuple[UUID, UUID], ...] = ()
 
 
 @dataclass(frozen=True, slots=True)
@@ -154,6 +158,8 @@ class _PreparedCommand:
     recipe_tag_ids: tuple[UUID, ...]
     ingredient_lines: tuple[_PreparedLine, ...]
     logical_operation_id: UUID | None
+    catalog_update: bool
+    expected_current_ingredient_versions: tuple[tuple[UUID, UUID], ...]
     violations: tuple[FieldViolation, ...]
 
 
@@ -237,6 +243,42 @@ def _prepare_command(
             violations.append(FieldViolation(path, "must_be_uuid"))
     if command.logical_operation_id is not None and not _is_uuid(command.logical_operation_id):
         violations.append(FieldViolation("logical_operation_id", "must_be_uuid_or_null"))
+
+    expected_current_ingredient_versions: tuple[tuple[UUID, UUID], ...] = ()
+    if isinstance(command, PublishRecipeVersionCommand):
+        if not isinstance(command.catalog_update, bool):
+            violations.append(FieldViolation("catalog_update", "must_be_boolean"))
+        expected = command.expected_current_ingredient_versions
+        if not isinstance(expected, tuple):
+            violations.append(
+                FieldViolation("expected_current_ingredient_versions", "must_be_tuple")
+            )
+        elif any(
+            not isinstance(pair, tuple)
+            or len(pair) != 2
+            or not _is_uuid(pair[0])
+            or not _is_uuid(pair[1])
+            for pair in expected
+        ):
+            violations.append(
+                FieldViolation("expected_current_ingredient_versions", "must_be_uuid_pairs")
+            )
+        elif len({pair[0] for pair in expected}) != len(expected):
+            violations.append(
+                FieldViolation(
+                    "expected_current_ingredient_versions", "must_not_contain_duplicates"
+                )
+            )
+        else:
+            expected_current_ingredient_versions = expected
+        if expected_current_ingredient_versions and not command.catalog_update:
+            violations.append(
+                FieldViolation("catalog_update", "must_be_true_for_expected_versions")
+            )
+        if command.catalog_update and not expected_current_ingredient_versions:
+            violations.append(
+                FieldViolation("expected_current_ingredient_versions", "must_be_nonempty")
+            )
 
     tag_ids: list[UUID] = []
     if not isinstance(command.recipe_tag_ids, tuple):
@@ -370,6 +412,10 @@ def _prepare_command(
         logical_operation_id=(
             command.logical_operation_id if isinstance(command.logical_operation_id, UUID) else None
         ),
+        catalog_update=(
+            command.catalog_update if isinstance(command, PublishRecipeVersionCommand) else False
+        ),
+        expected_current_ingredient_versions=expected_current_ingredient_versions,
         violations=tuple(violations),
     )
 
@@ -421,6 +467,15 @@ def _request_hash(
         "round_suggestions_up": command.round_suggestions_up,
         "scaling_unit_id": str(command.scaling_unit_id),
     }
+    if command.catalog_update or command.expected_current_ingredient_versions:
+        if command.catalog_update:
+            semantic_request["catalog_update"] = True
+        semantic_request["expected_current_ingredient_versions"] = [
+            {"ingredient_id": str(ingredient_id), "version_id": str(version_id)}
+            for ingredient_id, version_id in sorted(
+                command.expected_current_ingredient_versions, key=lambda pair: str(pair[0])
+            )
+        ]
     return hashlib.sha256(
         json.dumps(
             semantic_request, ensure_ascii=False, separators=(",", ":"), sort_keys=True
@@ -648,7 +703,7 @@ def _error_payload(error: ApplicationServiceError) -> dict[str, object]:
     }
 
 
-def _retained_error(mutation: Mutation) -> ApplicationServiceError:
+def _retained_error(mutation: Mutation, *, replayed: bool = False) -> ApplicationServiceError:
     payload = mutation.outcome_payload
     error = payload.get("error") if payload is not None else None
     if not isinstance(error, dict):
@@ -683,6 +738,7 @@ def _retained_error(mutation: Mutation) -> ApplicationServiceError:
         ),
         field_violations=violations,
         retry_same_identity=False,
+        replayed=replayed,
     )
 
 
@@ -827,6 +883,172 @@ async def _validate_catalog_references(session: AsyncSession, command: _Prepared
         if existing_line_id is not None:
             return False
     return True
+
+
+async def _prepare_guarded_catalog_update(
+    session: AsyncSession,
+    command: _PreparedCommand,
+    based_on_version_id: UUID,
+) -> tuple[_PreparedCommand, str | None]:
+    """Verify and normalize the trusted server-side recipe catalog update."""
+
+    base_lines = (
+        await session.execute(
+            select(RecipeVersionIngredientLine)
+            .where(
+                RecipeVersionIngredientLine.organization_id == command.organization_id,
+                RecipeVersionIngredientLine.recipe_version_id == based_on_version_id,
+            )
+            .order_by(RecipeVersionIngredientLine.line_key)
+            .with_for_update()
+        )
+    ).scalars().all()
+    base_by_key = {line.line_key: line for line in base_lines}
+    submitted_by_key = {line.line_key: line for line in command.ingredient_lines}
+    if set(base_by_key) != set(submitted_by_key):
+        return command, "stale_precondition"
+
+    base_version_ids = tuple(line.ingredient_version_id for line in base_lines)
+    submitted_version_ids = tuple(line.ingredient_version_id for line in command.ingredient_lines)
+    version_ids = tuple(sorted(set(base_version_ids + submitted_version_ids), key=str))
+    roots = (
+        await session.execute(
+            select(
+                IngredientVersion.ingredient_id,
+                Ingredient.current_version_id,
+            )
+            .join(Ingredient, Ingredient.id == IngredientVersion.ingredient_id)
+            .where(
+                IngredientVersion.organization_id == command.organization_id,
+                IngredientVersion.id.in_(version_ids),
+                Ingredient.retired_at.is_(None),
+            )
+            .order_by(Ingredient.id)
+            .with_for_update(of=Ingredient)
+        )
+    ).all()
+    ingredient_ids = tuple(sorted({row.ingredient_id for row in roots}, key=str))
+    current_by_ingredient = {row.ingredient_id: row.current_version_id for row in roots}
+    versions = (
+        await session.execute(
+            select(
+                IngredientVersion.id,
+                IngredientVersion.ingredient_id,
+                IngredientVersion.canonical_unit_id,
+            )
+            .where(
+                IngredientVersion.organization_id == command.organization_id,
+                IngredientVersion.id.in_(version_ids),
+            )
+            .order_by(IngredientVersion.id)
+            .with_for_update()
+        )
+    ).all()
+    version_by_id = {row.id: row for row in versions}
+    if set(version_by_id) != set(version_ids):
+        return command, "stale_precondition"
+    if {row.ingredient_id for row in versions} != set(ingredient_ids):
+        return command, "stale_precondition"
+    stale_by_ingredient: dict[UUID, UUID] = {}
+    for base_line in base_lines:
+        base_version = version_by_id[base_line.ingredient_version_id]
+        current_version_id = current_by_ingredient[base_version.ingredient_id]
+        if current_version_id != base_line.ingredient_version_id:
+            stale_by_ingredient[base_version.ingredient_id] = current_version_id
+    expected = dict(command.expected_current_ingredient_versions)
+    if expected != stale_by_ingredient:
+        return command, "stale_precondition"
+
+    unit_ids = tuple(sorted(
+        {
+            version.canonical_unit_id
+            for version in version_by_id.values()
+        }
+        | {
+            line.preferred_display_unit_id
+            for line in command.ingredient_lines
+            if line.preferred_display_unit_id is not None
+        }
+    , key=str))
+    units = (
+        await session.execute(
+            select(
+                UnitDefinition.id,
+                UnitDefinition.organization_id,
+                UnitDefinition.dimension,
+                UnitDefinition.base_unit_factor,
+                UnitDefinition.allows_ingredient_quantity,
+                UnitDefinition.retired_at,
+            )
+            .where(UnitDefinition.id.in_(unit_ids))
+            .with_for_update()
+        )
+    ).all()
+    unit_by_id = {row.id: row for row in units}
+    if any(version.canonical_unit_id not in unit_by_id for version in version_by_id.values()):
+        return command, "catalog_update_incompatible_units"
+
+    normalized_lines: list[_PreparedLine] = []
+    for base_line in base_lines:
+        submitted = submitted_by_key[base_line.line_key]
+        submitted = replace(
+            submitted,
+            note=base_line.note,
+            position_key=base_line.position_key,
+            scaling_behavior=cast(Literal["proportional", "fixed"], base_line.scaling_behavior),
+            include_in_portion_weight=base_line.include_in_portion_weight,
+        )
+        base_version = version_by_id[base_line.ingredient_version_id]
+        target_version = version_by_id[submitted.ingredient_version_id]
+        current_version_id = current_by_ingredient[base_version.ingredient_id]
+        if target_version.ingredient_id != base_version.ingredient_id:
+            return command, "stale_precondition"
+        if current_version_id != base_line.ingredient_version_id:
+            if submitted.ingredient_version_id != current_version_id:
+                return command, "stale_precondition"
+            source_unit = unit_by_id[base_version.canonical_unit_id]
+            target_unit = unit_by_id[target_version.canonical_unit_id]
+            if source_unit.dimension != target_unit.dimension:
+                return command, "catalog_update_incompatible_units"
+            if source_unit.id == target_unit.id:
+                expected_quantity = Fraction(base_line.base_quantity)
+            elif source_unit.base_unit_factor is None or target_unit.base_unit_factor is None:
+                return command, "catalog_update_incompatible_units"
+            else:
+                expected_quantity = (
+                    Fraction(base_line.base_quantity)
+                    * Fraction(source_unit.base_unit_factor)
+                    / Fraction(target_unit.base_unit_factor)
+                )
+            denominator = expected_quantity.denominator
+            for factor in (2, 5):
+                while denominator % factor == 0:
+                    denominator //= factor
+            if denominator != 1 or Fraction(submitted.base_quantity) != expected_quantity:
+                return command, "catalog_update_inexact_quantity"
+        elif submitted.ingredient_version_id != base_line.ingredient_version_id:
+            return command, "stale_precondition"
+        if (
+            current_version_id == base_line.ingredient_version_id
+            and submitted.base_quantity != base_line.base_quantity
+        ):
+            return command, "stale_precondition"
+        display_unit_id = submitted.preferred_display_unit_id
+        if display_unit_id is not None:
+            display = unit_by_id.get(display_unit_id)
+            if (
+                display is None
+                or display.retired_at is not None
+                or not display.allows_ingredient_quantity
+                or (
+                    display.organization_id is not None
+                    and display.organization_id != command.organization_id
+                )
+                or display.dimension != unit_by_id[target_version.canonical_unit_id].dimension
+            ):
+                display_unit_id = None
+        normalized_lines.append(replace(submitted, preferred_display_unit_id=display_unit_id))
+    return replace(command, ingredient_lines=tuple(normalized_lines)), None
 
 
 def _change_records(
@@ -1144,7 +1366,7 @@ async def publish_recipe_version(
             if retained.outcome == "accepted":
                 return _retained_result(retained)
             if retained.outcome == "rejected":
-                deferred_error = _retained_error(retained)
+                deferred_error = _retained_error(retained, replayed=True)
             else:
                 raise RuntimeError("Recipe publication retained an unsupported outcome")
         elif prepared.violations:
@@ -1184,10 +1406,29 @@ async def publish_recipe_version(
                 )
                 .with_for_update(of=RecipeVersion)
             )
+            guarded_error: str | None = None
+            if (
+                recipe is not None
+                and base is not None
+                and recipe.current_version_id == based_on
+                and prepared.catalog_update
+            ):
+                prepared, guarded_error = await _prepare_guarded_catalog_update(
+                    session, prepared, based_on
+                )
             if recipe is None or base is None or recipe.current_version_id != based_on:
                 deferred_error = ApplicationServiceError(
                     "stale_precondition", retry_same_identity=False
                 )
+            elif guarded_error is not None:
+                if guarded_error == "stale_precondition":
+                    deferred_error = ApplicationServiceError(
+                        "stale_precondition", retry_same_identity=False
+                    )
+                else:
+                    deferred_error = _validation_error(
+                        (FieldViolation("catalog_update", guarded_error),)
+                    )
             elif version_exists is not None:
                 deferred_error = _validation_error(
                     (FieldViolation("recipe_version_id", "already_exists"),)
@@ -1231,21 +1472,6 @@ async def publish_recipe_version(
                     replayed=False,
                 )
                 recipe.current_version_id = prepared.recipe_version_id
-                session.add(
-                    RecipeVersion(
-                        id=prepared.recipe_version_id,
-                        organization_id=prepared.organization_id,
-                        recipe_id=prepared.recipe_id,
-                        based_on_version_id=based_on,
-                        name=prepared.name,
-                        description=prepared.description,
-                        scaling_unit_id=prepared.scaling_unit_id,
-                        base_scaling_amount=prepared.base_scaling_amount,
-                        estimated_diners_per_scaling_unit=prepared.estimated_diners_per_scaling_unit,
-                        round_suggestions_up=prepared.round_suggestions_up,
-                        published_by_user_id=context.actor_user_id,
-                    )
-                )
                 session.add_all(
                     RecipeVersionTag(
                         recipe_version_id=prepared.recipe_version_id,
@@ -1271,6 +1497,22 @@ async def publish_recipe_version(
                     )
                     for line in prepared.ingredient_lines
                 )
+                await session.flush()
+                session.add(
+                    RecipeVersion(
+                        id=prepared.recipe_version_id,
+                        organization_id=prepared.organization_id,
+                        recipe_id=prepared.recipe_id,
+                        based_on_version_id=based_on,
+                        name=prepared.name,
+                        description=prepared.description,
+                        scaling_unit_id=prepared.scaling_unit_id,
+                        base_scaling_amount=prepared.base_scaling_amount,
+                        estimated_diners_per_scaling_unit=prepared.estimated_diners_per_scaling_unit,
+                        round_suggestions_up=prepared.round_suggestions_up,
+                        published_by_user_id=context.actor_user_id,
+                    )
+                )
                 session.add_all(
                     OrganizationChange(
                         organization_id=prepared.organization_id,
@@ -1285,32 +1527,32 @@ async def publish_recipe_version(
                 )
             else:
                 result = None
-        if deferred_error is not None:
-            session.add(
-                _mutation(
-                    command=prepared,
-                    context=context,
-                    actor_role=actor_role,
-                    request_hash=request_hash,
-                    outcome="rejected",
-                    outcome_payload=_error_payload(deferred_error),
-                    command_kind=PUBLISH_COMMAND_KIND,
+            if deferred_error is not None and retained is None:
+                session.add(
+                    _mutation(
+                        command=prepared,
+                        context=context,
+                        actor_role=actor_role,
+                        request_hash=request_hash,
+                        outcome="rejected",
+                        outcome_payload=_error_payload(deferred_error),
+                        command_kind=PUBLISH_COMMAND_KIND,
+                    )
                 )
-            )
-        elif result is not None:
-            session.add(
-                _mutation(
-                    command=prepared,
-                    context=context,
-                    actor_role=actor_role,
-                    request_hash=request_hash,
-                    outcome="accepted",
-                    outcome_payload=_result_payload(result),
-                    first_change_sequence=result.first_change_sequence,
-                    last_change_sequence=result.last_change_sequence,
-                    command_kind=PUBLISH_COMMAND_KIND,
+            elif result is not None:
+                session.add(
+                    _mutation(
+                        command=prepared,
+                        context=context,
+                        actor_role=actor_role,
+                        request_hash=request_hash,
+                        outcome="accepted",
+                        outcome_payload=_result_payload(result),
+                        first_change_sequence=result.first_change_sequence,
+                        last_change_sequence=result.last_change_sequence,
+                        command_kind=PUBLISH_COMMAND_KIND,
+                    )
                 )
-            )
     if deferred_error is not None:
         raise deferred_error
     if result is None:

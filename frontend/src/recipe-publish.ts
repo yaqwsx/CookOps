@@ -11,11 +11,14 @@ const recipeVersionTagNamespace = "82baf1fecee84306b6a84d92c10f5c4a";
 
 export type RecipeVersionLineInput = {
   id: string;
+  lineKey?: string;
+  positionKey?: string;
   ingredientVersionId: string;
   baseQuantity: string;
   scalingBehavior: "proportional" | "fixed";
   includeInPortionWeight: boolean;
   note: string;
+  preferredDisplayUnitId?: string;
 };
 export type RecipeVersionInput = {
   recipeId: string;
@@ -26,6 +29,10 @@ export type RecipeVersionInput = {
   baseScalingAmount: string;
   ingredientLines: RecipeVersionLineInput[];
   recipeTagIds: string[];
+  estimatedDinersPerScalingUnit?: string | null;
+  roundSuggestionsUp?: boolean;
+  catalogUpdate?: boolean;
+  expectedCurrentIngredientVersions?: { ingredientId: string; versionId: string }[];
 };
 
 export function validateRecipeVersion(
@@ -47,9 +54,21 @@ export function validateRecipeVersion(
     !input.recipeTagIds.every((id) => uuid.test(id))
   )
     return "tags";
+  if (
+    input.expectedCurrentIngredientVersions?.some(
+      ({ ingredientId, versionId }) => !uuid.test(ingredientId) || !uuid.test(versionId),
+    ) ||
+    (input.expectedCurrentIngredientVersions &&
+      new Set(input.expectedCurrentIngredientVersions.map(({ ingredientId }) => ingredientId)).size !==
+        input.expectedCurrentIngredientVersions.length)
+  )
+    return "ingredientLines";
   for (const line of input.ingredientLines) {
     if (
       !uuid.test(line.ingredientVersionId) ||
+      (line.lineKey !== undefined && !uuid.test(line.lineKey)) ||
+      (line.positionKey !== undefined && !/^[0-9A-Za-z]+$/.test(line.positionKey)) ||
+      (line.preferredDisplayUnitId !== undefined && !uuid.test(line.preferredDisplayUnitId)) ||
       !decimal.test(line.baseQuantity) ||
       (line.scalingBehavior !== "proportional" &&
         line.scalingBehavior !== "fixed") ||
@@ -188,6 +207,12 @@ async function writeRecipePublication(
         description: payload.description,
         scaling_unit_id: payload.scaling_unit_id,
         base_scaling_amount: payload.base_scaling_amount,
+        ...(payload.estimated_diners_per_scaling_unit !== undefined
+          ? { estimated_diners_per_scaling_unit: payload.estimated_diners_per_scaling_unit }
+          : {}),
+        ...(payload.round_suggestions_up !== undefined
+          ? { round_suggestions_up: payload.round_suggestions_up }
+          : {}),
         immutable: true,
       },
       mutationId,
@@ -205,6 +230,9 @@ async function writeRecipePublication(
           recipe_id: recipeId,
           recipe_version_id: versionId,
           organization_id: organizationId,
+          ...(line.preferred_display_unit_id !== undefined
+            ? { preferred_display_unit_id: line.preferred_display_unit_id }
+            : {}),
         },
         mutationId,
         actionAt,
@@ -239,16 +267,32 @@ export async function queueRecipeVersionPublish(
     recipe_tag_ids: input.recipeTagIds,
     ingredient_lines: input.ingredientLines.map((line, position) => ({
       id: crypto.randomUUID(),
-      line_key: crypto.randomUUID(),
+      line_key: line.lineKey ?? crypto.randomUUID(),
       ingredient_version_id: line.ingredientVersionId,
       base_quantity: line.baseQuantity,
-      position_key: position.toString(36),
+      position_key: line.positionKey ?? position.toString(36),
       scaling_behavior: line.scalingBehavior,
       include_in_portion_weight: line.includeInPortionWeight,
       ...(line.note.normalize("NFC").trim()
         ? { note: line.note.normalize("NFC").trim() }
         : {}),
+      ...(line.preferredDisplayUnitId
+        ? { preferred_display_unit_id: line.preferredDisplayUnitId }
+        : {}),
     })),
+    ...(input.estimatedDinersPerScalingUnit !== undefined
+      ? { estimated_diners_per_scaling_unit: input.estimatedDinersPerScalingUnit }
+      : {}),
+    ...(input.roundSuggestionsUp !== undefined
+      ? { round_suggestions_up: input.roundSuggestionsUp }
+      : {}),
+    ...(input.catalogUpdate ? { catalog_update: true } : {}),
+    ...(input.expectedCurrentIngredientVersions?.length
+      ? {
+          expected_current_ingredient_versions:
+            input.expectedCurrentIngredientVersions.map(({ ingredientId, versionId }) => [ingredientId, versionId]),
+        }
+      : {}),
   };
   await localDb.transaction(
     "rw",

@@ -4,6 +4,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import i18n, { defaultLocale } from "./i18n";
 import { RecipeCatalog } from "./recipe-catalog-view";
+import { queueRecipeVersionPublish } from "./recipe-publish";
 
 vi.mock("dexie", async (importOriginal) => ({
   ...(await importOriginal<typeof import("dexie")>()),
@@ -15,6 +16,17 @@ vi.mock("dexie", async (importOriginal) => ({
   }),
 }));
 vi.mock("./recipe-catalog", () => ({
+  projectRecipeCatalogUpdate: vi.fn((recipe: { id: string }) => recipe.id === "6ce17d2f-8365-4b1f-a80b-34d10425d51c" ? ({
+    blocked: false,
+    lines: [{
+      lineId: "dce17d2f-8365-4b1f-a80b-34d10425d51c",
+      oldIngredient: { name: "Historical carrot", versionId: "bde17d2f-8365-4b1f-a80b-34d10425d51c" },
+      newIngredient: { name: "Current carrot", versionId: "ace17d2f-8365-4b1f-a80b-34d10425d51c" },
+      oldQuantity: "1",
+      newQuantity: "1",
+      compatible: true,
+    }],
+  }) : ({ blocked: false, lines: [] })),
   readRecipeCatalog: vi.fn(async () => ({
     recipes: [
       {
@@ -28,6 +40,8 @@ vi.mock("./recipe-catalog", () => ({
         ingredientLines: [
           {
             id: "dce17d2f-8365-4b1f-a80b-34d10425d51c",
+            lineKey: "ece17d2f-8365-4b1f-a80b-34d10425d51c",
+            positionKey: "a",
             ingredientVersionId: "bde17d2f-8365-4b1f-a80b-34d10425d51c",
             baseQuantity: "1",
             scalingBehavior: "proportional",
@@ -74,6 +88,7 @@ vi.mock("./recipe-catalog", () => ({
         name: "Current carrot",
         canonicalUnitName: "g",
         massPerCanonicalQuantity: "1",
+        canonicalUnitId: "9ce17d2f-8365-4b1f-a80b-34d10425d51c",
       },
       {
         id: "9ce17d2f-8365-4b1f-a80b-34d10425d51c",
@@ -81,6 +96,7 @@ vi.mock("./recipe-catalog", () => ({
         name: "Historical carrot",
         canonicalUnitName: "g",
         massPerCanonicalQuantity: "1",
+        canonicalUnitId: "9ce17d2f-8365-4b1f-a80b-34d10425d51c",
         historical: true,
         retired: true,
       },
@@ -91,7 +107,7 @@ vi.mock("./recipe-catalog", () => ({
         name: "Quick meals",
       },
     ],
-    units: [],
+    units: [{ id: "9ce17d2f-8365-4b1f-a80b-34d10425d51c", name: "g", dimension: "mass", baseUnitFactor: "1" }],
     organizationDefaultCurrency: "EUR",
     costs: {
       "6ce17d2f-8365-4b1f-a80b-34d10425d51c": {
@@ -116,6 +132,10 @@ vi.mock("./sync-bootstrap", () => ({
   pullOrganization: vi.fn(async () => undefined),
   SyncRequestError: class extends Error {},
 }));
+vi.mock("./recipe-publish", () => ({
+  queueRecipeCreate: vi.fn(async () => undefined),
+  queueRecipeVersionPublish: vi.fn(async () => "new-version"),
+}));
 
 describe("recipe retired ingredient warning", () => {
   beforeEach(async () => {
@@ -134,6 +154,31 @@ describe("recipe retired ingredient warning", () => {
       "Tento recept obsahuje vyřazenou surovinu",
     );
     expect(screen.getByText("Je dostupná aktualizace verzí surovin v katalogu.")).toBeVisible();
+  });
+
+  it("previews and confirms one atomic ingredient update", async () => {
+    const user = userEvent.setup();
+    vi.spyOn(window, "confirm").mockReturnValue(true);
+    render(
+      <RecipeCatalog
+        organizationId="5ce17d2f-8365-4b1f-a80b-34d10425d51c"
+        userId="a6a58bd6-214e-49af-8fae-e5f974bf8e08"
+        onUnauthenticated={() => undefined}
+      />,
+    );
+    await user.click(await screen.findByText("Náhled aktualizace katalogu"));
+    expect(screen.getByText(/Historical carrot/)).toBeVisible();
+    await user.click(screen.getByRole("button", { name: "Použít aktualizace surovin" }));
+    expect(queueRecipeVersionPublish).toHaveBeenCalledTimes(1);
+    expect(queueRecipeVersionPublish).toHaveBeenCalledWith(
+      expect.any(String),
+      expect.any(String),
+      expect.objectContaining({
+        recipeId: "6ce17d2f-8365-4b1f-a80b-34d10425d51c",
+        ingredientLines: [expect.objectContaining({ ingredientVersionId: "ace17d2f-8365-4b1f-a80b-34d10425d51c" })],
+        recipeTagIds: ["1ce17d2f-8365-4b1f-a80b-34d10425d51c"],
+      }),
+    );
   });
 
   it("keeps historical options readable but excludes them from new lines", async () => {

@@ -12,7 +12,12 @@ from sqlalchemy import insert, select, update
 from test_sync_pull_http import SyncDatabase, _settings, _sign_in
 from test_sync_pull_http import sync_database as _sync_database_fixture
 
-from cookops.http_sync import PushCommandRequest, PublishIngredientPriceEstimatePayload, _push_command
+from cookops.http_sync import (
+    PublishIngredientPriceEstimatePayload,
+    PublishRecipeVersionPayload,
+    PushCommandRequest,
+    _push_command,
+)
 from cookops.main import create_app
 from cookops.persistence.models import (
     AdHocShoppingItem,
@@ -89,6 +94,23 @@ def test_publish_price_payload_is_strict_and_decimal_string_only() -> None:
         PublishIngredientPriceEstimatePayload.model_validate({**values, "amount": True})
     with pytest.raises(ValueError):
         PublishIngredientPriceEstimatePayload.model_validate({**values, "extra": "reject"})
+
+
+def test_recipe_catalog_update_flag_is_strict_boolean() -> None:
+    values = {
+        "recipe_id": uuid4(),
+        "recipe_version_id": uuid4(),
+        "based_on_version_id": uuid4(),
+        "name": "Recipe",
+        "scaling_unit_id": uuid4(),
+        "base_scaling_amount": "1",
+        "ingredient_lines": [],
+    }
+    assert PublishRecipeVersionPayload.model_validate(values).catalog_update is False
+    with pytest.raises(ValueError):
+        PublishRecipeVersionPayload.model_validate({**values, "catalog_update": 1})
+    with pytest.raises(ValueError):
+        PublishRecipeVersionPayload.model_validate({**values, "catalog_update": "true"})
 
 
 def test_push_publishes_price_and_replays_same_mutation(sync_database: SyncDatabase) -> None:
@@ -1786,6 +1808,165 @@ def test_push_creates_a_recipe_through_the_typed_shared_command(
             )
             == "fixed"
         )
+
+
+def test_push_rejects_malformed_guarded_recipe_update_map(
+    sync_database: SyncDatabase,
+) -> None:
+    installation_id = _installation(sync_database)
+    ingredient_id, base_version_id, next_version_id, latest_version_id = (
+        uuid4() for _ in range(4)
+    )
+    recipe_id, recipe_version_id, line_key = (uuid4() for _ in range(3))
+    with sync_database.engine.begin() as connection:
+        scaling_unit_id = connection.scalar(
+            select(UnitDefinition.id).where(UnitDefinition.code == "person")
+        )
+        grams_id = connection.scalar(select(UnitDefinition.id).where(UnitDefinition.code == "g"))
+        actor_id = connection.scalar(
+            select(OrganizationMembership.user_id).where(
+                OrganizationMembership.organization_id == sync_database.organization_id
+            )
+        )
+        assert (
+            isinstance(scaling_unit_id, UUID)
+            and isinstance(grams_id, UUID)
+            and isinstance(actor_id, UUID)
+        )
+        connection.execute(
+            insert(Ingredient).values(
+                id=ingredient_id,
+                organization_id=sync_database.organization_id,
+                current_version_id=base_version_id,
+                created_by_user_id=actor_id,
+            )
+        )
+        for version_id, name in ((base_version_id, "Base"), (next_version_id, "Next")):
+            connection.execute(
+                insert(IngredientVersion).values(
+                    id=version_id,
+                    organization_id=sync_database.organization_id,
+                    ingredient_id=ingredient_id,
+                    name=name,
+                    normalized_name=name.lower(),
+                    canonical_unit_id=grams_id,
+                    mass_per_canonical_quantity=Decimal("1"),
+                    published_by_user_id=actor_id,
+                )
+            )
+    line = {
+        "id": str(uuid4()), "line_key": str(line_key),
+        "ingredient_version_id": str(base_version_id), "base_quantity": "2",
+        "position_key": "a", "scaling_behavior": "fixed",
+        "include_in_portion_weight": False,
+    }
+    create = _recipe_command(
+        mutation_id=uuid4(), scaling_unit_id=scaling_unit_id,
+        recipe_id=str(recipe_id), recipe_version_id=str(recipe_version_id),
+        ingredient_lines=[line],
+    )
+    with TestClient(create_app(_settings()), base_url="https://testserver") as client:
+        _sign_in(client, "dummy-member")
+        assert client.post(
+            "/api/v1/sync/push", json=_body(sync_database, installation_id, [create])
+        ).json()["outcomes"][0]["status"] == "accepted"
+        with sync_database.engine.begin() as connection:
+            connection.execute(
+                update(Ingredient)
+                .where(Ingredient.id == ingredient_id)
+                .values(current_version_id=next_version_id)
+            )
+        accepted_payload = {
+            "recipe_id": str(recipe_id), "recipe_version_id": str(uuid4()),
+            "based_on_version_id": str(recipe_version_id), "name": "Updated",
+            "scaling_unit_id": str(scaling_unit_id), "base_scaling_amount": "10",
+            "ingredient_lines": [{**line, "id": str(uuid4()),
+                                   "ingredient_version_id": str(next_version_id)}],
+            "catalog_update": True,
+            "expected_current_ingredient_versions": [[str(ingredient_id), str(next_version_id)]],
+        }
+        accepted = _command(
+            mutation_id=uuid4(), event_id=uuid4(),
+            kind="recipe.publish_version", **accepted_payload,
+        )
+        accepted_body = _body(sync_database, installation_id, [accepted])
+        first = client.post("/api/v1/sync/push", json=accepted_body).json()["outcomes"][0]
+        replay = client.post("/api/v1/sync/push", json=accepted_body).json()["outcomes"][0]
+        assert first["status"] == "accepted" and replay["replayed"] is True
+        with sync_database.engine.connect() as connection:
+            assert len(
+                connection.scalars(
+                    select(RecipeVersion.id).where(RecipeVersion.recipe_id == recipe_id)
+                ).all()
+            ) == 2
+        with sync_database.engine.begin() as connection:
+            connection.execute(
+                insert(IngredientVersion).values(
+                    id=latest_version_id, organization_id=sync_database.organization_id,
+                    ingredient_id=ingredient_id, name="Latest", normalized_name="latest",
+                    canonical_unit_id=grams_id, mass_per_canonical_quantity=Decimal("1"),
+                    published_by_user_id=actor_id,
+                )
+            )
+            connection.execute(
+                update(Ingredient).where(Ingredient.id == ingredient_id)
+                .values(current_version_id=latest_version_id)
+            )
+        stale = _command(
+            mutation_id=uuid4(), event_id=uuid4(), kind="recipe.publish_version",
+            **{**accepted_payload, "recipe_version_id": str(uuid4())},
+        )
+        stale_body = _body(sync_database, installation_id, [stale])
+        stale_first = client.post("/api/v1/sync/push", json=stale_body).json()["outcomes"][0]
+        stale_replay = client.post("/api/v1/sync/push", json=stale_body).json()["outcomes"][0]
+        assert stale_first["status"] == "rejected"
+        assert stale_first["error"]["code"] == "stale_precondition"
+        assert stale_replay["replayed"] is True
+        assert stale_replay["error"]["code"] == stale_first["error"]["code"]
+        malformed_payload = {
+            **accepted_payload, "recipe_version_id": str(uuid4()),
+            "expected_current_ingredient_versions": [str(ingredient_id)],
+        }
+        malformed = _command(
+            mutation_id=uuid4(), event_id=uuid4(),
+            kind="recipe.publish_version", **malformed_payload,
+        )
+        outcome = client.post(
+            "/api/v1/sync/push", json=_body(sync_database, installation_id, [malformed])
+        ).json()["outcomes"][0]
+        replayed_malformed = client.post(
+            "/api/v1/sync/push", json=_body(sync_database, installation_id, [malformed])
+        ).json()["outcomes"][0]
+    assert outcome["status"] == "rejected"
+    assert outcome["error"]["code"] == "validation_failed"
+    assert replayed_malformed["replayed"] is True
+    assert replayed_malformed["error"] == outcome["error"]
+    empty_payload = {
+        **accepted_payload,
+        "recipe_version_id": str(uuid4()),
+        "expected_current_ingredient_versions": [],
+    }
+    empty = _command(
+        mutation_id=uuid4(), event_id=uuid4(), kind="recipe.publish_version", **empty_payload
+    )
+    empty_body = _body(sync_database, installation_id, [empty])
+    with TestClient(create_app(_settings()), base_url="https://testserver") as client:
+        _sign_in(client, "dummy-member")
+        empty_outcome = client.post(
+            "/api/v1/sync/push", json=empty_body
+        ).json()["outcomes"][0]
+        empty_replay = client.post(
+            "/api/v1/sync/push", json=empty_body
+        ).json()["outcomes"][0]
+    assert empty_outcome["status"] == "rejected"
+    assert empty_outcome["error"]["code"] == "validation_failed"
+    assert empty_replay["error"] == empty_outcome["error"]
+    with sync_database.engine.connect() as connection:
+        assert len(
+            connection.scalars(
+                select(RecipeVersion.id).where(RecipeVersion.recipe_id == recipe_id)
+            ).all()
+        ) == 2
 
 
 def test_push_schedules_a_recipe_through_the_typed_shared_command(
