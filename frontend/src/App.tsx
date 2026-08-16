@@ -759,6 +759,7 @@ function AuthenticatedShell({
                     onUnauthenticated={onUnauthenticated}
                     organizationId={organizationId}
                     userId={identity.id}
+                    systemAdmin={systemAdmin}
                   />
                 </>
               ) : (

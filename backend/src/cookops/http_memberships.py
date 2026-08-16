@@ -12,10 +12,13 @@ from cookops.application.memberships import (
     InviteMemberCommand,
     MembershipMutationResult,
     MembershipSummary,
+    OrganizationAdminRoleCommand,
     RemoveMemberCommand,
+    assign_organization_admin,
     invite_member,
     list_members,
     remove_member,
+    revoke_organization_admin,
 )
 from cookops.application.organizations import ApplicationServiceError, ExecutionContext
 from cookops.config import Settings
@@ -68,6 +71,7 @@ class MembershipMutationResponse(BaseModel):
     membership_id: UUID
     state: str
     replayed: bool
+    role: str | None = None
 
 
 class MembershipHttpServices:
@@ -195,5 +199,60 @@ def create_memberships_router(settings: Settings) -> APIRouter:
         except ApplicationServiceError as error:
             raise _error(error) from error
         return _mutation_response(result)
+
+    async def _change_role(
+        organization_id: UUID,
+        membership_id: UUID,
+        body: RemoveMemberRequest,
+        request: Request,
+        assign: bool,
+    ) -> MembershipMutationResponse:
+        services = _services(request)
+        actor_user_id = await _actor_id(request, settings, services)
+        command = OrganizationAdminRoleCommand(
+            mutation_id=body.mutation_id,
+            organization_id=organization_id,
+            membership_id=membership_id,
+            client_wall_time=body.client_wall_time,
+        )
+        try:
+            result = await (
+                assign_organization_admin if assign else revoke_organization_admin
+            )(
+                services.session_factory,
+                _context(actor_user_id, body.client_installation_id),
+                command,
+            )
+        except ApplicationServiceError as error:
+            raise _error(error) from error
+        return MembershipMutationResponse(
+            mutation_id=result.mutation_id,
+            membership_id=result.membership_id,
+            state="active",
+            replayed=result.replayed,
+            role=result.role,
+        )
+
+    @router.post(
+        "/{membership_id}/assign-organization-admin", response_model=MembershipMutationResponse
+    )
+    async def assign_role(
+        organization_id: UUID,
+        membership_id: UUID,
+        body: RemoveMemberRequest,
+        request: Request,
+    ) -> MembershipMutationResponse:
+        return await _change_role(organization_id, membership_id, body, request, True)
+
+    @router.post(
+        "/{membership_id}/revoke-organization-admin", response_model=MembershipMutationResponse
+    )
+    async def revoke_role(
+        organization_id: UUID,
+        membership_id: UUID,
+        body: RemoveMemberRequest,
+        request: Request,
+    ) -> MembershipMutationResponse:
+        return await _change_role(organization_id, membership_id, body, request, False)
 
     return router

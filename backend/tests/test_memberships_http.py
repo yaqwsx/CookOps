@@ -21,6 +21,12 @@ from cookops.application.human_authentication import (
     HumanAuthenticationService,
     TrustedIdentityAssertion,
 )
+from cookops.application.memberships import (
+    OrganizationAdminRoleCommand,
+    RemoveMemberCommand,
+    _validate_command,
+)
+from cookops.application.organizations import ApplicationServiceError
 from cookops.config import Environment, HumanAuthProvider, Settings
 from cookops.main import create_app
 from cookops.persistence.models import (
@@ -28,6 +34,7 @@ from cookops.persistence.models import (
     Organization,
     OrganizationChange,
     OrganizationMembership,
+    SystemRoleAssignment,
     User,
 )
 
@@ -36,6 +43,27 @@ pytestmark = pytest.mark.skipif(
 )
 
 KEY = base64.urlsafe_b64encode(b"0123456789abcdef0123456789abcdef").rstrip(b"=").decode()
+
+
+def test_membership_command_validation_keeps_remove_and_role_fields_safe() -> None:
+    base = {
+        "mutation_id": uuid4(),
+        "organization_id": uuid4(),
+        "membership_id": uuid4(),
+    }
+    _validate_command(RemoveMemberCommand(**base, client_wall_time=datetime.now(UTC)))
+    with pytest.raises(ApplicationServiceError, match="validation_failed"):
+        _validate_command(
+            OrganizationAdminRoleCommand(
+                **base, client_wall_time=datetime.now(UTC), role="invalid"  # type: ignore[arg-type]
+            )
+        )
+    with pytest.raises(ApplicationServiceError, match="validation_failed"):
+        _validate_command(
+            OrganizationAdminRoleCommand(
+                **base, client_wall_time="invalid"  # type: ignore[arg-type]
+            )
+        )
 
 
 @dataclass
@@ -128,6 +156,16 @@ def membership_database() -> Iterator[MembershipDatabase]:
                     (member_membership_id, member_id, "member@example.test", "member"),
                 )
             ],
+        )
+        connection.execute(
+            insert(SystemRoleAssignment).values(
+                id=uuid4(),
+                user_id=admin_id,
+                role="system_admin",
+                invited_email="admin@example.test",
+                granted_by_user_id=creator_id,
+                claimed_at=now,
+            )
         )
     database = MembershipDatabase(
         configuration,
@@ -305,3 +343,113 @@ def test_only_current_administrator_can_remove_an_ordinary_member(
     assert row[0] == "removed"
     assert row[1] is not None
     assert row[2] == membership_database.admin_id
+
+
+@pytest.mark.parametrize(
+    ("suffix", "expected_role"),
+    [
+        ("assign-organization-admin", "organization_admin"),
+        ("revoke-organization-admin", "member"),
+    ],
+)
+def test_system_admin_can_change_active_membership_role_idempotently(
+    membership_database: MembershipDatabase, suffix: str, expected_role: str
+) -> None:
+    path = f"/api/v1/organizations/{membership_database.organization_id}/members"
+    body = _body()
+    if suffix == "revoke-organization-admin":
+        with membership_database.engine.begin() as connection:
+            connection.execute(
+                OrganizationMembership.__table__.update()
+                .where(OrganizationMembership.id == membership_database.ordinary_membership_id)
+                .values(role="organization_admin")
+            )
+    with TestClient(create_app(_settings()), base_url="https://testserver") as client:
+        _sign_in(client, "membership-admin")
+        changed = client.post(
+            f"{path}/{membership_database.ordinary_membership_id}/{suffix}", json=body
+        )
+        assert changed.status_code == 200
+        assert changed.json()["role"] == expected_role
+        assert client.post(
+            f"{path}/{membership_database.ordinary_membership_id}/{suffix}", json=body
+        ).json()["replayed"] is True
+        mismatch = client.post(
+            f"{path}/{membership_database.ordinary_membership_id}/{suffix}",
+            json={
+                **body,
+                "client_wall_time": (datetime.now(UTC) + timedelta(minutes=1)).isoformat(),
+            },
+        )
+        assert mismatch.status_code == 409
+    with membership_database.engine.connect() as connection:
+        role = connection.scalar(
+            select(OrganizationMembership.role).where(
+                OrganizationMembership.id == membership_database.ordinary_membership_id
+            )
+        )
+    assert role == expected_role
+
+
+def test_non_system_actor_and_inactive_or_foreign_membership_are_not_enumerated(
+    membership_database: MembershipDatabase,
+) -> None:
+    path = f"/api/v1/organizations/{membership_database.organization_id}/members"
+    with membership_database.engine.begin() as connection:
+        connection.execute(
+            OrganizationMembership.__table__.update()
+            .where(OrganizationMembership.id == membership_database.ordinary_membership_id)
+            .values(role="organization_admin")
+        )
+    with TestClient(create_app(_settings()), base_url="https://testserver") as client:
+        _sign_in(client, "membership-ordinary")
+        assert client.post(
+            f"{path}/{membership_database.ordinary_membership_id}/assign-organization-admin",
+            json=_body(),
+        ).status_code == 404
+        _sign_in(client, "membership-admin")
+        with membership_database.engine.begin() as connection:
+            connection.execute(
+                OrganizationMembership.__table__.update()
+                .where(OrganizationMembership.id == membership_database.ordinary_membership_id)
+                .values(
+                    state="removed",
+                    removed_at=datetime.now(UTC),
+                    removed_by_user_id=membership_database.admin_id,
+                )
+            )
+        rejected_body = _body()
+        assert client.post(
+            f"{path}/{membership_database.ordinary_membership_id}/assign-organization-admin",
+            json=rejected_body,
+        ).status_code == 404
+        with membership_database.engine.begin() as connection:
+            connection.execute(
+                OrganizationMembership.__table__.update()
+                .where(OrganizationMembership.id == membership_database.ordinary_membership_id)
+                .values(state="active", removed_at=None, removed_by_user_id=None)
+            )
+        assert client.post(
+            f"{path}/{membership_database.ordinary_membership_id}/assign-organization-admin",
+            json=rejected_body,
+        ).status_code == 404
+
+
+def test_future_role_mutation_rejection_replays(
+    membership_database: MembershipDatabase,
+) -> None:
+    path = f"/api/v1/organizations/{membership_database.organization_id}/members"
+    body = {
+        **_body(),
+        "client_wall_time": (datetime.now(UTC) + timedelta(hours=25)).isoformat(),
+    }
+    with TestClient(create_app(_settings()), base_url="https://testserver") as client:
+        _sign_in(client, "membership-admin")
+        assert client.post(
+            f"{path}/{membership_database.ordinary_membership_id}/assign-organization-admin",
+            json=body,
+        ).status_code == 422
+        assert client.post(
+            f"{path}/{membership_database.ordinary_membership_id}/assign-organization-admin",
+            json=body,
+        ).status_code == 422

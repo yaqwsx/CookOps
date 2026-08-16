@@ -3,7 +3,7 @@
 import hashlib
 import json
 import unicodedata
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import UTC, datetime, timedelta
 from typing import Literal, cast
 from uuid import UUID, uuid4
@@ -31,6 +31,8 @@ from cookops.persistence.models import (
 
 INVITE_COMMAND_KIND = "organization_member.invite"
 REMOVE_COMMAND_KIND = "organization_member.remove"
+ASSIGN_ADMIN_COMMAND_KIND = "organization_member.assign_admin"
+REVOKE_ADMIN_COMMAND_KIND = "organization_member.revoke_admin"
 COMMAND_SCHEMA_VERSION = 1
 
 
@@ -49,6 +51,16 @@ class RemoveMemberCommand:
     organization_id: UUID
     membership_id: UUID
     client_wall_time: datetime
+    logical_operation_id: UUID | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class OrganizationAdminRoleCommand:
+    mutation_id: UUID
+    organization_id: UUID
+    membership_id: UUID
+    client_wall_time: datetime
+    role: Literal["member", "organization_admin"] = "organization_admin"
     logical_operation_id: UUID | None = None
 
 
@@ -72,14 +84,27 @@ class MembershipMutationResult:
     outcome: Literal["accepted"] = "accepted"
 
 
+@dataclass(frozen=True, slots=True)
+class MembershipRoleMutationResult:
+    mutation_id: UUID
+    organization_id: UUID
+    membership_id: UUID
+    role: Literal["member", "organization_admin"]
+    replayed: bool
+    outcome: Literal["accepted"] = "accepted"
+
+
 def _normalized_email(value: str) -> str:
     return unicodedata.normalize("NFC", value).strip().lower()
 
 
-def _validate_command(command: InviteMemberCommand | RemoveMemberCommand) -> None:
+def _validate_command(
+    command: InviteMemberCommand | RemoveMemberCommand | OrganizationAdminRoleCommand,
+) -> None:
     if (
         not isinstance(command.mutation_id, UUID)
         or not isinstance(command.organization_id, UUID)
+        or not isinstance(command.client_wall_time, datetime)
         or command.client_wall_time.tzinfo is None
         or command.client_wall_time.utcoffset() is None
     ):
@@ -96,14 +121,35 @@ def _validate_command(command: InviteMemberCommand | RemoveMemberCommand) -> Non
                 field_violations=(FieldViolation("invited_email", "invalid"),),
                 retry_same_identity=False,
             )
+    elif not isinstance(command.membership_id, UUID):
+        raise ApplicationServiceError(
+            "validation_failed",
+            field_violations=(FieldViolation("membership_id", "invalid"),),
+            retry_same_identity=False,
+        )
+    elif isinstance(command, OrganizationAdminRoleCommand) and command.role not in (
+        "member",
+        "organization_admin",
+    ):
+        raise ApplicationServiceError(
+            "validation_failed",
+            field_violations=(FieldViolation("role", "invalid"),),
+            retry_same_identity=False,
+        )
 
 
-def _request_hash(command: InviteMemberCommand | RemoveMemberCommand) -> bytes:
+def _request_hash(
+    command: InviteMemberCommand | RemoveMemberCommand | OrganizationAdminRoleCommand,
+) -> bytes:
     values: dict[str, object] = {
-        "client_wall_time": command.client_wall_time.astimezone(UTC).isoformat(),
-        "command_kind": (
-            INVITE_COMMAND_KIND if isinstance(command, InviteMemberCommand) else REMOVE_COMMAND_KIND
+        "client_wall_time": (
+            command.client_wall_time.astimezone(UTC).isoformat()
+            if isinstance(command.client_wall_time, datetime)
+            and command.client_wall_time.tzinfo is not None
+            and command.client_wall_time.utcoffset() is not None
+            else repr(command.client_wall_time)
         ),
+        "command_kind": _command_kind(command),
         "command_schema_version": COMMAND_SCHEMA_VERSION,
         "logical_operation_id": str(command.logical_operation_id)
         if command.logical_operation_id
@@ -117,6 +163,20 @@ def _request_hash(command: InviteMemberCommand | RemoveMemberCommand) -> bytes:
     return hashlib.sha256(
         json.dumps(values, ensure_ascii=False, separators=(",", ":"), sort_keys=True).encode()
     ).digest()
+
+
+def _command_kind(
+    command: InviteMemberCommand | RemoveMemberCommand | OrganizationAdminRoleCommand,
+) -> str:
+    if isinstance(command, InviteMemberCommand):
+        return INVITE_COMMAND_KIND
+    if isinstance(command, RemoveMemberCommand):
+        return REMOVE_COMMAND_KIND
+    return (
+        ASSIGN_ADMIN_COMMAND_KIND
+        if command.role == "organization_admin"
+        else REVOKE_ADMIN_COMMAND_KIND
+    )
 
 
 async def _ensure_browser_installation(session: AsyncSession, context: ExecutionContext) -> None:
@@ -172,6 +232,32 @@ def _result_from_mutation(mutation: Mutation) -> MembershipMutationResult:
         )
     except (KeyError, TypeError, ValueError) as error:
         raise RuntimeError("Membership mutation has an invalid accepted outcome") from error
+
+
+def _role_result_from_mutation(mutation: Mutation) -> MembershipRoleMutationResult:
+    payload = mutation.outcome_payload or {}
+    try:
+        membership_id = UUID(cast(str, payload["membership_id"]))
+        role = cast(Literal["member", "organization_admin"], payload["role"])
+        if role not in ("member", "organization_admin") or mutation.organization_id is None:
+            raise ValueError
+        return MembershipRoleMutationResult(
+            mutation.id, mutation.organization_id, membership_id, role, True
+        )
+    except (KeyError, TypeError, ValueError) as error:
+        raise RuntimeError("Membership role mutation has an invalid accepted outcome") from error
+
+
+def _error_payload(error: ApplicationServiceError) -> dict[str, object]:
+    return {
+        "error": {
+            "code": error.code,
+            "field_violations": [
+                {"path": violation.path, "code": violation.code}
+                for violation in error.field_violations
+            ],
+        }
+    }
 
 
 async def list_members(
@@ -454,3 +540,185 @@ async def remove_member(
             )
         )
         return result
+
+
+async def change_organization_admin_role(
+    session_factory: async_sessionmaker[AsyncSession],
+    context: ExecutionContext,
+    command: OrganizationAdminRoleCommand,
+) -> MembershipRoleMutationResult:
+    _validate_command(command)
+    request_hash = _request_hash(command)
+    deferred: ApplicationServiceError | None = None
+    result: MembershipRoleMutationResult | None = None
+    async with session_factory() as session, session.begin():
+        await _ensure_browser_installation(session, context)
+        actor = await session.scalar(
+            select(User.id)
+            .join(ClientInstallation, ClientInstallation.user_id == User.id)
+            .join(SystemRoleAssignment, SystemRoleAssignment.user_id == User.id)
+            .where(
+                User.id == context.actor_user_id,
+                User.disabled_at.is_(None),
+                ClientInstallation.id == context.client_installation_id,
+                ClientInstallation.disabled_at.is_(None),
+                ClientInstallation.installation_kind == "browser",
+                SystemRoleAssignment.role == "system_admin",
+                SystemRoleAssignment.revoked_at.is_(None),
+            )
+            .with_for_update(of=(User, ClientInstallation, SystemRoleAssignment))
+        )
+        organization = await session.scalar(
+            select(Organization)
+            .where(Organization.id == command.organization_id, Organization.retired_at.is_(None))
+            .with_for_update(of=Organization)
+        )
+        if actor is None or organization is None:
+            raise ApplicationServiceError("forbidden", retry_same_identity=True)
+        await session.execute(
+            text("SELECT pg_advisory_xact_lock(:lock_key)"),
+            {"lock_key": _advisory_lock_key("mutation", command.mutation_id)},
+        )
+        retained = await session.get(Mutation, command.mutation_id)
+        if retained is not None:
+            if (
+                retained.actor_user_id != context.actor_user_id
+                or retained.command_kind != _command_kind(command)
+                or retained.command_schema_version != COMMAND_SCHEMA_VERSION
+                or retained.request_hash != request_hash
+            ):
+                raise ApplicationServiceError("idempotency_mismatch", retry_same_identity=False)
+            if retained.outcome == "accepted":
+                return _role_result_from_mutation(retained)
+            if retained.outcome == "rejected":
+                error = (retained.outcome_payload or {}).get("error")
+                deferred = ApplicationServiceError(
+                    error.get("code", "forbidden") if isinstance(error, dict) else "forbidden",
+                    field_violations=tuple(
+                        FieldViolation(item["path"], item["code"])
+                        for item in (
+                            error.get("field_violations", []) if isinstance(error, dict) else []
+                        )
+                        if isinstance(item, dict)
+                        and isinstance(item.get("path"), str)
+                        and isinstance(item.get("code"), str)
+                    ),
+                    retry_same_identity=False,
+                )
+            else:
+                raise RuntimeError("Membership role mutation retained an invalid outcome")
+        elif command.client_wall_time.astimezone(UTC) > datetime.now(UTC) + timedelta(hours=24):
+            deferred = ApplicationServiceError(
+                "client_time_too_far_ahead", retry_same_identity=False
+            )
+        else:
+            membership = await session.scalar(
+                select(OrganizationMembership)
+                .where(
+                    OrganizationMembership.id == command.membership_id,
+                    OrganizationMembership.organization_id == command.organization_id,
+                    OrganizationMembership.state == "active",
+                )
+                .with_for_update(of=OrganizationMembership)
+            )
+            if membership is None:
+                deferred = ApplicationServiceError("forbidden", retry_same_identity=True)
+            else:
+                membership.role = command.role
+                first, last = await _reserve_change_range(
+                    session, command.organization_id, command.mutation_id, 1
+                )
+                session.add_all(
+                    (
+                        OrganizationChange(
+                            organization_id=command.organization_id,
+                            sequence=first,
+                            mutation_id=command.mutation_id,
+                            entity_id=organization.id,
+                            entity_kind="organization",
+                            operation="upsert",
+                            payload={
+                                "record_schema_version": 1,
+                                "record": _organization_record(organization),
+                            },
+                        ),
+                        Mutation(
+                            id=command.mutation_id,
+                            logical_operation_id=command.logical_operation_id,
+                            organization_id=command.organization_id,
+                            is_system_administration_scope=False,
+                            actor_user_id=context.actor_user_id,
+                            actor_role="system_admin",
+                            client_installation_id=context.client_installation_id,
+                            client_wall_time=command.client_wall_time.astimezone(UTC),
+                            command_schema_version=COMMAND_SCHEMA_VERSION,
+                            command_kind=_command_kind(command),
+                            target_identities=[
+                                {
+                                    "entity_kind": "organization_membership",
+                                    "entity_id": str(membership.id),
+                                }
+                            ],
+                            request_hash=request_hash,
+                            outcome="accepted",
+                            outcome_payload={
+                                "membership_id": str(membership.id),
+                                "role": command.role,
+                            },
+                            first_change_sequence=first,
+                            last_change_sequence=last,
+                        ),
+                    )
+                )
+                result = MembershipRoleMutationResult(
+                    command.mutation_id, command.organization_id, membership.id, command.role, False
+                )
+        if deferred is not None and retained is None:
+            session.add(
+                Mutation(
+                    id=command.mutation_id,
+                    logical_operation_id=command.logical_operation_id,
+                    organization_id=command.organization_id,
+                    is_system_administration_scope=False,
+                    actor_user_id=context.actor_user_id,
+                    actor_role="system_admin",
+                    client_installation_id=context.client_installation_id,
+                    client_wall_time=command.client_wall_time.astimezone(UTC),
+                    command_schema_version=COMMAND_SCHEMA_VERSION,
+                    command_kind=_command_kind(command),
+                    target_identities=[
+                        {
+                            "entity_kind": "organization_membership",
+                            "entity_id": str(command.membership_id),
+                        }
+                    ],
+                    request_hash=request_hash,
+                    outcome="rejected",
+                    outcome_payload=_error_payload(deferred),
+                )
+            )
+    if deferred is not None:
+        raise deferred
+    if result is None:
+        raise RuntimeError("Membership role mutation produced no outcome")
+    return result
+
+
+async def assign_organization_admin(
+    session_factory: async_sessionmaker[AsyncSession],
+    context: ExecutionContext,
+    command: OrganizationAdminRoleCommand,
+) -> MembershipRoleMutationResult:
+    return await change_organization_admin_role(
+        session_factory, context, replace(command, role="organization_admin")
+    )
+
+
+async def revoke_organization_admin(
+    session_factory: async_sessionmaker[AsyncSession],
+    context: ExecutionContext,
+    command: OrganizationAdminRoleCommand,
+) -> MembershipRoleMutationResult:
+    return await change_organization_admin_role(
+        session_factory, context, replace(command, role="member")
+    )

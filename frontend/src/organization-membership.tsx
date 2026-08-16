@@ -3,9 +3,11 @@ import { useTranslation } from "react-i18next";
 
 import {
   getMemberships,
+  assignOrganizationAdmin,
   inviteMember,
   MembershipRequestError,
   removeMember,
+  revokeOrganizationAdmin,
   type OrganizationMembership,
 } from "./api/memberships";
 
@@ -13,10 +15,12 @@ export function OrganizationMemberships({
   organizationId,
   userId,
   onUnauthenticated,
+  systemAdmin,
 }: {
   organizationId: string;
   userId: string;
   onUnauthenticated: () => void;
+  systemAdmin: boolean;
 }) {
   const { t } = useTranslation();
   const [memberships, setMemberships] = useState<
@@ -88,6 +92,22 @@ export function OrganizationMemberships({
     }
   }
 
+  async function changeRole(membership: OrganizationMembership) {
+    if (pending) return;
+    setPending(true);
+    setError(null);
+    try {
+      const change = membership.role === "member" ? assignOrganizationAdmin : revokeOrganizationAdmin;
+      await change(organizationId, userId, membership.id);
+      await load();
+    } catch (reason) {
+      if (reason instanceof MembershipRequestError && reason.status === 401) onUnauthenticated();
+      else setError("unavailable");
+    } finally {
+      setPending(false);
+    }
+  }
+
   if (error === "forbidden")
     return <p role="status">{t("membership.forbidden")}</p>;
   if (!memberships && !error)
@@ -131,6 +151,11 @@ export function OrganizationMemberships({
                 type="button"
               >
                 {t("membership.remove")}
+              </button>
+            ) : null}
+            {systemAdmin && membership.state === "active" ? (
+              <button disabled={pending} onClick={() => void changeRole(membership)} type="button">
+                {membership.role === "member" ? t("membership.assignAdmin") : t("membership.revokeAdmin")}
               </button>
             ) : null}
           </li>

@@ -49,6 +49,8 @@ const resources = {
         email: "E-mail účtu Google",
         invite: "Pozvat člena",
         remove: "Odebrat člena",
+        assignAdmin: "Povýšit na administrátora organizace",
+        revokeAdmin: "Odebrat administrátorskou roli",
         removeConfirm: "Opravdu chcete odebrat {{email}}?",
         unavailable: "Změnu členství se nepodařilo provést. Zkuste to znovu.",
         role: {
@@ -570,6 +572,8 @@ const resources = {
         email: "Google account email",
         invite: "Invite member",
         remove: "Remove member",
+        assignAdmin: "Assign organization administrator",
+        revokeAdmin: "Revoke organization administrator",
         removeConfirm: "Remove {{email}} from this organization?",
         unavailable: "The membership change could not be completed. Try again.",
         role: {
