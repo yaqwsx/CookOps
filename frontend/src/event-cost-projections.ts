@@ -1,6 +1,7 @@
 import type { CanonicalRecord } from "./local-db";
 import { decimal as parseDecimal } from "./shopping-projections";
 import { readVisibleRecords } from "./visible-records";
+import { readEventScopedRecords } from "./archive-cache";
 
 const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
@@ -115,7 +116,11 @@ export async function readEventCosts(
     "receipt",
   ] as const;
   const records = await Promise.all(
-    kinds.map((kind) => readVisibleRecords(userId, organizationId, kind, true)),
+    kinds.map((kind) =>
+      kind === "event"
+        ? readVisibleRecords(userId, organizationId, kind, true)
+        : readEventScopedRecords(userId, organizationId, eventId, kind, true),
+    ),
   );
   const byKind = new Map(kinds.map((kind, index) => [kind, records[index]]));
   const values = (kind: (typeof kinds)[number]): CanonicalRecord[] =>

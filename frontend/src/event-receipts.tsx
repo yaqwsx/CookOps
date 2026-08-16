@@ -134,6 +134,7 @@ function ReceiptItem({
   uploads,
   receipt,
   userId,
+  readOnly,
 }: {
   eventId: string;
   organizationId: string;
@@ -141,6 +142,7 @@ function ReceiptItem({
   uploads: PendingUpload[];
   receipt: ReceiptProjection;
   userId: string;
+  readOnly: boolean;
 }) {
   const { t } = useTranslation();
   const [editing, setEditing] = useState(false);
@@ -214,24 +216,26 @@ function ReceiptItem({
                 src={`/media/receipt-attachments/${attachment.id}?organization_id=${organizationId}`}
               />
             ) : null}
-            <button
-              onClick={() =>
-                void attachmentLifecycle(
-                  attachment.id,
-                  attachment.retired ? "restore" : "retire",
-                )
-              }
-              type="button"
-            >
-              {t(
-                attachment.retired
-                  ? "receipts.restorePhoto"
-                  : "receipts.removePhoto",
-              )}
-            </button>
+            {!readOnly ? (
+              <button
+                onClick={() =>
+                  void attachmentLifecycle(
+                    attachment.id,
+                    attachment.retired ? "restore" : "retire",
+                  )
+                }
+                type="button"
+              >
+                {t(
+                  attachment.retired
+                    ? "receipts.restorePhoto"
+                    : "receipts.removePhoto",
+                )}
+              </button>
+            ) : null}
           </div>
         ))}
-        {!receipt.retired ? (
+        {!readOnly && !receipt.retired ? (
           <label className="receipt-item__media">
             {t("receipts.addPhoto")}
             <input
@@ -247,7 +251,7 @@ function ReceiptItem({
             {t(
               `receipts.photo${upload.state[0].toUpperCase()}${upload.state.slice(1)}`,
             )}
-            {upload.state === "failed" ? (
+            {!readOnly && upload.state === "failed" ? (
               <button
                 onClick={() => void retryReceiptUpload(upload.id)}
                 type="button"
@@ -255,27 +259,31 @@ function ReceiptItem({
                 {t("receipts.retryPhoto")}
               </button>
             ) : null}
-            <button
-              onClick={() => void removeReceiptUpload(userId, upload.id)}
-              type="button"
-            >
-              {t("receipts.removePhoto")}
-            </button>
+            {!readOnly ? (
+              <button
+                onClick={() => void removeReceiptUpload(userId, upload.id)}
+                type="button"
+              >
+                {t("receipts.removePhoto")}
+              </button>
+            ) : null}
           </p>
         ))}
       </div>
       <div className="receipt-item__actions">
-        {!receipt.retired ? (
+        {!readOnly && !receipt.retired ? (
           <button onClick={() => setEditing((value) => !value)} type="button">
             {t("receipts.edit")}
           </button>
         ) : null}
-        <button onClick={() => void lifecycle()} type="button">
-          {t(receipt.retired ? "receipts.restore" : "receipts.retire")}
-        </button>
+        {!readOnly ? (
+          <button onClick={() => void lifecycle()} type="button">
+            {t(receipt.retired ? "receipts.restore" : "receipts.retire")}
+          </button>
+        ) : null}
       </div>
       {error ? <p role="alert">{t("receipts.errors.unavailable")}</p> : null}
-      {editing && !receipt.retired ? (
+      {!readOnly && editing && !receipt.retired ? (
         <ReceiptForm
           eventId={eventId}
           onDone={() => setEditing(false)}
@@ -307,9 +315,24 @@ export function EventReceipts({
   const optimisticUploadIds = useRef(new Set<string>());
   const [offline, setOffline] = useState(false);
   const [error, setError] = useState(false);
+  const [readOnly, setReadOnly] = useState(false);
   const refresh = useCallback(async () => {
     try {
+      const readOnly = async () => {
+        const event = await localDb.canonicalRecords.get([
+          userId,
+          organizationId,
+          "event",
+          eventId,
+        ]);
+        return (
+          event?.fields.lifecycle === "archived" &&
+          typeof event.fields.current_archive_snapshot_id === "string"
+        );
+      };
+      setReadOnly(await readOnly());
       await pullOrganization(userId, organizationId);
+      setReadOnly(await readOnly());
       setOffline(false);
       setError(false);
     } catch (reason) {
@@ -317,7 +340,7 @@ export function EventReceipts({
         return onUnauthenticated();
       setOffline(true);
     }
-  }, [onUnauthenticated, organizationId, userId]);
+  }, [eventId, onUnauthenticated, organizationId, userId]);
   useEffect(() => {
     const subscription = liveQuery(() =>
       readEventReceipts(userId, organizationId, eventId),
@@ -370,11 +393,17 @@ export function EventReceipts({
       </header>
       <p>{t("receipts.scope")}</p>
       {offline ? <p role="status">{t("receipts.offline")}</p> : null}
-      <ReceiptForm
-        eventId={eventId}
-        organizationId={organizationId}
-        userId={userId}
-      />
+      {!readOnly ? (
+        <ReceiptForm
+          eventId={eventId}
+          organizationId={organizationId}
+          userId={userId}
+        />
+      ) : (
+        <p className="planner-archived" role="status">
+          {t("planner.archived")}
+        </p>
+      )}
       {!receipts?.length ? (
         <p role="status">{t("receipts.empty")}</p>
       ) : (
@@ -394,6 +423,7 @@ export function EventReceipts({
               }}
               receipt={receipt}
               userId={userId}
+              readOnly={readOnly}
               uploads={uploads.filter(
                 (upload) => upload.receiptId === receipt.id,
               )}

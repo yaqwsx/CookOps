@@ -180,6 +180,11 @@ describe("EventPlanner", () => {
           dayId: ids.day,
           roleId: ids.role,
           position: "a",
+          recipeId: ids.recipe,
+          recipeVersionId: "7d8b2b21-c378-4574-9e46-9338c81305ef",
+          catalogUpdateAvailable: true,
+          catalogUpdateChanges: { added: 1, removed: 0, changed: 0 },
+          catalogScaleImpact: { currentUnitId: "a", targetUnitId: "b", currentUnitName: "porce", targetUnitName: "osoba", reset: false, targetBase: "1", suggestedAmount: "12" },
         },
       ],
       ...emptyPlannerCollections,
@@ -340,6 +345,9 @@ describe("EventPlanner", () => {
     expect(
       screen.queryByText("Přesunout", { exact: true }),
     ).not.toBeInTheDocument();
+    expect(screen.getByText("Tato akce je archivovaná a plán je jen pro čtení.")).toBeVisible();
+    expect(screen.queryByText("Náhled aktualizace katalogu")).not.toBeInTheDocument();
+    expect(queueScheduledRecipeCatalogUpdate).not.toHaveBeenCalled();
   });
 
   it("adds an active catalog ingredient through the typed local override", async () => {

@@ -23,6 +23,7 @@ const eventId = "6ce17d2f-8365-4b1f-a80b-34d10425d51c";
 async function clearDatabase() {
   await Promise.all([
     localDb.canonicalRecords.clear(),
+    localDb.archiveRecords.clear(),
     localDb.optimisticOverlays.clear(),
   ]);
 }
@@ -60,5 +61,18 @@ describe("event receipt metadata screen", () => {
       eventId,
       expect.objectContaining({ title: "Bakery", totalAmount: "12.50" }),
     );
+  });
+
+  it("hides receipt mutations when refresh archives the event", async () => {
+    const snapshotId = crypto.randomUUID();
+    const receiptId = crypto.randomUUID();
+    await localDb.canonicalRecords.put({ userId, organizationId, entityType: "event", entityId: eventId, recordSchemaVersion: 1, lifecycle: "active", fields: { id: eventId, organization_id: organizationId, lifecycle: "active", current_archive_snapshot_id: null }, fieldClocks: {}, immutable: false, updatedAt: new Date().toISOString() });
+    await localDb.canonicalRecords.put({ userId, organizationId, entityType: "receipt", entityId: receiptId, recordSchemaVersion: 1, lifecycle: "active", fields: { id: receiptId, organization_id: organizationId, event_id: eventId, title: "Bakery", total_amount: "12.50", currency: "CZK", receipt_date: null, note: null }, fieldClocks: {}, immutable: false, updatedAt: new Date().toISOString() });
+    const sync = vi.mocked((await import("./sync-bootstrap")).pullOrganization);
+    sync.mockImplementationOnce(async () => { await localDb.canonicalRecords.update([userId, organizationId, "event", eventId], { fields: { id: eventId, organization_id: organizationId, lifecycle: "archived", current_archive_snapshot_id: snapshotId }, lifecycle: "retired" }); await localDb.archiveRecords.put({ userId, organizationId, eventId, snapshotId, entityType: "receipt", entityId: receiptId, recordSchemaVersion: 1, lifecycle: "active", fields: { id: receiptId, organization_id: organizationId, event_id: eventId, title: "Bakery", total_amount: "12.50", currency: "CZK", receipt_date: null, note: null }, fieldClocks: {}, immutable: true, updatedAt: new Date().toISOString() }); return true; });
+    render(<EventReceipts eventId={eventId} onBack={vi.fn()} onUnauthenticated={vi.fn()} organizationId={organizationId} userId={userId} />);
+    await screen.findByText("Bakery");
+    expect(screen.queryByRole("button", { name: "Uložit účtenku" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Upravit" })).not.toBeInTheDocument();
   });
 });

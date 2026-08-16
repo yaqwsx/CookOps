@@ -1,4 +1,4 @@
-import { readVisibleRecords } from "./visible-records";
+import { readEventScopedRecords } from "./archive-cache";
 
 export type ReceiptProjection = {
   id: string;
@@ -22,13 +22,22 @@ export async function readEventReceipts(
 ): Promise<ReceiptProjection[]> {
   if (![userId, organizationId, eventId].every((id) => uuid.test(id)))
     return [];
-  const attachments = await readVisibleRecords(
+  const attachments = await readEventScopedRecords(
     userId,
     organizationId,
+    eventId,
     "receipt_attachment",
     true,
   );
-  return (await readVisibleRecords(userId, organizationId, "receipt", true))
+  return (
+    await readEventScopedRecords(
+      userId,
+      organizationId,
+      eventId,
+      "receipt",
+      true,
+    )
+  )
     .filter((record) => {
       const fields = record.fields;
       return (

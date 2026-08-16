@@ -1,4 +1,4 @@
-import type { CanonicalRecord } from "./local-db";
+import { localDb, type CanonicalRecord } from "./local-db";
 import { readVisibleRecords } from "./visible-records";
 import { decimal as parseDecimal } from "./shopping-projections";
 
@@ -128,31 +128,7 @@ export async function readEventPlanner(
   eventId: string,
 ): Promise<EventPlannerProjection | undefined> {
   if (!uuid.test(eventId)) return undefined;
-  const [
-    eventRecords,
-    dayRecords,
-    roleRecords,
-    recipeRecords,
-    versionRecords,
-    lineRecords,
-    scheduledRecords,
-    ingredientRecords,
-    ingredientVersionRecords,
-    overrideRecords,
-    unitRecords,
-  ] = await Promise.all([
-    readVisibleRecords(userId, organizationId, "event", true),
-    readVisibleRecords(userId, organizationId, "event_day", true),
-    readVisibleRecords(userId, organizationId, "event_meal_role", true),
-    readVisibleRecords(userId, organizationId, "recipe"),
-    readVisibleRecords(userId, organizationId, "recipe_version"),
-    readVisibleRecords(userId, organizationId, "recipe_ingredient_line"),
-    readVisibleRecords(userId, organizationId, "scheduled_recipe", true),
-    readVisibleRecords(userId, organizationId, "ingredient", true),
-    readVisibleRecords(userId, organizationId, "ingredient_version"),
-    readVisibleRecords(userId, organizationId, "scheduled_ingredient_override"),
-    readVisibleRecords(userId, organizationId, "unit_definition"),
-  ]);
+  const eventRecords = await readVisibleRecords(userId, organizationId, "event", true);
   const event = eventRecords.find(
     (record) =>
       record.entityId === eventId &&
@@ -160,6 +136,17 @@ export async function readEventPlanner(
       value(record, "organization_id") === organizationId,
   );
   const lifecycle = event?.fields.lifecycle;
+  const snapshotId = event?.fields.current_archive_snapshot_id;
+  const archiveRows = lifecycle === "archived" && typeof snapshotId === "string"
+    ? await localDb.archiveRecords.where("[userId+organizationId+eventId+snapshotId]").equals([userId, organizationId, eventId, snapshotId]).toArray()
+    : [];
+  const readRecords = (entityType: string, includeRetired = false) =>
+    lifecycle === "archived"
+      ? Promise.resolve(archiveRows.filter((record) => record.entityType === entityType && (includeRetired || record.lifecycle === "active")))
+      : readVisibleRecords(userId, organizationId, entityType, includeRetired);
+  const [dayRecords, roleRecords, recipeRecords, versionRecords, lineRecords, scheduledRecords, ingredientRecords, ingredientVersionRecords, overrideRecords, unitRecords] = await Promise.all([
+    readRecords("event_day", true), readRecords("event_meal_role", true), readRecords("recipe"), readRecords("recipe_version"), readRecords("recipe_ingredient_line"), readRecords("scheduled_recipe", true), readRecords("ingredient", true), readRecords("ingredient_version"), readRecords("scheduled_ingredient_override"), readRecords("unit_definition"),
+  ]);
   const name = event && value(event, "name");
   const startDate = event && value(event, "start_date");
   const endDate = event && value(event, "end_date");

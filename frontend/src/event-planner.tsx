@@ -26,6 +26,7 @@ import {
 import { queueEventDayCreate, queueEventDayLifecycle, queueEventDayNote, queueEventDayVisibility } from "./event-day";
 import { queueEventMealRoleCreate, queueEventMealRoleLifecycle, queueEventMealRoleName, queueEventMealRolePosition } from "./event-meal-role";
 import { pullOrganization, SyncRequestError } from "./sync-bootstrap";
+import { ensureArchivedEventCached } from "./archive-cache";
 
 type PlannerState = "loading" | "ready" | "offline" | "error";
 
@@ -60,7 +61,7 @@ function CatalogUpdateChoice({ item, planner, eventId, organizationId, userId }:
   const { t } = useTranslation();
   const target = planner.recipes.find((recipe) => recipe.id === item.recipeId)?.versionId;
   const [error, setError] = useState(false);
-  if (!item.catalogUpdateAvailable || !target || target === item.recipeVersionId || item.retired) return null;
+  if (planner.lifecycle !== "active" || !item.catalogUpdateAvailable || !target || target === item.recipeVersionId || item.retired) return null;
   async function queue(preserveOverrides: boolean) {
     if (!target) return;
     try {
@@ -780,13 +781,14 @@ export function EventPlanner({
     if (!navigator.onLine) return setState("offline");
     try {
       await pullOrganization(userId, organizationId);
+      await ensureArchivedEventCached(userId, organizationId, eventId);
       if (current === generation.current) setState("ready");
     } catch (error) {
       if (error instanceof SyncRequestError && error.status === 401)
         return onUnauthenticated();
       if (current === generation.current) setState("error");
     }
-  }, [onUnauthenticated, organizationId, userId]);
+  }, [eventId, onUnauthenticated, organizationId, userId]);
   useEffect(() => {
     let active = true;
     generation.current += 1;

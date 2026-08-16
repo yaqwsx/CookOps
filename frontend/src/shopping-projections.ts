@@ -1,5 +1,5 @@
 import type { CanonicalRecord } from "./local-db";
-import { readVisibleRecords } from "./visible-records";
+import { readEventScopedRecords } from "./archive-cache";
 
 const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
@@ -142,8 +142,13 @@ export async function readShoppingLists(
 ): Promise<ShoppingListSummary[]> {
   if (!uuid.test(eventId)) return [];
   const [lists, sources] = await Promise.all([
-    readVisibleRecords(userId, organizationId, "shopping_list"),
-    readVisibleRecords(userId, organizationId, "shopping_revision_source"),
+    readEventScopedRecords(userId, organizationId, eventId, "shopping_list"),
+    readEventScopedRecords(
+      userId,
+      organizationId,
+      eventId,
+      "shopping_revision_source",
+    ),
   ]);
   const sourceCounts = new Map<string, number>();
   for (const source of sources) {
@@ -191,22 +196,50 @@ export async function readShoppingList(
     adHocItems,
   ] = await Promise.all([
     readShoppingLists(userId, organizationId, eventId),
-    readVisibleRecords(userId, organizationId, "shopping_ingredient_row"),
-    readVisibleRecords(userId, organizationId, "shopping_contribution", true),
-    readVisibleRecords(
+    readEventScopedRecords(
       userId,
       organizationId,
+      eventId,
+      "shopping_ingredient_row",
+    ),
+    readEventScopedRecords(
+      userId,
+      organizationId,
+      eventId,
+      "shopping_contribution",
+      true,
+    ),
+    readEventScopedRecords(
+      userId,
+      organizationId,
+      eventId,
       "shopping_contribution_snapshot",
     ),
-    readVisibleRecords(userId, organizationId, "store_section"),
-    readVisibleRecords(userId, organizationId, "unit_definition"),
-    readVisibleRecords(userId, organizationId, "shopping_revision_source"),
-    readVisibleRecords(userId, organizationId, "ad_hoc_shopping_item", true),
+    readEventScopedRecords(userId, organizationId, eventId, "store_section"),
+    readEventScopedRecords(userId, organizationId, eventId, "unit_definition"),
+    readEventScopedRecords(
+      userId,
+      organizationId,
+      eventId,
+      "shopping_revision_source",
+    ),
+    readEventScopedRecords(
+      userId,
+      organizationId,
+      eventId,
+      "ad_hoc_shopping_item",
+      true,
+    ),
   ]);
   const summary = lists.find((list) => list.id === shoppingListId);
   if (!summary) return undefined;
   const list = (
-    await readVisibleRecords(userId, organizationId, "shopping_list")
+    await readEventScopedRecords(
+      userId,
+      organizationId,
+      eventId,
+      "shopping_list",
+    )
   ).find((record) => record.entityId === shoppingListId);
   const currentRevisionId =
     list && value(list, "current_generation_revision_id");

@@ -19,7 +19,12 @@ from cookops.application.browser_sessions import (
     BrowserSessionService,
     decode_browser_session_hmac_key,
 )
-from cookops.application.events import EventQueryDenied, EventSummary, list_event_summaries
+from cookops.application.events import (
+    EventQueryDenied,
+    EventSummary,
+    get_event_archive_snapshot,
+    list_event_summaries,
+)
 from cookops.config import Settings
 
 
@@ -40,11 +45,18 @@ class EventSummaryResponse(BaseModel):
     currency: str
     lifecycle: str
     archived_at: datetime | None
+    current_archive_snapshot_id: UUID | None
 
 
 class EventListResponse(BaseModel):
     events: tuple[EventSummaryResponse, ...]
     next_cursor: str | None
+
+
+class EventArchiveSnapshotResponse(BaseModel):
+    archive_schema_version: int
+    content_hash: str
+    payload: dict[str, object]
 
 
 @dataclass(frozen=True, slots=True)
@@ -165,6 +177,7 @@ def _summary_response(summary: EventSummary) -> EventSummaryResponse:
         currency=summary.currency,
         lifecycle=summary.lifecycle,
         archived_at=summary.archived_at,
+        current_archive_snapshot_id=summary.current_archive_snapshot_id,
     )
 
 
@@ -221,6 +234,36 @@ def create_events_router(settings: Settings) -> APIRouter:
         return EventListResponse(
             events=tuple(_summary_response(summary) for summary in page.summaries),
             next_cursor=next_cursor,
+        )
+
+    @router.get(
+        "/{event_id}/archive/{snapshot_id}", response_model=EventArchiveSnapshotResponse
+    )
+    async def get_archived_event(
+        organization_id: UUID,
+        event_id: UUID,
+        snapshot_id: UUID,
+        request: Request,
+    ) -> EventArchiveSnapshotResponse:
+        services = _services(request)
+        user_id = await _authenticated_user_id(request, settings, services)
+        try:
+            snapshot = await get_event_archive_snapshot(
+                services.session_factory,
+                actor_user_id=user_id,
+                organization_id=organization_id,
+                event_id=event_id,
+                snapshot_id=snapshot_id,
+            )
+        except EventQueryDenied as error:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail={"code": "not_found"},
+            ) from error
+        return EventArchiveSnapshotResponse(
+            archive_schema_version=snapshot.archive_schema_version,
+            content_hash=snapshot.content_hash.hex(),
+            payload=snapshot.payload,
         )
 
     return router

@@ -21,6 +21,7 @@ from cookops.application.organizations import (
 from cookops.persistence.models import (
     ClientInstallation,
     Event,
+    EventArchiveSnapshot,
     EventDay,
     EventMealRole,
     FieldClock,
@@ -107,6 +108,7 @@ class EventSummary:
     currency: str
     lifecycle: Literal["active", "archived"]
     archived_at: datetime | None
+    current_archive_snapshot_id: UUID | None
     created_at: datetime
 
 
@@ -118,6 +120,13 @@ class EventSummaryPage:
 
 class EventQueryDenied(PermissionError):
     """A deliberately non-enumerating event-query denial."""
+
+
+@dataclass(frozen=True, slots=True)
+class EventArchiveSnapshotRead:
+    archive_schema_version: int
+    content_hash: bytes
+    payload: dict[str, object]
 
 
 @dataclass(frozen=True, slots=True)
@@ -431,35 +440,7 @@ async def list_event_summaries(
     ):
         raise ValueError("event cursor values must be present together")
     async with session_factory() as session:
-        actor_is_active = await session.scalar(
-            select(User.id).where(User.id == actor_user_id, User.disabled_at.is_(None))
-        )
-        organization_is_active = await session.scalar(
-            select(Organization.id).where(
-                Organization.id == organization_id,
-                Organization.retired_at.is_(None),
-            )
-        )
-        if actor_is_active is None or organization_is_active is None:
-            raise EventQueryDenied("organization access denied")
-        system_admin = await session.scalar(
-            select(SystemRoleAssignment.id).where(
-                SystemRoleAssignment.user_id == actor_user_id,
-                SystemRoleAssignment.role == "system_admin",
-                SystemRoleAssignment.revoked_at.is_(None),
-            )
-        )
-        if system_admin is None:
-            membership = await session.scalar(
-                select(OrganizationMembership.id).where(
-                    OrganizationMembership.organization_id == organization_id,
-                    OrganizationMembership.user_id == actor_user_id,
-                    OrganizationMembership.state == "active",
-                    OrganizationMembership.role.in_(("member", "organization_admin")),
-                )
-            )
-            if membership is None:
-                raise EventQueryDenied("organization access denied")
+        await _require_event_read_access(session, actor_user_id, organization_id)
         statement = select(Event).where(Event.organization_id == organization_id)
         if before_lifecycle is not None:
             assert before_created_at is not None and before_id is not None
@@ -504,11 +485,85 @@ async def list_event_summaries(
                 currency=event.currency,
                 lifecycle=cast(Literal["active", "archived"], event.lifecycle),
                 archived_at=event.archived_at,
+                current_archive_snapshot_id=event.current_archive_snapshot_id,
                 created_at=event.created_at,
             )
             for event in page_events
         )
         return EventSummaryPage(summaries=summaries, has_more=len(events) > limit)
+
+
+async def get_event_archive_snapshot(
+    session_factory: async_sessionmaker[AsyncSession],
+    *,
+    actor_user_id: UUID,
+    organization_id: UUID,
+    event_id: UUID,
+    snapshot_id: UUID,
+) -> EventArchiveSnapshotRead:
+    """Read the current immutable archive projection without exposing scope."""
+
+    async with session_factory() as session:
+        await _require_event_read_access(session, actor_user_id, organization_id)
+        row = (
+            await session.execute(
+                select(EventArchiveSnapshot)
+                .join(Event, Event.id == EventArchiveSnapshot.event_id)
+                .where(
+                    Event.id == event_id,
+                    Event.organization_id == organization_id,
+                    Event.lifecycle == "archived",
+                    Event.current_archive_snapshot_id == snapshot_id,
+                    EventArchiveSnapshot.id == snapshot_id,
+                )
+            )
+        ).scalar_one_or_none()
+        if (
+            row is None
+            or row.archive_schema_version != 1
+            or row.payload.get("schema_version") != row.archive_schema_version
+        ):
+            raise EventQueryDenied("archive snapshot unavailable")
+        encoded = json.dumps(
+            row.payload, ensure_ascii=False, sort_keys=True, separators=(",", ":")
+        ).encode()
+        if hashlib.sha256(encoded).digest() != row.content_hash:
+            raise EventQueryDenied("archive snapshot unavailable")
+        return EventArchiveSnapshotRead(row.archive_schema_version, row.content_hash, row.payload)
+
+
+async def _require_event_read_access(
+    session: AsyncSession, actor_user_id: UUID, organization_id: UUID
+) -> None:
+    actor_is_active = await session.scalar(
+        select(User.id).where(User.id == actor_user_id, User.disabled_at.is_(None))
+    )
+    organization_is_active = await session.scalar(
+        select(Organization.id).where(
+            Organization.id == organization_id,
+            Organization.retired_at.is_(None),
+        )
+    )
+    if actor_is_active is None or organization_is_active is None:
+        raise EventQueryDenied("organization access denied")
+    system_admin = await session.scalar(
+        select(SystemRoleAssignment.id).where(
+            SystemRoleAssignment.user_id == actor_user_id,
+            SystemRoleAssignment.role == "system_admin",
+            SystemRoleAssignment.revoked_at.is_(None),
+        )
+    )
+    if system_admin is None:
+        membership = await session.scalar(
+            select(OrganizationMembership.id).where(
+                OrganizationMembership.organization_id == organization_id,
+                OrganizationMembership.user_id == actor_user_id,
+                OrganizationMembership.state == "active",
+                OrganizationMembership.role.in_(("member", "organization_admin")),
+            )
+        )
+        if membership is None:
+            raise EventQueryDenied("organization access denied")
 
 
 async def _authorize_and_lock_organization(

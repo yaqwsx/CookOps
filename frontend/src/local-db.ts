@@ -32,6 +32,11 @@ export interface CanonicalRecord {
   updatedAt: string;
 }
 
+export interface ArchiveRecord extends CanonicalRecord {
+  eventId: string;
+  snapshotId: string;
+}
+
 export interface OutboxCommand {
   id: string;
   userId: string;
@@ -86,6 +91,10 @@ export class CookOpsDatabase extends Dexie {
   readonly canonicalRecords!: Table<
     CanonicalRecord,
     [string, string, string, string]
+  >;
+  readonly archiveRecords!: Table<
+    ArchiveRecord,
+    [string, string, string, string, string, string]
   >;
   readonly outbox!: EntityTable<OutboxCommand, "id">;
   readonly pendingUploads!: EntityTable<PendingUpload, "id">;
@@ -169,6 +178,10 @@ export class CookOpsDatabase extends Dexie {
           await outbox.update(command.id, { sequence });
         }
       });
+    this.version(8).stores({
+      archiveRecords:
+        "[userId+organizationId+eventId+snapshotId+entityType+entityId], [userId+organizationId+eventId+snapshotId]",
+    });
   }
 }
 

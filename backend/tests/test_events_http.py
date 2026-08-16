@@ -1,4 +1,6 @@
 import base64
+import hashlib
+import json
 import os
 from collections.abc import Iterator
 from dataclasses import dataclass
@@ -12,13 +14,14 @@ from alembic.config import Config
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 from pydantic import PostgresDsn
-from sqlalchemy import Engine, create_engine, insert
+from sqlalchemy import Engine, create_engine, insert, update
 
 from alembic import command as alembic_command
 from cookops.config import Environment, HumanAuthProvider, Settings
 from cookops.main import create_app
 from cookops.persistence.models import (
     Event,
+    EventArchiveSnapshot,
     ExternalIdentity,
     Organization,
     OrganizationMembership,
@@ -39,6 +42,8 @@ class EventsHttpDatabase:
     organization_id: UUID
     other_organization_id: UUID
     event_ids: tuple[UUID, ...]
+    archive_snapshot_id: UUID
+    archive_created_by_user_id: UUID
 
 
 @pytest.fixture
@@ -53,6 +58,11 @@ def events_http_database() -> Iterator[EventsHttpDatabase]:
     organization_id, other_organization_id = uuid4(), uuid4()
     event_ids = (uuid4(), uuid4(), uuid4())
     now = datetime.now(UTC)
+    archive_snapshot_id = uuid4()
+    archive_payload = {"schema_version": 1, "event": {"id": str(event_ids[0])}}
+    archive_hash = hashlib.sha256(
+        json.dumps(archive_payload, sort_keys=True, separators=(",", ":")).encode()
+    ).digest()
     with engine.begin() as connection:
         connection.execute(
             insert(User),
@@ -167,12 +177,35 @@ def events_http_database() -> Iterator[EventsHttpDatabase]:
                 for index, event_id in enumerate(event_ids)
             ],
         )
+        connection.execute(
+            insert(EventArchiveSnapshot).values(
+                id=archive_snapshot_id,
+                event_id=event_ids[0],
+                archive_schema_version=1,
+                payload=archive_payload,
+                content_hash=archive_hash,
+                attachment_manifest=[],
+                created_by_user_id=admin_id,
+            )
+        )
+        connection.execute(
+            update(Event)
+            .where(Event.id == event_ids[0])
+            .values(
+                lifecycle="archived",
+                current_archive_snapshot_id=archive_snapshot_id,
+                archived_at=now + timedelta(seconds=10),
+                archived_by_user_id=admin_id,
+            )
+        )
     database = EventsHttpDatabase(
         configuration=configuration,
         engine=engine,
         organization_id=organization_id,
         other_organization_id=other_organization_id,
         event_ids=event_ids,
+        archive_snapshot_id=archive_snapshot_id,
+        archive_created_by_user_id=admin_id,
     )
     try:
         yield database
@@ -243,3 +276,100 @@ def test_event_http_exposes_a_read_only_typed_contract(
         schema = cast(FastAPI, client.app).openapi()
         contract_path = path.replace(str(events_http_database.organization_id), "{organization_id}")
         assert set(schema["paths"][contract_path]) == {"get"}
+
+
+def test_archived_event_http_reads_only_the_current_verified_snapshot(
+    events_http_database: EventsHttpDatabase,
+) -> None:
+    database = events_http_database
+    path = (
+        f"/api/v1/organizations/{database.organization_id}/events/{database.event_ids[0]}"
+        f"/archive/{database.archive_snapshot_id}"
+    )
+    with TestClient(create_app(_settings()), base_url="https://testserver") as client:
+        _sign_in(client, "event-member")
+        response = client.get(path)
+        assert response.status_code == 200
+        assert response.json() == {
+            "archive_schema_version": 1,
+            "content_hash": hashlib.sha256(
+                json.dumps(
+                    {"schema_version": 1, "event": {"id": str(database.event_ids[0])}},
+                    sort_keys=True,
+                    separators=(",", ":"),
+                ).encode()
+            ).hexdigest(),
+            "payload": {"schema_version": 1, "event": {"id": str(database.event_ids[0])}},
+        }
+
+        for forged_path in (
+            path.replace(str(database.archive_snapshot_id), str(uuid4())),
+            path.replace(str(database.event_ids[0]), str(database.event_ids[1])),
+            path.replace(str(database.organization_id), str(database.other_organization_id)),
+        ):
+            assert client.get(forged_path).status_code == 404
+
+
+def test_archived_event_http_fails_closed_for_tampered_or_unsupported_snapshot(
+    events_http_database: EventsHttpDatabase,
+) -> None:
+    database = events_http_database
+    payload = {"schema_version": 1, "event": {"id": str(database.event_ids[0])}}
+    payload_hash = hashlib.sha256(
+        json.dumps(payload, sort_keys=True, separators=(",", ":")).encode()
+    ).digest()
+    tampered_snapshot_id, unsupported_snapshot_id = uuid4(), uuid4()
+    with events_http_database.engine.begin() as connection:
+        connection.execute(
+            insert(EventArchiveSnapshot),
+            [
+                {
+                    "id": tampered_snapshot_id,
+                    "event_id": database.event_ids[0],
+                    "archive_schema_version": 1,
+                    "payload": payload,
+                    "content_hash": b"0" * 32,
+                    "attachment_manifest": [],
+                    "created_by_user_id": database.archive_created_by_user_id,
+                },
+                {
+                    "id": unsupported_snapshot_id,
+                    "event_id": database.event_ids[0],
+                    "archive_schema_version": 99,
+                    "payload": payload,
+                    "content_hash": payload_hash,
+                    "attachment_manifest": [],
+                    "created_by_user_id": database.archive_created_by_user_id,
+                },
+            ],
+        )
+        connection.execute(
+            update(Event)
+            .where(Event.id == database.event_ids[0])
+            .values(current_archive_snapshot_id=tampered_snapshot_id)
+        )
+    tampered_path = (
+        f"/api/v1/organizations/{database.organization_id}/events/{database.event_ids[0]}"
+        f"/archive/{tampered_snapshot_id}"
+    )
+    with TestClient(create_app(_settings()), base_url="https://testserver") as client:
+        _sign_in(client, "event-member")
+        assert client.get(tampered_path).status_code == 404
+    with events_http_database.engine.begin() as connection:
+        connection.execute(
+            update(Event)
+            .where(Event.id == database.event_ids[0])
+            .values(current_archive_snapshot_id=unsupported_snapshot_id)
+        )
+    unsupported_path = (
+        f"/api/v1/organizations/{database.organization_id}/events/{database.event_ids[0]}"
+        f"/archive/{unsupported_snapshot_id}"
+    )
+    with TestClient(create_app(_settings()), base_url="https://testserver") as client:
+        _sign_in(client, "event-member")
+        assert client.get(unsupported_path).status_code == 404
+        stale_path = (
+            f"/api/v1/organizations/{database.organization_id}/events/{database.event_ids[0]}"
+            f"/archive/{tampered_snapshot_id}"
+        )
+        assert client.get(stale_path).status_code == 404
