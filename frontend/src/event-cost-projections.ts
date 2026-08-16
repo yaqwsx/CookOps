@@ -173,6 +173,7 @@ export async function readEventCosts(
     "event_ingredient_price",
     "event_ingredient_price_snapshot",
     "shopping_list",
+    "shopping_generation_revision",
     "shopping_ingredient_row",
     "shopping_contribution",
     "shopping_contribution_snapshot",
@@ -260,8 +261,35 @@ export async function readEventCosts(
           entry[0] !== undefined && entry[1] !== undefined,
       ),
   );
+  const eventPricesById = new Map(
+    values("event_ingredient_price")
+      .filter(
+        (record) =>
+          record.lifecycle === "active" &&
+          validRecordIdentity(record, organizationId) &&
+          fieldId(record, "event_id") === eventId &&
+          fieldId(record, "ingredient_id") !== undefined,
+      )
+      .map((record) => [record.entityId, record] as const),
+  );
+  const eventPriceSnapshots = new Map(
+    values("event_ingredient_price_snapshot")
+      .filter(
+        (record) =>
+          record.lifecycle === "active" &&
+          validRecordIdentity(record, organizationId) &&
+          fieldId(record, "event_id") === eventId &&
+          fieldId(record, "ingredient_id") !== undefined,
+      )
+      .map((record) => [record.entityId, record] as const),
+  );
   const versions = new Map(
     values("recipe_version").map((record) => [record.entityId, record]),
+  );
+  const immutableIngredientVersions = new Set(
+    values("ingredient_version")
+      .filter((record) => record.immutable === true)
+      .map((record) => record.entityId),
   );
   const lines = values("recipe_ingredient_line");
   const overrides = values("scheduled_ingredient_override");
@@ -389,48 +417,142 @@ export async function readEventCosts(
     });
   }
   let expectedShopping = { numerator: 0n, denominator: 1n };
+  const revisions = new Map(
+    values("shopping_generation_revision")
+      .filter(
+        (revision) =>
+          revision.lifecycle === "active" &&
+          validRecordIdentity(revision, organizationId) &&
+          fieldId(revision, "event_id") === eventId &&
+          fieldId(revision, "shopping_list_id") !== undefined,
+      )
+      .map((revision) => [revision.entityId, revision] as const),
+  );
   const currentRevisions = new Map(
     values("shopping_list")
       .filter(
         (item) =>
-          item.lifecycle === "active" && fieldId(item, "event_id") === eventId,
+          item.lifecycle === "active" &&
+          validRecordIdentity(item, organizationId) &&
+          fieldId(item, "event_id") === eventId,
       )
-      .map((item) => [
-        item.entityId,
-        fieldId(item, "current_generation_revision_id"),
-      ]),
+      .flatMap((item) => {
+        const revisionId = fieldId(item, "current_generation_revision_id");
+        const revision = revisionId ? revisions.get(revisionId) : undefined;
+        return revision &&
+          fieldId(revision, "shopping_list_id") === item.entityId
+          ? [[item.entityId, revision.entityId] as const]
+          : [];
+      }),
   );
   const contributions = new Map(
     values("shopping_contribution")
-      .filter((item) => item.lifecycle === "active")
+      .filter(
+        (item) =>
+          item.lifecycle === "active" &&
+          validRecordIdentity(item, organizationId) &&
+          fieldId(item, "event_id") === eventId &&
+          fieldId(item, "shopping_list_id") !== undefined &&
+          fieldId(item, "shopping_ingredient_row_id") !== undefined &&
+          fieldId(item, "ingredient_id") !== undefined,
+      )
       .map((item) => [item.entityId, item]),
   );
   for (const row of values("shopping_ingredient_row")) {
     const listId = fieldId(row, "shopping_list_id");
     const revisionId = listId ? currentRevisions.get(listId) : undefined;
+    const rowIngredientId = fieldId(row, "ingredient_id");
     if (
       row.lifecycle !== "active" ||
+      !validRecordIdentity(row, organizationId) ||
       !listId ||
       fieldId(row, "event_id") !== eventId ||
-      !revisionId
+      !revisionId ||
+      !rowIngredientId ||
+      !ingredients.has(rowIngredientId)
     )
       continue;
-    const snapshots = values("shopping_contribution_snapshot").filter(
-      (snapshot) => {
-        const contribution = contributions.get(
-          fieldId(snapshot, "shopping_contribution_id") ?? "",
-        );
-        return (
-          snapshot.fields.active_in_revision === true &&
-          snapshot.lifecycle === "active" &&
-          fieldId(snapshot, "shopping_list_id") === listId &&
-          fieldId(snapshot, "generation_revision_id") === revisionId &&
-          contribution !== undefined &&
-          fieldId(contribution, "shopping_ingredient_row_id") === row.entityId
-        );
-      },
+    const snapshotsByContribution = new Map<string, CanonicalRecord[]>();
+    for (const snapshot of values("shopping_contribution_snapshot")) {
+      const contributionId = fieldId(snapshot, "shopping_contribution_id");
+      const contribution = contributionId
+        ? contributions.get(contributionId)
+        : undefined;
+      const snapshotIngredientId = fieldId(snapshot, "ingredient_id");
+      const ingredientVersionId = fieldId(snapshot, "ingredient_version_id");
+      const ingredientVersion = ingredientVersionId
+        ? ingredientVersions.get(ingredientVersionId)
+        : undefined;
+      const generated = decimal(snapshot.fields.generated_quantity);
+      const eventPriceSnapshotId = fieldId(
+        snapshot,
+        "event_price_snapshot_id",
+      );
+      const amount = decimal(snapshot.fields.price_amount);
+      const pricedQuantity = decimal(snapshot.fields.priced_quantity);
+      const pricedUnitId = fieldId(snapshot, "priced_unit_id");
+      const currencyValue = snapshot.fields.currency;
+      const hasAnyPriceField =
+        snapshot.fields.event_price_snapshot_id != null ||
+        snapshot.fields.price_amount != null ||
+        snapshot.fields.priced_quantity != null ||
+        snapshot.fields.priced_unit_id != null ||
+        snapshot.fields.currency != null;
+      const hasCompletePrice =
+        eventPriceSnapshotId !== undefined &&
+        amount !== undefined &&
+        amount.numerator >= 0n &&
+        pricedQuantity !== undefined &&
+        pricedQuantity.numerator > 0n &&
+        pricedUnitId !== undefined &&
+        typeof currencyValue === "string" &&
+        currencyValue === currency &&
+        eventPriceSnapshots.has(eventPriceSnapshotId) &&
+        (() => {
+          const source = eventPriceSnapshots.get(eventPriceSnapshotId);
+          const parent = source
+            ? eventPricesById.get(fieldId(source, "event_ingredient_price_id") ?? "")
+            : undefined;
+          return (
+            source !== undefined &&
+            parent !== undefined &&
+            fieldId(source, "ingredient_id") === snapshotIngredientId &&
+            fieldId(parent, "ingredient_id") === snapshotIngredientId
+          );
+        })();
+      const noPrice =
+        !hasAnyPriceField;
+      if (
+        !contribution ||
+        !contributionId ||
+        snapshot.lifecycle !== "active" ||
+        snapshot.immutable !== true ||
+        !validRecordIdentity(snapshot, organizationId) ||
+        snapshot.fields.active_in_revision !== true ||
+        fieldId(snapshot, "event_id") !== eventId ||
+        fieldId(snapshot, "shopping_list_id") !== listId ||
+        fieldId(snapshot, "generation_revision_id") !== revisionId ||
+        fieldId(contribution, "shopping_list_id") !== listId ||
+        fieldId(contribution, "event_id") !== eventId ||
+        fieldId(contribution, "shopping_ingredient_row_id") !== row.entityId ||
+        fieldId(contribution, "ingredient_id") !== rowIngredientId ||
+        snapshotIngredientId !== rowIngredientId ||
+        !ingredientVersion ||
+        !immutableIngredientVersions.has(ingredientVersionId ?? "") ||
+        ingredientVersion.ingredientId !== rowIngredientId ||
+        !generated ||
+        generated.numerator < 0n ||
+        (!noPrice && !hasCompletePrice)
+      )
+        continue;
+      const existing = snapshotsByContribution.get(contributionId) ?? [];
+      existing.push(snapshot);
+      snapshotsByContribution.set(contributionId, existing);
+    }
+    const validSnapshots = [...snapshotsByContribution.values()].flatMap(
+      (snapshots) => (snapshots.length === 1 ? snapshots : []),
     );
-    const generated = snapshots
+    const generated = validSnapshots
       .map((snapshot) => decimal(snapshot.fields.generated_quantity))
       .filter((value): value is Fraction => value !== undefined)
       .reduce(add, { numerator: 0n, denominator: 1n });
@@ -442,39 +564,49 @@ export async function readEventCosts(
     const quantity =
       manual ?? (supply ? maxZeroSubtract(generated, supply) : generated);
     if (quantity.numerator === 0n) continue;
-    const snapshot = snapshots[0];
-    const ingredient = ingredientVersions.get(
-      snapshot ? (fieldId(snapshot, "ingredient_version_id") ?? "") : "",
-    );
-    const amount = snapshot && decimal(snapshot.fields.price_amount);
-    const pricedQuantity = snapshot && decimal(snapshot.fields.priced_quantity);
-    const pricedUnit = snapshot && fieldId(snapshot, "priced_unit_id");
-    const sourceUnit = ingredient?.unitId
-      ? units.get(ingredient.unitId)
-      : undefined;
-    const targetUnit = pricedUnit ? units.get(pricedUnit) : undefined;
-    if (
-      !ingredient ||
-      !amount ||
-      !pricedQuantity ||
-      !sourceUnit?.factor ||
-      !targetUnit?.factor ||
-      snapshot?.fields.currency !== currency ||
-      sourceUnit.dimension !== targetUnit.dimension
-    ) {
-      missing.add(
-        ingredient?.name ?? text(row, "ingredient_name") ?? row.entityId,
+    let rowCost = { numerator: 0n, denominator: 1n };
+    let pricingValid = generated.numerator > 0n;
+    for (const snapshot of validSnapshots) {
+      const ingredient = ingredientVersions.get(
+        fieldId(snapshot, "ingredient_version_id") ?? "",
       );
-      continue;
+      const amount = decimal(snapshot.fields.price_amount);
+      const pricedQuantity = decimal(snapshot.fields.priced_quantity);
+      const pricedUnit = fieldId(snapshot, "priced_unit_id");
+      const sourceUnit = ingredient?.unitId
+        ? units.get(ingredient.unitId)
+        : undefined;
+      const targetUnit = pricedUnit ? units.get(pricedUnit) : undefined;
+      if (
+        !ingredient ||
+        !amount ||
+        !pricedQuantity ||
+        !sourceUnit?.factor ||
+        !targetUnit?.factor ||
+        snapshot.fields.currency !== currency ||
+        sourceUnit.dimension !== targetUnit.dimension
+      ) {
+        pricingValid = false;
+        continue;
+      }
+      const snapshotGenerated = decimal(snapshot.fields.generated_quantity);
+      const allocated =
+        snapshotGenerated && generated.numerator > 0n
+          ? divide(multiply(quantity, snapshotGenerated), generated)
+          : undefined;
+      const converted = allocated
+        ? divide(multiply(allocated, sourceUnit.factor), targetUnit.factor)
+        : undefined;
+      const cost =
+        converted && divide(multiply(amount, converted), pricedQuantity);
+      if (!cost) pricingValid = false;
+      else rowCost = add(rowCost, cost);
     }
-    const converted = divide(
-      multiply(quantity, sourceUnit.factor),
-      targetUnit.factor,
-    );
-    const cost =
-      converted && divide(multiply(amount, converted), pricedQuantity);
-    if (cost) expectedShopping = add(expectedShopping, cost);
-    else missing.add(ingredient.name ?? row.entityId);
+    if (pricingValid) expectedShopping = add(expectedShopping, rowCost);
+    else
+      missing.add(
+        text(row, "ingredient_name") ?? row.entityId,
+      );
   }
   const actual = values("receipt")
     .filter(
