@@ -3,9 +3,9 @@ import { useTranslation } from "react-i18next";
 
 import {
   type CurrentIdentity,
-  type DevelopmentIdentity,
   createDevelopmentSession,
   createGoogleSession,
+  type DevelopmentIdentity,
   getCurrentIdentity,
   getDevelopmentIdentities,
   logout,
@@ -15,20 +15,21 @@ import {
   getAvailableOrganizations,
   OrganizationRequestError,
 } from "./api/organizations";
-import { loadGoogleIdentityServices } from "./google-identity-services";
-import { EventOverview } from "./events-overview";
-import { EventPlanner } from "./event-planner";
-import { EventShopping } from "./event-shopping";
-import { RecipeCatalog } from "./recipe-catalog-view";
-import { IngredientCatalog } from "./ingredient-catalog-view";
-import { EventReceipts } from "./event-receipts";
-import { EventCostsPage } from "./event-costs-page";
-import { OrganizationMemberships } from "./organization-membership";
 import { CatalogAdministration } from "./catalog-administration";
+import { EventCostsPage } from "./event-costs-page";
+import { EventPlanner } from "./event-planner";
+import { EventReceipts } from "./event-receipts";
+import { EventSettingsPage } from "./event-settings-page";
+import { EventShopping } from "./event-shopping";
+import { EventOverview } from "./events-overview";
+import { loadGoogleIdentityServices } from "./google-identity-services";
 import type { SupportedLocale } from "./i18n";
+import { IngredientCatalog } from "./ingredient-catalog-view";
+import { OrganizationMemberships } from "./organization-membership";
+import { RecipeCatalog } from "./recipe-catalog-view";
 import { runtimeAuthentication } from "./runtime-config";
-import { SynchronizationStatus } from "./synchronization-status";
 import { useOutboxSynchronization } from "./sync-lifecycle";
+import { SynchronizationStatus } from "./synchronization-status";
 import "./app.css";
 
 const sections = ["events", "recipes", "ingredients", "settings"] as const;
@@ -36,7 +37,7 @@ const sections = ["events", "recipes", "ingredients", "settings"] as const;
 const organizationPath =
   /^\/organizations\/([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})(?:\/|$)/i;
 const eventSectionPath =
-  /^\/organizations\/([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})\/events\/([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})\/(planner|shopping|costs|receipts)(?:\/([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}))?$/i;
+  /^\/organizations\/([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})\/events\/([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})\/(planner|shopping|costs|receipts|settings)(?:\/([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}))?$/i;
 const recipeCatalogPath = /^\/organizations\/[0-9a-f-]{36}\/recipes$/i;
 const ingredientCatalogPath = /^\/organizations\/[0-9a-f-]{36}\/ingredients$/i;
 const settingsPath = /^\/organizations\/[0-9a-f-]{36}\/settings$/i;
@@ -405,6 +406,7 @@ function AuthenticatedShell({
   const eventId = eventSection?.[2]?.toLowerCase();
   const eventSectionName = eventSection?.[3]?.toLowerCase();
   const shoppingListId = eventSection?.[4]?.toLowerCase();
+  const validEventRoute = !shoppingListId || eventSectionName === "shopping";
   const recipeCatalogOpen = recipeCatalogPath.test(pathname);
   const ingredientCatalogOpen = ingredientCatalogPath.test(pathname);
   const settingsOpen = settingsPath.test(pathname);
@@ -548,7 +550,19 @@ function AuthenticatedShell({
                   userId={identity.id}
                 />
               ) : section === "events" && organizationId ? (
-                eventId && eventSectionName === "planner" ? (
+                eventId &&
+                eventSectionName === "settings" &&
+                !shoppingListId ? (
+                  <EventSettingsPage
+                    eventId={eventId}
+                    onOpenCosts={() => openCosts(eventId)}
+                    onOpenPlanner={() => openEvent(eventId)}
+                    organizationId={organizationId}
+                    userId={identity.id}
+                  />
+                ) : eventId &&
+                  eventSectionName === "planner" &&
+                  validEventRoute ? (
                   <EventPlanner
                     eventId={eventId}
                     onOpenCosts={() => openCosts(eventId)}
@@ -558,7 +572,9 @@ function AuthenticatedShell({
                     organizationId={organizationId}
                     userId={identity.id}
                   />
-                ) : eventId && eventSectionName === "shopping" ? (
+                ) : eventId &&
+                  eventSectionName === "shopping" &&
+                  validEventRoute ? (
                   <EventShopping
                     eventId={eventId}
                     onBack={() => openShopping(eventId)}
@@ -569,7 +585,9 @@ function AuthenticatedShell({
                     shoppingListId={shoppingListId}
                     userId={identity.id}
                   />
-                ) : eventId && eventSectionName === "receipts" ? (
+                ) : eventId &&
+                  eventSectionName === "receipts" &&
+                  validEventRoute ? (
                   <EventReceipts
                     eventId={eventId}
                     onBack={() => openEvent(eventId)}
@@ -577,10 +595,9 @@ function AuthenticatedShell({
                     organizationId={organizationId}
                     userId={identity.id}
                   />
-                ) :
-                  eventId &&
-                    eventSectionName === "costs" &&
-                    !shoppingListId ? (
+                ) : eventId &&
+                  eventSectionName === "costs" &&
+                  !shoppingListId ? (
                   <EventCostsPage
                     eventId={eventId}
                     onBack={() => openEvent(eventId)}

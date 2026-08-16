@@ -1,5 +1,5 @@
 import type { EventSummary } from "./api/events";
-import { localDb, type CanonicalRecord } from "./local-db";
+import { type CanonicalRecord, localDb } from "./local-db";
 
 function text(value: unknown): string | null {
   return typeof value === "string" && value.length > 0 ? value : null;
@@ -15,8 +15,14 @@ function eventSummary(
   const endDate = text(fields.end_date);
   const budgetAmount = text(fields.budget_amount);
   const currency = text(fields.currency);
-  const location = fields.location === null || fields.location === undefined ? null : text(fields.location);
-  const generalNote = fields.general_note === null || fields.general_note === undefined ? null : text(fields.general_note);
+  const location =
+    fields.location === null || fields.location === undefined
+      ? null
+      : text(fields.location);
+  const generalNote =
+    fields.general_note === null || fields.general_note === undefined
+      ? null
+      : text(fields.general_note);
   const attendance = fields.base_expected_attendance;
   const lifecycle = fields.lifecycle;
   const archivedAt = fields.archived_at;
@@ -100,6 +106,7 @@ export async function canCreateEvents(
     organizationId,
   ]);
   return (
+    capabilities?.lifecycle === "active" &&
     capabilities?.fields.actor_user_id === userId &&
     capabilities.fields.can_manage_organization === true
   );

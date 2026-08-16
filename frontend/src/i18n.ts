@@ -382,6 +382,16 @@ const resources = {
         refreshPending: "Aktualizace odhadů čeká na synchronizaci",
         error: "Odhady cen se nepodařilo zařadit do synchronizace.",
       },
+      eventSettings: {
+        heading: "Nastavení akce",
+        navigation: "Navigace nastavení akce",
+        planner: "Zpět na plán",
+        costs: "Náklady",
+        lifecycle: "Stav akce",
+        archivedReadOnly: "Archivovaná akce je jen pro čtení.",
+        loading: "Načítáme nastavení akce…",
+        unavailable: "Nastavení této akce není v místní projekci k dispozici.",
+      },
       synchronization: {
         caughtUp: "Synchronizováno",
         offline: "Bez připojení",
@@ -803,6 +813,16 @@ const resources = {
         refresh: "Update price estimates",
         refreshPending: "Price refresh pending synchronization",
         error: "Price estimates could not be queued for synchronization.",
+      },
+      eventSettings: {
+        heading: "Event settings",
+        navigation: "Event settings navigation",
+        planner: "Back to planner",
+        costs: "Costs",
+        lifecycle: "Event lifecycle",
+        archivedReadOnly: "Archived events are read-only.",
+        loading: "Loading event settings…",
+        unavailable: "This event's settings are not available in the cached projection.",
       },
       synchronization: {
         caughtUp: "Synchronized",

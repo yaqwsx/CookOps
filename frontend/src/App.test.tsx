@@ -14,10 +14,37 @@ vi.mock("./event-costs-page", () => ({
     onOpenReceipts: () => void;
   }) => (
     <section aria-label="costs-route">
-      <button onClick={onBack} type="button">Back to planner</button>
-      <button onClick={onOpenReceipts} type="button">Receipts</button>
+      <button onClick={onBack} type="button">
+        Back to planner
+      </button>
+      <button onClick={onOpenReceipts} type="button">
+        Receipts
+      </button>
     </section>
   ),
+}));
+
+vi.mock("./event-settings-page", () => ({
+  EventSettingsPage: ({
+    onOpenCosts,
+    onOpenPlanner,
+  }: {
+    onOpenCosts: () => void;
+    onOpenPlanner: () => void;
+  }) => (
+    <section aria-label="event-settings-route">
+      <button onClick={onOpenPlanner} type="button">
+        Back to planner
+      </button>
+      <button onClick={onOpenCosts} type="button">
+        Costs
+      </button>
+    </section>
+  ),
+}));
+
+vi.mock("./event-shopping", () => ({
+  EventShopping: () => <section aria-label="shopping-route" />,
 }));
 
 const alice = {
@@ -362,6 +389,82 @@ describe("development authentication", () => {
     expect(window.location.pathname).toBe(
       `/organizations/${primaryOrganization.id}/events/${eventId}/receipts`,
     );
+  });
+
+  it("renders a bookmarked event settings route and navigates to planner or costs", async () => {
+    const user = userEvent.setup();
+    const eventId = "6ce17d2f-8365-4b1f-a80b-34d10425d51c";
+    window.history.replaceState(
+      null,
+      "",
+      `/organizations/${primaryOrganization.id}/events/${eventId}/settings`,
+    );
+    mockAnonymousDevelopmentSession();
+    render(<App />);
+    await user.click(
+      await screen.findByRole("button", {
+        name: "Přihlásit se jako Alice Member",
+      }),
+    );
+    await screen.findByRole("region", { name: "event-settings-route" });
+    await user.click(screen.getByRole("button", { name: "Back to planner" }));
+    expect(window.location.pathname).toBe(
+      `/organizations/${primaryOrganization.id}/events/${eventId}/planner`,
+    );
+    window.history.pushState(
+      null,
+      "",
+      `/organizations/${primaryOrganization.id}/events/${eventId}/settings`,
+    );
+    fireEvent(window, new PopStateEvent("popstate"));
+    await screen.findByRole("region", { name: "event-settings-route" });
+    await user.click(screen.getByRole("button", { name: "Costs" }));
+    expect(window.location.pathname).toBe(
+      `/organizations/${primaryOrganization.id}/events/${eventId}/costs`,
+    );
+  });
+
+  it("does not open settings for an extra route segment", async () => {
+    const user = userEvent.setup();
+    const eventId = "6ce17d2f-8365-4b1f-a80b-34d10425d51c";
+    window.history.replaceState(
+      null,
+      "",
+      `/organizations/${primaryOrganization.id}/events/${eventId}/settings/${eventId}`,
+    );
+    mockAnonymousDevelopmentSession();
+    render(<App />);
+    await user.click(
+      await screen.findByRole("button", {
+        name: "Přihlásit se jako Alice Member",
+      }),
+    );
+    await waitFor(() =>
+      expect(
+        screen.queryByRole("region", { name: "event-settings-route" }),
+      ).not.toBeInTheDocument(),
+    );
+  });
+
+  it("keeps a valid shopping-list suffix route", async () => {
+    const user = userEvent.setup();
+    const eventId = "6ce17d2f-8365-4b1f-a80b-34d10425d51c";
+    const shoppingListId = "7ce17d2f-8365-4b1f-a80b-34d10425d51c";
+    window.history.replaceState(
+      null,
+      "",
+      `/organizations/${primaryOrganization.id}/events/${eventId}/shopping/${shoppingListId}`,
+    );
+    mockAnonymousDevelopmentSession();
+    render(<App />);
+    await user.click(
+      await screen.findByRole("button", {
+        name: "Přihlásit se jako Alice Member",
+      }),
+    );
+    expect(
+      await screen.findByRole("region", { name: "shopping-route" }),
+    ).toBeInTheDocument();
   });
 
   it("returns to authentication when current organization access is revoked", async () => {
