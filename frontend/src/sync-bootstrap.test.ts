@@ -72,9 +72,9 @@ describe("bootstrapOrganization", () => {
   beforeEach(clearDatabase);
 
   it("accepts dietary exception and association records and replays pending create", async () => {
-    const eventId = "event-dietary";
-    const tagId = "tag-dietary";
-    const exceptionId = "exception-dietary";
+    const eventId = "00000000-0000-4000-8000-000000000041";
+    const tagId = "00000000-0000-4000-8000-000000000042";
+    const exceptionId = "00000000-0000-4000-8000-000000000043";
     await localDb.canonicalRecords.bulkPut([
       {
         userId,
@@ -102,7 +102,7 @@ describe("bootstrapOrganization", () => {
       },
     ]);
     await localDb.outbox.add({
-      id: "dietary-create",
+      id: "00000000-0000-4000-8000-000000000044",
       userId,
       organizationId,
       commandType: "event_dietary_exception.create",
@@ -115,6 +115,16 @@ describe("bootstrapOrganization", () => {
       },
       actionAt: "2026-08-07T11:00:00.000Z",
       createdAt: "2026-08-07T11:00:00.000Z",
+      state: "pending",
+    });
+    await localDb.outbox.add({
+      id: "00000000-0000-4000-8000-000000000045",
+      userId,
+      organizationId,
+      commandType: "event_dietary_exception.update",
+      payload: { event_id: eventId, exception_id: exceptionId, name: "Updated", note: "Changed", tag_ids: [tagId] },
+      actionAt: "2026-08-07T11:01:00.000Z",
+      createdAt: "2026-08-07T11:01:00.000Z",
       state: "pending",
     });
     await bootstrapOrganization(userId, organizationId, {
@@ -182,7 +192,7 @@ describe("bootstrapOrganization", () => {
         "event_dietary_exception",
         exceptionId,
       ]),
-    ).resolves.toBeTruthy();
+    ).resolves.toMatchObject({ fields: { name: "Updated", note: "Changed", tag_ids: [tagId] } });
   });
 
   it("replays a pending recipe create as both root and immutable initial version", async () => {

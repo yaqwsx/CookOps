@@ -4,6 +4,7 @@ import { useTranslation } from "react-i18next";
 import { localDb } from "./local-db";
 import {
   queueEventDietaryExceptionCreate,
+  queueEventDietaryExceptionUpdate,
   readVisibleEventDietaryExceptions,
 } from "./event-dietary-exception";
 
@@ -21,6 +22,7 @@ export function EventDietaryExceptions({
   const [note, setNote] = useState("");
   const [tagIds, setTagIds] = useState<string[]>([]);
   const [error, setError] = useState(false);
+  const [editingId, setEditingId] = useState<string | null>(null);
   const [tags, setTags] = useState<{ id: string; name: string }[]>([]);
   const [exceptions, setExceptions] = useState<
     { entityId: string; fields: Record<string, unknown> }[]
@@ -56,14 +58,14 @@ export function EventDietaryExceptions({
   async function submit(event: React.FormEvent) {
     event.preventDefault();
     try {
-      await queueEventDietaryExceptionCreate(userId, organizationId, eventId, {
-        name,
-        note,
-        tagIds,
-      });
+      const save = editingId
+        ? queueEventDietaryExceptionUpdate(userId, organizationId, eventId, editingId, { name, note, tagIds })
+        : queueEventDietaryExceptionCreate(userId, organizationId, eventId, { name, note, tagIds });
+      await save;
       setName("");
       setNote("");
       setTagIds([]);
+      setEditingId(null);
       setError(false);
     } catch {
       setError(true);
@@ -109,7 +111,8 @@ export function EventDietaryExceptions({
             </label>
           ))}
         </fieldset>
-        <button type="submit">{t("eventDietaryExceptions.create")}</button>
+        <button type="submit">{editingId ? t("eventDietaryExceptions.save") : t("eventDietaryExceptions.create")}</button>
+        {editingId ? <button type="button" aria-label={t("eventDietaryExceptions.cancel")} onClick={() => { setEditingId(null); setName(""); setNote(""); setTagIds([]); }}>{t("eventDietaryExceptions.cancel")}</button> : null}
         {error ? <p role="alert">{t("eventDietaryExceptions.error")}</p> : null}
       </form>
       <ul aria-label={t("eventDietaryExceptions.list")}>
@@ -121,6 +124,7 @@ export function EventDietaryExceptions({
               ? ` — ${item.fields.selected_tag_names.join(", ")}`
               : ""}
             {item.fields.note ? ` — ${String(item.fields.note)}` : ""}
+            <button type="button" aria-label={t("eventDietaryExceptions.edit")} onClick={() => { setEditingId(item.entityId); setName(String(item.fields.name ?? "")); setNote(String(item.fields.note ?? "")); setTagIds(Array.isArray(item.fields.selected_tag_ids) ? item.fields.selected_tag_ids.filter((id): id is string => typeof id === "string") : []); }}>{t("eventDietaryExceptions.edit")}</button>
           </li>
         ))}
       </ul>

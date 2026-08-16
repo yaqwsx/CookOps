@@ -27,6 +27,7 @@ from cookops.persistence.models import (
     EventArchiveSnapshot,
     EventDay,
     EventMealRole,
+    EventDietaryExceptionTag,
     FieldClock,
     Ingredient,
     IngredientVersion,
@@ -166,14 +167,67 @@ def test_dietary_exception_create_replays_and_bootstraps_clocks(
         first = client.post("/api/v1/sync/push", json=body).json()["outcomes"][0]
         assert first["status"] == "accepted"
         assert client.post("/api/v1/sync/push", json=body).json()["outcomes"][0]["replayed"]
+        update_command = _command(mutation_id=uuid4(), event_id=event_id, kind="event_dietary_exception.update", exception_id=str(exception_id), name="Updated", note="new", tag_ids=[str(tag_id)])
+        updated = client.post("/api/v1/sync/push", json=_body(sync_database, installation_id, [update_command])).json()["outcomes"][0]
+        assert updated["status"] == "accepted"
+        assert client.post("/api/v1/sync/push", json=_body(sync_database, installation_id, [update_command])).json()["outcomes"][0]["replayed"]
+        mismatch = {**update_command, "payload": {**update_command["payload"], "name": "Different"}}
+        assert client.post("/api/v1/sync/push", json=_body(sync_database, installation_id, [mismatch])).json()["outcomes"][0]["error"]["code"] == "idempotency_mismatch"
+        rejected = _command(mutation_id=uuid4(), event_id=event_id, kind="event_dietary_exception.update", exception_id=str(exception_id), name="", note=None, tag_ids=[])
+        rejected_first = client.post("/api/v1/sync/push", json=_body(sync_database, installation_id, [rejected])).json()["outcomes"][0]
+        assert rejected_first["status"] == "rejected"
+        rejected_again = client.post("/api/v1/sync/push", json=_body(sync_database, installation_id, [rejected])).json()["outcomes"][0]
+        assert rejected_again["status"] == "rejected" and rejected_again["error"]["code"] == rejected_first["error"]["code"]
+        stale = _command(mutation_id=uuid4(), event_id=event_id, kind="event_dietary_exception.update", exception_id=str(exception_id), name="Stale", note="stale", tag_ids=[])
+        stale["client_wall_time"] = "2020-01-01T00:00:00+00:00"
+        stale_outcome = client.post("/api/v1/sync/push", json=_body(sync_database, installation_id, [stale])).json()["outcomes"][0]
+        assert stale_outcome["status"] == "partially_superseded"
+        assert client.post("/api/v1/sync/push", json=_body(sync_database, installation_id, [stale])).json()["outcomes"][0]["replayed"]
+        remove = _command(mutation_id=uuid4(), event_id=event_id, kind="event_dietary_exception.update", exception_id=str(exception_id), name="Updated", note="new", tag_ids=[])
+        assert client.post("/api/v1/sync/push", json=_body(sync_database, installation_id, [remove])).json()["outcomes"][0]["status"] == "accepted"
+        add = _command(mutation_id=uuid4(), event_id=event_id, kind="event_dietary_exception.update", exception_id=str(exception_id), name="Updated", note="new", tag_ids=[str(tag_id)])
+        assert client.post("/api/v1/sync/push", json=_body(sync_database, installation_id, [add])).json()["outcomes"][0]["status"] == "accepted"
+        association_ids = [row[0] for row in sync_database.engine.connect().execute(select(EventDietaryExceptionTag.id).where(EventDietaryExceptionTag.exception_id == exception_id)).all()]
+        assert len(association_ids) == 1
+        with sync_database.engine.begin() as connection:
+            connection.execute(update(DietaryTag).where(DietaryTag.id == tag_id).values(retired_at=datetime.now(UTC), retired_by_user_id=actor_id))
+        retain = _command(mutation_id=uuid4(), event_id=event_id, kind="event_dietary_exception.update", exception_id=str(exception_id), name="Retained", note="new", tag_ids=[str(tag_id)])
+        retain_first = client.post("/api/v1/sync/push", json=_body(sync_database, installation_id, [retain])).json()["outcomes"][0]
+        assert retain_first["status"] == "accepted"
+        retain_again = client.post("/api/v1/sync/push", json=_body(sync_database, installation_id, [retain])).json()["outcomes"][0]
+        assert retain_again["status"] == "accepted"
+        remove_retired = _command(mutation_id=uuid4(), event_id=event_id, kind="event_dietary_exception.update", exception_id=str(exception_id), name="Retained", note="new", tag_ids=[])
+        assert client.post("/api/v1/sync/push", json=_body(sync_database, installation_id, [remove_retired])).json()["outcomes"][0]["status"] == "accepted"
+        readd_retired = _command(mutation_id=uuid4(), event_id=event_id, kind="event_dietary_exception.update", exception_id=str(exception_id), name="Retained", note="new", tag_ids=[str(tag_id)])
+        assert client.post("/api/v1/sync/push", json=_body(sync_database, installation_id, [readd_retired])).json()["outcomes"][0]["status"] == "rejected"
+        retired_tag = uuid4()
+        with sync_database.engine.begin() as connection:
+            connection.execute(insert(DietaryTag).values(id=retired_tag, organization_id=sync_database.organization_id, name="Retired", normalized_name="retired", color=None, created_by_user_id=actor_id, retired_at=datetime.now(UTC), retired_by_user_id=actor_id))
+        foreign_tag = uuid4()
+        with sync_database.engine.begin() as connection:
+            connection.execute(insert(DietaryTag).values(id=foreign_tag, organization_id=sync_database.other_organization_id, name="Foreign", normalized_name="foreign", color=None, created_by_user_id=actor_id))
+        retired_update = _command(mutation_id=uuid4(), event_id=event_id, kind="event_dietary_exception.update", exception_id=str(exception_id), name="Updated", note="new", tag_ids=[str(retired_tag)])
+        retired_outcome = client.post("/api/v1/sync/push", json=_body(sync_database, installation_id, [retired_update])).json()["outcomes"][0]
+        assert retired_outcome["status"] == "rejected"
+        foreign_update = _command(mutation_id=uuid4(), event_id=event_id, kind="event_dietary_exception.update", exception_id=str(exception_id), name="Updated", note="new", tag_ids=[str(foreign_tag)])
+        foreign_outcome = client.post("/api/v1/sync/push", json=_body(sync_database, installation_id, [foreign_update])).json()["outcomes"][0]
+        assert foreign_outcome["status"] == "rejected"
         bootstrap = client.post(
             "/api/v1/sync/bootstrap",
             json={"organization_id": str(sync_database.organization_id)},
         ).json()
-        record = next(
-            item for item in bootstrap["records"] if item["entity_id"] == str(exception_id)
-        )
-        assert set(record["payload"]["record"]["field_clocks"]) == {"name", "note", "lifecycle"}
+        record = next(item for item in bootstrap["records"] if item["entity_id"] == str(exception_id))
+        assert set(record["payload"]["record"]["field_clocks"]) == {"name", "note", "tag_ids", "lifecycle"}
+        assert record["payload"]["record"]["field_clocks"]["tag_ids"]["winning_mutation_id"] == remove_retired["mutation_id"]
+        with sync_database.engine.begin() as connection:
+            archive_id = uuid4()
+            connection.execute(insert(EventArchiveSnapshot).values(id=archive_id, event_id=event_id, archive_schema_version=1, payload={}, content_hash=b"0" * 32, attachment_manifest=[], created_by_user_id=actor_id))
+            connection.execute(update(Event).where(Event.id == event_id).values(lifecycle="archived", current_archive_snapshot_id=archive_id, archived_at=datetime.now(UTC), archived_by_user_id=actor_id))
+        archived_update = _command(mutation_id=uuid4(), event_id=event_id, kind="event_dietary_exception.update", exception_id=str(exception_id), name="Blocked", note=None, tag_ids=[])
+        archived_first = client.post("/api/v1/sync/push", json=_body(sync_database, installation_id, [archived_update])).json()["outcomes"][0]
+        assert archived_first["status"] == "rejected"
+        archived_again = client.post("/api/v1/sync/push", json=_body(sync_database, installation_id, [archived_update])).json()["outcomes"][0]
+        assert archived_again["status"] == "rejected" and archived_again["error"] == archived_first["error"]
 
 
 def _command(
@@ -202,6 +256,8 @@ def _command(
             "general_note": "Bring cups",
             **payload,
         }
+    elif kind == "event_dietary_exception.update":
+        payload = {"event_id": str(event_id), "exception_id": str(uuid4()), "name": "Updated", "note": None, "tag_ids": [], **payload}
     elif kind == "shopping_list.create":
         payload = {
             "shopping_list_id": str(uuid4()),

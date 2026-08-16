@@ -2,6 +2,8 @@ import { beforeEach, describe, expect, it } from "vitest";
 import { localDb } from "./local-db";
 import {
   queueEventDietaryExceptionCreate,
+  queueEventDietaryExceptionUpdate,
+  replayEventDietaryExceptionUpdate,
   readVisibleEventDietaryExceptions,
 } from "./event-dietary-exception";
 
@@ -128,6 +130,46 @@ describe("event dietary exception create", () => {
         tagIds: [],
       }),
     ).rejects.toThrow("validation");
+  });
+  it("queues an edit against the visible active exception", async () => {
+    const exceptionId = "00000000-0000-4000-8000-000000000030";
+    await localDb.canonicalRecords.put(record("event_dietary_exception", exceptionId, {
+      event_id: eventId, name: "Old", note: null, retired_at: null,
+    }));
+    await queueEventDietaryExceptionUpdate(userId, organizationId, eventId, exceptionId, { name: "New", note: "Note", tagIds: [] });
+    expect((await localDb.outbox.toArray())[0].commandType).toBe("event_dietary_exception.update");
+    expect((await localDb.optimisticOverlays.get([userId, organizationId, "event_dietary_exception", exceptionId]))?.fields.name).toBe("New");
+  });
+  it.each([
+    null,
+    [],
+    { exception_id: "00000000-0000-4000-8000-000000000031", event_id: eventId, name: "New", note: null },
+  ])("fails closed for malformed update payload", async (payload) => {
+    const exceptionId = "00000000-0000-4000-8000-000000000031";
+    await localDb.canonicalRecords.put(record("event_dietary_exception", exceptionId, { event_id: eventId, name: "Old", retired_at: null }));
+    await expect(replayEventDietaryExceptionUpdate(userId, organizationId, { id: crypto.randomUUID(), userId, organizationId, commandType: "event_dietary_exception.update", payload: payload as Record<string, unknown>, actionAt: new Date().toISOString(), createdAt: new Date().toISOString(), state: "pending" })).rejects.toThrow("validation");
+  });
+  it("keeps a newer microsecond canonical field and rejects archived edits", async () => {
+    const exceptionId = "00000000-0000-4000-8000-000000000032";
+    await localDb.canonicalRecords.put(record("event_dietary_exception", exceptionId, { event_id: eventId, name: "Newer", retired_at: null }, "active"));
+    await localDb.canonicalRecords.update([userId, organizationId, "event_dietary_exception", exceptionId], { fieldClocks: { name: { actionAt: "2999-08-16T10:00:00.000001+00:00", mutationId: "ffffffff-ffff-4fff-8fff-ffffffffffff" } } });
+    await expect(queueEventDietaryExceptionUpdate(userId, organizationId, eventId, exceptionId, { name: "Old", note: null, tagIds: [] }, "00000000-0000-4000-8000-000000000033")).resolves.toBeUndefined();
+    expect((await localDb.optimisticOverlays.get([userId, organizationId, "event_dietary_exception", exceptionId]))?.fields.name).toBe("Newer");
+    await localDb.canonicalRecords.update([userId, organizationId, "event", eventId], { lifecycle: "retired" });
+    await expect(queueEventDietaryExceptionUpdate(userId, organizationId, eventId, exceptionId, { name: "Blocked", note: null, tagIds: [] })).rejects.toThrow("event");
+  });
+  it("retains a retired tag only through an active exception association", async () => {
+    const exceptionId = "00000000-0000-4000-8000-000000000034";
+    const tagId = "00000000-0000-4000-8000-000000000035";
+    await localDb.canonicalRecords.bulkPut([
+      record("event_dietary_exception", exceptionId, { event_id: eventId, name: "Old", retired_at: null }),
+      record("event_dietary_exception_tag", "00000000-0000-4000-8000-000000000036", { exception_id: exceptionId, dietary_tag_id: tagId, retired_at: null }),
+      record("dietary_tag", tagId, { name: "Retired", retired_at: "2026-01-01" }, "retired"),
+    ]);
+    await expect(queueEventDietaryExceptionUpdate(userId, organizationId, eventId, exceptionId, { name: "Kept", note: null, tagIds: [tagId] })).resolves.toBeUndefined();
+    await localDb.optimisticOverlays.clear(); await localDb.outbox.clear();
+    await localDb.canonicalRecords.update([userId, organizationId, "event_dietary_exception_tag", "00000000-0000-4000-8000-000000000036"], { lifecycle: "retired", fields: { exception_id: exceptionId, dietary_tag_id: tagId, retired_at: "2026-01-02" } });
+    await expect(queueEventDietaryExceptionUpdate(userId, organizationId, eventId, exceptionId, { name: "Rejected", note: null, tagIds: [tagId] })).rejects.toThrow("tag");
   });
   it("joins authoritative association records and falls back to optimistic tag_ids", async () => {
     const exceptionId = "00000000-0000-4000-8000-000000000020";

@@ -32,7 +32,7 @@ import {
   replayAdHocShoppingItemUpdate,
 } from "./ad-hoc-shopping-item";
 import { replayShoppingListRename } from "./shopping-list";
-import { replayEventDietaryExceptionCreate } from "./event-dietary-exception";
+import { replayEventDietaryExceptionCreate, replayEventDietaryExceptionUpdate } from "./event-dietary-exception";
 
 const supportedEntityKinds = new Set([
   "organization",
@@ -225,6 +225,9 @@ async function replayOptimisticCommands(
       } catch {
         /* keep rejected overlay absent */
       }
+    }
+    if (command.commandType === "event_dietary_exception.update") {
+      try { await replayEventDietaryExceptionUpdate(userId, organizationId, command); } catch { /* rejected overlay absent */ }
     }
     if (
       command.commandType === "event.update_base_attendance" &&

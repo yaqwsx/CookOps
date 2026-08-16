@@ -58,7 +58,10 @@ from cookops.application.event_day_visibility import (
 from cookops.application.event_dietary_exceptions import (
     CreateEventDietaryExceptionCommand,
     EventDietaryExceptionCreationResult,
+    EventDietaryExceptionUpdateResult,
+    UpdateEventDietaryExceptionCommand,
     create_event_dietary_exception,
+    update_event_dietary_exception,
 )
 from cookops.application.event_duplication import (
     DuplicateEventCommand,
@@ -383,6 +386,7 @@ SyncCommand = (
     | SetEventDayLifecycleCommand
     | CreateEventMealRoleCommand
     | CreateEventDietaryExceptionCommand
+    | UpdateEventDietaryExceptionCommand
     | SetEventMealRolePositionCommand
     | SetEventMealRoleNameCommand
     | SetEventMealRoleLifecycleCommand
@@ -435,6 +439,7 @@ def _command_kind(
         | SetEventDayLifecycleCommand
         | CreateEventMealRoleCommand
         | CreateEventDietaryExceptionCommand
+        | UpdateEventDietaryExceptionCommand
         | SetEventMealRolePositionCommand
         | SetEventMealRoleNameCommand
         | SetEventMealRoleLifecycleCommand
@@ -492,6 +497,8 @@ def _command_kind(
         return "event_meal_role.create"
     if isinstance(command, CreateEventDietaryExceptionCommand):
         return "event_dietary_exception.create"
+    if isinstance(command, UpdateEventDietaryExceptionCommand):
+        return "event_dietary_exception.update"
     if isinstance(command, SetEventMealRolePositionCommand):
         return "event_meal_role.position"
     if isinstance(command, SetEventMealRoleNameCommand):
@@ -862,6 +869,7 @@ class SynchronizationCommandService:
                 | EventDayLifecycleResult
                 | EventMealRoleCreationResult
                 | EventDietaryExceptionCreationResult
+                | EventDietaryExceptionUpdateResult
                 | EventMealRolePositionResult
                 | EventMealRoleNameResult
                 | EventMealRoleLifecycleResult
@@ -913,6 +921,8 @@ class SynchronizationCommandService:
                 result = await create_event_dietary_exception(
                     self._session_factory, context, command
                 )
+            elif isinstance(command, UpdateEventDietaryExceptionCommand):
+                result = await update_event_dietary_exception(self._session_factory, context, command)
             elif isinstance(command, SetEventMealRolePositionCommand):
                 result = await set_event_meal_role_position(self._session_factory, context, command)
             elif isinstance(command, SetEventMealRoleNameCommand):
@@ -1139,6 +1149,7 @@ class SynchronizationCommandService:
             | CatalogConfigurationResult
             | EventMealRoleCreationResult
             | EventDietaryExceptionCreationResult
+            | EventDietaryExceptionUpdateResult
             | EventMealRolePositionResult
             | EventMealRoleNameResult
             | EventMealRoleLifecycleResult
@@ -1191,6 +1202,8 @@ class SynchronizationCommandService:
                 if isinstance(result, EventMealRolePositionResult)
                 else "event_dietary_exception.create"
                 if isinstance(result, EventDietaryExceptionCreationResult)
+                else "event_dietary_exception.update"
+                if isinstance(result, EventDietaryExceptionUpdateResult)
                 else "event_meal_role.name"
                 if isinstance(result, EventMealRoleNameResult)
                 else "event_meal_role.lifecycle"
