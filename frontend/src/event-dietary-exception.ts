@@ -288,7 +288,7 @@ export async function queueEventDietaryExceptionLifecycle(
     const event = await readVisibleCanonicalRecord(userId, organizationId, "event", eventId);
     const exception = (await readVisibleEventDietaryExceptions(userId, organizationId, eventId, true)).find((item) => item.entityId === exceptionId);
     if ((canonicalEvent && !active(canonicalEvent)) || !active(event)) throw new Error("event");
-    if (!exception || exception.fields.event_id !== eventId) throw new Error("exception");
+    if (!exception || !("event_id" in exception.fields) || typeof exception.fields.event_id !== "string" || exception.fields.event_id !== eventId) throw new Error("exception");
     const command: OutboxCommand = {
       id: mutationId, userId, organizationId, commandType: "event_dietary_exception.lifecycle",
       payload: { exception_id: exceptionId, event_id: eventId, operation },
@@ -309,7 +309,7 @@ export async function replayEventDietaryExceptionLifecycle(userId: string, organ
   const event = await readVisibleCanonicalRecord(userId, organizationId, "event", eventId);
   const visible = await readVisibleEventDietaryExceptions(userId, organizationId, eventId, true);
   const current = visible.find((record) => record.entityId === exceptionId);
-  if ((canonicalEvent && !active(canonicalEvent)) || !active(event) || !current || current.fields.event_id !== eventId) throw new Error("archived");
+  if ((canonicalEvent && !active(canonicalEvent)) || !active(event) || !current || !("event_id" in current.fields) || typeof current.fields.event_id !== "string" || current.fields.event_id !== eventId) throw new Error("archived");
   const clock = current.fieldClocks.lifecycle;
   if (clock && typeof clock === "object") {
     const value = clock as Record<string, unknown>;
