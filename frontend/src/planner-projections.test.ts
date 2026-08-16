@@ -16,6 +16,10 @@ const ids = {
   currentVersion: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
   line: "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb",
   scheduled: "cccccccc-cccc-4ccc-8ccc-cccccccccccc",
+  tag: "dddddddd-dddd-4ddd-8ddd-dddddddddddd",
+  exception: "eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee",
+  replacement: "ffffffff-ffff-4fff-8fff-ffffffffffff",
+  addedVersion: "12121212-1212-4121-8121-121212121212",
 };
 
 it("matches backend decimal scaling without rounding fractional suggestions", () => {
@@ -41,12 +45,12 @@ function record(
     entityType,
     entityId,
     recordSchemaVersion: 1,
-    fields: { id: entityId, organization_id: organizationId, ...fields },
     fieldClocks: {},
     immutable: true,
     lifecycle: "active",
     updatedAt: "2026-08-15T00:00:00Z",
     ...options,
+    fields: { id: entityId, organization_id: organizationId, ...fields, ...(options.fields ?? {}) },
   };
 }
 
@@ -59,6 +63,9 @@ function cache(options: {
   recipeCurrentVersionId?: string;
   recipeCurrentVersion?: Partial<CanonicalRecord>;
   scheduledDinerCount?: number;
+  dietary?: CanonicalRecord[];
+  overrides?: CanonicalRecord[];
+  dietaryTag?: Partial<CanonicalRecord>;
 }) {
   const currentVersion = record("ingredient_version", ids.currentVersion, {
     ingredient_id: ids.ingredient,
@@ -83,8 +90,11 @@ function cache(options: {
     scheduled_recipe: [record("scheduled_recipe", ids.scheduled, { event_id: ids.event, event_day_id: ids.day, event_meal_role_id: ids.role, recipe_id: ids.recipe, recipe_version_id: ids.recipeVersion, diner_count: options.scheduledDinerCount ?? 2, consumption_percentage: "100", selected_scale_amount: "2", position_key: "a" })],
     ingredient: [root],
     ingredient_version: [oldVersion, currentVersion],
-    scheduled_ingredient_override: [],
+    scheduled_ingredient_override: options.overrides ?? [],
     unit_definition: [record("unit_definition", "eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee", { code: "portion", custom_name: "portion" }), record("unit_definition", "ffffffff-ffff-4fff-8fff-ffffffffffff", { code: "portion", custom_name: "portion" })],
+    dietary_tag: [record("dietary_tag", ids.tag, { name: "Vegan", ...(options.dietaryTag?.fields ?? {}) }, options.dietaryTag)],
+    event_dietary_exception: options.dietary?.filter((item) => item.entityType === "event_dietary_exception") ?? [],
+    event_dietary_exception_tag: options.dietary?.filter((item) => item.entityType === "event_dietary_exception_tag") ?? [],
   };
   readVisibleRecords.mockImplementation(async (_user: string, _org: string, entityType: string) => records[entityType] ?? []);
 }
@@ -121,4 +131,53 @@ describe("readEventPlanner catalog update projection", () => {
     const planner = await readEventPlanner(userId, organizationId, ids.event);
     expect(planner?.scheduled[0]?.catalogScaleImpact.suggestedAmount).toBe("3.5");
   });
+});
+
+it("projects active dietary conflicts from resolved nonzero ingredients", async () => {
+  const exception = record("event_dietary_exception", ids.exception, {
+    event_id: ids.event,
+    name: "Alex",
+    tag_ids: [ids.tag],
+  });
+  const replacement = record("scheduled_ingredient_override", ids.replacement, {
+    event_id: ids.event,
+    scheduled_recipe_id: ids.scheduled,
+    override_kind: "replace",
+    target_line_key: ids.line,
+    ingredient_version_id: ids.currentVersion,
+    quantity: "1",
+  }, { immutable: false });
+  const added = record("scheduled_ingredient_override", ids.addedVersion, {
+    event_id: ids.event,
+    scheduled_recipe_id: ids.scheduled,
+    override_kind: "add",
+    ingredient_version_id: ids.oldVersion,
+    quantity: "0",
+  }, { immutable: false });
+  cache({
+    currentVersion: { fields: { id: ids.currentVersion, organization_id: organizationId, ingredient_id: ids.ingredient, name: "Current", dietary_tag_ids: [ids.tag] } },
+    dietary: [exception],
+    overrides: [replacement, added],
+  });
+  const planner = await readEventPlanner(userId, organizationId, ids.event);
+  expect(planner?.scheduled[0]?.dietaryWarnings).toEqual([
+    { exceptionName: "Alex", tagNames: ["Vegan"], tagDescriptors: [{ id: ids.tag, name: "Vegan" }], ingredientNames: ["Current"] },
+  ]);
+});
+
+it("matches retired seeded dietary tags and preserves their descriptor", async () => {
+  const exception = record("event_dietary_exception", ids.exception, {
+    event_id: ids.event,
+    name: "Alex",
+    tag_ids: [ids.tag],
+  });
+  cache({
+    dietaryTag: { lifecycle: "retired", fields: { name: null, seed_key: "vegan" } },
+    ingredientVersion: { fields: { dietary_tag_ids: [ids.tag] } },
+    dietary: [exception],
+  });
+  const planner = await readEventPlanner(userId, organizationId, ids.event);
+  expect(planner?.scheduled[0]?.dietaryWarnings?.[0]?.tagDescriptors).toEqual([
+    { id: ids.tag, seedKey: "vegan", name: undefined },
+  ]);
 });

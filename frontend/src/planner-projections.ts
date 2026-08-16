@@ -1,5 +1,6 @@
 import { localDb, type CanonicalRecord } from "./local-db";
 import { readVisibleRecords } from "./visible-records";
+import { parseArchivedDietaryTagDescriptor } from "./archive-cache";
 import { decimal as parseDecimal } from "./shopping-projections";
 
 export type PlannerRecipe = { id: string; versionId: string; name: string; scalingUnitId: string; scalingUnitName: string; baseScalingAmount: string; roundSuggestionsUp: boolean };
@@ -23,6 +24,7 @@ export type PlannedRecipe = {
   catalogScaleImpact: { currentUnitId: string | undefined; targetUnitId: string | undefined; currentUnitName: string | undefined; targetUnitName: string | undefined; reset: boolean; targetBase: string | undefined; suggestedAmount: string | undefined };
   lines: { id: string; quantity: string; ingredientId?: string }[];
   localAddedIngredients: { id: string; name: string; quantity: string }[];
+  dietaryWarnings?: { exceptionName: string; tagNames: string[]; ingredientNames: string[]; tagDescriptors?: { id: string; seedKey?: string; name?: string }[] }[];
 };
 export type EventPlannerProjection = {
   name: string;
@@ -91,6 +93,30 @@ function belongsToOrganization(
   return owner === undefined || owner === organizationId;
 }
 
+function archivedWarnings(value: unknown): PlannedRecipe["dietaryWarnings"] {
+  if (!Array.isArray(value)) return undefined;
+  const warnings = value.map((item) => {
+    if (typeof item !== "object" || item === null || Array.isArray(item)) return undefined;
+    const fields = item as Record<string, unknown>;
+    const descriptors = fields.tag_descriptors;
+    const ingredientNames = fields.ingredient_names;
+    const tagDescriptors = Array.isArray(descriptors) ? descriptors.map(parseArchivedDietaryTagDescriptor) : [];
+    return typeof fields.exception_name === "string" && fields.exception_name.length > 0 &&
+        tagDescriptors.length > 0 && tagDescriptors.every((descriptor) => descriptor !== undefined) &&
+        Array.isArray(ingredientNames) && ingredientNames.length > 0 && ingredientNames.every((name) => typeof name === "string" && name.length > 0)
+      ? {
+          exceptionName: fields.exception_name,
+          tagNames: tagDescriptors.map((descriptor) => descriptor?.name ?? descriptor?.seedKey ?? ""),
+          ingredientNames: ingredientNames as string[],
+          tagDescriptors: tagDescriptors as { id: string; seedKey?: string; name?: string }[],
+        }
+      : undefined;
+  });
+  return warnings.every((warning): warning is NonNullable<typeof warning> => warning !== undefined)
+    ? warnings
+    : undefined;
+}
+
 function hasCatalogIngredientUpdate(
   line: CanonicalRecord,
   ingredientVersions: Map<string, CanonicalRecord>,
@@ -144,8 +170,8 @@ export async function readEventPlanner(
     lifecycle === "archived"
       ? Promise.resolve(archiveRows.filter((record) => record.entityType === entityType && (includeRetired || record.lifecycle === "active")))
       : readVisibleRecords(userId, organizationId, entityType, includeRetired);
-  const [dayRecords, roleRecords, recipeRecords, versionRecords, lineRecords, scheduledRecords, ingredientRecords, ingredientVersionRecords, overrideRecords, unitRecords] = await Promise.all([
-    readRecords("event_day", true), readRecords("event_meal_role", true), readRecords("recipe"), readRecords("recipe_version"), readRecords("recipe_ingredient_line"), readRecords("scheduled_recipe", true), readRecords("ingredient", true), readRecords("ingredient_version"), readRecords("scheduled_ingredient_override"), readRecords("unit_definition"),
+  const [dayRecords, roleRecords, recipeRecords, versionRecords, lineRecords, scheduledRecords, ingredientRecords, ingredientVersionRecords, overrideRecords, unitRecords, dietaryTagRecords, exceptionRecords, exceptionTagRecords, archivedWarningRecords] = await Promise.all([
+    readRecords("event_day", true), readRecords("event_meal_role", true), readRecords("recipe"), readRecords("recipe_version"), readRecords("recipe_ingredient_line"), readRecords("scheduled_recipe", true), readRecords("ingredient", true), readRecords("ingredient_version"), readRecords("scheduled_ingredient_override"), readRecords("unit_definition"), readRecords("dietary_tag", true), readRecords("event_dietary_exception", true), readRecords("event_dietary_exception_tag", true), readRecords("resolved_dietary_warning", true),
   ]);
   const name = event && value(event, "name");
   const startDate = event && value(event, "start_date");
@@ -352,6 +378,82 @@ export async function readEventPlanner(
         { id: lineKey, quantity: baseQuantity, ingredientId },
       ]);
   }
+
+  const dietaryTagNames = new Map(
+    dietaryTagRecords
+      .filter((tag) => hasId(tag) && value(tag, "organization_id") === organizationId)
+      .map((tag) => [tag.entityId, value(tag, "name") ?? value(tag, "seed_key")])
+      .filter((entry): entry is [string, string] => Boolean(entry[1])),
+  );
+  const warningExceptions = lifecycle === "active"
+    ? exceptionRecords
+      .filter((exception) => exception.lifecycle === "active" && hasId(exception) && value(exception, "organization_id") === organizationId && value(exception, "event_id") === eventId)
+      .map((exception) => {
+        const selected = Array.isArray(exception.fields.tag_ids)
+          ? exception.fields.tag_ids.filter((id): id is string => typeof id === "string")
+          : exceptionTagRecords
+            .filter((association) => association.lifecycle === "active" && hasId(association) && value(association, "organization_id") === organizationId && value(association, "exception_id") === exception.entityId)
+            .map((association) => value(association, "dietary_tag_id"))
+            .filter((id): id is string => Boolean(id));
+        const tags = [...new Set(selected)].filter((id) => dietaryTagNames.has(id));
+        return { id: exception.entityId, name: value(exception, "name"), tags };
+      })
+      .filter((exception): exception is { id: string; name: string; tags: string[] } => Boolean(exception.name && exception.tags.length))
+      .sort((left, right) => left.name.localeCompare(right.name) || left.id.localeCompare(right.id))
+    : [];
+  const dietaryWarningsByScheduled = new Map<string, PlannedRecipe["dietaryWarnings"]>();
+  if (lifecycle === "archived") {
+    for (const record of archivedWarningRecords) {
+      const warnings = record.fields.warnings;
+      const mapped = archivedWarnings(warnings);
+      if (typeof record.fields.scheduled_recipe_id === "string" && mapped)
+        dietaryWarningsByScheduled.set(record.fields.scheduled_recipe_id, mapped);
+    }
+  }
+  if (warningExceptions.length) {
+    const nonzero = (quantity: unknown) => {
+      const parsed = parseDecimal(quantity);
+      return Boolean(parsed && parsed.value !== 0n);
+    };
+    for (const item of scheduledRecords) {
+      if (item.lifecycle !== "active" || value(item, "organization_id") !== organizationId || value(item, "event_id") !== eventId) continue;
+      const recipeVersionId = value(item, "recipe_version_id");
+      const version = recipeVersionId ? versionRecords.find((candidate) => candidate.entityId === recipeVersionId) : undefined;
+      const selected = parseDecimal(value(item, "selected_scale_amount"));
+      const base = version && parseDecimal(version.fields.base_scaling_amount);
+      const resolved = new Set<string>();
+      for (const line of lineRecords.filter((candidate) => value(candidate, "recipe_version_id") === recipeVersionId)) {
+        const replacement = overrideRecords.find((candidate) => candidate.lifecycle === "active" && value(candidate, "organization_id") === organizationId && value(candidate, "event_id") === eventId && value(candidate, "scheduled_recipe_id") === item.entityId && candidate.fields.override_kind === "replace" && value(candidate, "target_line_key") === value(line, "line_key"));
+        const quantity = replacement ? value(replacement, "quantity") : value(line, "base_quantity");
+        const ingredientVersionId = replacement ? value(replacement, "ingredient_version_id") : value(line, "ingredient_version_id");
+        const parsedQuantity = parseDecimal(quantity);
+        const scaled = value(line, "scaling_behavior") === "fixed"
+          ? Boolean(parsedQuantity && parsedQuantity.value !== 0n)
+          : Boolean(parsedQuantity && selected && base && selected.value !== 0n && base.value !== 0n && parsedQuantity.value !== 0n);
+        if (scaled && ingredientVersionId && uuid.test(ingredientVersionId)) resolved.add(ingredientVersionId);
+      }
+      for (const override of overrideRecords.filter((candidate) => candidate.lifecycle === "active" && value(candidate, "organization_id") === organizationId && value(candidate, "event_id") === eventId && value(candidate, "scheduled_recipe_id") === item.entityId && candidate.fields.override_kind === "add")) {
+        const ingredientVersionId = value(override, "ingredient_version_id");
+        if (ingredientVersionId && uuid.test(ingredientVersionId) && nonzero(override.fields.quantity)) resolved.add(ingredientVersionId);
+      }
+      const warning = warningExceptions.map((exception) => {
+        const tagIds = new Set(exception.tags);
+        const matchingTagIds = new Set<string>();
+        const ingredientNames = [...resolved]
+          .map((id) => ingredientVersions.get(id))
+          .filter((ingredient): ingredient is CanonicalRecord => Boolean(ingredient && ingredient.immutable === true && value(ingredient, "organization_id") === organizationId))
+          .map((ingredient) => {
+            const tags = Array.isArray(ingredient.fields.dietary_tag_ids) ? ingredient.fields.dietary_tag_ids.filter((id): id is string => typeof id === "string" && dietaryTagNames.has(id)) : [];
+            const matching = tags.filter((id) => tagIds.has(id));
+            matching.forEach((id) => { matchingTagIds.add(id); });
+            return matching.length ? value(ingredient, "name") : undefined;
+          })
+          .filter((name): name is string => Boolean(name));
+        return { exceptionName: exception.name, tagNames: [...matchingTagIds].map((id) => dietaryTagNames.get(id) as string).sort((a, b) => a.localeCompare(b)), tagDescriptors: [...matchingTagIds].map((id) => { const tag = dietaryTagRecords.find((record) => record.entityId === id); return { id, seedKey: tag ? value(tag, "seed_key") : undefined, name: tag ? value(tag, "name") : undefined }; }), ingredientNames: [...new Set(ingredientNames)].sort((a, b) => a.localeCompare(b)) };
+      }).filter((warning) => warning.ingredientNames.length);
+      if (warning.length) dietaryWarningsByScheduled.set(item.entityId, warning);
+    }
+  }
   const localAddedIngredients = new Map<
     string,
     { id: string; name: string; quantity: string }[]
@@ -376,7 +478,7 @@ export async function readEventPlanner(
         { id: record.entityId, name, quantity },
       ]);
   }
-  const scheduled = scheduledRecords
+  const scheduled = (scheduledRecords
     .filter(
       (record) =>
         hasId(record) &&
@@ -425,13 +527,14 @@ export async function readEventPlanner(
       })(),
       lines: lines.get(value(record, "recipe_version_id") ?? "") ?? [],
       localAddedIngredients: localAddedIngredients.get(record.entityId) ?? [],
+      dietaryWarnings: dietaryWarningsByScheduled.get(record.entityId) ?? [],
       dinerCount: record.fields.diner_count,
       consumptionPercentage: value(record, "consumption_percentage"),
       selectedScaleAmount: value(record, "selected_scale_amount"),
       position: value(record, "position_key"),
       retired: record.lifecycle === "retired",
     }))
-    .filter((item): item is PlannedRecipe =>
+    .filter((item) =>
       Boolean(
         item.dayId &&
           item.roleId &&
@@ -445,8 +548,7 @@ export async function readEventPlanner(
           item.consumptionPercentage !== undefined &&
           item.selectedScaleAmount !== undefined,
       ),
-    )
-    .sort(
+    ) as PlannedRecipe[]).sort(
       (left, right) =>
         left.position.localeCompare(right.position) ||
         left.id.localeCompare(right.id),

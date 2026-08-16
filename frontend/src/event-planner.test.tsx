@@ -18,6 +18,7 @@ const {
   queueEventMealRoleCreate,
   queueEventMealRoleName,
   pullOrganization,
+  ensureArchivedEventCached,
 } = vi.hoisted(() => ({
   readEventPlanner: vi.fn(),
   queueRecipeSchedule: vi.fn(),
@@ -31,6 +32,7 @@ const {
   queueEventMealRoleCreate: vi.fn(),
   queueEventMealRoleName: vi.fn(),
   pullOrganization: vi.fn(),
+  ensureArchivedEventCached: vi.fn(),
 }));
 vi.mock("./planner-projections", () => ({ readEventPlanner }));
 vi.mock("./scheduled-recipe", () => ({
@@ -46,6 +48,7 @@ vi.mock("./sync-bootstrap", () => ({
   pullOrganization,
   SyncRequestError: class SyncRequestError extends Error {},
 }));
+vi.mock("./archive-cache", () => ({ ensureArchivedEventCached, dietaryTagSeedKeys: new Set(["vegetarian", "vegan", "gluten", "lactose"]) }));
 
 const ids = {
   organization: "5ce17d2f-8365-4b1f-a80b-34d10425d51c",
@@ -175,10 +178,11 @@ describe("EventPlanner", () => {
       name: "Archivovaná akce", startDate: "2026-08-10", endDate: "2026-08-10", attendance: 12, lifecycle: "archived",
       days: [{ id: ids.day, date: "2026-08-10", note: null }],
       roles: [{ id: ids.role, name: "Večeře", position: "a", retired: false, custom: false }], recipes: [],
-      scheduled: [{ id: ids.recipe, recipeId: ids.recipe, name: "Chili", dinerCount: 12, dayId: ids.day, roleId: ids.role, retired: true, position: "a" }], ...emptyPlannerCollections,
+      scheduled: [{ id: ids.recipe, recipeId: ids.recipe, name: "Chili", dinerCount: 12, dayId: ids.day, roleId: ids.role, retired: true, position: "a", dietaryWarnings: [{ exceptionName: "Alex", tagNames: ["vegan"], tagDescriptors: [{ id: "dietary-vegan", seedKey: "vegan" }], ingredientNames: ["Tofu"] }] }], ...emptyPlannerCollections,
     });
     pullOrganization.mockResolvedValue(false);
     render(<EventPlanner eventId={ids.event} onUnauthenticated={vi.fn()} organizationId={ids.organization} userId="a6a58bd6-214e-49af-8fae-e5f974bf8e08" />);
+    expect(await screen.findByText("Alex: štítky Veganské se týkají surovin Tofu.")).toBeVisible();
     const card = (await screen.findAllByRole("listitem")).find((item) => item.textContent?.includes("Chili"));
     if (!card) throw new Error("retired card missing");
     const transfer = dataTransfer();
@@ -197,11 +201,12 @@ describe("EventPlanner", () => {
       days: [{ id: ids.day, date: "2026-08-10", note: null }, { id: secondDay, date: "2026-08-11", note: null }],
       roles: [{ id: ids.role, name: "Večeře", position: "a", retired: false, custom: false }, { id: secondRole, name: "Oběd", position: "b", retired: false, custom: false }],
       recipes: [],
-      scheduled: [{ id: ids.recipe, recipeId: ids.recipe, recipeVersionId: "7d8b2b21-c378-4574-9e46-9338c81305ef", name: "Chili", dinerCount: 12, dayId: ids.day, roleId: ids.role, position: "a", retired: false, lines: [], localAddedIngredients: [], catalogUpdateAvailable: false, catalogUpdateChanges: { added: 0, removed: 0, changed: 0 }, catalogScaleImpact: { reset: false } }],
+      scheduled: [{ id: ids.recipe, recipeId: ids.recipe, recipeVersionId: "7d8b2b21-c378-4574-9e46-9338c81305ef", name: "Chili", dinerCount: 12, dayId: ids.day, roleId: ids.role, position: "a", retired: false, lines: [], localAddedIngredients: [], dietaryWarnings: [{ exceptionName: "Alex", tagNames: ["Vegan"], ingredientNames: ["Tofu"] }], catalogUpdateAvailable: false, catalogUpdateChanges: { added: 0, removed: 0, changed: 0 }, catalogScaleImpact: { reset: false } }],
       ...emptyPlannerCollections,
     });
     pullOrganization.mockResolvedValue(false);
     render(<EventPlanner eventId={ids.event} onUnauthenticated={vi.fn()} organizationId={ids.organization} userId="a6a58bd6-214e-49af-8fae-e5f974bf8e08" />);
+    expect(await screen.findByText("Alex: štítky Vegan se týkají surovin Tofu.")).toBeVisible();
     const transfer = dataTransfer();
     const source = (await screen.findAllByRole("listitem")).find((item) => item.draggable);
     const targets = screen.getAllByRole("region", { name: "Oběd" });

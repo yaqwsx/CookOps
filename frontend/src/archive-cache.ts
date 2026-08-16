@@ -4,6 +4,18 @@ import { readVisibleRecords } from "./visible-records";
 const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const MAX_ARCHIVE_BYTES = 8 * 1024 * 1024;
 const MAX_ARCHIVE_RECORDS = 20_000;
+export const dietaryTagSeedKeys: ReadonlySet<string> = new Set(["vegetarian", "vegan", "gluten", "lactose"]);
+export type ArchivedDietaryTagDescriptor = { id: string; seedKey?: string; name?: string };
+
+export function parseArchivedDietaryTagDescriptor(value: unknown): ArchivedDietaryTagDescriptor | undefined {
+  if (!object(value) || typeof value.id !== "string" || !uuid.test(value.id)) return undefined;
+  const hasName = typeof value.name === "string" && value.name.length > 0;
+  const hasSeed = typeof value.seed_key === "string" && dietaryTagSeedKeys.has(value.seed_key);
+  if (hasName === hasSeed || (value.name !== undefined && value.name !== null && !hasName) || (value.seed_key !== undefined && value.seed_key !== null && !hasSeed)) return undefined;
+  return hasName
+    ? { id: value.id, name: value.name as string }
+    : { id: value.id, seedKey: value.seed_key as string };
+}
 const archiveKinds: Record<string, string> = {
   event_days: "event_day",
   event_meal_roles: "event_meal_role",
@@ -32,6 +44,7 @@ const archiveKinds: Record<string, string> = {
   dietary_tags: "dietary_tag",
   store_sections: "store_section",
   dietary_exceptions: "event_dietary_exception",
+  resolved_dietary_warnings: "resolved_dietary_warning",
   attribution_users: "user",
 };
 const requiredCollections = new Set([
@@ -75,6 +88,7 @@ const eventOwnedCollections = new Set([
   "shopping_lists",
   "ad_hoc_shopping_items",
   "receipts",
+  "resolved_dietary_warnings",
 ]);
 const organizationRequiredKinds = new Set([
   "scheduled_recipe",
@@ -99,6 +113,7 @@ const organizationRequiredKinds = new Set([
   "store_section",
   "receipt",
   "receipt_attachment",
+  "resolved_dietary_warning",
 ]);
 
 function object(value: unknown): value is Record<string, unknown> {
@@ -166,8 +181,6 @@ function parseArchive(
     throw new Error("Invalid archive event.");
   for (const key of requiredCollections) {
     if (!Array.isArray(value.payload[key]))
-      throw new Error("Invalid archive collection.");
-    if (key === "resolved_dietary_warnings" && value.payload[key].length)
       throw new Error("Invalid archive collection.");
   }
   const records = Object.entries(value.payload).reduce(
@@ -281,6 +294,15 @@ function validateRelations(
   const prices = byId("event_ingredient_prices");
   const priceSnapshotIds = ids("event_ingredient_price_snapshots");
   const priceSnapshots = byId("event_ingredient_price_snapshots");
+  const dietaryTagIds = ids("dietary_tags");
+  for (const row of rows("dietary_exceptions")) {
+    if (row.event_id !== eventId || !Array.isArray(row.tag_ids))
+      throw new Error("Invalid archive event linkage.");
+    for (const tagId of row.tag_ids) {
+      if (typeof tagId !== "string" || !dietaryTagIds.has(tagId))
+        throw new Error("Invalid archive relation.");
+    }
+  }
   for (const row of rows("scheduled_ingredient_overrides")) {
     requireRef(row, "scheduled_recipe_id", scheduledIds);
     requireRef(row, "ingredient_id", ingredientIds);
@@ -465,6 +487,27 @@ function validateRelations(
       "organization_id",
     ]);
   }
+  for (const row of rows("resolved_dietary_warnings")) {
+    requireRef(row, "scheduled_recipe_id", scheduledIds);
+    if (row.id !== row.scheduled_recipe_id || !Array.isArray(row.warnings))
+      throw new Error("Invalid archive relation.");
+    sameScope(row, scheduled.get(row.scheduled_recipe_id as string), ["event_id", "organization_id"]);
+    for (const warning of row.warnings) {
+      if (!object(warning) || typeof warning.exception_name !== "string" || !Array.isArray(warning.tag_descriptors) || !warning.tag_descriptors.every((tag) => parseArchivedDietaryTagDescriptor(tag) !== undefined) || !Array.isArray(warning.ingredient_names) || !warning.ingredient_names.every((name) => typeof name === "string"))
+        throw new Error("Invalid archive relation.");
+      for (const tag of warning.tag_descriptors) {
+        const descriptor = parseArchivedDietaryTagDescriptor(tag);
+        if (!descriptor) throw new Error("Invalid archive relation.");
+        requireRef(tag, "id", dietaryTagIds);
+        const archivedTag = byId("dietary_tags").get(descriptor.id);
+        if (!archivedTag) throw new Error("Invalid archive relation.");
+        if (descriptor.seedKey !== undefined
+          ? archivedTag.seed_key !== descriptor.seedKey || archivedTag.name != null
+          : archivedTag.name !== descriptor.name || archivedTag.seed_key != null)
+          throw new Error("Invalid archive relation.");
+      }
+    }
+  }
 }
 
 export async function ensureArchivedEventCached(
@@ -516,8 +559,7 @@ export async function ensureArchivedEventCached(
   for (const [key, items] of Object.entries(parsed.payload)) {
     if (
       key === "event" ||
-      key === "schema_version" ||
-      key === "resolved_dietary_warnings"
+      key === "schema_version"
     )
       continue;
     if (key === "field_clocks") {

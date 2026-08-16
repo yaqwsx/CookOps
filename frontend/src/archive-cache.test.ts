@@ -2,12 +2,14 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { ensureArchivedEventCached } from "./archive-cache";
 import { localDb } from "./local-db";
+import { readEventPlanner } from "./planner-projections";
 
 const userId = "11111111-1111-4111-8111-111111111111";
 const organizationId = "22222222-2222-4222-8222-222222222222";
 const eventId = "33333333-3333-4333-8333-333333333333";
 const snapshotId = "44444444-4444-4444-8444-444444444444";
 const dayId = "55555555-5555-4555-8555-555555555555";
+const roleId = "56565656-5656-4565-8565-565656565656";
 const revisionId = "66666666-6666-4666-8666-666666666666";
 const scheduledId = "77777777-7777-4777-8777-777777777777";
 const recipeVersionId = "88888888-8888-4888-8888-888888888888";
@@ -17,9 +19,13 @@ const dietaryTagId = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb";
 const listId = "cccccccc-cccc-4ccc-8ccc-cccccccccccc";
 const recipeId = "dddddddd-dddd-4ddd-8ddd-dddddddddddd";
 const ingredientId = "ffffffff-ffff-4fff-8fff-ffffffffffff";
+const unitId = "10101010-1010-4010-8010-101010101010";
 const overrideId = "12121212-1212-4121-8121-121212121212";
 const priceId = "13131313-1313-4131-8131-131313131313";
 const missingId = "15151515-1515-4151-8151-151515151515";
+
+const readVisibleRecords = vi.hoisted(() => vi.fn());
+vi.mock("./visible-records", () => ({ readVisibleRecords }));
 
 const emptyCollections = Object.fromEntries(
   [
@@ -67,6 +73,9 @@ const payload = {
   event_days: [
     { id: dayId, event_id: eventId, calendar_date: "2026-08-16", note: null },
   ],
+  event_meal_roles: [
+    { id: roleId, event_id: eventId, position_key: "a", custom_name: "Dinner", built_in_translation_key: null },
+  ],
   shopping_revision_sources: [
     {
       generation_revision_id: revisionId,
@@ -94,17 +103,26 @@ const payload = {
       organization_id: organizationId,
       recipe_id: recipeId,
       recipe_version_id: recipeVersionId,
+      event_day_id: dayId,
+      event_meal_role_id: roleId,
+      diner_count: 2,
+      consumption_percentage: "100",
+      selected_scale_amount: "2",
+      position_key: "a",
     },
   ],
-  recipes: [{ id: recipeId, organization_id: organizationId }],
+  recipes: [{ id: recipeId, organization_id: organizationId, current_version_id: recipeVersionId }],
   ingredients: [{ id: ingredientId, organization_id: organizationId }],
-  dietary_tags: [{ id: dietaryTagId, organization_id: organizationId }],
+  dietary_tags: [{ id: dietaryTagId, organization_id: organizationId, seed_key: "vegan", name: null }],
   recipe_tags: [{ id: recipeTagId, organization_id: organizationId }],
   recipe_versions: [
     {
       id: recipeVersionId,
       recipe_id: recipeId,
       organization_id: organizationId,
+      name: "Soup",
+      scaling_unit_id: unitId,
+      base_scaling_amount: "1",
     },
   ],
   ingredient_versions: [
@@ -126,6 +144,18 @@ const payload = {
       ingredient_version_id: ingredientVersionId,
       dietary_tag_id: dietaryTagId,
       organization_id: organizationId,
+    },
+  ],
+  units: [{ id: unitId, organization_id: organizationId, code: "portion", custom_name: "portion" }],
+  resolved_dietary_warnings: [
+    {
+      id: scheduledId,
+      scheduled_recipe_id: scheduledId,
+      event_id: eventId,
+      organization_id: organizationId,
+      warnings: [
+        { exception_name: "Alex", tag_descriptors: [{ id: dietaryTagId, seed_key: "vegan", name: null }], ingredient_names: ["Tofu"] },
+      ],
     },
   ],
 };
@@ -251,6 +281,52 @@ describe("archived event cache", () => {
         dayId,
       ]),
     ).resolves.toBeDefined();
+    await expect(
+      localDb.archiveRecords.get([
+        userId,
+        organizationId,
+        eventId,
+        snapshotId,
+        "resolved_dietary_warning",
+        scheduledId,
+      ]),
+    ).resolves.toMatchObject({ fields: payload.resolved_dietary_warnings[0] });
+  });
+
+  it("maps cached snake-case warnings into the archived planner projection", async () => {
+    const fetcher = vi.fn().mockResolvedValue(
+      response({ archive_schema_version: 1, content_hash: await hash(payload), payload }),
+    );
+    await ensureArchivedEventCached(userId, organizationId, eventId, fetcher);
+    readVisibleRecords.mockImplementation(async (_user: string, _org: string, kind: string) =>
+      kind === "event"
+        ? [{
+            userId,
+            organizationId,
+            entityType: "event",
+            entityId: eventId,
+            recordSchemaVersion: 1,
+            lifecycle: "retired",
+            immutable: false,
+            updatedAt: "2026-08-16T00:00:00Z",
+            fields: {
+              ...payload.event,
+              lifecycle: "archived",
+              name: "Archive",
+              start_date: "2026-08-16",
+              end_date: "2026-08-16",
+              base_expected_attendance: 4,
+              current_archive_snapshot_id: snapshotId,
+            },
+            fieldClocks: {},
+          }]
+        : [],
+    );
+    const planner = await readEventPlanner(userId, organizationId, eventId);
+    expect(planner?.lifecycle).toBe("archived");
+    expect(planner?.scheduled[0]?.dietaryWarnings).toEqual([
+      { exceptionName: "Alex", tagNames: ["vegan"], ingredientNames: ["Tofu"], tagDescriptors: [{ id: dietaryTagId, seedKey: "vegan" }] },
+    ]);
   });
 
   it("rejects a bad hash and leaves the local database unchanged", async () => {
@@ -386,6 +462,33 @@ describe("archived event cache", () => {
             parent_revision_id: missingId,
           },
         ],
+      },
+    ],
+    [
+      "invalid dietary tag descriptor",
+      {
+        ...payload,
+        resolved_dietary_warnings: [{
+          ...payload.resolved_dietary_warnings[0],
+          warnings: [{
+            ...payload.resolved_dietary_warnings[0].warnings[0],
+            tag_descriptors: [{ id: dietaryTagId, seed_key: "unknown", name: null }],
+          }],
+        }],
+      },
+    ],
+    [
+      "forged dietary tag descriptor",
+      {
+        ...payload,
+        resolved_dietary_warnings: [{
+          ...payload.resolved_dietary_warnings[0],
+          warnings: [{
+            ...payload.resolved_dietary_warnings[0].warnings[0],
+            tag_descriptors: [{ id: dietaryTagId, seed_key: "vegan", name: null }],
+          }],
+        }],
+        dietary_tags: [{ id: dietaryTagId, organization_id: organizationId, seed_key: "vegan", name: "Forged" }],
       },
     ],
   ])("rejects %s atomically", async (_name, invalidPayload) => {

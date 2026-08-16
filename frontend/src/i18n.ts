@@ -267,6 +267,9 @@ const resources = {
         emptyRole: "Pro tento chod zatím není naplánovaný recept.",
         catalogUpdateAvailable:
           "Je dostupná aktualizace verzí surovin v katalogu.",
+        dietaryWarnings: "Dietní konflikty",
+        dietaryTagSeeds: { vegetarian: "Vegetariánské", vegan: "Veganské", gluten: "Bez lepku", lactose: "Bez laktózy" },
+        dietaryWarning: "{{exception}}: štítky {{tags}} se týkají surovin {{ingredients}}.",
         catalogUpdatePreview: "Náhled aktualizace katalogu",
         catalogUpdateChoice: "Zvolte zachování nebo vyřazení místních úprav.",
         catalogUpdateDiff: "Přidané: {{added}}, odebrané: {{removed}}, změněné množství: {{changed}}.",
@@ -746,6 +749,9 @@ const resources = {
         emptyRole: "No recipe is scheduled for this meal role yet.",
         catalogUpdateAvailable:
           "An ingredient version update is available in the catalog.",
+        dietaryWarnings: "Dietary conflicts",
+        dietaryTagSeeds: { vegetarian: "Vegetarian", vegan: "Vegan", gluten: "Gluten-free", lactose: "Lactose-free" },
+        dietaryWarning: "{{exception}}: tags {{tags}} match ingredients {{ingredients}}.",
         catalogUpdatePreview: "Catalog update preview",
         catalogUpdateChoice: "Choose whether to preserve or discard local overrides.",
         catalogUpdateDiff: "Added: {{added}}, removed: {{removed}}, changed quantities: {{changed}}.",

@@ -10,7 +10,7 @@ from decimal import Decimal
 from typing import Any, Literal, cast
 from uuid import UUID, uuid4
 
-from sqlalchemy import or_, select, text
+from sqlalchemy import false, or_, select, text
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from sqlalchemy.inspection import inspect
 
@@ -32,6 +32,8 @@ from cookops.persistence.models import (
     Event,
     EventArchiveSnapshot,
     EventDay,
+    EventDietaryException,
+    EventDietaryExceptionTag,
     EventIngredientPrice,
     EventIngredientPriceSnapshot,
     EventMealRole,
@@ -236,8 +238,7 @@ async def _archive_payload(
         if recipe_version_ids
         else []
     )
-    ingredient_version_ids = tuple({item.ingredient_version_id for item in (*lines, *overrides)})
-    ingredient_ids = tuple({item.ingredient_id for item in (*lines, *overrides)})
+    ingredient_version_ids = {item.ingredient_version_id for item in (*lines, *overrides)}
     recipe_versions = (
         await _selected(
             session, select(RecipeVersion).where(RecipeVersion.id.in_(recipe_version_ids))
@@ -253,6 +254,133 @@ async def _archive_payload(
         if ingredient_version_ids
         else []
     )
+    ingredient_ids = tuple({item.ingredient_id for item in ingredient_versions})
+    exceptions = await _selected(
+        session,
+        select(EventDietaryException).where(
+            EventDietaryException.event_id == event.id,
+            EventDietaryException.organization_id == event.organization_id,
+            EventDietaryException.retired_at.is_(None),
+        ),
+    )
+    exception_ids = tuple(item.id for item in exceptions)
+    exception_tags = (
+        await _selected(
+            session,
+            select(EventDietaryExceptionTag).where(
+                EventDietaryExceptionTag.exception_id.in_(exception_ids),
+                EventDietaryExceptionTag.organization_id == event.organization_id,
+                EventDietaryExceptionTag.retired_at.is_(None),
+            ),
+        )
+        if exception_ids
+        else []
+    )
+    dietary_tags = await _selected(
+        session,
+        select(DietaryTag).where(DietaryTag.organization_id == event.organization_id),
+    )
+    tag_descriptors = {
+        item.id: {"id": str(item.id), "seed_key": item.seed_key, "name": item.name}
+        for item in dietary_tags
+    }
+    exception_tag_ids: dict[UUID, set[UUID]] = {}
+    for item in exception_tags:
+        exception_tag_ids.setdefault(item.exception_id, set()).add(item.dietary_tag_id)
+    version_tags: dict[UUID, set[UUID]] = {}
+    for item in await _selected(
+        session,
+        select(IngredientVersionDietaryTag).where(
+            IngredientVersionDietaryTag.ingredient_version_id.in_(ingredient_version_ids),
+            IngredientVersionDietaryTag.organization_id == event.organization_id,
+        ) if ingredient_version_ids else select(IngredientVersionDietaryTag).where(false()),
+    ):
+        version_tags.setdefault(item.ingredient_version_id, set()).add(item.dietary_tag_id)
+    version_by_id = {item.id: item for item in ingredient_versions}
+    ingredient_names = {item.id: item.name for item in ingredient_versions}
+    lines_by_version: dict[UUID, list[RecipeVersionIngredientLine]] = {}
+    for item in lines:
+        lines_by_version.setdefault(item.recipe_version_id, []).append(item)
+    overrides_by_schedule: dict[UUID, list[ScheduledIngredientOverride]] = {}
+    for item in overrides:
+        overrides_by_schedule.setdefault(item.scheduled_recipe_id, []).append(item)
+    def valid_decimal(value: object) -> Decimal | None:
+        try:
+            parsed = Decimal(str(value))
+        except Exception:
+            return None
+        return parsed if parsed.is_finite() else None
+    resolved_warnings: list[dict[str, object]] = []
+    for schedule in schedules:
+        recipe_version = next(
+            (item for item in recipe_versions if item.id == schedule.recipe_version_id), None
+        )
+        selected = valid_decimal(schedule.selected_scale_amount)
+        base = valid_decimal(recipe_version.base_scaling_amount) if recipe_version else None
+        resolved_ids: set[UUID] = set()
+        schedule_overrides = [
+            item for item in overrides_by_schedule.get(schedule.id, []) if item.retired_at is None
+        ]
+        replacements = {
+            item.target_line_key: item
+            for item in schedule_overrides
+            if item.override_kind == "replace"
+        }
+        for line in lines_by_version.get(schedule.recipe_version_id, []):
+            override = replacements.get(line.line_key)
+            quantity = valid_decimal(override.quantity if override else line.base_quantity)
+            ingredient_version_id = (
+                override.ingredient_version_id if override else line.ingredient_version_id
+            )
+            if quantity is None or quantity == 0 or ingredient_version_id not in version_by_id:
+                continue
+            if (
+                line.scaling_behavior != "fixed"
+                and (
+                    selected is None
+                    or base is None
+                    or base == 0
+                    or selected == 0
+                    or quantity * selected / base == 0
+                )
+            ):
+                continue
+            resolved_ids.add(ingredient_version_id)
+        for override in schedule_overrides:
+            quantity = valid_decimal(override.quantity)
+            if (
+                override.override_kind == "add"
+                and quantity is not None
+                and quantity != 0
+                and override.ingredient_version_id in version_by_id
+            ):
+                resolved_ids.add(override.ingredient_version_id)
+        warnings = []
+        for exception in exceptions:
+            exception_tag_set = exception_tag_ids.get(exception.id, set())
+            matches: dict[UUID, set[str]] = {}
+            for version_id in resolved_ids:
+                matching = exception_tag_set & version_tags.get(version_id, set())
+                if matching:
+                    for tag_id in matching:
+                        matches.setdefault(tag_id, set()).add(ingredient_names[version_id])
+            if matches:
+                warnings.append({
+                    "exception_name": exception.name,
+                    "tag_descriptors": [tag_descriptors[tag_id] for tag_id in sorted(matches)],
+                    "ingredient_names": sorted(
+                        {name for names in matches.values() for name in names}
+                    ),
+                })
+        if warnings:
+            resolved_warnings.append({
+                "id": str(schedule.id),
+                "event_id": str(event.id),
+                "organization_id": str(event.organization_id),
+                "scheduled_recipe_id": str(schedule.id),
+                "warnings": sorted(warnings, key=lambda item: str(item["exception_name"])),
+                "retired_at": None,
+            })
     user_ids = {event.created_by_user_id, archive_actor_id}
     for group in (
         schedules,
@@ -271,6 +399,8 @@ async def _archive_payload(
         ad_hoc_items,
         recipe_versions,
         ingredient_versions,
+        exceptions,
+        exception_tags,
     ):
         for item in group:
             for column in inspect(item).mapper.columns:
@@ -339,20 +469,18 @@ async def _archive_payload(
                 UnitDefinition.organization_id.is_(None),
             ),
         ),
-        "dietary_tags": await _rows(
-            session,
-            DietaryTag,
-            DietaryTag.organization_id == event.organization_id,
-        ),
+        "dietary_tags": [_row(value) for value in dietary_tags],
         "store_sections": await _rows(
             session,
             StoreSection,
             StoreSection.organization_id == event.organization_id,
         ),
-        # Dietary exceptions and derived warnings are not modeled by this MVP schema;
-        # preserve their explicit empty historical projection rather than infer them later.
-        "dietary_exceptions": [],
-        "resolved_dietary_warnings": [],
+        "dietary_exceptions": [
+            _row(item)
+            | {"tag_ids": [str(tag_id) for tag_id in sorted(exception_tag_ids.get(item.id, set()))]}
+            for item in exceptions
+        ],
+        "resolved_dietary_warnings": resolved_warnings,
         "field_clocks": await _rows(
             session,
             FieldClock,

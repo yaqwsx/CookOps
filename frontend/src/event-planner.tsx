@@ -26,7 +26,7 @@ import {
 import { queueEventDayCreate, queueEventDayLifecycle, queueEventDayNote, queueEventDayVisibility } from "./event-day";
 import { queueEventMealRoleCreate, queueEventMealRoleLifecycle, queueEventMealRoleName, queueEventMealRolePosition } from "./event-meal-role";
 import { pullOrganization, SyncRequestError } from "./sync-bootstrap";
-import { ensureArchivedEventCached } from "./archive-cache";
+import { dietaryTagSeedKeys, ensureArchivedEventCached } from "./archive-cache";
 
 const plannerDragMime = "application/x-cookops-planner";
 type PlannerDragPayload = { kind: "recipe" | "scheduled"; id: string };
@@ -987,6 +987,23 @@ export function EventPlanner({
                           {item.retired ? ` · ${t("planner.retired")}` : null}
                           {item.catalogUpdateAvailable ? (
                             <span role="status"> · {t("planner.catalogUpdateAvailable")}</span>
+                          ) : null}
+                          {(item.dietaryWarnings?.length ?? 0) ? (
+                            <ul role="alert" aria-label={t("planner.dietaryWarnings")}>
+                              {(item.dietaryWarnings ?? []).map((warning) => {
+                                const tags = warning.tagDescriptors
+                                  ?.map((tag) => tag.name ?? (tag.seedKey && dietaryTagSeedKeys.has(tag.seedKey) ? t(`planner.dietaryTagSeeds.${tag.seedKey}`) : undefined))
+                                  .filter((tag): tag is string => Boolean(tag)) ?? warning.tagNames;
+                                if (!tags.length) return null;
+                                return <li key={`${warning.exceptionName}:${tags.join(",")}:${warning.ingredientNames.join(",")}`}>
+                                  {t("planner.dietaryWarning", {
+                                    exception: warning.exceptionName,
+                                    tags: tags.join(", "),
+                                    ingredients: warning.ingredientNames.join(", "),
+                                  })}
+                                </li>;
+                              })}
+                            </ul>
                           ) : null}
                           <CatalogUpdateChoice item={item} planner={planner} eventId={eventId} organizationId={organizationId} userId={userId} />
                           {planner.lifecycle === "active" ? <button onClick={() => void queueScheduledRecipeLifecycle(userId, organizationId, { scheduledRecipeId: item.id, eventId, operation: item.retired ? "restore" : "retire" })} type="button">{t(item.retired ? "planner.restoreRecipe" : "planner.retireRecipe")}</button> : null}

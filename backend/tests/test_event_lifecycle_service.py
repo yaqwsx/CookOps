@@ -2,6 +2,7 @@ import asyncio
 import os
 from collections.abc import Callable, Iterator
 from datetime import UTC, datetime
+from decimal import Decimal
 from typing import Literal, cast
 from uuid import UUID, uuid4
 
@@ -22,12 +23,21 @@ from cookops.application.organizations import (
 )
 from cookops.persistence.models import (
     ClientInstallation,
+    DietaryTag,
     Event,
     EventArchiveSnapshot,
     EventDay,
+    EventDietaryException,
+    EventDietaryExceptionTag,
+    EventMealRole,
     Mutation,
     OrganizationChange,
     OrganizationMembership,
+    Recipe,
+    RecipeVersion,
+    RecipeVersionIngredientLine,
+    ScheduledRecipe,
+    UnitDefinition,
     User,
 )
 
@@ -153,6 +163,239 @@ def test_archive_materializes_history_emits_change_and_replays(
     )
     assert replay.replayed is True
     assert replay.archive_snapshot_id == result.archive_snapshot_id
+
+
+def test_archive_persists_resolved_dietary_warnings_after_live_changes(
+    service_database: ServiceDatabase,
+) -> None:
+    from cookops.application.events import create_event
+    from cookops.application.ingredients import CreateIngredientCommand, create_ingredient
+
+    created = asyncio.run(
+        create_event(
+            service_database.sessions, context(service_database), event_command(service_database)
+        )
+    )
+    ingredient_id, ingredient_version_id = uuid4(), uuid4()
+    recipe_id, recipe_version_id, line_key = uuid4(), uuid4(), uuid4()
+    exception_id, association_id, custom_association_id = uuid4(), uuid4(), uuid4()
+    custom_tag_id = uuid4()
+    connection = service_database.sync_engine.connect()
+    try:
+        day_id = connection.scalar(select(EventDay.id).where(EventDay.event_id == created.event_id))
+        role_id = connection.scalar(
+            select(EventMealRole.id).where(EventMealRole.event_id == created.event_id)
+        )
+        unit_id = uuid4()
+        tag_id = uuid4()
+        assert day_id and role_id and unit_id and tag_id
+        connection.execute(
+            insert(UnitDefinition).values(
+                id=unit_id,
+                organization_id=service_database.organization_id,
+                code="portion_test",
+                custom_name="Portion test",
+                normalized_custom_name="portion test",
+                dimension="count",
+                base_unit_factor=None,
+                rounds_up_to_whole_unit=False,
+                allows_ingredient_quantity=True,
+                allows_recipe_scaling=True,
+                created_by_user_id=service_database.actor_id,
+            )
+        )
+        connection.execute(
+            insert(DietaryTag).values(
+                id=tag_id,
+                organization_id=service_database.organization_id,
+                seed_key="vegan",
+                name=None,
+                normalized_name=None,
+                color=None,
+                created_by_user_id=service_database.actor_id,
+            )
+        )
+        connection.execute(
+            insert(DietaryTag).values(
+                id=custom_tag_id,
+                organization_id=service_database.organization_id,
+                seed_key=None,
+                name="Nut-free",
+                normalized_name="nut-free",
+                color=None,
+                created_by_user_id=service_database.actor_id,
+            )
+        )
+        connection.commit()
+        ingredient = asyncio.run(
+            create_ingredient(
+                service_database.sessions,
+                context(service_database),
+                CreateIngredientCommand(
+                    mutation_id=uuid4(),
+                    ingredient_id=ingredient_id,
+                    ingredient_version_id=ingredient_version_id,
+                    organization_id=service_database.organization_id,
+                    name="Tofu",
+                    canonical_unit_id=unit_id,
+                    mass_per_canonical_quantity=Decimal("1"),
+                    client_wall_time=datetime.now(UTC),
+                    dietary_tag_ids=(tag_id, custom_tag_id),
+                ),
+            )
+        )
+        ingredient_id = ingredient.ingredient_id
+        ingredient_version_id = ingredient.ingredient_version_id
+        connection.execute(
+            insert(Recipe).values(
+                id=recipe_id,
+                organization_id=service_database.organization_id,
+                current_version_id=recipe_version_id,
+                created_by_user_id=service_database.actor_id,
+            )
+        )
+        connection.execute(
+            insert(RecipeVersionIngredientLine).values(
+                id=uuid4(),
+                organization_id=service_database.organization_id,
+                recipe_id=recipe_id,
+                recipe_version_id=recipe_version_id,
+                line_key=line_key,
+                ingredient_version_id=ingredient_version_id,
+                base_quantity=Decimal("1"),
+                preferred_display_unit_id=None,
+                note=None,
+                position_key="a",
+                scaling_behavior="proportional",
+                include_in_portion_weight=True,
+            )
+        )
+        connection.execute(
+            insert(RecipeVersion).values(
+                id=recipe_version_id,
+                organization_id=service_database.organization_id,
+                recipe_id=recipe_id,
+                based_on_version_id=None,
+                name="Tofu soup",
+                description=None,
+                scaling_model="single_variable",
+                scaling_unit_id=unit_id,
+                base_scaling_amount=Decimal("1"),
+                estimated_diners_per_scaling_unit=None,
+                round_suggestions_up=False,
+                published_by_user_id=service_database.actor_id,
+            )
+        )
+        scheduled_id = uuid4()
+        connection.execute(
+            insert(ScheduledRecipe).values(
+                id=scheduled_id,
+                organization_id=service_database.organization_id,
+                event_id=created.event_id,
+                event_day_id=day_id,
+                event_meal_role_id=role_id,
+                recipe_id=recipe_id,
+                recipe_version_id=recipe_version_id,
+                diner_count=2,
+                attendance_mode="follows_event",
+                consumption_percentage=Decimal("100"),
+                selected_scale_amount=Decimal("2"),
+                scale_mode="manual",
+                note=None,
+                position_key="a",
+                created_by_user_id=service_database.actor_id,
+            )
+        )
+        connection.execute(
+            insert(EventDietaryException).values(
+                id=exception_id,
+                organization_id=service_database.organization_id,
+                event_id=created.event_id,
+                name="Alex",
+                note=None,
+                created_by_user_id=service_database.actor_id,
+            )
+        )
+        connection.execute(
+            insert(EventDietaryExceptionTag).values(
+                id=association_id,
+                organization_id=service_database.organization_id,
+                exception_id=exception_id,
+                dietary_tag_id=tag_id,
+                created_by_user_id=service_database.actor_id,
+            )
+        )
+        connection.execute(
+            insert(EventDietaryExceptionTag).values(
+                id=custom_association_id,
+                organization_id=service_database.organization_id,
+                exception_id=exception_id,
+                dietary_tag_id=custom_tag_id,
+                created_by_user_id=service_database.actor_id,
+            )
+        )
+        connection.commit()
+    finally:
+        connection.close()
+    archived = command(service_database, created.event_id, "archive")
+    result = asyncio.run(
+        set_event_lifecycle(service_database.sessions, context(service_database), archived)
+    )
+    with service_database.sync_engine.begin() as connection:
+        before = connection.scalar(
+            select(EventArchiveSnapshot.payload).where(
+                EventArchiveSnapshot.id == result.archive_snapshot_id
+            )
+        )
+        expected_descriptors = sorted(
+            [
+                {"id": str(tag_id), "seed_key": "vegan", "name": None},
+                {"id": str(custom_tag_id), "seed_key": None, "name": "Nut-free"},
+            ],
+            key=lambda item: item["id"],
+        )
+        assert before["resolved_dietary_warnings"] == [
+            {
+                "id": str(scheduled_id),
+                "event_id": str(created.event_id),
+                "organization_id": str(service_database.organization_id),
+                "scheduled_recipe_id": str(scheduled_id),
+                "warnings": [
+                    {
+                        "exception_name": "Alex",
+                        "tag_descriptors": expected_descriptors,
+                        "ingredient_names": ["Tofu"],
+                    }
+                ],
+                "retired_at": None,
+            }
+        ]
+        connection.execute(
+            update(EventDietaryException)
+            .where(EventDietaryException.id == exception_id)
+            .values(name="Changed")
+        )
+        connection.execute(
+            update(DietaryTag)
+            .where(DietaryTag.id == tag_id)
+            .values(retired_at=datetime.now(UTC), retired_by_user_id=service_database.actor_id)
+        )
+        connection.execute(
+            update(DietaryTag)
+            .where(DietaryTag.id == custom_tag_id)
+            .values(
+                name="Changed",
+                normalized_name="changed",
+                retired_at=datetime.now(UTC),
+                retired_by_user_id=service_database.actor_id,
+            )
+        )
+        after = connection.scalar(
+            select(EventArchiveSnapshot.payload).where(
+                EventArchiveSnapshot.id == result.archive_snapshot_id
+            )
+        )
+    assert after["resolved_dietary_warnings"] == before["resolved_dietary_warnings"]
 
 
 def test_only_administrator_can_archive_and_reactivate(service_database: ServiceDatabase) -> None:
