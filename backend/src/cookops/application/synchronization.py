@@ -117,6 +117,11 @@ from cookops.application.ingredient_lifecycle import (
     SetIngredientLifecycleCommand,
     set_ingredient_lifecycle,
 )
+from cookops.application.ingredient_prices import (
+    PublishIngredientPriceEstimateCommand,
+    PublishIngredientPriceEstimateResult,
+    publish_ingredient_price_estimate,
+)
 from cookops.application.ingredient_versions import (
     PublishIngredientVersionCommand,
     publish_ingredient_version,
@@ -391,6 +396,7 @@ SyncCommand = (
     | CreateIngredientCommand
     | SetIngredientLifecycleCommand
     | PublishIngredientVersionCommand
+    | PublishIngredientPriceEstimateCommand
     | ScheduleRecipeCommand
     | MoveScheduledRecipeCommand
     | SetScheduledRecipeAttendanceCommand
@@ -510,6 +516,8 @@ def _command_kind(
         return "ingredient.lifecycle"
     if isinstance(command, PublishIngredientVersionCommand):
         return "ingredient.publish_version"
+    if isinstance(command, PublishIngredientPriceEstimateCommand):
+        return "ingredient.publish_price_estimate"
     if isinstance(command, ScheduleRecipeCommand):
         return "scheduled_recipe.schedule"
     if isinstance(command, MoveScheduledRecipeCommand):
@@ -868,6 +876,7 @@ class SynchronizationCommandService:
                 | CreateRecipeResult
                 | RecipeLifecycleResult
                 | CreateIngredientResult
+                | PublishIngredientPriceEstimateResult
                 | IngredientLifecycleResult
                 | ScheduleRecipeResult
                 | MoveScheduledRecipeResult
@@ -930,6 +939,10 @@ class SynchronizationCommandService:
                 result = await set_ingredient_lifecycle(self._session_factory, context, command)
             elif isinstance(command, PublishIngredientVersionCommand):
                 result = await publish_ingredient_version(self._session_factory, context, command)
+            elif isinstance(command, PublishIngredientPriceEstimateCommand):
+                result = await publish_ingredient_price_estimate(
+                    self._session_factory, context, command
+                )
             elif isinstance(command, ScheduleRecipeCommand):
                 result = await schedule_recipe(self._session_factory, context, command)
             elif isinstance(command, MoveScheduledRecipeCommand):
@@ -1112,6 +1125,7 @@ class SynchronizationCommandService:
             | CreateRecipeResult
             | RecipeLifecycleResult
             | CreateIngredientResult
+            | PublishIngredientPriceEstimateResult
             | IngredientLifecycleResult
             | ScheduleRecipeResult
             | MoveScheduledRecipeResult
@@ -1159,6 +1173,8 @@ class SynchronizationCommandService:
                 if isinstance(result, RecipeLifecycleResult)
                 else "ingredient.create"
                 if isinstance(result, CreateIngredientResult)
+                else "ingredient.publish_price_estimate"
+                if isinstance(result, PublishIngredientPriceEstimateResult)
                 else "ingredient.lifecycle"
                 if isinstance(result, IngredientLifecycleResult)
                 else "scheduled_recipe.schedule"
@@ -1862,6 +1878,14 @@ async def _bootstrap_records(
                             "winning_mutation_id": str(clock.winning_mutation_id),
                         }
                         if (clock := ingredient_clocks.get((item.id, "current_version_id")))
+                        else None
+                    ),
+                    "current_price_estimate_id": (
+                        {
+                            "winning_client_wall_time": clock.winning_client_wall_time.isoformat(),
+                            "winning_mutation_id": str(clock.winning_mutation_id),
+                        }
+                        if (clock := ingredient_clocks.get((item.id, "current_price_estimate_id")))
                         else None
                     ),
                 },

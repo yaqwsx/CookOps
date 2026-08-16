@@ -41,6 +41,7 @@ from cookops.application.event_metadata import (
 from cookops.application.event_prices import UpdateEventPriceEstimatesCommand
 from cookops.application.events import CreateEventCommand, UpdateEventBaseAttendanceCommand
 from cookops.application.ingredient_lifecycle import SetIngredientLifecycleCommand
+from cookops.application.ingredient_prices import PublishIngredientPriceEstimateCommand
 from cookops.application.ingredient_versions import PublishIngredientVersionCommand
 from cookops.application.ingredients import CreateIngredientCommand, InitialPrice
 from cookops.application.receipts import (
@@ -571,6 +572,25 @@ class PublishIngredientVersionPayload(BaseModel):
     @classmethod
     def mass_must_be_decimal_string(cls, value: object) -> object:
         if not isinstance(value, str):
+            raise ValueError("must be a decimal string")
+        return value
+
+
+class PublishIngredientPriceEstimatePayload(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    ingredient_id: UUID
+    ingredient_price_estimate_id: UUID
+    amount: Decimal
+    priced_quantity: Decimal
+    unit_id: UUID
+    currency: str
+    logical_operation_id: UUID | None = None
+
+    @field_validator("amount", "priced_quantity", mode="before")
+    @classmethod
+    def decimals_must_be_strings(cls, value: object) -> object:
+        if not is_bounded_decimal_string(value):
             raise ValueError("must be a decimal string")
         return value
 
@@ -1224,6 +1244,20 @@ def _push_command(command: PushCommandRequest, organization_id: UUID) -> SyncCom
                 dietary_tag_ids=ingredient_payload.dietary_tag_ids,
                 default_store_section_id=ingredient_payload.default_store_section_id,
                 logical_operation_id=ingredient_payload.logical_operation_id,
+            )
+        if command.command_kind == "ingredient.publish_price_estimate":
+            price_payload = PublishIngredientPriceEstimatePayload.model_validate(command.payload)
+            return PublishIngredientPriceEstimateCommand(
+                mutation_id=command.mutation_id,
+                ingredient_id=price_payload.ingredient_id,
+                ingredient_price_estimate_id=price_payload.ingredient_price_estimate_id,
+                organization_id=organization_id,
+                amount=price_payload.amount,
+                priced_quantity=price_payload.priced_quantity,
+                unit_id=price_payload.unit_id,
+                currency=price_payload.currency,
+                client_wall_time=command.client_wall_time,
+                logical_operation_id=price_payload.logical_operation_id,
             )
         if command.command_kind == "ingredient.lifecycle":
             ingredient_payload = IngredientLifecyclePayload.model_validate(command.payload)

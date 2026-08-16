@@ -12,7 +12,7 @@ from sqlalchemy import insert, select, update
 from test_sync_pull_http import SyncDatabase, _settings, _sign_in
 from test_sync_pull_http import sync_database as _sync_database_fixture
 
-from cookops.http_sync import PushCommandRequest, _push_command
+from cookops.http_sync import PushCommandRequest, PublishIngredientPriceEstimatePayload, _push_command
 from cookops.main import create_app
 from cookops.persistence.models import (
     AdHocShoppingItem,
@@ -74,6 +74,40 @@ def _installation(database: SyncDatabase) -> UUID:
             )
         )
     return installation_id
+
+
+def test_publish_price_payload_is_strict_and_decimal_string_only() -> None:
+    values = {
+        "ingredient_id": uuid4(), "ingredient_price_estimate_id": uuid4(),
+        "amount": "12.50", "priced_quantity": "1", "unit_id": uuid4(), "currency": "CZK",
+    }
+    parsed = PublishIngredientPriceEstimatePayload.model_validate(values)
+    assert parsed.amount == Decimal("12.50")
+    with pytest.raises(ValueError):
+        PublishIngredientPriceEstimatePayload.model_validate({**values, "amount": 12.5})
+    with pytest.raises(ValueError):
+        PublishIngredientPriceEstimatePayload.model_validate({**values, "amount": True})
+    with pytest.raises(ValueError):
+        PublishIngredientPriceEstimatePayload.model_validate({**values, "extra": "reject"})
+
+
+def test_push_publishes_price_and_replays_same_mutation(sync_database: SyncDatabase) -> None:
+    installation_id = _installation(sync_database)
+    ingredient_id, version_id, estimate_id, mutation_id = (uuid4() for _ in range(4))
+    with sync_database.engine.begin() as connection:
+        actor_id = connection.scalar(select(OrganizationMembership.user_id).where(OrganizationMembership.organization_id == sync_database.organization_id))
+        unit_id = connection.scalar(select(UnitDefinition.id).where(UnitDefinition.organization_id.is_(None), UnitDefinition.code == "g"))
+        assert isinstance(actor_id, UUID) and isinstance(unit_id, UUID)
+        connection.execute(insert(Ingredient).values(id=ingredient_id, organization_id=sync_database.organization_id, current_version_id=version_id, created_by_user_id=actor_id))
+        connection.execute(insert(IngredientVersion).values(id=version_id, organization_id=sync_database.organization_id, ingredient_id=ingredient_id, name="Tomatoes", normalized_name="tomatoes", canonical_unit_id=unit_id, mass_per_canonical_quantity=Decimal("1"), published_by_user_id=actor_id))
+    command = _command(mutation_id=mutation_id, event_id=uuid4(), kind="ingredient.publish_price_estimate", ingredient_id=str(ingredient_id), ingredient_price_estimate_id=str(estimate_id), amount="12.50", priced_quantity="1", unit_id=str(unit_id), currency="CZK")
+    with TestClient(create_app(_settings()), base_url="https://testserver") as client:
+        _sign_in(client, "dummy-member")
+        body = _body(sync_database, installation_id, [command])
+        assert client.post("/api/v1/sync/push", json=body).json()["outcomes"][0]["status"] == "accepted"
+        assert client.post("/api/v1/sync/push", json=body).json()["outcomes"][0]["replayed"]
+        huge = {**command, "mutation_id": str(uuid4()), "payload": {**command["payload"], "amount": "1e999"}}
+        assert client.post("/api/v1/sync/push", json=_body(sync_database, installation_id, [huge])).json()["outcomes"][0]["status"] == "rejected"
 
 
 def test_dietary_exception_create_replays_and_bootstraps_clocks(

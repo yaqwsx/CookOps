@@ -18,6 +18,7 @@ import { replayRecipeVersionPublish } from "./recipe-publish";
 import { replayIngredientCreate } from "./ingredient-create";
 import { replayIngredientLifecycle } from "./ingredient-lifecycle";
 import { replayIngredientVersionPublish } from "./ingredient-version-publish";
+import { replayIngredientPricePublish } from "./ingredient-price-publish";
 import { replayScheduledIngredientOverride } from "./scheduled-ingredient-override";
 import { replayReceiptCommand } from "./receipt-metadata";
 import { replayCatalogConfiguration } from "./catalog-configuration";
@@ -284,6 +285,9 @@ async function replayOptimisticCommands(
     }
     if (command.commandType === "ingredient.publish_version") {
       await replayIngredientVersionPublish(userId, organizationId, command);
+    }
+    if (command.commandType === "ingredient.publish_price_estimate") {
+      await replayIngredientPricePublish(userId, organizationId, command);
     }
     if (command.commandType === "scheduled_recipe.attendance")
       await replayScheduledRecipeAttendance(userId, organizationId, command);
