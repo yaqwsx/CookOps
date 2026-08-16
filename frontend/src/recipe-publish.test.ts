@@ -111,6 +111,17 @@ describe("offline recipe version publication", () => {
     ).toBe("ingredientLines");
   });
 
+  it("rejects a blank ingredient version before any local publication write", async () => {
+    await expect(
+      queueRecipeVersionPublish(userId, organizationId, {
+        ...input,
+        ingredientLines: [{ ...input.ingredientLines[0], ingredientVersionId: "" }],
+      }),
+    ).rejects.toThrow("ingredientLines");
+    await expect(localDb.outbox.count()).resolves.toBe(0);
+    await expect(localDb.optimisticOverlays.count()).resolves.toBe(0);
+  });
+
   it("fuzzes untrusted line quantities without admitting malformed commands", () => {
     for (let index = 0; index < 200; index += 1) {
       expect(

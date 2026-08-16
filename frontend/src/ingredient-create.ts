@@ -41,6 +41,7 @@ export type IngredientCreateInput = {
   dietaryTagIds: string[];
 };
 export type IngredientCreateValidationError = "name" | "unit" | "mass" | "tag";
+export type IngredientCreateResult = { ingredientId: string; ingredientVersionId: string };
 
 export function validateIngredientCreate(
   input: IngredientCreateInput,
@@ -142,11 +143,11 @@ async function availableDietaryTags(
   );
 }
 
-export async function queueIngredientCreate(
+async function queueIngredientCreateResult(
   userId: string,
   organizationId: string,
   input: IngredientCreateInput,
-): Promise<string> {
+): Promise<IngredientCreateResult> {
   const error = validateIngredientCreate(input);
   if (error || !uuid.test(userId) || !uuid.test(organizationId))
     throw new Error(error ?? "unit");
@@ -197,7 +198,24 @@ export async function queueIngredientCreate(
       });
     },
   );
-  return ingredientId;
+  return { ingredientId, ingredientVersionId };
+}
+
+export async function queueIngredientCreate(
+  userId: string,
+  organizationId: string,
+  input: IngredientCreateInput,
+): Promise<string> {
+  return (await queueIngredientCreateResult(userId, organizationId, input)).ingredientId;
+}
+
+/** Queue one create while exposing both server-bound immutable identities to a caller selecting the new version. */
+export async function queueIngredientCreateWithVersion(
+  userId: string,
+  organizationId: string,
+  input: IngredientCreateInput,
+): Promise<IngredientCreateResult> {
+  return queueIngredientCreateResult(userId, organizationId, input);
 }
 
 /** Rebuild a pending typed create after replacing the canonical replica. */

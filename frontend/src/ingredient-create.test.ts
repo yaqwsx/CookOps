@@ -3,6 +3,7 @@ import { beforeEach, describe, expect, it } from "vitest";
 import { readIngredientCatalog } from "./ingredient-catalog";
 import {
   queueIngredientCreate,
+  queueIngredientCreateWithVersion,
   replayIngredientCreate,
   validateIngredientCreate,
 } from "./ingredient-create";
@@ -133,6 +134,19 @@ describe("offline ingredient creation", () => {
         },
       ],
     });
+  });
+
+  it("returns the exact immutable version represented by the optimistic outbox", async () => {
+    await addUnit();
+    const result = await queueIngredientCreateWithVersion(userId, organizationId, input);
+    const [command] = await localDb.outbox.toArray();
+    expect(result).toEqual({
+      ingredientId: command.payload.ingredient_id,
+      ingredientVersionId: command.payload.ingredient_version_id,
+    });
+    expect(await localDb.optimisticOverlays.get([userId, organizationId, "ingredient_version", result.ingredientVersionId])).toEqual(
+      expect.objectContaining({ entityId: result.ingredientVersionId, immutable: true }),
+    );
   });
 
   it("leaves no partial work when the cached unit is absent or unsuitable", async () => {

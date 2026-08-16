@@ -5,6 +5,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import i18n, { defaultLocale } from "./i18n";
 import { RecipeCatalog } from "./recipe-catalog-view";
 import { queueRecipeVersionPublish } from "./recipe-publish";
+import { queueIngredientCreateWithVersion } from "./ingredient-create";
 
 vi.mock("dexie", async (importOriginal) => ({
   ...(await importOriginal<typeof import("dexie")>()),
@@ -136,6 +137,13 @@ vi.mock("./recipe-publish", () => ({
   queueRecipeCreate: vi.fn(async () => undefined),
   queueRecipeVersionPublish: vi.fn(async () => "new-version"),
 }));
+vi.mock("./ingredient-create", () => ({
+  defaultMassForUnit: () => "1",
+  queueIngredientCreateWithVersion: vi.fn(async () => ({
+    ingredientId: "bce17d2f-8365-4b1f-a80b-34d10425d51c",
+    ingredientVersionId: "cce17d2f-8365-4b1f-a80b-34d10425d51c",
+  })),
+}));
 
 describe("recipe retired ingredient warning", () => {
   beforeEach(async () => {
@@ -198,13 +206,15 @@ describe("recipe retired ingredient warning", () => {
       await screen.findByRole("button", { name: "Upravit recept" }),
     );
     const ingredientSelect = screen.getByRole("combobox", { name: "Surovina" });
-    expect(ingredientSelect).toHaveTextContent("Historical carrot");
-    expect(screen.getByRole("option", { name: "Historical carrot" })).toBeVisible();
+    expect(ingredientSelect).toHaveValue("Historical carrot");
+    await user.click(ingredientSelect);
+    expect(screen.queryByRole("option", { name: "Historical carrot" })).not.toBeInTheDocument();
     await user.click(screen.getByRole("button", { name: "Odebrat surovinu" }));
     await user.click(screen.getByRole("button", { name: "Přidat surovinu" }));
     const newIngredientSelect = screen.getByRole("combobox", { name: "Surovina" });
-    expect(newIngredientSelect).toHaveTextContent("Current carrot");
-    expect(newIngredientSelect).not.toHaveTextContent("Historical carrot");
+    expect(newIngredientSelect).toHaveValue("Current carrot");
+    await user.click(newIngredientSelect);
+    expect(screen.queryByRole("option", { name: "Historical carrot" })).not.toBeInTheDocument();
   });
 
   it("matches description, tag, and ingredient with normalized search", async () => {
@@ -235,6 +245,87 @@ describe("recipe retired ingredient warning", () => {
     expect(
       screen.getByText("Hledání neodpovídá žádnému receptu."),
     ).toBeVisible();
+  });
+
+  it("selects only an explicit keyboard choice", async () => {
+    const user = userEvent.setup();
+    render(
+      <RecipeCatalog
+        editRecipeId="6ce17d2f-8365-4b1f-a80b-34d10425d51c"
+        onUnauthenticated={() => undefined}
+        organizationId="5ce17d2f-8365-4b1f-a80b-34d10425d51c"
+        selectedRecipeId="6ce17d2f-8365-4b1f-a80b-34d10425d51c"
+        userId="a6a58bd6-214e-49af-8fae-e5f974bf8e08"
+      />,
+    );
+    const combobox = await screen.findByRole("combobox", { name: "Surovina" });
+    await user.clear(combobox);
+    await user.type(combobox, "current");
+    expect(screen.getByRole("option", { name: /Current carrot/ })).not.toHaveAttribute("tabindex");
+    expect(combobox).toHaveValue("current");
+    await user.keyboard("{ArrowDown}{Enter}");
+    expect(combobox).toHaveValue("Current carrot");
+  });
+
+  it("blocks publishing a line after query text changes without a selection", async () => {
+    const user = userEvent.setup();
+    render(
+      <RecipeCatalog
+        editRecipeId="6ce17d2f-8365-4b1f-a80b-34d10425d51c"
+        onUnauthenticated={() => undefined}
+        organizationId="5ce17d2f-8365-4b1f-a80b-34d10425d51c"
+        selectedRecipeId="6ce17d2f-8365-4b1f-a80b-34d10425d51c"
+        userId="a6a58bd6-214e-49af-8fae-e5f974bf8e08"
+      />,
+    );
+    const combobox = await screen.findByRole("combobox", { name: "Surovina" });
+    await user.clear(combobox);
+    await user.type(combobox, "uncommitted text");
+    await user.click(screen.getByRole("button", { name: "Publikovat verzi" }));
+    expect(queueRecipeVersionPublish).toHaveBeenCalledWith(
+      expect.any(String),
+      expect.any(String),
+      expect.objectContaining({ ingredientLines: [expect.objectContaining({ ingredientVersionId: "" })] }),
+    );
+  });
+
+  it("Escape restores the committed label and ID, including after a query edit", async () => {
+    const user = userEvent.setup();
+    render(
+      <RecipeCatalog
+        editRecipeId="6ce17d2f-8365-4b1f-a80b-34d10425d51c"
+        onUnauthenticated={() => undefined}
+        organizationId="5ce17d2f-8365-4b1f-a80b-34d10425d51c"
+        selectedRecipeId="6ce17d2f-8365-4b1f-a80b-34d10425d51c"
+        userId="a6a58bd6-214e-49af-8fae-e5f974bf8e08"
+      />,
+    );
+    const combobox = await screen.findByRole("combobox", { name: "Surovina" });
+    await user.clear(combobox);
+    await user.type(combobox, "other");
+    await user.keyboard("{Escape}");
+    expect(combobox).toHaveValue("Historical carrot");
+  });
+
+  it("creates inline through the outbox and selects the returned immutable version", async () => {
+    const user = userEvent.setup();
+    render(
+      <RecipeCatalog
+        editRecipeId="6ce17d2f-8365-4b1f-a80b-34d10425d51c"
+        onUnauthenticated={() => undefined}
+        organizationId="5ce17d2f-8365-4b1f-a80b-34d10425d51c"
+        selectedRecipeId="6ce17d2f-8365-4b1f-a80b-34d10425d51c"
+        userId="a6a58bd6-214e-49af-8fae-e5f974bf8e08"
+      />,
+    );
+    const combobox = await screen.findByRole("combobox", { name: "Surovina" });
+    await user.clear(combobox);
+    await user.type(combobox, "not found");
+    await user.click(screen.getByRole("button", { name: "Vytvořit novou surovinu" }));
+    await user.type(screen.getByRole("textbox", { name: "Název nové suroviny" }), "New ingredient");
+    await user.click(screen.getByRole("button", { name: "Uložit a vybrat surovinu" }));
+    expect(queueIngredientCreateWithVersion).toHaveBeenCalledOnce();
+    expect(combobox).toHaveValue("New ingredient");
   });
 
   it("keeps retired filtering independent from search", async () => {

@@ -14,6 +14,8 @@ import {
 } from "./recipe-publish";
 import { queueRecipeLifecycle } from "./recipe-lifecycle";
 import { pullOrganization, SyncRequestError } from "./sync-bootstrap";
+import { defaultMassForUnit, queueIngredientCreateWithVersion, type IngredientCreateInput } from "./ingredient-create";
+import { rankIngredients } from "./ingredient-fuzzy";
 
 type CatalogState =
   | { status: "loading" }
@@ -146,6 +148,133 @@ function RecipeCreateForm({
         {t("recipesCatalog.create")}
       </button>
     </form>
+  );
+}
+
+function IngredientCombobox({
+  catalog,
+  organizationId,
+  userId,
+  selectedVersionId,
+  onSelect,
+}: {
+  catalog: RecipeCatalogProjection;
+  organizationId: string;
+  userId: string;
+  selectedVersionId: string;
+  onSelect: (versionId: string) => void;
+}) {
+  const { t } = useTranslation();
+  const selected = catalog.ingredients.find((ingredient) => ingredient.versionId === selectedVersionId);
+  const [query, setQuery] = useState(selected?.name ?? "");
+  const [committedVersionId, setCommittedVersionId] = useState(selectedVersionId);
+  const [committedLabel, setCommittedLabel] = useState(selected?.name ?? "");
+  const [open, setOpen] = useState(false);
+  const [activeIndex, setActiveIndex] = useState(-1);
+  const [creating, setCreating] = useState(false);
+  const [createInput, setCreateInput] = useState<IngredientCreateInput>({
+    name: "",
+    canonicalUnitId: catalog.units[0]?.id ?? "",
+    massPerCanonicalQuantity: defaultMassForUnit(catalog.units[0]),
+    dietaryTagIds: [],
+  });
+  const [createError, setCreateError] = useState<string>();
+  const [createPending, setCreatePending] = useState(false);
+  const listId = `ingredient-options-${selectedVersionId || "new"}`;
+  const results = rankIngredients(catalog.ingredients, query).slice(0, 12);
+  const select = (ingredient: { versionId: string; name: string }) => {
+    onSelect(ingredient.versionId);
+    setCommittedVersionId(ingredient.versionId);
+    setCommittedLabel(ingredient.name);
+    setQuery(ingredient.name);
+    setOpen(false);
+    setActiveIndex(0);
+  };
+  async function createIngredient() {
+    if (createPending) return;
+    setCreatePending(true);
+    setCreateError(undefined);
+    try {
+      const created = await queueIngredientCreateWithVersion(userId, organizationId, createInput);
+      select({ versionId: created.ingredientVersionId, name: createInput.name.normalize("NFC").trim() });
+      setCreating(false);
+      setCreateInput({ ...createInput, name: "" });
+    } catch (reason) {
+      setCreateError(reason instanceof Error ? reason.message : "unavailable");
+    } finally {
+      setCreatePending(false);
+    }
+  }
+  function keyDown(event: React.KeyboardEvent<HTMLInputElement>) {
+    if (event.key === "ArrowDown") {
+      event.preventDefault();
+      setOpen(true);
+      setActiveIndex((index) => Math.min(index + 1, Math.max(results.length - 1, 0)));
+    } else if (event.key === "ArrowUp") {
+      event.preventDefault();
+      setActiveIndex((index) => index < 0 ? Math.max(results.length - 1, 0) : Math.max(index - 1, 0));
+    } else if (event.key === "Enter" && open && activeIndex >= 0 && results[activeIndex]) {
+      event.preventDefault();
+      select(results[activeIndex]);
+    } else if (event.key === "Escape") {
+      setOpen(false);
+      setQuery(committedLabel);
+      onSelect(committedVersionId);
+    }
+  }
+  return (
+    <div className="ingredient-combobox">
+      <input
+        aria-activedescendant={open && results[activeIndex] ? `${listId}-${results[activeIndex].versionId}` : undefined}
+        aria-controls={listId}
+        aria-expanded={open}
+        aria-label={t("recipesCatalog.ingredient")}
+        aria-haspopup="listbox"
+        autoComplete="off"
+        onChange={(event) => {
+          setQuery(event.target.value);
+          if (committedVersionId) onSelect("");
+          setCommittedVersionId("");
+          setOpen(true);
+          setActiveIndex(-1);
+        }}
+        onFocus={() => { setOpen(true); setActiveIndex(-1); }}
+        onKeyDown={keyDown}
+        role="combobox"
+        value={query}
+      />
+      {open ? (
+        <div id={listId} role="listbox">
+          {results.map((ingredient, index) => (
+            /* biome-ignore lint/a11y/useFocusableInteractive: the input owns keyboard focus through aria-activedescendant */
+            /* biome-ignore lint/a11y/useKeyWithClickEvents: keyboard selection is handled by the owning combobox input */
+            <div
+              aria-selected={index === activeIndex}
+              id={`${listId}-${ingredient.versionId}`}
+              key={ingredient.versionId}
+              onClick={() => select(ingredient)}
+              onMouseDown={(event) => event.preventDefault()}
+              role="option"
+            >
+              {ingredient.name} · {ingredient.canonicalUnitName}
+            </div>
+          ))}
+          {!results.length ? <div role="status">{t("recipesCatalog.ingredientSearchEmpty")}</div> : null}
+        </div>
+      ) : null}
+      {open ? <button onClick={() => setCreating(true)} type="button">{t("recipesCatalog.createIngredient")}</button> : null}
+      {creating ? (
+        <fieldset>
+          <legend>{t("recipesCatalog.createIngredient")}</legend>
+          <label>{t("recipesCatalog.newIngredientName")}<input required value={createInput.name} onChange={(event) => setCreateInput({ ...createInput, name: event.target.value })} /></label>
+          <label>{t("recipesCatalog.ingredientUnit")}<select required value={createInput.canonicalUnitId} onChange={(event) => { const unit = catalog.units.find((item) => item.id === event.target.value); setCreateInput({ ...createInput, canonicalUnitId: event.target.value, massPerCanonicalQuantity: defaultMassForUnit(unit) }); }}>{catalog.units.map((unit) => <option key={unit.id} value={unit.id}>{unit.name}</option>)}</select></label>
+          <label>{t("recipesCatalog.ingredientMass")}<input inputMode="decimal" required value={createInput.massPerCanonicalQuantity} onChange={(event) => setCreateInput({ ...createInput, massPerCanonicalQuantity: event.target.value })} /></label>
+          {createError ? <p role="alert">{t(`recipesCatalog.errors.${createError}`, { defaultValue: t("recipesCatalog.errors.unavailable") })}</p> : null}
+          <button disabled={createPending || !catalog.units.length} onClick={() => void createIngredient()} type="button">{t("recipesCatalog.saveIngredient")}</button>
+          <button onClick={() => setCreating(false)} type="button">{t("recipesCatalog.cancel")}</button>
+        </fieldset>
+      ) : null}
+    </div>
   );
 }
 
@@ -287,36 +416,16 @@ function RecipeEditor({
         <legend>{t("recipesCatalog.ingredients")}</legend>
         {input.ingredientLines.map((line, index) => (
           <div key={line.id}>
-            <select
-              aria-label={t("recipesCatalog.ingredient")}
-              onChange={(event) =>
-                setInput((current) => ({
-                  ...current,
-                  ingredientLines: current.ingredientLines.map(
-                    (item, itemIndex) =>
-                      itemIndex === index
-                        ? { ...item, ingredientVersionId: event.target.value }
-                        : item,
-                  ),
-                }))
-              }
-              value={line.ingredientVersionId}
-            >
-              {catalog.ingredients
-                .filter(
-                  (ingredient) =>
-                    ingredient.retired !== true ||
-                    ingredient.versionId === line.ingredientVersionId,
-                )
-                .map((ingredient) => (
-                  <option
-                    key={ingredient.versionId}
-                    value={ingredient.versionId}
-                  >
-                    {ingredient.name}
-                  </option>
-                ))}
-            </select>
+            <IngredientCombobox
+              catalog={catalog}
+              organizationId={organizationId}
+              selectedVersionId={line.ingredientVersionId}
+              userId={userId}
+              onSelect={(ingredientVersionId) => setInput((current) => ({
+                ...current,
+                ingredientLines: current.ingredientLines.map((item, itemIndex) => itemIndex === index ? { ...item, ingredientVersionId } : item),
+              }))}
+            />
             <input
               aria-label={t("recipesCatalog.quantity")}
               inputMode="decimal"
