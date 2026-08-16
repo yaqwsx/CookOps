@@ -5,6 +5,7 @@ import type { EventSummary } from "./api/events";
 import { EventAttendance } from "./event-attendance-form";
 import { EventLifecycle } from "./event-lifecycle-form";
 import { EventMetadata } from "./event-metadata-form";
+import { EventPriceRefreshControl } from "./event-price-refresh-control";
 import {
   canCreateEvents,
   readVisibleEventSummaries,
@@ -79,6 +80,11 @@ export function EventSettingsPage({
           />
           <EventAttendance
             attendance={event.baseExpectedAttendance}
+            eventId={event.id}
+            organizationId={organizationId}
+            userId={userId}
+          />
+          <EventPriceRefreshControl
             eventId={event.id}
             organizationId={organizationId}
             userId={userId}

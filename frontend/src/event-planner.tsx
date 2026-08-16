@@ -10,10 +10,7 @@ import {
   readEventCosts,
   type EventCostsProjection,
 } from "./event-cost-projections";
-import {
-  eventPriceRefreshPending,
-  queueEventPriceRefresh,
-} from "./event-price-refresh";
+import { EventPriceRefreshControl } from "./event-price-refresh-control";
 import {
   queueRecipeSchedule,
   queueScheduledRecipeAttendance,
@@ -75,38 +72,21 @@ export function EventCosts({
     identity: string;
     costs?: EventCostsProjection;
   }>();
-  const [pendingState, setPendingState] = useState({ identity, pending: false });
   const [errorState, setErrorState] = useState({ identity, error: false });
-  const refreshing = useRef(false);
   // biome-ignore lint/correctness/useExhaustiveDependencies: identity is derived from the listed route dependencies.
   useEffect(() => {
     const effectIdentity = identity;
     const subscription = liveQuery(async () => ({
       costs: await readEventCosts(userId, organizationId, eventId),
-      pending: await eventPriceRefreshPending(userId, organizationId, eventId),
     })).subscribe({
       next: (next) => {
         setCostsState({ identity: effectIdentity, costs: next.costs });
-        setPendingState({ identity: effectIdentity, pending: next.pending });
       },
       error: () => setErrorState({ identity: effectIdentity, error: true }),
     });
     return () => subscription.unsubscribe();
   }, [eventId, organizationId, userId]);
-  async function refresh() {
-    if (refreshing.current) return;
-    refreshing.current = true;
-    try {
-      await queueEventPriceRefresh(userId, organizationId, eventId);
-      setErrorState({ identity, error: false });
-    } catch {
-      setErrorState({ identity, error: true });
-    } finally {
-      refreshing.current = false;
-    }
-  }
   const costs = costsState?.identity === identity ? costsState.costs : undefined;
-  const pending = pendingState.identity === identity && pendingState.pending;
   const error = errorState.identity === identity && errorState.error;
   if (!costs) return null;
   return (
@@ -167,11 +147,9 @@ export function EventCosts({
         </p>
       ) : null}
       {planner.lifecycle === "active" ? (
-        <button disabled={pending} onClick={() => void refresh()} type="button">
-          {t(pending ? "costs.refreshPending" : "costs.refresh")}
-        </button>
+        <EventPriceRefreshControl eventId={eventId} organizationId={organizationId} userId={userId} />
       ) : null}
-      {error ? <p role="alert">{t("costs.error")}</p> : null}
+      {error ? <p role="alert">{t("costs.unavailable")}</p> : null}
       {planner.scheduled.length ? (
         <ul className="event-costs__recipes">
           {planner.scheduled.map((item) => {

@@ -22,7 +22,8 @@ export async function queueEventPriceRefresh(
         "event",
         eventId,
       ]);
-      if (event?.fields.lifecycle !== "active") throw new Error("event");
+      if (event?.lifecycle !== "active" || event.fields?.lifecycle !== "active")
+        throw new Error("event");
       const exists = (
         await localDb.outbox
           .where("[userId+organizationId+state]")

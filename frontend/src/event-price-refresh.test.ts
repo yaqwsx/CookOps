@@ -80,4 +80,48 @@ describe("offline event price refresh", () => {
     ).rejects.toThrow("event");
     expect(await localDb.outbox.count()).toBe(0);
   });
+
+  it("rejects a canonical active record whose event fields are archived", async () => {
+    await localDb.canonicalRecords.add({
+      userId,
+      organizationId,
+      entityType: "event",
+      entityId: eventId,
+      recordSchemaVersion: 1,
+      lifecycle: "active",
+      fields: {
+        id: eventId,
+        organization_id: organizationId,
+        lifecycle: "archived",
+      },
+      fieldClocks: {},
+      immutable: false,
+      updatedAt: "2026-08-07T12:00:00.000Z",
+    });
+    await expect(
+      queueEventPriceRefresh(userId, organizationId, eventId),
+    ).rejects.toThrow("event");
+  });
+
+  it("rejects a retired canonical record even when legacy fields are active", async () => {
+    await localDb.canonicalRecords.add({
+      userId,
+      organizationId,
+      entityType: "event",
+      entityId: eventId,
+      recordSchemaVersion: 1,
+      lifecycle: "retired",
+      fields: {
+        id: eventId,
+        organization_id: organizationId,
+        lifecycle: "active",
+      },
+      fieldClocks: {},
+      immutable: true,
+      updatedAt: "2026-08-07T12:00:00.000Z",
+    });
+    await expect(
+      queueEventPriceRefresh(userId, organizationId, eventId),
+    ).rejects.toThrow("event");
+  });
 });

@@ -65,7 +65,7 @@ describe("event costs route", () => {
     const view = render(<EventCostsPage {...props} eventId={eventA} />);
     expect((await screen.findAllByText("10.00 CZK")).length).toBeGreaterThan(0);
     expect(
-      screen.getByRole("button", {
+      await screen.findByRole("button", {
         name: "Aktualizace odhadů čeká na synchronizaci",
       }),
     ).toBeDisabled();
