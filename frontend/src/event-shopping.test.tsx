@@ -145,13 +145,22 @@ describe("EventShopping", () => {
           fulfilled: false,
           notRequired: false,
           contributions: [
-            {
-              id: "2e8b2b21-c378-4574-9e46-9338c81305ef",
-              generated: "2",
-              fulfilled: false,
-              retired: false,
-              source: "Chili",
-            },
+              {
+                id: "2e8b2b21-c378-4574-9e46-9338c81305ef",
+                generated: "2",
+                requiredQuantity: "2",
+                fulfilled: false,
+                retired: false,
+                source: "Chili",
+                recipeDescription: "Smoky tomato stew",
+                day: "2026-08-10",
+                mealRole: "Dinner",
+                lineNotes: ["diced"],
+                recipeNotes: [],
+                ingredientNotes: [],
+                estimatedUnitPrice: "3 / 1 kg (EUR)",
+                expectedCost: "6.00 EUR",
+              },
           ],
         },
       ],
@@ -189,6 +198,11 @@ describe("EventShopping", () => {
         shoppingContributionId: "2e8b2b21-c378-4574-9e46-9338c81305ef",
       }),
     );
+    expect(screen.getByText("Vygenerovaná potřeba")).toBeVisible();
+    expect(screen.getAllByText("Plánovaný nákup")).toHaveLength(2);
+    expect(screen.getByText("Smoky tomato stew")).toBeVisible();
+    expect(screen.getByText("2026-08-10")).toBeVisible();
+    expect(screen.getByText("6.00 EUR")).toBeVisible();
     readShoppingList.mockResolvedValue({
       id: "9d8b2b21-c378-4574-9e46-9338c81305ef",
       name: "Sobota",

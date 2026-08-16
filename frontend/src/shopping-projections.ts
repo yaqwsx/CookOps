@@ -1,7 +1,9 @@
 import type { CanonicalRecord } from "./local-db";
 import { readEventScopedRecords } from "./archive-cache";
+import { divide, money, multiply, type Fraction } from "./exact-decimal";
 
 const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+const maxDecimalDigits = 38;
 
 export type ShoppingListSummary = {
   id: string;
@@ -29,9 +31,18 @@ export type ShoppingRow = {
 export type ShoppingContribution = {
   id: string;
   generated: string;
+  requiredQuantity: string;
   fulfilled: boolean;
   retired: boolean;
   source: string | null;
+  recipeDescription: string | null;
+  day: string | null;
+  mealRole: string | null;
+  lineNotes: string[];
+  recipeNotes: string[];
+  ingredientNotes: string[];
+  estimatedUnitPrice: string | null;
+  expectedCost: string | null;
 };
 
 export type AdHocShoppingItem = {
@@ -69,11 +80,168 @@ export function decimal(value: unknown): Decimal | undefined {
   if (typeof value !== "string" || !/^\d+(?:\.\d+)?$/.test(value))
     return undefined;
   const [whole, fraction = ""] = value.split(".");
+  if (whole.length + fraction.length > maxDecimalDigits) return undefined;
   return { value: BigInt(`${whole}${fraction}`), scale: fraction.length };
 }
 
 function atScale(value: Decimal, scale: number): bigint {
   return value.value * 10n ** BigInt(scale - value.scale);
+}
+
+function fraction(value: Decimal): Fraction {
+  return { numerator: value.value, denominator: 10n ** BigInt(value.scale) };
+}
+
+function detailsObject(value: unknown): Record<string, unknown> | undefined {
+  return value && typeof value === "object" && !Array.isArray(value)
+    ? (value as Record<string, unknown>)
+    : undefined;
+}
+
+function detailText(
+  details: Record<string, unknown> | undefined,
+  key: string,
+): string | null {
+  const value = details?.[key];
+  return typeof value === "string" && value.trim() ? value : null;
+}
+
+function detailTexts(
+  details: Record<string, unknown> | undefined,
+  ...keys: string[]
+): string[] {
+  const result: string[] = [];
+  for (const key of keys) {
+    const value = details?.[key];
+    if (typeof value === "string" && value.trim()) result.push(value);
+    else if (Array.isArray(value))
+      result.push(
+        ...value.filter(
+          (item): item is string => typeof item === "string" && item.trim().length > 0,
+        ),
+      );
+  }
+  return [...new Set(result)];
+}
+
+type UnitInfo = { dimension: string; factor: Decimal };
+
+function validContribution(
+  contribution: CanonicalRecord,
+  rowId: string,
+  rowIngredientId: string | undefined,
+  shoppingListId: string,
+  organizationId: string,
+  eventId: string,
+): boolean {
+  const ingredientId = value(contribution, "ingredient_id");
+  return (
+    uuid.test(contribution.entityId) &&
+    value(contribution, "id") === contribution.entityId &&
+    uuid.test(ingredientId ?? "") &&
+    uuid.test(rowIngredientId ?? "") &&
+    ingredientId === rowIngredientId &&
+    value(contribution, "shopping_ingredient_row_id") === rowId &&
+    value(contribution, "shopping_list_id") === shoppingListId &&
+    value(contribution, "organization_id") === organizationId &&
+    value(contribution, "event_id") === eventId
+  );
+}
+
+function validSnapshot(
+  snapshot: CanonicalRecord,
+  contribution: CanonicalRecord,
+  currentRevisionId: string,
+  shoppingListId: string,
+  organizationId: string,
+  eventId: string,
+  ingredientVersionById: Map<string, CanonicalRecord>,
+): boolean {
+  const ingredientId = value(contribution, "ingredient_id");
+  const version = ingredientVersionById.get(
+    value(snapshot, "ingredient_version_id") ?? "",
+  );
+  return (
+    uuid.test(snapshot.entityId) &&
+    value(snapshot, "id") === snapshot.entityId &&
+    value(snapshot, "shopping_contribution_id") === contribution.entityId &&
+    value(snapshot, "shopping_list_id") === shoppingListId &&
+    value(snapshot, "organization_id") === organizationId &&
+    value(snapshot, "event_id") === eventId &&
+    value(snapshot, "generation_revision_id") === currentRevisionId &&
+    snapshot.fields.active_in_revision !== undefined &&
+    typeof snapshot.fields.active_in_revision === "boolean" &&
+    value(snapshot, "ingredient_id") === ingredientId &&
+    version !== undefined &&
+    value(version, "ingredient_id") === ingredientId
+  );
+}
+
+function priceDetails(
+  snapshot: CanonicalRecord | undefined,
+  ingredientVersion: CanonicalRecord | undefined,
+  quantity: Decimal | undefined,
+  calculationUnitId: string | undefined,
+  units: Map<string, UnitInfo>,
+  unitNames: Map<string, string | undefined>,
+): { estimatedUnitPrice: string; expectedCost: string } | undefined {
+  if (!snapshot || !ingredientVersion) return undefined;
+  const snapshotIngredientId = value(snapshot, "ingredient_id");
+  const versionIngredientId = value(ingredientVersion, "ingredient_id");
+  if (
+    !snapshotIngredientId ||
+    !versionIngredientId ||
+    snapshotIngredientId !== versionIngredientId ||
+    !uuid.test(snapshotIngredientId)
+  )
+    return undefined;
+  const amount = decimal(snapshot.fields.price_amount);
+  const pricedQuantity = decimal(snapshot.fields.priced_quantity);
+  const pricedUnitId = value(snapshot, "priced_unit_id");
+  const currency = value(snapshot, "currency");
+  const canonicalUnitId = value(ingredientVersion, "canonical_unit_id");
+  const calculationUnit = calculationUnitId
+    ? units.get(calculationUnitId)
+    : undefined;
+  const sourceUnit = canonicalUnitId ? units.get(canonicalUnitId) : undefined;
+  const targetUnit = pricedUnitId ? units.get(pricedUnitId) : undefined;
+  const pricedUnitName = pricedUnitId ? unitNames.get(pricedUnitId) : undefined;
+  if (
+    !amount ||
+    amount.value < 0n ||
+    !quantity ||
+    quantity.value < 0n ||
+    !pricedQuantity ||
+    pricedQuantity.value <= 0n ||
+    !pricedUnitId ||
+    !calculationUnit ||
+    !currency ||
+    !/^[A-Z]{3}$/.test(currency) ||
+    !sourceUnit ||
+    !targetUnit ||
+    !pricedUnitName ||
+    calculationUnit.dimension !== sourceUnit.dimension ||
+    sourceUnit.dimension !== targetUnit.dimension ||
+    calculationUnit.factor.value <= 0n ||
+    sourceUnit.factor.value <= 0n ||
+    targetUnit.factor.value <= 0n
+  )
+    return undefined;
+  const converted = divide(
+    multiply(fraction(quantity), fraction(calculationUnit.factor)),
+    fraction(targetUnit.factor),
+  );
+  const cost = converted
+    ? divide(
+        multiply(fraction(amount), converted),
+        fraction(pricedQuantity),
+      )
+    : undefined;
+  if (!cost) return undefined;
+  return {
+    estimatedUnitPrice: `${print(amount)} / ${print(pricedQuantity)} ${pricedUnitName} (${currency})`,
+    expectedCost: `${money(cost)} ${currency}`,
+  };
 }
 
 export function add(values: Decimal[]): Decimal {
@@ -192,6 +360,7 @@ export async function readShoppingList(
     snapshots,
     sections,
     units,
+    ingredientVersions,
     sources,
     adHocItems,
   ] = await Promise.all([
@@ -217,6 +386,12 @@ export async function readShoppingList(
     ),
     readEventScopedRecords(userId, organizationId, eventId, "store_section"),
     readEventScopedRecords(userId, organizationId, eventId, "unit_definition"),
+    readEventScopedRecords(
+      userId,
+      organizationId,
+      eventId,
+      "ingredient_version",
+    ),
     readEventScopedRecords(
       userId,
       organizationId,
@@ -255,11 +430,47 @@ export async function readShoppingList(
   );
   const unitNames = new Map(
     units
-      .filter((unit) => value(unit, "id") === unit.entityId)
+      .filter(
+        (unit) =>
+          uuid.test(unit.entityId) &&
+          value(unit, "id") === unit.entityId &&
+          (unit.fields.organization_id === null ||
+            value(unit, "organization_id") === organizationId),
+      )
       .map((unit) => [
         unit.entityId,
         value(unit, "custom_name") ?? value(unit, "code"),
       ]),
+  );
+  const unitInfo = new Map(
+    units
+      .filter(
+        (unit) =>
+          uuid.test(unit.entityId) &&
+          value(unit, "id") === unit.entityId &&
+          typeof value(unit, "dimension") === "string" &&
+          (unit.fields.organization_id === null ||
+            value(unit, "organization_id") === organizationId) &&
+          decimal(unit.fields.base_unit_factor),
+      )
+      .flatMap((unit) => {
+        const dimension = value(unit, "dimension");
+        const factor = decimal(unit.fields.base_unit_factor);
+        return dimension && factor
+          ? [[unit.entityId, { dimension, factor }] as const]
+          : [];
+      }),
+  );
+  const ingredientVersionById = new Map(
+    ingredientVersions
+      .filter(
+        (version) =>
+          uuid.test(version.entityId) &&
+          value(version, "id") === version.entityId &&
+          value(version, "organization_id") === organizationId &&
+          uuid.test(value(version, "ingredient_id") ?? ""),
+      )
+      .map((version) => [version.entityId, version]),
   );
   return {
     ...summary,
@@ -357,43 +568,46 @@ export async function readShoppingList(
           value(row, "organization_id") === organizationId &&
           value(row, "event_id") === eventId &&
           uuid.test(row.entityId) &&
-          value(row, "id") === row.entityId,
+          value(row, "id") === row.entityId &&
+          uuid.test(value(row, "ingredient_id") ?? "") &&
+          unitNames.has(value(row, "calculation_unit_id") ?? ""),
       )
       .map((row) => {
         const rowContributions = contributions.filter(
           (contribution) =>
-            value(contribution, "shopping_list_id") === shoppingListId &&
-            value(contribution, "shopping_ingredient_row_id") ===
-              row.entityId &&
-            value(contribution, "organization_id") === organizationId &&
-            value(contribution, "event_id") === eventId &&
-            value(contribution, "id") === contribution.entityId,
+            validContribution(
+              contribution,
+              row.entityId,
+              value(row, "ingredient_id"),
+              shoppingListId,
+              organizationId,
+              eventId,
+            ),
         );
-        const contributionIds = rowContributions.map(
-          (contribution) => contribution.entityId,
+        const validSnapshots = snapshots.filter((snapshot) =>
+          rowContributions.some((contribution) =>
+            validSnapshot(
+              snapshot,
+              contribution,
+              currentRevisionId,
+              shoppingListId,
+              organizationId,
+              eventId,
+              ingredientVersionById,
+            ),
+          ),
         );
         const generated = add(
-          snapshots
+          validSnapshots
             .filter(
               (snapshot) =>
-                value(snapshot, "shopping_list_id") === shoppingListId &&
-                value(snapshot, "organization_id") === organizationId &&
-                value(snapshot, "event_id") === eventId &&
-                value(snapshot, "generation_revision_id") ===
-                  currentRevisionId &&
-                snapshot.fields.active_in_revision === true &&
-                contributionIds.includes(
-                  value(snapshot, "shopping_contribution_id") ?? "",
-                ),
+                snapshot.fields.active_in_revision === true,
             )
             .map((snapshot) => decimal(snapshot.fields.generated_quantity))
             .filter((amount): amount is Decimal => amount !== undefined),
         );
         const credit = add(
-          contributions
-            .filter((contribution) =>
-              contributionIds.includes(contribution.entityId),
-            )
+          rowContributions
             .map((contribution) =>
               decimal(contribution.fields.fulfilment_credit),
             )
@@ -427,30 +641,55 @@ export async function readShoppingList(
           fulfilled: target.value > 0n && remaining.value === 0n,
           notRequired: target.value === 0n,
           contributions: rowContributions.map((contribution) => {
-            const snapshot = snapshots.find(
-              (item) =>
-                value(item, "generation_revision_id") === currentRevisionId &&
-                value(item, "shopping_contribution_id") ===
-                  contribution.entityId,
+            const snapshot = validSnapshots.find((item) =>
+              validSnapshot(
+                item,
+                contribution,
+                currentRevisionId,
+                shoppingListId,
+                organizationId,
+                eventId,
+                ingredientVersionById,
+              ),
             );
-            const details = snapshot?.fields.source_details;
-            const source =
-              details && typeof details === "object" && !Array.isArray(details)
-                ? (details as Record<string, unknown>).recipe_name
-                : undefined;
+            const details = detailsObject(snapshot?.fields.source_details);
+            const source = detailText(details, "recipe_name");
             const amount = snapshot
               ? decimal(snapshot.fields.generated_quantity)
               : undefined;
+            const price = priceDetails(
+              snapshot,
+              ingredientVersionById.get(
+                value(snapshot ?? contribution, "ingredient_version_id") ?? "",
+              ),
+              target,
+              value(row, "calculation_unit_id"),
+              unitInfo,
+              unitNames,
+            );
             return {
               id: contribution.entityId,
               generated: print(amount ?? add([])),
+              requiredQuantity: print(amount ?? add([])),
               fulfilled:
                 (decimal(contribution.fields.fulfilment_credit)?.value ?? 0n) >
                 0n,
               retired:
                 contribution.lifecycle === "retired" ||
                 snapshot?.fields.active_in_revision !== true,
-              source: typeof source === "string" ? source : null,
+              source,
+              recipeDescription: detailText(details, "recipe_description"),
+              day: detailText(details, "day"),
+              mealRole: detailText(details, "meal_role"),
+              lineNotes: detailTexts(details, "line_notes"),
+              recipeNotes: detailTexts(details, "recipe_notes", "recipe_note"),
+              ingredientNotes: detailTexts(
+                details,
+                "ingredient_notes",
+                "ingredient_note",
+              ),
+              estimatedUnitPrice: price?.estimatedUnitPrice ?? null,
+              expectedCost: price?.expectedCost ?? null,
             };
           }),
         };

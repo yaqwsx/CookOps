@@ -790,14 +790,30 @@ function ShoppingRowControls({
               {t("shopping.clearManualTarget")}
             </button>
           ) : null}
-          {row.contributions.length ? (
-            <details className="shopping-contributions">
-              <summary>{t("shopping.contributions")}</summary>
-              <ul>
-                {row.contributions.map((contribution) => (
-                  <li key={contribution.id}>
+          {error ? (
+            <p role="alert">{t("shopping.errors.unavailable")}</p>
+          ) : null}
+        </div>
+      ) : null}
+      {row.contributions.length ? (
+        <details className="shopping-contributions">
+          <summary>{t("shopping.contributions")}</summary>
+          <ul>
+            {row.contributions.map((contribution) => {
+              const requiredQuantity = contribution.requiredQuantity ?? contribution.generated;
+              const lineNotes = contribution.lineNotes ?? [];
+              const recipeNotes = contribution.recipeNotes ?? [];
+              const ingredientNotes = contribution.ingredientNotes ?? [];
+              const label = `${contribution.source ?? t("shopping.scheduledRecipe")} · ${t(
+                "shopping.quantity",
+                { amount: requiredQuantity, unit: row.unit },
+              )}${contribution.retired ? ` · ${t("shopping.retired")}` : ""}`;
+              return (
+                <li key={contribution.id}>
+                  {editable ? (
                     <label>
                       <input
+                        aria-label={label}
                         checked={contribution.fulfilled}
                         onChange={(event) =>
                           void run(() =>
@@ -814,24 +830,94 @@ function ShoppingRowControls({
                         }
                         type="checkbox"
                       />
-                      {contribution.source ?? t("shopping.scheduledRecipe")} ·{" "}
-                      {t("shopping.quantity", {
-                        amount: contribution.generated,
-                        unit: row.unit,
-                      })}
-                      {contribution.retired
-                        ? ` · ${t("shopping.retired")}`
-                        : null}
+                      {label}
                     </label>
-                  </li>
-                ))}
-              </ul>
-            </details>
-          ) : null}
-          {error ? (
-            <p role="alert">{t("shopping.errors.unavailable")}</p>
-          ) : null}
-        </div>
+                  ) : (
+                    <span>{label}</span>
+                  )}
+                  <dl>
+                    <div>
+                      <dt>{t("shopping.generatedRequirement")}</dt>
+                      <dd>
+                        {t("shopping.quantity", {
+                          amount: requiredQuantity,
+                          unit: row.unit,
+                        })}
+                      </dd>
+                    </div>
+                    <div>
+                      <dt>{t("shopping.purchaseTarget")}</dt>
+                      <dd>
+                        {t("shopping.quantity", {
+                          amount: row.target,
+                          unit: row.unit,
+                        })}
+                      </dd>
+                    </div>
+                    {contribution.day ? (
+                      <div>
+                        <dt>{t("shopping.day")}</dt>
+                        <dd>{contribution.day}</dd>
+                      </div>
+                    ) : null}
+                    {contribution.mealRole ? (
+                      <div>
+                        <dt>{t("shopping.mealRole")}</dt>
+                        <dd>{contribution.mealRole}</dd>
+                      </div>
+                    ) : null}
+                    {contribution.recipeDescription ? (
+                      <div>
+                        <dt>{t("shopping.recipeDescription")}</dt>
+                        <dd>{contribution.recipeDescription}</dd>
+                      </div>
+                    ) : null}
+                    {contribution.estimatedUnitPrice ? (
+                      <div>
+                        <dt>{t("shopping.estimatedUnitPrice")}</dt>
+                        <dd>{contribution.estimatedUnitPrice}</dd>
+                      </div>
+                    ) : (
+                      <div>
+                        <dt>{t("shopping.estimatedUnitPrice")}</dt>
+                        <dd>{t("shopping.priceUnavailable")}</dd>
+                      </div>
+                    )}
+                    {contribution.expectedCost ? (
+                      <div>
+                        <dt>{t("shopping.expectedCost")}</dt>
+                        <dd>{contribution.expectedCost}</dd>
+                      </div>
+                    ) : (
+                      <div>
+                        <dt>{t("shopping.expectedCost")}</dt>
+                        <dd>{t("shopping.priceUnavailable")}</dd>
+                      </div>
+                    )}
+                  </dl>
+                  {lineNotes.length ? (
+                    <p>
+                      <strong>{t("shopping.lineNotes")}:</strong>{" "}
+                      {lineNotes.join(" · ")}
+                    </p>
+                  ) : null}
+                  {recipeNotes.length ? (
+                    <p>
+                      <strong>{t("shopping.recipeNotes")}:</strong>{" "}
+                      {recipeNotes.join(" · ")}
+                    </p>
+                  ) : null}
+                  {ingredientNotes.length ? (
+                    <p>
+                      <strong>{t("shopping.ingredientNotes")}:</strong>{" "}
+                      {ingredientNotes.join(" · ")}
+                    </p>
+                  ) : null}
+                </li>
+              );
+            })}
+          </ul>
+        </details>
       ) : null}
     </li>
   );

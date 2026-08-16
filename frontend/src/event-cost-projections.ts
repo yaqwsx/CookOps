@@ -2,10 +2,17 @@ import type { CanonicalRecord } from "./local-db";
 import { decimal as parseDecimal } from "./shopping-projections";
 import { readVisibleRecords } from "./visible-records";
 import { readEventScopedRecords } from "./archive-cache";
+import {
+  divide,
+  money,
+  multiply,
+  type Fraction,
+} from "./exact-decimal";
 
 const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
-export type Fraction = { numerator: bigint; denominator: bigint };
+export { divide, money, multiply } from "./exact-decimal";
+export type { Fraction } from "./exact-decimal";
 export const zeroFraction: Fraction = { numerator: 0n, denominator: 1n };
 type ResolvedLine = { ingredientVersionId: string; quantity: Fraction };
 
@@ -37,21 +44,6 @@ export function decimal(value: unknown): Fraction | undefined {
   };
 }
 
-export function multiply(left: Fraction, right: Fraction): Fraction {
-  return {
-    numerator: left.numerator * right.numerator,
-    denominator: left.denominator * right.denominator,
-  };
-}
-
-export function divide(left: Fraction, right: Fraction): Fraction | undefined {
-  if (right.numerator === 0n) return undefined;
-  return {
-    numerator: left.numerator * right.denominator,
-    denominator: left.denominator * right.numerator,
-  };
-}
-
 export function add(left: Fraction, right: Fraction): Fraction {
   return {
     numerator:
@@ -73,18 +65,6 @@ function maxZeroSubtract(left: Fraction, right: Fraction): Fraction {
   return difference.numerator > 0n
     ? difference
     : { numerator: 0n, denominator: 1n };
-}
-
-/** Display a rounded advisory monetary value without converting it to a JS number. */
-export function money(value: Fraction): string {
-  const sign = value.numerator < 0n ? "-" : "";
-  const absolute =
-    value.numerator < 0n ? { ...value, numerator: -value.numerator } : value;
-  const scale = 100n;
-  const rounded =
-    (absolute.numerator * scale * 2n + absolute.denominator) /
-    (absolute.denominator * 2n);
-  return `${sign}${rounded / scale}.${(rounded % scale).toString().padStart(2, "0")}`;
 }
 
 function fieldId(record: CanonicalRecord, key: string): string | undefined {

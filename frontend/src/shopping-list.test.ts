@@ -231,6 +231,270 @@ describe("offline shopping-list creation", () => {
     await expect(localDb.outbox.count()).resolves.toBe(2);
   });
 
+  it("projects contribution context and exact snapshot cost, but rejects malformed price data", async () => {
+    await seedPlanner();
+    const record = (
+      entityType: string,
+      entityId: string,
+      fields: Record<string, unknown>,
+    ) => ({
+      userId: ids.user,
+      organizationId: ids.organization,
+      entityType,
+      entityId,
+      recordSchemaVersion: 1,
+      lifecycle: "active" as const,
+      fields,
+      fieldClocks: {},
+      immutable: false,
+      updatedAt: "2026-08-07T12:00:00.000Z",
+    });
+    await localDb.canonicalRecords.bulkAdd([
+      record("shopping_list", ids.list, {
+        id: ids.list,
+        organization_id: ids.organization,
+        event_id: ids.event,
+        name: "Saturday",
+        current_generation_revision_id: ids.revision,
+        created_at: "2026-08-07T12:00:00.000Z",
+      }),
+      record("shopping_ingredient_row", ids.row, {
+        id: ids.row,
+        organization_id: ids.organization,
+        event_id: ids.event,
+        shopping_list_id: ids.list,
+        ingredient_id: ids.recipe,
+        ingredient_name: "Tomatoes",
+        calculation_unit_id: ids.unit,
+        available_supply_quantity: "0",
+        manual_purchase_target: "10",
+        aggregate_fulfilment_credit: "0",
+      }),
+      record("unit_definition", ids.unit, {
+        id: ids.unit,
+        organization_id: null,
+        code: "kg",
+        dimension: "mass",
+        base_unit_factor: "1",
+        allows_ingredient_quantity: true,
+      }),
+      record("unit_definition", ids.retiredContribution, {
+        id: ids.retiredContribution,
+        organization_id: null,
+        code: "g",
+        dimension: "mass",
+        base_unit_factor: "0.001",
+        allows_ingredient_quantity: true,
+      }),
+      record("ingredient_version", ids.version, {
+        id: ids.version,
+        organization_id: ids.organization,
+        ingredient_id: ids.recipe,
+        canonical_unit_id: ids.unit,
+      }),
+      record("shopping_contribution", ids.contribution, {
+        id: ids.contribution,
+        organization_id: ids.organization,
+        event_id: ids.event,
+        shopping_list_id: ids.list,
+        shopping_ingredient_row_id: ids.row,
+        ingredient_id: ids.recipe,
+        fulfilment_credit: "0",
+      }),
+      record("shopping_contribution_snapshot", ids.snapshot, {
+        id: ids.snapshot,
+        organization_id: ids.organization,
+        event_id: ids.event,
+        shopping_list_id: ids.list,
+        generation_revision_id: ids.revision,
+        shopping_contribution_id: ids.contribution,
+        ingredient_id: ids.recipe,
+        ingredient_version_id: ids.version,
+        active_in_revision: true,
+        generated_quantity: "2",
+        price_amount: "3",
+        priced_quantity: "1",
+        priced_unit_id: ids.unit,
+        currency: "EUR",
+        source_details: {
+          recipe_name: "Chili",
+          recipe_description: "Smoky tomato stew",
+          day: "2026-08-10",
+          meal_role: "Dinner",
+          line_notes: ["diced"],
+          recipe_notes: ["serve warm"],
+          ingredient_notes: ["use ripe fruit"],
+        },
+      }),
+    ]);
+    await expect(
+      readShoppingList(ids.user, ids.organization, ids.event, ids.list),
+    ).resolves.toMatchObject({
+      rows: [
+        {
+          contributions: [
+            expect.objectContaining({
+              requiredQuantity: "2",
+              source: "Chili",
+              recipeDescription: "Smoky tomato stew",
+              day: "2026-08-10",
+              mealRole: "Dinner",
+              lineNotes: ["diced"],
+              recipeNotes: ["serve warm"],
+              ingredientNotes: ["use ripe fruit"],
+              estimatedUnitPrice: "3 / 1 kg (EUR)",
+              expectedCost: "30.00 EUR",
+            }),
+          ],
+        },
+      ],
+    });
+    const contributionKey: [string, string, string, string] = [
+      ids.user,
+      ids.organization,
+      "shopping_contribution",
+      ids.contribution,
+    ];
+    const contribution = await localDb.canonicalRecords.get(contributionKey);
+    if (!contribution) throw new Error("test contribution missing");
+    await localDb.canonicalRecords.update(contributionKey, {
+      fields: { ...contribution.fields, ingredient_id: ids.retiredContribution },
+    });
+    await expect(
+      readShoppingList(ids.user, ids.organization, ids.event, ids.list),
+    ).resolves.toMatchObject({ rows: [{ contributions: [] }] });
+    await localDb.canonicalRecords.update(contributionKey, {
+      fields: contribution.fields,
+    });
+    const rowKey: [string, string, string, string] = [
+      ids.user,
+      ids.organization,
+      "shopping_ingredient_row",
+      ids.row,
+    ];
+    const row = await localDb.canonicalRecords.get(rowKey);
+    if (!row) throw new Error("test row missing");
+    await localDb.canonicalRecords.update(rowKey, {
+      fields: {
+        ...row.fields,
+        calculation_unit_id: ids.retiredContribution,
+        manual_purchase_target: "2000",
+      },
+    });
+    await expect(
+      readShoppingList(ids.user, ids.organization, ids.event, ids.list),
+    ).resolves.toMatchObject({
+      rows: [{ contributions: [expect.objectContaining({ expectedCost: "6.00 EUR" })] }],
+    });
+    await localDb.canonicalRecords.update(
+      [ids.user, ids.organization, "unit_definition", ids.retiredContribution],
+      {
+        fields: {
+          id: ids.retiredContribution,
+          organization_id: null,
+          code: "l",
+          dimension: "volume",
+          base_unit_factor: "0.001",
+          allows_ingredient_quantity: true,
+        },
+      },
+    );
+    await expect(
+      readShoppingList(ids.user, ids.organization, ids.event, ids.list),
+    ).resolves.toMatchObject({
+      rows: [{ contributions: [expect.objectContaining({ expectedCost: null })] }],
+    });
+    await localDb.canonicalRecords.update(
+      [ids.user, ids.organization, "unit_definition", ids.retiredContribution],
+      {
+        fields: {
+          id: ids.retiredContribution,
+          organization_id: null,
+          code: "g",
+          dimension: "mass",
+          base_unit_factor: "0.001",
+          allows_ingredient_quantity: true,
+        },
+      },
+    );
+    await localDb.canonicalRecords.update(rowKey, { fields: row.fields });
+    await localDb.canonicalRecords.update(
+      [ids.user, ids.organization, "shopping_contribution_snapshot", ids.snapshot],
+      { fields: { price_amount: "NaN", source_details: [] } },
+    );
+    await expect(
+      readShoppingList(ids.user, ids.organization, ids.event, ids.list),
+    ).resolves.toMatchObject({
+      rows: [
+        {
+          contributions: [
+            expect.objectContaining({
+              source: null,
+              estimatedUnitPrice: null,
+              expectedCost: null,
+            }),
+          ],
+        },
+      ],
+    });
+    const snapshotKey: [string, string, string, string] = [
+      ids.user,
+      ids.organization,
+      "shopping_contribution_snapshot",
+      ids.snapshot,
+    ];
+    const cached = await localDb.canonicalRecords.get(snapshotKey);
+    if (!cached) throw new Error("test snapshot missing");
+    await localDb.canonicalRecords.update(snapshotKey, {
+      fields: { ...cached.fields, id: ids.retiredContribution },
+    });
+    await expect(
+      readShoppingList(ids.user, ids.organization, ids.event, ids.list),
+    ).resolves.toMatchObject({
+      rows: [{ contributions: [expect.objectContaining({ source: null, expectedCost: null })] }],
+    });
+    await localDb.canonicalRecords.update(snapshotKey, {
+      fields: { ...cached.fields, ingredient_id: ids.retiredContribution },
+    });
+    await expect(
+      readShoppingList(ids.user, ids.organization, ids.event, ids.list),
+    ).resolves.toMatchObject({
+      rows: [{ contributions: [expect.objectContaining({ source: null, expectedCost: null })] }],
+    });
+    await localDb.canonicalRecords.update(snapshotKey, {
+      fields: {
+        ...cached.fields,
+        id: ids.snapshot,
+        organization_id: ids.organization,
+        event_id: ids.event,
+        shopping_list_id: ids.list,
+        generation_revision_id: ids.revision,
+        shopping_contribution_id: ids.contribution,
+        ingredient_id: ids.recipe,
+        ingredient_version_id: ids.version,
+        active_in_revision: true,
+        generated_quantity: "2",
+        priced_quantity: "1",
+        priced_unit_id: ids.unit,
+        currency: "EUR",
+        price_amount: "9".repeat(40),
+        source_details: { recipe_name: "Chili" },
+      },
+    });
+    await expect(
+      readShoppingList(ids.user, ids.organization, ids.event, ids.list),
+    ).resolves.toMatchObject({
+      rows: [{ contributions: [expect.objectContaining({ source: "Chili", expectedCost: null })] }],
+    });
+    await localDb.canonicalRecords.update(
+      [ids.user, ids.organization, "unit_definition", ids.unit],
+      { fields: { organization_id: ids.retiredContribution } },
+    );
+    await expect(
+      readShoppingList(ids.user, ids.organization, ids.event, ids.list),
+    ).resolves.toMatchObject({ rows: [] });
+  });
+
   it("updates an ad-hoc item through the typed outbox without overwriting a newer field", async () => {
     await seedPlanner();
     const itemId = "2e8b2b21-c378-4574-9e46-9338c81305ef";
