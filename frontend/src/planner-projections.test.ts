@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import type { CanonicalRecord } from "./local-db";
-import { readEventPlanner } from "./planner-projections";
+import { readEventPlanner, suggestedScale } from "./planner-projections";
 
 const organizationId = "55555555-5555-4555-8555-555555555555";
 const userId = "66666666-6666-4666-8666-666666666666";
@@ -17,6 +17,14 @@ const ids = {
   line: "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb",
   scheduled: "cccccccc-cccc-4ccc-8ccc-cccccccccccc",
 };
+
+it("matches backend decimal scaling without rounding fractional suggestions", () => {
+  expect(suggestedScale(12, "100", "portion", "5", "1", false)).toBe("2.4");
+  expect(suggestedScale(12, "100", "portion", "5", "1", true)).toBe("3");
+  expect(suggestedScale(10, "100", "portion", "3", "1", false)).toBeUndefined();
+  expect(suggestedScale(0, "100", "portion", "3", "1", false)).toBe("0");
+  expect(suggestedScale(1, "0.00000000000001", "person", undefined, "1", false)).toBe("0.0000000000000001");
+});
 
 const readVisibleRecords = vi.hoisted(() => vi.fn());
 vi.mock("./visible-records", () => ({ readVisibleRecords }));
@@ -48,6 +56,9 @@ function cache(options: {
   currentRoot?: Partial<CanonicalRecord>;
   lineVersionId?: string;
   lineVersion?: Partial<CanonicalRecord>;
+  recipeCurrentVersionId?: string;
+  recipeCurrentVersion?: Partial<CanonicalRecord>;
+  scheduledDinerCount?: number;
 }) {
   const currentVersion = record("ingredient_version", ids.currentVersion, {
     ingredient_id: ids.ingredient,
@@ -66,13 +77,14 @@ function cache(options: {
     event: [record("event", ids.event, { name: "Event", start_date: "2026-08-15", end_date: "2026-08-15", base_expected_attendance: 4, lifecycle: "active" })],
     event_day: [record("event_day", ids.day, { event_id: ids.event, calendar_date: "2026-08-15", is_visible: true })],
     event_meal_role: [record("event_meal_role", ids.role, { event_id: ids.event, position_key: "a", custom_name: "Dinner", built_in_translation_key: null })],
-    recipe: [record("recipe", ids.recipe, { current_version_id: ids.recipeVersion })],
-    recipe_version: [record("recipe_version", ids.recipeVersion, { recipe_id: ids.recipe, name: "Soup" })],
-    recipe_ingredient_line: [record("recipe_ingredient_line", ids.line, { recipe_version_id: ids.recipeVersion, ingredient_version_id: options.lineVersionId ?? ids.oldVersion, base_quantity: "1", line_key: ids.line })],
-    scheduled_recipe: [record("scheduled_recipe", ids.scheduled, { event_id: ids.event, event_day_id: ids.day, event_meal_role_id: ids.role, recipe_id: ids.recipe, recipe_version_id: ids.recipeVersion, diner_count: 2, consumption_percentage: "100", selected_scale_amount: "2", position_key: "a" })],
+    recipe: [record("recipe", ids.recipe, { current_version_id: options.recipeCurrentVersionId ?? ids.recipeVersion })],
+    recipe_version: [record("recipe_version", ids.recipeVersion, { recipe_id: ids.recipe, name: "Soup", scaling_unit_id: "eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee", base_scaling_amount: "1" }), ...(options.recipeCurrentVersionId ? [record("recipe_version", options.recipeCurrentVersionId, { recipe_id: ids.recipe, name: "Soup new", scaling_unit_id: "ffffffff-ffff-4fff-8fff-ffffffffffff", base_scaling_amount: "1", estimated_diners_per_scaling_unit: "2", round_suggestions_up: false }, options.recipeCurrentVersion)] : [])],
+    recipe_ingredient_line: [record("recipe_ingredient_line", ids.line, { recipe_version_id: ids.recipeVersion, ingredient_version_id: options.lineVersionId ?? ids.oldVersion, base_quantity: "1", line_key: ids.line }), ...(options.recipeCurrentVersionId ? [record("recipe_ingredient_line", "dddddddd-dddd-4ddd-8ddd-dddddddddddd", { recipe_version_id: options.recipeCurrentVersionId, ingredient_version_id: ids.oldVersion, base_quantity: "2", line_key: ids.line })] : [])],
+    scheduled_recipe: [record("scheduled_recipe", ids.scheduled, { event_id: ids.event, event_day_id: ids.day, event_meal_role_id: ids.role, recipe_id: ids.recipe, recipe_version_id: ids.recipeVersion, diner_count: options.scheduledDinerCount ?? 2, consumption_percentage: "100", selected_scale_amount: "2", position_key: "a" })],
     ingredient: [root],
     ingredient_version: [oldVersion, currentVersion],
     scheduled_ingredient_override: [],
+    unit_definition: [record("unit_definition", "eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee", { code: "portion", custom_name: "portion" }), record("unit_definition", "ffffffff-ffff-4fff-8fff-ffffffffffff", { code: "portion", custom_name: "portion" })],
   };
   readVisibleRecords.mockImplementation(async (_user: string, _org: string, entityType: string) => records[entityType] ?? []);
 }
@@ -93,5 +105,20 @@ describe("readEventPlanner catalog update projection", () => {
     const planner = await readEventPlanner(userId, organizationId, ids.event);
     expect(planner?.recipes[0]?.name).toBe("Soup");
     expect(planner?.scheduled[0]?.catalogUpdateAvailable).toBe(expected);
+  });
+
+  it("shows a recipe-version quantity update even without an ingredient-version update", async () => {
+    const target = "dddddddd-dddd-4ddd-8ddd-dddddddddddd";
+    cache({ recipeCurrentVersionId: target });
+    const planner = await readEventPlanner(userId, organizationId, ids.event);
+    expect(planner?.scheduled[0]?.catalogUpdateAvailable).toBe(true);
+    expect(planner?.scheduled[0]?.catalogUpdateChanges.changed).toBe(1);
+  });
+
+  it("uses manual scheduled diners for the catalog scale suggestion", async () => {
+    const target = "dddddddd-dddd-4ddd-8ddd-dddddddddddd";
+    cache({ recipeCurrentVersionId: target, scheduledDinerCount: 7 });
+    const planner = await readEventPlanner(userId, organizationId, ids.event);
+    expect(planner?.scheduled[0]?.catalogScaleImpact.suggestedAmount).toBe("3.5");
   });
 });

@@ -10,6 +10,7 @@ const {
   queueRecipeSchedule,
   queueScheduledRecipeContext,
   queueScheduledRecipeMove,
+  queueScheduledRecipeCatalogUpdate,
   queueAddedOverride,
   queueEventDayCreate,
   queueEventDayNote,
@@ -22,6 +23,7 @@ const {
   queueRecipeSchedule: vi.fn(),
   queueScheduledRecipeContext: vi.fn(),
   queueScheduledRecipeMove: vi.fn(),
+  queueScheduledRecipeCatalogUpdate: vi.fn(),
   queueAddedOverride: vi.fn(),
   queueEventDayCreate: vi.fn(),
   queueEventDayNote: vi.fn(),
@@ -35,6 +37,7 @@ vi.mock("./scheduled-recipe", () => ({
   queueRecipeSchedule,
   queueScheduledRecipeContext,
   queueScheduledRecipeMove,
+  queueScheduledRecipeCatalogUpdate,
 }));
 vi.mock("./scheduled-ingredient-override", () => ({ queueAddedOverride }));
 vi.mock("./event-day", () => ({ queueEventDayCreate, queueEventDayNote, queueEventDayVisibility }));
@@ -255,6 +258,50 @@ describe("EventPlanner", () => {
         consumptionPercentage: "100",
         selectedScaleAmount: null,
       },
+    );
+  });
+
+  it("shows scaling units and queues the selected catalog-update choice", async () => {
+    await i18n.changeLanguage(defaultLocale);
+    readEventPlanner.mockResolvedValue({
+      name: "Letní vaření",
+      startDate: "2026-08-10",
+      endDate: "2026-08-10",
+      attendance: 12,
+      lifecycle: "active",
+      days: [{ id: ids.day, date: "2026-08-10", note: null }],
+      roles: [{ id: ids.role, name: "Večeře", position: "a", custom: false }],
+      recipes: [{ id: ids.recipe, versionId: "8d8b2b21-c378-4574-9e46-9338c81305ef", name: "Chili" }],
+      scheduled: [{
+        id: ids.recipe,
+        recipeId: ids.recipe,
+        recipeVersionId: "7d8b2b21-c378-4574-9e46-9338c81305ef",
+        name: "Chili",
+        dinerCount: 12,
+        consumptionPercentage: "100",
+        selectedScaleAmount: "2",
+        dayId: ids.day,
+        roleId: ids.role,
+        position: "a",
+        lines: [],
+        localAddedIngredients: [],
+        catalogUpdateAvailable: true,
+        catalogUpdateChanges: { added: 1, removed: 0, changed: 1 },
+        catalogScaleImpact: { currentUnitName: "porce", targetUnitName: "osoba", reset: true, suggestedAmount: "12", currentUnitId: "a", targetUnitId: "b", targetBase: "1" },
+      }],
+      ...emptyPlannerCollections,
+    });
+    pullOrganization.mockResolvedValue(false);
+    const user = userEvent.setup();
+    render(<EventPlanner eventId={ids.event} onUnauthenticated={vi.fn()} organizationId={ids.organization} userId="a6a58bd6-214e-49af-8fae-e5f974bf8e08" />);
+    await user.click(await screen.findByText("Náhled aktualizace katalogu"));
+    expect(screen.getByText(/porce.*osoba/)).toBeVisible();
+    expect(screen.getByText(/návrh podle účasti 12/)).toBeVisible();
+    await user.click(screen.getByRole("button", { name: "Zachovat úpravy" }));
+    expect(queueScheduledRecipeCatalogUpdate).toHaveBeenCalledWith(
+      "a6a58bd6-214e-49af-8fae-e5f974bf8e08",
+      ids.organization,
+      expect.objectContaining({ preserveOverrides: true }),
     );
   });
 

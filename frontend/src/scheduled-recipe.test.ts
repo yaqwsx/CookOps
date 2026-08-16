@@ -6,6 +6,8 @@ import { queueAddedOverride } from "./scheduled-ingredient-override";
 import {
   queueRecipeSchedule,
   queueScheduledRecipeMove,
+  queueScheduledRecipeCatalogUpdate,
+  replayScheduledRecipeCatalogUpdate,
 } from "./scheduled-recipe";
 
 const ids = {
@@ -16,6 +18,7 @@ const ids = {
   role: "5d8b2b21-c378-4574-9e46-9338c81305ef",
   recipe: "6d8b2b21-c378-4574-9e46-9338c81305ef",
   version: "7d8b2b21-c378-4574-9e46-9338c81305ef",
+  scheduled: "8d8b2b21-c378-4574-9e46-9338c81305ef",
 };
 
 async function seed() {
@@ -162,6 +165,23 @@ describe("offline recipe scheduling", () => {
     ).rejects.toThrow("selection");
     await expect(localDb.outbox.count()).resolves.toBe(0);
     await expect(localDb.optimisticOverlays.count()).resolves.toBe(0);
+  });
+
+  it("queues an exact catalog update without changing the canonical pointer", async () => {
+    await seed();
+    await localDb.canonicalRecords.put({ userId: ids.user, organizationId: ids.organization, recordSchemaVersion: 1, entityType: "scheduled_recipe", entityId: ids.scheduled, fields: { id: ids.scheduled, event_id: ids.event, recipe_id: ids.recipe, recipe_version_id: ids.version, event_day_id: ids.day, event_meal_role_id: ids.role, diner_count: 12, consumption_percentage: "100", selected_scale_amount: "12", position_key: "a" }, lifecycle: "active", fieldClocks: {}, immutable: false, updatedAt: "2026-08-07T12:00:00.000Z" });
+    const target = "9d8b2b21-c378-4574-9e46-9338c81305ef";
+    await queueScheduledRecipeCatalogUpdate(ids.user, ids.organization, { scheduledRecipeId: ids.scheduled, eventId: ids.event, expectedRecipeVersionId: ids.version, targetRecipeVersionId: target, preserveOverrides: true });
+    await expect(localDb.outbox.toArray()).resolves.toEqual([expect.objectContaining({ commandType: "scheduled_recipe.catalog_update", payload: { scheduled_recipe_id: ids.scheduled, event_id: ids.event, expected_recipe_version_id: ids.version, target_recipe_version_id: target, preserve_overrides: true } })]);
+    await expect(localDb.canonicalRecords.get([ids.user, ids.organization, "scheduled_recipe", ids.scheduled])).resolves.toMatchObject({ fields: { recipe_version_id: ids.version } });
+  });
+
+  it("marks stale catalog replay failed instead of leaving it pending", async () => {
+    await seed();
+    const id = crypto.randomUUID();
+    await localDb.outbox.put({ id, userId: ids.user, organizationId: ids.organization, commandType: "scheduled_recipe.catalog_update", payload: { scheduled_recipe_id: ids.scheduled, event_id: ids.event, expected_recipe_version_id: ids.version, target_recipe_version_id: ids.version, preserve_overrides: true }, actionAt: "2026-08-07T12:00:00.000Z", createdAt: "2026-08-07T12:00:00.000Z", state: "pending" });
+    await replayScheduledRecipeCatalogUpdate(ids.user, ids.organization, { id, actionAt: "2026-08-07T12:00:00.000Z", payload: { scheduled_recipe_id: ids.scheduled, event_id: ids.event, expected_recipe_version_id: ids.version, target_recipe_version_id: ids.version, preserve_overrides: true } });
+    await expect(localDb.outbox.get(id)).resolves.toMatchObject({ state: "failed", failureReason: "stale_catalog_update_precondition" });
   });
 
   it("moves a stored scheduled recipe with one scoped overlay and outbox command", async () => {

@@ -54,6 +54,7 @@ from cookops.application.recipes import (
     RecipeIngredientLineInput,
 )
 from cookops.application.scheduled_recipe_attendance import SetScheduledRecipeAttendanceCommand
+from cookops.application.scheduled_recipe_catalog_update import UpdateScheduledRecipeCatalogCommand
 from cookops.application.scheduled_recipe_context import SetScheduledRecipeContextCommand
 from cookops.application.scheduled_recipe_lifecycle import SetScheduledRecipeLifecycleCommand
 from cookops.application.scheduled_recipe_moves import MoveScheduledRecipeCommand
@@ -279,6 +280,16 @@ class ScheduledRecipeContextPayload(BaseModel):
         if value is not None and not isinstance(value, str):
             raise ValueError("must be a decimal string or null")
         return value
+
+
+class ScheduledRecipeCatalogUpdatePayload(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    scheduled_recipe_id: UUID
+    event_id: UUID
+    expected_recipe_version_id: UUID
+    target_recipe_version_id: UUID
+    preserve_overrides: StrictBool
+    logical_operation_id: UUID | None = None
 
 
 class EventLifecyclePayload(BaseModel):
@@ -1350,6 +1361,19 @@ def _push_command(command: PushCommandRequest, organization_id: UUID) -> SyncCom
                 consumption_percentage=payload.consumption_percentage,
                 operation=payload.operation,
                 selected_scale_amount=payload.selected_scale_amount,
+                client_wall_time=command.client_wall_time,
+                logical_operation_id=payload.logical_operation_id,
+            )
+        if command.command_kind == "scheduled_recipe.catalog_update":
+            payload = ScheduledRecipeCatalogUpdatePayload.model_validate(command.payload)
+            return UpdateScheduledRecipeCatalogCommand(
+                mutation_id=command.mutation_id,
+                scheduled_recipe_id=payload.scheduled_recipe_id,
+                organization_id=organization_id,
+                event_id=payload.event_id,
+                expected_recipe_version_id=payload.expected_recipe_version_id,
+                target_recipe_version_id=payload.target_recipe_version_id,
+                preserve_overrides=payload.preserve_overrides,
                 client_wall_time=command.client_wall_time,
                 logical_operation_id=payload.logical_operation_id,
             )

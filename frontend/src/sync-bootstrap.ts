@@ -12,6 +12,7 @@ import {
   replayScheduledRecipeAttendance,
   replayScheduledRecipeContext,
   replayScheduledRecipeLifecycle,
+  replayScheduledRecipeCatalogUpdate,
 } from "./scheduled-recipe";
 import { replayRecipeVersionPublish } from "./recipe-publish";
 import { replayIngredientCreate } from "./ingredient-create";
@@ -287,6 +288,8 @@ async function replayOptimisticCommands(
     if (command.commandType === "scheduled_recipe.lifecycle") {
       try { await replayScheduledRecipeLifecycle(userId, organizationId, command); } catch { /* remains recoverable */ }
     }
+    if (command.commandType === "scheduled_recipe.catalog_update")
+      await replayScheduledRecipeCatalogUpdate(userId, organizationId, command);
     if (command.commandType === "scheduled_recipe.ingredient_override")
       await replayScheduledIngredientOverride(userId, organizationId, command);
     if (command.commandType === "event_day.visibility")

@@ -47,6 +47,10 @@ from cookops.application.scheduled_recipe_attendance import (
     SetScheduledRecipeAttendanceCommand,
     set_scheduled_recipe_attendance,
 )
+from cookops.application.scheduled_recipe_catalog_update import (
+    UpdateScheduledRecipeCatalogCommand,
+    update_scheduled_recipe_catalog,
+)
 from cookops.application.scheduled_recipe_context import (
     SetScheduledRecipeContextCommand,
     set_scheduled_recipe_context,
@@ -1112,7 +1116,9 @@ def test_member_sets_replaces_and_clears_pinned_recipe_ingredient(
     with service_database.sync_engine.connect() as connection:
         stored = connection.execute(
             select(
-                ScheduledIngredientOverride.quantity,
+                        ScheduledIngredientOverride.quantity,
+                        ScheduledIngredientOverride.include_in_portion_weight,
+                        ScheduledIngredientOverride.position_key,
                 ScheduledIngredientOverride.retired_at,
                 Mutation.outcome,
                 OrganizationChange.entity_kind,
@@ -1865,3 +1871,161 @@ def test_fuzz_numeric_suggestion_is_nonnegative_or_rejected(
                 ),
             )
             assert suggestion >= 0
+
+
+def test_catalog_update_rejects_stale_expected_version_and_replays(  # noqa: E501
+    service_database: ServiceDatabase,
+) -> None:
+    scheduled_recipe_id = schedule_then_override(service_database)
+    command = UpdateScheduledRecipeCatalogCommand(
+        mutation_id=uuid4(),
+        scheduled_recipe_id=scheduled_recipe_id,
+        organization_id=service_database.organization_id,
+        event_id=service_database.event_id,
+        expected_recipe_version_id=uuid4(),
+        target_recipe_version_id=service_database.recipe_version_id,
+        preserve_overrides=True,
+        client_wall_time=datetime.now(UTC),
+    )
+    with pytest.raises(ApplicationServiceError, match="stale_precondition"):
+        asyncio.run(  # noqa: E501
+            update_scheduled_recipe_catalog(
+                service_database.sessions, context(service_database), command
+            )
+        )
+    with pytest.raises(ApplicationServiceError, match="stale_precondition"):
+        asyncio.run(  # noqa: E501
+            update_scheduled_recipe_catalog(
+                service_database.sessions, context(service_database), command
+            )
+        )
+
+
+def test_catalog_update_preserve_and_discard_commands_are_explicit(  # noqa: E501
+    service_database: ServiceDatabase,
+) -> None:
+    scheduled_recipe_id = schedule_then_override(service_database)
+    override_id = uuid4()
+    asyncio.run(
+        set_scheduled_ingredient_override(
+            service_database.sessions,
+            context(service_database),
+            override_command(
+                service_database,
+                scheduled_recipe_id,
+                override_id=override_id,
+            ),
+        )
+    )
+    target_version_id = uuid4()
+    with service_database.sync_engine.begin() as connection:
+        connection.execute(insert(RecipeVersion).values(
+            id=target_version_id,
+            organization_id=service_database.organization_id,
+            recipe_id=service_database.recipe_id,
+            based_on_version_id=service_database.recipe_version_id,
+            name="Updated recipe",
+            scaling_unit_id=connection.scalar(
+                select(UnitDefinition.id).where(
+                    UnitDefinition.code == "person", UnitDefinition.organization_id.is_(None)
+                )
+            ),
+            base_scaling_amount=Decimal("2"),
+            estimated_diners_per_scaling_unit=Decimal("3"),
+            round_suggestions_up=False,
+            published_by_user_id=service_database.actor_id,
+        ))
+        connection.execute(
+            update(ScheduledRecipe)
+            .where(ScheduledRecipe.id == scheduled_recipe_id)
+            .values(diner_count=1, consumption_percentage=Decimal("33.33333333333333333333333333"))
+        )
+    with service_database.sync_engine.connect() as connection:
+        original_clocks = {
+            row.field_name: (row.winning_client_wall_time, row.winning_mutation_id)
+            for row in connection.execute(
+                select(
+                    FieldClock.field_name,
+                    FieldClock.winning_client_wall_time,
+                    FieldClock.winning_mutation_id,
+                ).where(
+                    FieldClock.entity_kind == "scheduled_ingredient_override",
+                    FieldClock.entity_id == override_id,
+                )
+            )
+        }
+    for preserve in (True, False):
+        command = UpdateScheduledRecipeCatalogCommand(
+            mutation_id=uuid4(),
+            scheduled_recipe_id=scheduled_recipe_id,
+            organization_id=service_database.organization_id,
+            event_id=service_database.event_id,
+            expected_recipe_version_id=(
+                service_database.recipe_version_id if preserve else target_version_id
+            ),
+            target_recipe_version_id=target_version_id,
+            preserve_overrides=preserve,
+            client_wall_time=datetime.now(UTC),
+        )
+        asyncio.run(  # noqa: E501
+            update_scheduled_recipe_catalog(
+                service_database.sessions, context(service_database), command
+            )
+        )
+        with service_database.sync_engine.connect() as connection:
+            scheduled = connection.scalar(
+                select(ScheduledRecipe.recipe_version_id).where(
+                    ScheduledRecipe.id == scheduled_recipe_id
+                )
+            )
+            assert scheduled == target_version_id
+            changed = connection.execute(
+                select(
+                    ScheduledIngredientOverride.override_kind,
+                    ScheduledIngredientOverride.target_line_key,
+                    ScheduledIngredientOverride.quantity,
+                    ScheduledIngredientOverride.note,
+                    ScheduledIngredientOverride.include_in_portion_weight,
+                    ScheduledIngredientOverride.position_key,
+                    ScheduledIngredientOverride.retired_at,
+                    ScheduledIngredientOverride.retired_by_user_id,
+                ).where(ScheduledIngredientOverride.id == override_id)
+            ).one_or_none()
+            assert changed is not None
+            if preserve:
+                assert changed.override_kind == "add"
+                assert changed.target_line_key is None
+                assert changed.quantity == Decimal("750")
+                assert changed.note == "Local note\n"
+                assert changed.include_in_portion_weight is True
+                assert changed.position_key is None
+                scheduled_row = connection.execute(
+                    select(
+                        ScheduledRecipe.selected_scale_amount,
+                        ScheduledRecipe.scale_mode,
+                    ).where(ScheduledRecipe.id == scheduled_recipe_id)
+                ).one()
+                assert scheduled_row == (
+                    Decimal("33.33333333333333333333333333") / Decimal(100),
+                    "suggested",
+                )
+                change = connection.execute(
+                    select(OrganizationChange.payload).where(
+                        OrganizationChange.mutation_id == command.mutation_id,
+                        OrganizationChange.entity_id == override_id,
+                    )
+                ).scalar_one()
+                clocks = change["record"]["field_clocks"]
+                assert "catalog_update" in clocks
+                assert set(original_clocks) <= set(clocks)
+                scheduled_change = connection.execute(
+                    select(OrganizationChange.payload).where(
+                        OrganizationChange.mutation_id == command.mutation_id,
+                        OrganizationChange.entity_id == scheduled_recipe_id,
+                    )
+                ).scalar_one()
+                scheduled_clocks = scheduled_change["record"]["field_clocks"]
+                assert {"recipe_version_id", "selected_scale_amount", "scale_mode"} <= set(scheduled_clocks)
+            else:
+                assert changed.retired_at is not None
+                assert changed.retired_by_user_id == service_database.actor_id

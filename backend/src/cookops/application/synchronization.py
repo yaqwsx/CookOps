@@ -155,6 +155,11 @@ from cookops.application.scheduled_recipe_attendance import (
     SetScheduledRecipeAttendanceCommand,
     set_scheduled_recipe_attendance,
 )
+from cookops.application.scheduled_recipe_catalog_update import (
+    UpdateScheduledRecipeCatalogCommand,
+    UpdateScheduledRecipeCatalogResult,
+    update_scheduled_recipe_catalog,
+)
 from cookops.application.scheduled_recipe_context import (
     ScheduledRecipeContextResult,
     SetScheduledRecipeContextCommand,
@@ -385,6 +390,7 @@ SyncCommand = (
     | MoveScheduledRecipeCommand
     | SetScheduledRecipeAttendanceCommand
     | SetScheduledRecipeContextCommand
+    | UpdateScheduledRecipeCatalogCommand
     | SetScheduledRecipeLifecycleCommand
     | SetScheduledIngredientOverrideCommand
     | SetShoppingAvailableSupplyCommand
@@ -434,6 +440,7 @@ def _command_kind(
         | MoveScheduledRecipeCommand
         | SetScheduledRecipeAttendanceCommand
         | SetScheduledRecipeContextCommand
+        | UpdateScheduledRecipeCatalogCommand
         | SetScheduledRecipeLifecycleCommand
         | SetScheduledIngredientOverrideCommand
         | SetShoppingAvailableSupplyCommand
@@ -504,6 +511,8 @@ def _command_kind(
         return "scheduled_recipe.attendance"
     if isinstance(command, SetScheduledRecipeContextCommand):
         return "scheduled_recipe.context"
+    if isinstance(command, UpdateScheduledRecipeCatalogCommand):
+        return "scheduled_recipe.catalog_update"
     if isinstance(command, SetScheduledRecipeLifecycleCommand):
         return "scheduled_recipe.lifecycle"
     if isinstance(command, SetScheduledIngredientOverrideCommand):
@@ -857,6 +866,7 @@ class SynchronizationCommandService:
                 | MoveScheduledRecipeResult
                 | ScheduledRecipeAttendanceResult
                 | ScheduledRecipeContextResult
+                | UpdateScheduledRecipeCatalogResult
                 | ScheduledRecipeLifecycleResult
                 | ScheduledIngredientOverrideResult
                 | ShoppingOperationResult
@@ -921,6 +931,10 @@ class SynchronizationCommandService:
                 )
             elif isinstance(command, SetScheduledRecipeContextCommand):
                 result = await set_scheduled_recipe_context(self._session_factory, context, command)
+            elif isinstance(command, UpdateScheduledRecipeCatalogCommand):
+                result = await update_scheduled_recipe_catalog(  # noqa: E501
+                    self._session_factory, context, command
+                )
             elif isinstance(command, SetScheduledRecipeLifecycleCommand):
                 result = await set_scheduled_recipe_lifecycle(
                     self._session_factory, context, command
@@ -1094,6 +1108,7 @@ class SynchronizationCommandService:
             | MoveScheduledRecipeResult
             | ScheduledRecipeAttendanceResult
             | ScheduledRecipeContextResult
+            | UpdateScheduledRecipeCatalogResult
             | ScheduledRecipeLifecycleResult
             | ScheduledIngredientOverrideResult
             | ShoppingOperationResult

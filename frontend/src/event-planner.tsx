@@ -17,6 +17,7 @@ import {
   queueScheduledRecipeContext,
   queueScheduledRecipeLifecycle,
   queueScheduledRecipeMove,
+  queueScheduledRecipeCatalogUpdate,
 } from "./scheduled-recipe";
 import {
   queueAddedOverride,
@@ -53,6 +54,22 @@ function EventSummary({ planner }: { planner: EventPlannerProjection }) {
       </dl>
     </header>
   );
+}
+
+function CatalogUpdateChoice({ item, planner, eventId, organizationId, userId }: { item: EventPlannerProjection["scheduled"][number]; planner: EventPlannerProjection; eventId: string; organizationId: string; userId: string }) {
+  const { t } = useTranslation();
+  const target = planner.recipes.find((recipe) => recipe.id === item.recipeId)?.versionId;
+  const [error, setError] = useState(false);
+  if (!item.catalogUpdateAvailable || !target || target === item.recipeVersionId || item.retired) return null;
+  async function queue(preserveOverrides: boolean) {
+    if (!target) return;
+    try {
+      await queueScheduledRecipeCatalogUpdate(userId, organizationId, { scheduledRecipeId: item.id, eventId, expectedRecipeVersionId: item.recipeVersionId, targetRecipeVersionId: target, preserveOverrides });
+      setError(false);
+    } catch { setError(true); }
+  }
+  const scale = item.catalogScaleImpact;
+  return <details><summary>{t("planner.catalogUpdatePreview")}</summary><p>{t("planner.catalogUpdateDiff", item.catalogUpdateChanges)}</p>{scale.reset ? (scale.suggestedAmount ? <p>{t("planner.catalogUpdateScaleReset", { current: scale.currentUnitName ?? "—", target: scale.targetUnitName ?? "—", suggestion: scale.suggestedAmount })}</p> : <p>{t("planner.catalogUpdateScaleDeferred")}</p>) : <p>{t("planner.catalogUpdateScaleKept", { unit: scale.targetUnitName ?? scale.currentUnitName ?? "—" })}</p>}<p>{t("planner.catalogUpdateChoice")}</p><button type="button" onClick={() => void queue(true)}>{t("planner.preserveOverrides")}</button><button type="button" onClick={() => void queue(false)}>{t("planner.discardOverrides")}</button>{error ? <p role="alert">{t("planner.errors.unavailable")}</p> : null}</details>;
 }
 
 export function EventCosts({
@@ -878,6 +895,7 @@ export function EventPlanner({
                           {item.catalogUpdateAvailable ? (
                             <span role="status"> · {t("planner.catalogUpdateAvailable")}</span>
                           ) : null}
+                          <CatalogUpdateChoice item={item} planner={planner} eventId={eventId} organizationId={organizationId} userId={userId} />
                           {planner.lifecycle === "active" ? <button onClick={() => void queueScheduledRecipeLifecycle(userId, organizationId, { scheduledRecipeId: item.id, eventId, operation: item.retired ? "restore" : "retire" })} type="button">{t(item.retired ? "planner.restoreRecipe" : "planner.retireRecipe")}</button> : null}
                           {!item.retired && <>
                           <MoveRecipe

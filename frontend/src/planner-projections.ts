@@ -1,12 +1,15 @@
 import type { CanonicalRecord } from "./local-db";
 import { readVisibleRecords } from "./visible-records";
+import { decimal as parseDecimal } from "./shopping-projections";
 
-export type PlannerRecipe = { id: string; versionId: string; name: string };
+export type PlannerRecipe = { id: string; versionId: string; name: string; scalingUnitId: string; scalingUnitName: string; baseScalingAmount: string; roundSuggestionsUp: boolean };
 export type PlannerIngredient = { id: string; versionId: string; name: string };
 export type PlannerDay = { id: string; date: string; note: string | null; visible: boolean; retired: boolean };
 export type PlannerRole = { id: string; name: string; position: string; retired: boolean; custom: boolean };
 export type PlannedRecipe = {
   id: string;
+  recipeId: string;
+  recipeVersionId: string;
   dayId: string;
   roleId: string;
   name: string;
@@ -16,6 +19,8 @@ export type PlannedRecipe = {
   position: string;
   retired: boolean;
   catalogUpdateAvailable: boolean;
+  catalogUpdateChanges: { added: number; removed: number; changed: number };
+  catalogScaleImpact: { currentUnitId: string | undefined; targetUnitId: string | undefined; currentUnitName: string | undefined; targetUnitName: string | undefined; reset: boolean; targetBase: string | undefined; suggestedAmount: string | undefined };
   lines: { id: string; quantity: string; ingredientId?: string }[];
   localAddedIngredients: { id: string; name: string; quantity: string }[];
 };
@@ -36,6 +41,38 @@ export type EventPlannerProjection = {
 };
 
 const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+export function suggestedScale(attendance: number, consumption: string, code: string | undefined, estimated: string | undefined, base: string | undefined, round: boolean): string | undefined {
+  const percentage = parseDecimal(consumption);
+  const capacity = code === "person" ? { value: 1n, scale: 0 } : estimated ? parseDecimal(estimated) : undefined;
+  if (!percentage || !capacity || capacity.value <= 0n) return base;
+  const numerator = BigInt(attendance) * percentage.value * 10n ** BigInt(capacity.scale);
+  const denominator = 100n * 10n ** BigInt(percentage.scale) * capacity.value;
+  if (numerator === 0n) return "0";
+  const whole = numerator / denominator;
+  if (round) return String(numerator % denominator === 0n ? whole : whole + 1n);
+  let reduced = denominator;
+  let common = numerator;
+  while (common !== 0n) {
+    const remainder = reduced % common;
+    reduced = common;
+    common = remainder;
+  }
+  reduced = denominator / reduced;
+  for (const factor of [2n, 5n]) {
+    while (reduced % factor === 0n) reduced /= factor;
+  }
+  if (reduced !== 1n) return undefined;
+  let remainder = numerator % denominator;
+  if (remainder === 0n) return String(whole);
+  let fraction = "";
+  while (remainder) {
+    remainder *= 10n;
+    fraction += (remainder / denominator).toString();
+    remainder %= denominator;
+  }
+  return `${whole}.${fraction.replace(/0+$/, "")}`;
+}
 
 function value(record: CanonicalRecord, key: string): string | undefined {
   const item = record.fields[key];
@@ -102,6 +139,7 @@ export async function readEventPlanner(
     ingredientRecords,
     ingredientVersionRecords,
     overrideRecords,
+    unitRecords,
   ] = await Promise.all([
     readVisibleRecords(userId, organizationId, "event", true),
     readVisibleRecords(userId, organizationId, "event_day", true),
@@ -113,6 +151,7 @@ export async function readEventPlanner(
     readVisibleRecords(userId, organizationId, "ingredient", true),
     readVisibleRecords(userId, organizationId, "ingredient_version"),
     readVisibleRecords(userId, organizationId, "scheduled_ingredient_override"),
+    readVisibleRecords(userId, organizationId, "unit_definition"),
   ]);
   const event = eventRecords.find(
     (record) =>
@@ -201,6 +240,14 @@ export async function readEventPlanner(
         id: record.entityId,
         versionId,
         name: versions.get(versionId ?? "") ?? value(record, "name"),
+        scalingUnitId: (versionRecords.find((version) => version.entityId === versionId)?.fields.scaling_unit_id as string | undefined) ?? "",
+        scalingUnitName: (() => {
+          const unitId = versionRecords.find((version) => version.entityId === versionId)?.fields.scaling_unit_id;
+          const unit = unitRecords.find((candidate) => candidate.entityId === unitId);
+          return value(unit ?? ({ fields: {} } as CanonicalRecord), "custom_name") ?? value(unit ?? ({ fields: {} } as CanonicalRecord), "code") ?? "";
+        })(),
+        baseScalingAmount: (versionRecords.find((version) => version.entityId === versionId)?.fields.base_scaling_amount as string | undefined) ?? "",
+        roundSuggestionsUp: versionRecords.find((version) => version.entityId === versionId)?.fields.round_suggestions_up === true,
       };
     })
     .filter((recipe): recipe is PlannerRecipe =>
@@ -295,6 +342,11 @@ export async function readEventPlanner(
       .map((line) => value(line, "recipe_version_id"))
       .filter((id): id is string => Boolean(id)),
   );
+  const currentVersionByRecipe = new Map(
+    recipeRecords
+      .filter((record) => belongsToOrganization(record, organizationId) && hasId(record))
+      .map((record) => [record.entityId, value(record, "current_version_id")]),
+  );
   const lines = new Map<
     string,
     { id: string; quantity: string; ingredientId?: string }[]
@@ -346,12 +398,44 @@ export async function readEventPlanner(
     )
     .map((record) => ({
       id: record.entityId,
+      recipeId: value(record, "recipe_id") ?? "",
+      recipeVersionId: value(record, "recipe_version_id") ?? "",
       dayId: value(record, "event_day_id"),
       roleId: value(record, "event_meal_role_id"),
       name: names.get(value(record, "recipe_id") ?? ""),
-      catalogUpdateAvailable: catalogUpdateRecipeVersionIds.has(
-        value(record, "recipe_version_id") ?? "",
-      ),
+      catalogUpdateAvailable:
+        catalogUpdateRecipeVersionIds.has(value(record, "recipe_version_id") ?? "") ||
+        currentVersionByRecipe.get(value(record, "recipe_id") ?? "") !==
+          value(record, "recipe_version_id"),
+      catalogUpdateChanges: (() => {
+        const current = lines.get(value(record, "recipe_version_id") ?? "") ?? [];
+        const targetVersion = recipes.find((recipe) => recipe.id === value(record, "recipe_id"))?.versionId ?? "";
+        const target = lines.get(targetVersion) ?? [];
+        const currentById = new Map(current.map((line) => [line.id, line.quantity]));
+        const targetById = new Map(target.map((line) => [line.id, line.quantity]));
+        return {
+          added: target.filter((line) => !currentById.has(line.id)).length,
+          removed: current.filter((line) => !targetById.has(line.id)).length,
+          changed: target.filter((line) => currentById.get(line.id) !== undefined && currentById.get(line.id) !== line.quantity).length,
+        };
+      })(),
+      catalogScaleImpact: (() => {
+        const current = versionRecords.find((version) => version.entityId === value(record, "recipe_version_id"));
+        const target = recipes.find((recipe) => recipe.id === value(record, "recipe_id"));
+        const currentUnitId = current?.fields.scaling_unit_id as string | undefined;
+        const targetUnitId = target?.scalingUnitId;
+        const reset = Boolean(currentUnitId && targetUnitId && currentUnitId !== targetUnitId);
+        const currentUnit = unitRecords.find((unit) => unit.entityId === currentUnitId);
+        const targetUnit = unitRecords.find((unit) => unit.entityId === targetUnitId);
+        const currentUnitName = currentUnit
+          ? value(currentUnit, "custom_name") ?? value(currentUnit, "code")
+          : undefined;
+        const code = value(targetUnit ?? ({ fields: {} } as CanonicalRecord), "code");
+        const round = target?.versionId ? versionRecords.find((version) => version.entityId === target.versionId)?.fields.round_suggestions_up === true : false;
+        const dinerCount = typeof record.fields.diner_count === "number" ? record.fields.diner_count : attendance;
+        const suggestedAmount = suggestedScale(dinerCount, value(record, "consumption_percentage") ?? "", code, target?.versionId ? String(versionRecords.find((version) => version.entityId === target.versionId)?.fields.estimated_diners_per_scaling_unit ?? "") : undefined, target?.baseScalingAmount, round);
+        return { currentUnitId, targetUnitId, currentUnitName, targetUnitName: target?.scalingUnitName, reset, targetBase: target?.baseScalingAmount, suggestedAmount: reset ? suggestedAmount : undefined };
+      })(),
       lines: lines.get(value(record, "recipe_version_id") ?? "") ?? [],
       localAddedIngredients: localAddedIngredients.get(record.entityId) ?? [],
       dinerCount: record.fields.diner_count,
@@ -368,6 +452,8 @@ export async function readEventPlanner(
           item.position &&
           uuid.test(item.dayId) &&
           uuid.test(item.roleId) &&
+          uuid.test(item.recipeId) &&
+          uuid.test(item.recipeVersionId) &&
           Number.isSafeInteger(item.dinerCount) &&
           item.consumptionPercentage !== undefined &&
           item.selectedScaleAmount !== undefined,

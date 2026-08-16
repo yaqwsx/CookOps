@@ -19,6 +19,40 @@ export type MoveScheduledRecipeInput = {
   positionKey: string;
 };
 
+export type ScheduledRecipeCatalogUpdateInput = {
+  scheduledRecipeId: string;
+  eventId: string;
+  expectedRecipeVersionId: string;
+  targetRecipeVersionId: string;
+  preserveOverrides: boolean;
+};
+
+export async function queueScheduledRecipeCatalogUpdate(
+  userId: string,
+  organizationId: string,
+  input: ScheduledRecipeCatalogUpdateInput,
+): Promise<void> {
+  if (![input.scheduledRecipeId, input.eventId, input.expectedRecipeVersionId, input.targetRecipeVersionId].every((id) => uuid.test(id)) || typeof input.preserveOverrides !== "boolean") throw new Error("selection");
+  const event = await localDb.canonicalRecords.get([userId, organizationId, "event", input.eventId]);
+  const scheduled = await localDb.canonicalRecords.get([userId, organizationId, "scheduled_recipe", input.scheduledRecipeId]);
+  if (event?.lifecycle !== "active" || event.fields.lifecycle !== "active" || !scheduled || scheduled.lifecycle !== "active" || scheduled.fields.event_id !== input.eventId || scheduled.fields.recipe_version_id !== input.expectedRecipeVersionId) throw new Error("stale");
+  const actionAt = new Date().toISOString();
+  await appendOutboxCommand({ id: crypto.randomUUID(), userId, organizationId, commandType: "scheduled_recipe.catalog_update", payload: { scheduled_recipe_id: input.scheduledRecipeId, event_id: input.eventId, expected_recipe_version_id: input.expectedRecipeVersionId, target_recipe_version_id: input.targetRecipeVersionId, preserve_overrides: input.preserveOverrides }, actionAt, createdAt: actionAt, state: "pending" });
+}
+
+export async function replayScheduledRecipeCatalogUpdate(userId: string, organizationId: string, command: { id: string; actionAt: string; payload: Record<string, unknown> }): Promise<void> {
+  const fail = async (reason: string) => { await localDb.outbox.update(command.id, { state: "failed", failureReason: reason }); };
+  const p = command.payload;
+  if (Object.keys(p).length !== 5 || typeof p.scheduled_recipe_id !== "string" || typeof p.event_id !== "string" || typeof p.expected_recipe_version_id !== "string" || typeof p.target_recipe_version_id !== "string" || typeof p.preserve_overrides !== "boolean" || ![p.scheduled_recipe_id, p.event_id, p.expected_recipe_version_id, p.target_recipe_version_id].every((id) => uuid.test(id)) || !uuid.test(command.id) || !Number.isFinite(Date.parse(command.actionAt))) return fail("invalid_catalog_update_payload");
+  const [event, scheduled, target] = await Promise.all([
+    localDb.canonicalRecords.get([userId, organizationId, "event", p.event_id]),
+    localDb.canonicalRecords.get([userId, organizationId, "scheduled_recipe", p.scheduled_recipe_id]),
+    localDb.canonicalRecords.get([userId, organizationId, "recipe_version", p.target_recipe_version_id]),
+  ]);
+  if (event?.lifecycle !== "active" || event.fields.lifecycle !== "active" || scheduled?.lifecycle !== "active" || scheduled.fields.event_id !== p.event_id || scheduled.fields.recipe_version_id !== p.expected_recipe_version_id || target?.immutable !== true || target.fields.organization_id !== organizationId || target.fields.recipe_id !== scheduled.fields.recipe_id) return fail("stale_catalog_update_precondition");
+  // Catalog updates never mutate the local canonical pointer before server acceptance.
+}
+
 export async function queueScheduledRecipeLifecycle(userId: string, organizationId: string, input: { scheduledRecipeId: string; eventId: string; operation: "retire" | "restore" }) {
   if (![input.scheduledRecipeId, input.eventId].every((id) => uuid.test(id))) throw new Error("selection");
   const id = crypto.randomUUID();

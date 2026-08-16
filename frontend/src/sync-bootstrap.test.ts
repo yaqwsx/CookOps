@@ -1137,4 +1137,77 @@ describe("bootstrapOrganization", () => {
       fields: { lifecycle: "archived" },
     });
   });
+
+  it("retains override clocks when bootstrapping a catalog-update feed record", async () => {
+    const overrideId = "44444444-4444-4444-8444-444444444444";
+    await bootstrapOrganization(userId, organizationId, {
+      fetch: vi.fn<typeof fetch>(async () => response([
+        organizationRecord(),
+        {
+          organization_id: organizationId,
+          entity_id: "11111111-1111-4111-8111-111111111111",
+          entity_kind: "scheduled_recipe",
+          operation: "upsert",
+          payload: {
+            record_schema_version: 1,
+            record: {
+              id: "11111111-1111-4111-8111-111111111111",
+              event_id: "22222222-2222-4222-8222-222222222222",
+              recipe_version_id: "33333333-3333-4333-8333-333333333333",
+              selected_scale_amount: "34",
+              scale_mode: "suggested",
+              field_clocks: {
+                placement: { winning_mutation_id: "placement" },
+                recipe_version_id: { winning_mutation_id: "catalog" },
+                selected_scale_amount: { winning_mutation_id: "catalog" },
+                scale_mode: { winning_mutation_id: "catalog" },
+              },
+            },
+          },
+        },
+        {
+          organization_id: organizationId,
+          entity_id: overrideId,
+          entity_kind: "scheduled_ingredient_override",
+          operation: "upsert",
+          payload: {
+            record_schema_version: 1,
+            record: {
+              id: overrideId,
+              organization_id: organizationId,
+              event_id: "22222222-2222-4222-8222-222222222222",
+              scheduled_recipe_id: "11111111-1111-4111-8111-111111111111",
+              override_kind: "add",
+              ingredient_id: "55555555-5555-4555-8555-555555555555",
+              ingredient_version_id: "66666666-6666-4666-8666-666666666666",
+              quantity: "2",
+              include_in_portion_weight: true,
+              note: "local",
+              position_key: "q",
+              field_clocks: {
+                "replace.line-catalog": { winning_mutation_id: "old" },
+                catalog_update: { winning_mutation_id: "catalog" },
+              },
+            },
+          },
+        },
+      ])),
+    });
+    await expect(readVisibleCanonicalRecord(userId, organizationId, "scheduled_ingredient_override", overrideId)).resolves.toMatchObject({
+      fields: { override_kind: "add", quantity: "2" },
+      fieldClocks: {
+        "replace.line-catalog": { winning_mutation_id: "old" },
+        catalog_update: { winning_mutation_id: "catalog" },
+      },
+    });
+    await expect(readVisibleCanonicalRecord(userId, organizationId, "scheduled_recipe", "11111111-1111-4111-8111-111111111111")).resolves.toMatchObject({
+      fields: { selected_scale_amount: "34", scale_mode: "suggested" },
+      fieldClocks: {
+        placement: { winning_mutation_id: "placement" },
+        recipe_version_id: { winning_mutation_id: "catalog" },
+        selected_scale_amount: { winning_mutation_id: "catalog" },
+        scale_mode: { winning_mutation_id: "catalog" },
+      },
+    });
+  });
 });

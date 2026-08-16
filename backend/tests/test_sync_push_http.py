@@ -2642,3 +2642,28 @@ def test_push_clock_and_timestamp_boundaries_are_safe(
     assert response.status_code == status_code
     if status_code == 200:
         assert (response.json()["clock_skew_warning"] is not None) is has_warning
+
+
+def test_catalog_update_payload_is_strict() -> None:
+    base = {
+        "mutation_id": str(uuid4()),
+        "command_kind": "scheduled_recipe.catalog_update",
+        "command_schema_version": 1,
+        "client_wall_time": "2026-08-10T12:00:00Z",
+        "payload": {
+            "scheduled_recipe_id": str(uuid4()),
+            "event_id": str(uuid4()),
+            "expected_recipe_version_id": str(uuid4()),
+            "target_recipe_version_id": str(uuid4()),
+            "preserve_overrides": True,
+        },
+    }
+    parsed = _push_command(PushCommandRequest.model_validate(base), uuid4())
+    assert parsed.preserve_overrides is True
+    for key, value in (("preserve_overrides", 1), ("extra", True)):
+        payload = dict(base["payload"])
+        payload[key] = value
+        rejected = _push_command(
+            PushCommandRequest.model_validate({**base, "payload": payload}), uuid4()
+        )
+        assert type(rejected).__name__ == "UnsupportedSyncCommand"
