@@ -1,5 +1,5 @@
 import { liveQuery } from "dexie";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 
 import {
@@ -29,6 +29,7 @@ const blank: ReceiptInput = {
   receiptDate: "",
   note: "",
 };
+const emptyUploads: PendingUpload[] = [];
 
 function ReceiptForm({
   eventId,
@@ -148,8 +149,52 @@ function ReceiptItem({
   const [editing, setEditing] = useState(false);
   const [error, setError] = useState(false);
   const [attaching, setAttaching] = useState(false);
+  const [previewUrls, setPreviewUrls] = useState<Record<string, string>>({});
+  const previewUrlEntries = useRef(
+    new Map<string, { signature: string; url: string }>(),
+  );
   const attachingRef = useRef(false);
   const busy = useRef(false);
+  useEffect(() => {
+    const currentIds = new Set<string>();
+    for (const upload of uploads) {
+      currentIds.add(upload.id);
+      const signature = `${upload.id}:${upload.createdAt}:${upload.blob.size}:${upload.blob.type}:${upload.state === "synchronized"}`;
+      const existing = previewUrlEntries.current.get(upload.id);
+      if (upload.state === "synchronized") {
+        if (existing) {
+          URL.revokeObjectURL(existing.url);
+          previewUrlEntries.current.delete(upload.id);
+        }
+      } else if (existing?.signature !== signature) {
+        if (existing) URL.revokeObjectURL(existing.url);
+        if (typeof URL.createObjectURL === "function")
+          previewUrlEntries.current.set(upload.id, {
+            signature,
+            url: URL.createObjectURL(upload.blob),
+          });
+      }
+    }
+    for (const [id, entry] of previewUrlEntries.current) {
+      if (!currentIds.has(id)) {
+        URL.revokeObjectURL(entry.url);
+        previewUrlEntries.current.delete(id);
+      }
+    }
+    setPreviewUrls(
+      Object.fromEntries(
+        [...previewUrlEntries.current].map(([id, entry]) => [id, entry.url]),
+      ),
+    );
+  }, [uploads]);
+  useEffect(
+    () => () => {
+      for (const entry of previewUrlEntries.current.values())
+        URL.revokeObjectURL(entry.url);
+      previewUrlEntries.current.clear();
+    },
+    [],
+  );
   async function lifecycle() {
     if (busy.current) return;
     busy.current = true;
@@ -264,27 +309,36 @@ function ReceiptItem({
           </label>
         ) : null}
         {uploads.map((upload) => (
-          <p key={upload.id} role="status">
-            {t(
-              `receipts.photo${upload.state[0].toUpperCase()}${upload.state.slice(1)}`,
-            )}
-            {!readOnly && upload.state === "failed" ? (
-              <button
-                onClick={() => void retryReceiptUpload(upload.id)}
-                type="button"
-              >
-                {t("receipts.retryPhoto")}
-              </button>
+          <div key={upload.id}>
+            {previewUrls[upload.id] ? (
+              <img
+                alt={t("receipts.photo")}
+                loading="lazy"
+                src={previewUrls[upload.id]}
+              />
             ) : null}
-            {!readOnly ? (
-              <button
-                onClick={() => void removeReceiptUpload(userId, upload.id)}
-                type="button"
-              >
-                {t("receipts.removePhoto")}
-              </button>
-            ) : null}
-          </p>
+            <p role="status">
+              {t(
+                `receipts.photo${upload.state[0].toUpperCase()}${upload.state.slice(1)}`,
+              )}
+              {!readOnly && upload.state === "failed" ? (
+                <button
+                  onClick={() => void retryReceiptUpload(upload.id)}
+                  type="button"
+                >
+                  {t("receipts.retryPhoto")}
+                </button>
+              ) : null}
+              {!readOnly ? (
+                <button
+                  onClick={() => void removeReceiptUpload(userId, upload.id)}
+                  type="button"
+                >
+                  {t("receipts.removePhoto")}
+                </button>
+              ) : null}
+            </p>
+          </div>
         ))}
       </div>
       <div className="receipt-item__actions">
@@ -333,6 +387,16 @@ export function EventReceipts({
   const [offline, setOffline] = useState(false);
   const [error, setError] = useState(false);
   const [readOnly, setReadOnly] = useState(false);
+  const uploadsByReceipt = useMemo(() => {
+    const byReceipt = new Map<string, PendingUpload[]>();
+    for (const upload of uploads) {
+      if (!upload.receiptId) continue;
+      const receiptUploads = byReceipt.get(upload.receiptId) ?? [];
+      receiptUploads.push(upload);
+      byReceipt.set(upload.receiptId, receiptUploads);
+    }
+    return byReceipt;
+  }, [uploads]);
   const refresh = useCallback(async () => {
     try {
       const readOnly = async () => {
@@ -441,9 +505,7 @@ export function EventReceipts({
               receipt={receipt}
               userId={userId}
               readOnly={readOnly}
-              uploads={uploads.filter(
-                (upload) => upload.receiptId === receipt.id,
-              )}
+              uploads={uploadsByReceipt.get(receipt.id) ?? emptyUploads}
             />
           ))}
         </ul>

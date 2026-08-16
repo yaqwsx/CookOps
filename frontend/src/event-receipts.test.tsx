@@ -1,4 +1,4 @@
-import { fireEvent, render, screen } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -34,6 +34,7 @@ async function clearDatabase() {
     localDb.canonicalRecords.clear(),
     localDb.archiveRecords.clear(),
     localDb.optimisticOverlays.clear(),
+    localDb.pendingUploads.clear(),
   ]);
 }
 
@@ -85,6 +86,133 @@ describe("event receipt metadata screen", () => {
     await screen.findByText("Bakery");
     expect(screen.queryByRole("button", { name: "Uložit účtenku" })).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Upravit" })).not.toBeInTheDocument();
+  });
+
+  it("previews persisted pending photos across remounts without marking them synchronized", async () => {
+    const receiptId = crypto.randomUUID();
+    await localDb.canonicalRecords.put({
+      userId,
+      organizationId,
+      entityType: "receipt",
+      entityId: receiptId,
+      recordSchemaVersion: 1,
+      lifecycle: "active",
+      fields: {
+        id: receiptId,
+        organization_id: organizationId,
+        event_id: eventId,
+        title: "Bakery",
+        total_amount: "12.50",
+        currency: "CZK",
+        receipt_date: null,
+        note: null,
+      },
+      fieldClocks: {},
+      immutable: false,
+      updatedAt: new Date().toISOString(),
+    });
+    const otherReceiptId = crypto.randomUUID();
+    await localDb.canonicalRecords.put({
+      userId,
+      organizationId,
+      entityType: "receipt",
+      entityId: otherReceiptId,
+      recordSchemaVersion: 1,
+      lifecycle: "active",
+      fields: {
+        id: otherReceiptId,
+        organization_id: organizationId,
+        event_id: eventId,
+        title: "Cafe",
+        total_amount: "3.50",
+        currency: "CZK",
+        receipt_date: null,
+        note: null,
+      },
+      fieldClocks: {},
+      immutable: false,
+      updatedAt: new Date().toISOString(),
+    });
+    const objectUrls = vi.fn((blob: Blob) => `blob:${blob.size}`);
+    const revokeObjectUrl = vi.fn();
+    vi.stubGlobal("URL", {
+      createObjectURL: objectUrls,
+      revokeObjectURL: revokeObjectUrl,
+    });
+    for (const state of ["pending", "uploading", "failed"] as const)
+      await localDb.pendingUploads.put({
+        id: `upload-${state}`,
+        userId,
+        organizationId,
+        receiptId,
+        attachmentId: crypto.randomUUID(),
+        blob: new Blob([state], { type: "image/jpeg" }),
+        createdAt: new Date().toISOString(),
+        state,
+      });
+    try {
+      const first = render(
+        <EventReceipts
+          eventId={eventId}
+          onBack={vi.fn()}
+          onUnauthenticated={vi.fn()}
+          organizationId={organizationId}
+          userId={userId}
+        />,
+      );
+      expect(
+        await screen.findAllByRole("img", { name: "Fotografie účtenky" }),
+      ).toHaveLength(3);
+      expect(screen.queryByText("Fotografie nahrána")).not.toBeInTheDocument();
+      await localDb.pendingUploads.put({
+        id: "upload-other",
+        userId,
+        organizationId,
+        receiptId: otherReceiptId,
+        attachmentId: crypto.randomUUID(),
+        blob: new Blob(["other"], { type: "image/jpeg" }),
+        createdAt: new Date().toISOString(),
+        state: "pending",
+      });
+      await waitFor(() =>
+        expect(
+          screen.getAllByRole("img", { name: "Fotografie účtenky" }),
+        ).toHaveLength(4),
+      );
+      expect(objectUrls).toHaveBeenCalledTimes(4);
+      expect(revokeObjectUrl).not.toHaveBeenCalled();
+      await localDb.pendingUploads.update("upload-pending", {
+        state: "uploading",
+      });
+      expect(await screen.findByText("Fotografie se nahrává")).toBeInTheDocument();
+      expect(objectUrls).toHaveBeenCalledTimes(4);
+      expect(revokeObjectUrl).not.toHaveBeenCalled();
+      await localDb.pendingUploads.update("upload-pending", {
+        state: "synchronized",
+      });
+      await waitFor(() =>
+        expect(
+          screen.getAllByRole("img", { name: "Fotografie účtenky" }),
+        ).toHaveLength(3),
+      );
+      expect(revokeObjectUrl).toHaveBeenCalledWith("blob:7");
+      first.unmount();
+      expect(revokeObjectUrl.mock.calls.length).toBeGreaterThanOrEqual(3);
+      render(
+        <EventReceipts
+          eventId={eventId}
+          onBack={vi.fn()}
+          onUnauthenticated={vi.fn()}
+          organizationId={organizationId}
+          userId={userId}
+        />,
+      );
+      expect(
+        await screen.findAllByRole("img", { name: "Fotografie účtenky" }),
+      ).toHaveLength(3);
+    } finally {
+      vi.unstubAllGlobals();
+    }
   });
 
   it("queues selected receipt photos in picker order and keeps earlier photos after a later failure", async () => {
