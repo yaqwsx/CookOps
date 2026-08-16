@@ -64,6 +64,9 @@ describe("cached event cost projection", () => {
       dimension: "mass",
       base_unit_factor: "1000",
     });
+    await record("ingredient", ids.ingredient, {
+      current_version_id: ids.ingredientVersion,
+    });
     await record("ingredient_version", ids.ingredientVersion, {
       ingredient_id: ids.ingredient,
       canonical_unit_id: ids.unit,
@@ -89,6 +92,7 @@ describe("cached event cost projection", () => {
     await record("event_ingredient_price_snapshot", ids.snapshot, {
       event_id: ids.event,
       ingredient_id: ids.ingredient,
+      event_ingredient_price_id: ids.price,
       state: "available",
       price_amount: "2500",
       priced_quantity: "1",
@@ -147,6 +151,254 @@ describe("cached event cost projection", () => {
         [ids.scheduled, { total: "15.00", perDiner: "5.00", missing: false }],
       ]),
     });
+    await localDb.canonicalRecords.update(
+      [userId, organizationId, "event", ids.event],
+      {
+        fields: {
+          id: "4ce17d2f-8365-4b1f-a80b-34d10425d51c",
+          organization_id: organizationId,
+          currency: "CZK",
+          budget_amount: "20",
+        },
+      },
+    );
+    await expect(
+      readEventCosts(userId, organizationId, ids.event),
+    ).resolves.toBeUndefined();
+    await localDb.canonicalRecords.update(
+      [userId, organizationId, "event", ids.event],
+      {
+        fields: {
+          id: ids.event,
+          organization_id: organizationId,
+          currency: "CZK",
+          budget_amount: "20",
+        },
+      },
+    );
+    await localDb.canonicalRecords.update(
+      [userId, organizationId, "unit_definition", ids.unit],
+      {
+        fields: {
+          id: ids.unit,
+          organization_id: organizationId,
+          dimension: "evil",
+          base_unit_factor: "1",
+        },
+      },
+    );
+    await expect(
+      readEventCosts(userId, organizationId, ids.event),
+    ).resolves.toMatchObject({ total: "0.00", missingIngredients: ["Beans"] });
+    await localDb.canonicalRecords.update(
+      [userId, organizationId, "unit_definition", ids.unit],
+      {
+        fields: {
+          id: ids.unit,
+          organization_id: organizationId,
+          dimension: "mass",
+          base_unit_factor: "1",
+        },
+      },
+    );
+    await localDb.canonicalRecords.update(
+      [userId, organizationId, "ingredient", ids.ingredient],
+      {
+        fields: {
+          id: ids.ingredient,
+          organization_id: "4ce17d2f-8365-4b1f-a80b-34d10425d51c",
+          current_version_id: ids.ingredientVersion,
+        },
+      },
+    );
+    await expect(
+      readEventCosts(userId, organizationId, ids.event),
+    ).resolves.toMatchObject({
+      total: "0.00",
+      missingIngredients: [ids.ingredientVersion, "Beans"],
+    });
+    await localDb.canonicalRecords.update(
+      [userId, organizationId, "ingredient", ids.ingredient],
+      {
+        fields: {
+          id: ids.ingredient,
+          organization_id: organizationId,
+          current_version_id: ids.ingredientVersion,
+        },
+      },
+    );
+    await localDb.canonicalRecords.update(
+      [userId, organizationId, "unit_definition", ids.unit],
+      {
+        fields: {
+          id: ids.unit,
+          organization_id: "4ce17d2f-8365-4b1f-a80b-34d10425d51c",
+          dimension: "mass",
+          base_unit_factor: "1",
+        },
+      },
+    );
+    await expect(
+      readEventCosts(userId, organizationId, ids.event),
+    ).resolves.toMatchObject({ total: "0.00", missingIngredients: ["Beans"] });
+    await localDb.canonicalRecords.update(
+      [userId, organizationId, "unit_definition", ids.unit],
+      {
+        fields: {
+          id: ids.unit,
+          organization_id: organizationId,
+          dimension: "mass",
+          base_unit_factor: "1",
+        },
+      },
+    );
+    await localDb.canonicalRecords.update(
+      [userId, organizationId, "ingredient_version", ids.ingredientVersion],
+      {
+        fields: {
+          id: ids.ingredientVersion,
+          organization_id: organizationId,
+          ingredient_id: "4ce17d2f-8365-4b1f-a80b-34d10425d51c",
+          canonical_unit_id: ids.unit,
+          name: "Beans",
+        },
+      },
+    );
+    await expect(
+      readEventCosts(userId, organizationId, ids.event),
+    ).resolves.toMatchObject({
+      total: "0.00",
+      missingIngredients: [ids.ingredientVersion, "Beans"],
+    });
+    await localDb.canonicalRecords.update(
+      [userId, organizationId, "ingredient_version", ids.ingredientVersion],
+      {
+        fields: {
+          id: ids.ingredientVersion,
+          organization_id: organizationId,
+          ingredient_id: ids.ingredient,
+          canonical_unit_id: ids.unit,
+          name: "Beans",
+        },
+      },
+    );
+    await localDb.canonicalRecords.update(
+      [userId, organizationId, "event_ingredient_price_snapshot", ids.snapshot],
+      {
+        fields: {
+          id: ids.snapshot,
+          organization_id: organizationId,
+          event_id: "4ce17d2f-8365-4b1f-a80b-34d10425d51c",
+          ingredient_id: ids.ingredient,
+          event_ingredient_price_id: ids.price,
+          state: "available",
+          price_amount: "2500",
+          priced_quantity: "1",
+          priced_unit_id: ids.kilogram,
+          currency: "CZK",
+        },
+      },
+    );
+    await expect(
+      readEventCosts(userId, organizationId, ids.event),
+    ).resolves.toMatchObject({ total: "0.00", missingIngredients: ["Beans"] });
+    await localDb.canonicalRecords.update(
+      [userId, organizationId, "event_ingredient_price_snapshot", ids.snapshot],
+      {
+        fields: {
+          id: ids.snapshot,
+          organization_id: organizationId,
+          event_id: ids.event,
+          ingredient_id: ids.ingredient,
+          event_ingredient_price_id: ids.price,
+          state: "available",
+          price_amount: "not-a-decimal",
+          priced_quantity: "0",
+          priced_unit_id: ids.kilogram,
+          currency: "CZK",
+        },
+      },
+    );
+    await expect(
+      readEventCosts(userId, organizationId, ids.event),
+    ).resolves.toMatchObject({ total: "0.00", missingIngredients: ["Beans"] });
+    await localDb.canonicalRecords.update(
+      [userId, organizationId, "event_ingredient_price_snapshot", ids.snapshot],
+      {
+        fields: {
+          id: ids.snapshot,
+          organization_id: "4ce17d2f-8365-4b1f-a80b-34d10425d51c",
+          event_id: ids.event,
+          ingredient_id: ids.ingredient,
+          event_ingredient_price_id: ids.price,
+          state: "available",
+          price_amount: "2500",
+          priced_quantity: "1",
+          priced_unit_id: ids.kilogram,
+          currency: "CZK",
+        },
+      },
+    );
+    await expect(
+      readEventCosts(userId, organizationId, ids.event),
+    ).resolves.toMatchObject({ total: "0.00", missingIngredients: ["Beans"] });
+    await localDb.canonicalRecords.update(
+      [userId, organizationId, "event_ingredient_price_snapshot", ids.snapshot],
+      {
+        fields: {
+          id: ids.snapshot,
+          organization_id: organizationId,
+          event_id: ids.event,
+          ingredient_id: ids.ingredient,
+          event_ingredient_price_id: ids.price,
+          state: "available",
+          price_amount: "2500",
+          priced_quantity: "1",
+          priced_unit_id: ids.kilogram,
+          currency: "CZK",
+        },
+      },
+    );
+    await expect(
+      readEventCosts(userId, organizationId, ids.event),
+    ).resolves.toMatchObject({ total: "15.00", missingIngredients: [] });
+    await localDb.canonicalRecords.update(
+      [userId, organizationId, "event_ingredient_price_snapshot", ids.snapshot],
+      {
+        fields: {
+          id: ids.snapshot,
+          organization_id: organizationId,
+          event_id: ids.event,
+          ingredient_id: "4ce17d2f-8365-4b1f-a80b-34d10425d51c",
+          event_ingredient_price_id: ids.price,
+          state: "available",
+          price_amount: "2500",
+          priced_quantity: "1",
+          priced_unit_id: ids.kilogram,
+          currency: "CZK",
+        },
+      },
+    );
+    await expect(
+      readEventCosts(userId, organizationId, ids.event),
+    ).resolves.toMatchObject({ total: "0.00", missingIngredients: ["Beans"] });
+    await localDb.canonicalRecords.update(
+      [userId, organizationId, "event_ingredient_price_snapshot", ids.snapshot],
+      {
+        fields: {
+          id: ids.snapshot,
+          organization_id: organizationId,
+          event_id: ids.event,
+          ingredient_id: ids.ingredient,
+          event_ingredient_price_id: ids.price,
+          state: "available",
+          price_amount: "2500",
+          priced_quantity: "1",
+          priced_unit_id: ids.kilogram,
+          currency: "CZK",
+        },
+      },
+    );
     await localDb.canonicalRecords.update(
       [userId, organizationId, "shopping_ingredient_row", ids.row],
       {
@@ -322,6 +574,7 @@ describe("cached event cost projection", () => {
           organization_id: organizationId,
           event_id: ids.event,
           ingredient_id: ids.ingredient,
+          event_ingredient_price_id: ids.price,
           state: "available",
           price_amount: "2500",
           priced_quantity: "1",
@@ -341,6 +594,7 @@ describe("cached event cost projection", () => {
           organization_id: organizationId,
           event_id: ids.event,
           ingredient_id: ids.ingredient,
+          event_ingredient_price_id: ids.price,
           state: "unavailable",
           price_amount: null,
           priced_quantity: null,

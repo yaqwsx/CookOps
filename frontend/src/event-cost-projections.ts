@@ -10,11 +10,13 @@ import {
 } from "./exact-decimal";
 
 const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+const unitDimensions = new Set(["mass", "volume", "count", "custom"]);
 
 export { divide, money, multiply } from "./exact-decimal";
 export type { Fraction } from "./exact-decimal";
 export const zeroFraction: Fraction = { numerator: 0n, denominator: 1n };
 type ResolvedLine = { ingredientVersionId: string; quantity: Fraction };
+type UnitInfo = { dimension: string; factor: Fraction };
 
 export type EventCostsProjection = {
   currency: string;
@@ -72,6 +74,85 @@ function fieldId(record: CanonicalRecord, key: string): string | undefined {
   return value && uuid.test(value) ? value : undefined;
 }
 
+function validRecordIdentity(
+  record: CanonicalRecord,
+  organizationId: string,
+): boolean {
+  return (
+    uuid.test(record.entityId) &&
+    text(record, "id") === record.entityId &&
+    text(record, "organization_id") === organizationId
+  );
+}
+
+function validUnit(
+  record: CanonicalRecord,
+  organizationId: string,
+): UnitInfo | undefined {
+  if (
+    !uuid.test(record.entityId) ||
+    text(record, "id") !== record.entityId ||
+    (record.fields.organization_id !== null &&
+      record.fields.organization_id !== organizationId)
+  )
+    return undefined;
+  const dimension = text(record, "dimension")?.trim();
+  const factor = decimal(record.fields.base_unit_factor);
+  return dimension &&
+    unitDimensions.has(dimension) &&
+    factor &&
+    factor.numerator > 0n
+    ? { dimension, factor }
+    : undefined;
+}
+
+function validIngredientRoot(
+  record: CanonicalRecord,
+  organizationId: string,
+): boolean {
+  return record.lifecycle === "active" && validRecordIdentity(record, organizationId);
+}
+
+function validIngredientVersion(
+  record: CanonicalRecord,
+  organizationId: string,
+): { ingredientId: string; unitId: string; name: string } | undefined {
+  const ingredientId = fieldId(record, "ingredient_id");
+  const unitId = fieldId(record, "canonical_unit_id");
+  const name = text(record, "name")?.trim();
+  return validRecordIdentity(record, organizationId) &&
+    ingredientId &&
+    unitId &&
+    name
+    ? { ingredientId, unitId, name }
+    : undefined;
+}
+
+function validPriceSnapshot(
+  record: CanonicalRecord,
+  organizationId: string,
+  eventId: string,
+  priceId: string,
+  ingredientId: string,
+  currency: string,
+): boolean {
+  const amount = decimal(record.fields.price_amount);
+  const pricedQuantity = decimal(record.fields.priced_quantity);
+  return (
+    validRecordIdentity(record, organizationId) &&
+    fieldId(record, "event_id") === eventId &&
+    fieldId(record, "ingredient_id") === ingredientId &&
+    fieldId(record, "event_ingredient_price_id") === priceId &&
+    record.fields.state === "available" &&
+    amount !== undefined &&
+    amount.numerator >= 0n &&
+    pricedQuantity !== undefined &&
+    pricedQuantity.numerator > 0n &&
+    fieldId(record, "priced_unit_id") !== undefined &&
+    record.fields.currency === currency
+  );
+}
+
 /** Derive advisory costs exclusively from cached immutable event price snapshots. */
 export async function readEventCosts(
   userId: string,
@@ -86,6 +167,7 @@ export async function readEventCosts(
     "scheduled_ingredient_override",
     "recipe_version",
     "recipe_ingredient_line",
+    "ingredient",
     "ingredient_version",
     "unit_definition",
     "event_ingredient_price",
@@ -111,45 +193,72 @@ export async function readEventCosts(
     ?.find(
       (record) =>
         record.entityId === eventId &&
-        text(record, "organization_id") === organizationId,
+        validRecordIdentity(record, organizationId),
     );
   const currency = event && text(event, "currency");
   const budget = event && decimal(event.fields.budget_amount);
   if (!event || !currency || !budget || !/^[A-Z]{3}$/.test(currency))
     return undefined;
+  const ingredients = new Set(
+    values("ingredient")
+      .filter((record) => validIngredientRoot(record, organizationId))
+      .map((record) => record.entityId),
+  );
   const ingredientVersions = new Map(
     values("ingredient_version")
-      .filter((record) => text(record, "organization_id") === organizationId)
-      .map((record) => [
-        record.entityId,
-        {
-          ingredientId: fieldId(record, "ingredient_id"),
-          unitId: fieldId(record, "canonical_unit_id"),
-          name: text(record, "name"),
-        },
-      ]),
+      .map((record) => [record.entityId, validIngredientVersion(record, organizationId)] as const)
+      .filter(
+        (entry): entry is [string, NonNullable<(typeof entry)[1]>] =>
+          entry[1] !== undefined && ingredients.has(entry[1].ingredientId),
+      ),
   );
   const units = new Map(
-    values("unit_definition").map((record) => [
-      record.entityId,
-      {
-        dimension: text(record, "dimension"),
-        factor: decimal(record.fields.base_unit_factor),
-      },
-    ]),
+    values("unit_definition")
+      .map((record) => [record.entityId, validUnit(record, organizationId)] as const)
+      .filter(
+        (entry): entry is [string, NonNullable<(typeof entry)[1]>] =>
+          entry[1] !== undefined,
+      ),
   );
   const snapshots = new Map(
     values("event_ingredient_price_snapshot")
-      .filter((record) => fieldId(record, "event_id") === eventId)
+      .filter(
+        (record) =>
+          validRecordIdentity(record, organizationId) &&
+          fieldId(record, "event_id") === eventId,
+      )
       .map((record) => [record.entityId, record]),
   );
   const prices = new Map(
     values("event_ingredient_price")
-      .filter((record) => fieldId(record, "event_id") === eventId)
-      .map((record) => [
-        fieldId(record, "ingredient_id"),
-        snapshots.get(fieldId(record, "current_snapshot_id") ?? ""),
-      ]),
+      .map((record) => {
+        const ingredientId = fieldId(record, "ingredient_id");
+        const snapshotId = fieldId(record, "current_snapshot_id");
+        const snapshot =
+          ingredientId && snapshotId ? snapshots.get(snapshotId) : undefined;
+        return [
+          ingredientId,
+          validRecordIdentity(record, organizationId) &&
+          fieldId(record, "event_id") === eventId &&
+          ingredientId &&
+          snapshotId &&
+          snapshot &&
+          validPriceSnapshot(
+            snapshot,
+            organizationId,
+            eventId,
+            record.entityId,
+            ingredientId,
+            currency,
+          )
+            ? snapshot
+            : undefined,
+        ] as const;
+      })
+      .filter(
+        (entry): entry is [string, CanonicalRecord] =>
+          entry[0] !== undefined && entry[1] !== undefined,
+      ),
   );
   const versions = new Map(
     values("recipe_version").map((record) => [record.entityId, record]),
@@ -345,7 +454,6 @@ export async function readEventCosts(
       : undefined;
     const targetUnit = pricedUnit ? units.get(pricedUnit) : undefined;
     if (
-      !quantity ||
       !ingredient ||
       !amount ||
       !pricedQuantity ||
