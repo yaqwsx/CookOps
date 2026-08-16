@@ -117,6 +117,10 @@ from cookops.application.ingredient_lifecycle import (
     SetIngredientLifecycleCommand,
     set_ingredient_lifecycle,
 )
+from cookops.application.ingredient_versions import (
+    PublishIngredientVersionCommand,
+    publish_ingredient_version,
+)
 from cookops.application.ingredients import (
     CreateIngredientCommand,
     CreateIngredientResult,
@@ -386,6 +390,7 @@ SyncCommand = (
     | SetRecipeLifecycleCommand
     | CreateIngredientCommand
     | SetIngredientLifecycleCommand
+    | PublishIngredientVersionCommand
     | ScheduleRecipeCommand
     | MoveScheduledRecipeCommand
     | SetScheduledRecipeAttendanceCommand
@@ -503,6 +508,8 @@ def _command_kind(
         return "ingredient.create"
     if isinstance(command, SetIngredientLifecycleCommand):
         return "ingredient.lifecycle"
+    if isinstance(command, PublishIngredientVersionCommand):
+        return "ingredient.publish_version"
     if isinstance(command, ScheduleRecipeCommand):
         return "scheduled_recipe.schedule"
     if isinstance(command, MoveScheduledRecipeCommand):
@@ -921,6 +928,8 @@ class SynchronizationCommandService:
                 result = await create_ingredient(self._session_factory, context, command)
             elif isinstance(command, SetIngredientLifecycleCommand):
                 result = await set_ingredient_lifecycle(self._session_factory, context, command)
+            elif isinstance(command, PublishIngredientVersionCommand):
+                result = await publish_ingredient_version(self._session_factory, context, command)
             elif isinstance(command, ScheduleRecipeCommand):
                 result = await schedule_recipe(self._session_factory, context, command)
             elif isinstance(command, MoveScheduledRecipeCommand):
@@ -1838,15 +1847,23 @@ async def _bootstrap_records(
                 "retired_at": _time(item.retired_at),
                 "retired_by_user_id": _uuid(item.retired_by_user_id),
                 "lifecycle": "retired" if item.retired_at else "active",
-                "field_clocks": {
-                    "lifecycle": (
+                    "field_clocks": {
+                        "lifecycle": (
                         {
                             "winning_client_wall_time": clock.winning_client_wall_time.isoformat(),
                             "winning_mutation_id": str(clock.winning_mutation_id),
                         }
                         if (clock := ingredient_clocks.get((item.id, "lifecycle")))
                         else None
-                    )
+                    ),
+                    "current_version_id": (
+                        {
+                            "winning_client_wall_time": clock.winning_client_wall_time.isoformat(),
+                            "winning_mutation_id": str(clock.winning_mutation_id),
+                        }
+                        if (clock := ingredient_clocks.get((item.id, "current_version_id")))
+                        else None
+                    ),
                 },
             },
         )

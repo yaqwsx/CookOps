@@ -21,6 +21,10 @@ from cookops.application.ingredient_lifecycle import (
     SetIngredientLifecycleCommand,
     set_ingredient_lifecycle,
 )
+from cookops.application.ingredient_versions import (
+    PublishIngredientVersionCommand,
+    publish_ingredient_version,
+)
 from cookops.application.ingredients import (
     CreateIngredientCommand,
     InitialPrice,
@@ -157,6 +161,23 @@ def database() -> Iterator[Database]:
 
 def context(database: Database) -> ExecutionContext:
     return ExecutionContext(database.actor_id, database.installation_id)
+
+
+def publish_command(database: Database, **changes: object) -> PublishIngredientVersionCommand:
+    values: dict[str, object] = {
+        "mutation_id": uuid4(),
+        "ingredient_id": uuid4(),
+        "based_on_version_id": uuid4(),
+        "ingredient_version_id": uuid4(),
+        "organization_id": database.organization_id,
+        "name": "Tomatoes",
+        "canonical_unit_id": database.gram_id,
+        "mass_per_canonical_quantity": Decimal("1"),
+        "client_wall_time": datetime.now(UTC),
+        "dietary_tag_ids": (),
+    }
+    values.update(changes)
+    return PublishIngredientVersionCommand(**values)  # type: ignore[arg-type]
 
 
 def command(database: Database, **changes: object) -> CreateIngredientCommand:
@@ -512,3 +533,85 @@ def test_concurrent_normalized_name_creates_exactly_one_ingredient(database: Dat
     with database.sync.connect() as connection:
         assert connection.scalar(select(func.count()).select_from(Ingredient)) == 1
         assert connection.scalar(select(func.count()).select_from(Mutation)) == 2
+
+
+def test_publish_ingredient_version_is_atomic_idempotent_and_boundary_safe(
+    database: Database,
+) -> None:
+    initial = command(database, dietary_tag_ids=(database.tag_id,), initial_price=None)
+    created = asyncio.run(create_ingredient(database.sessions, context(database), initial))
+    with database.sync.begin() as connection:
+        connection.execute(
+            update(DietaryTag)
+            .where(DietaryTag.id == database.tag_id)
+            .values(retired_at=datetime.now(UTC), retired_by_user_id=database.actor_id)
+        )
+    published = publish_command(
+        database,
+        ingredient_id=created.ingredient_id,
+        based_on_version_id=created.ingredient_version_id,
+        dietary_tag_ids=(database.tag_id,),
+    )
+    result = asyncio.run(
+        publish_ingredient_version(database.sessions, context(database), published)
+    )
+    replay = asyncio.run(
+        publish_ingredient_version(database.sessions, context(database), published)
+    )
+    assert result.replayed is False and replay.replayed is True
+    with database.sync.connect() as connection:
+        assert (
+            connection.scalar(
+                select(Ingredient.current_version_id).where(Ingredient.id == created.ingredient_id)
+            )
+            == result.ingredient_version_id
+        )
+        assert (
+            connection.scalar(
+                select(IngredientVersion.id).where(
+                    IngredientVersion.id == created.ingredient_version_id
+                )
+            )
+            == created.ingredient_version_id
+        )
+
+    stale = publish_command(
+        database,
+        ingredient_id=created.ingredient_id,
+        based_on_version_id=uuid4(),
+    )
+    with pytest.raises(ApplicationServiceError, match="stale"):
+        asyncio.run(publish_ingredient_version(database.sessions, context(database), stale))
+    with pytest.raises(ApplicationServiceError, match="stale"):
+        asyncio.run(publish_ingredient_version(database.sessions, context(database), stale))
+
+    invalid_mass = publish_command(
+        database,
+        ingredient_id=created.ingredient_id,
+        based_on_version_id=result.ingredient_version_id,
+        mass_per_canonical_quantity=Decimal("0"),
+    )
+    with pytest.raises(ApplicationServiceError):
+        asyncio.run(publish_ingredient_version(database.sessions, context(database), invalid_mass))
+
+    retired_new_tag = uuid4()
+    with database.sync.begin() as connection:
+        connection.execute(
+            insert(DietaryTag).values(
+                id=retired_new_tag,
+                organization_id=database.organization_id,
+                name="Retired",
+                normalized_name="retired",
+                created_by_user_id=database.actor_id,
+                retired_at=datetime.now(UTC),
+                retired_by_user_id=database.actor_id,
+            )
+        )
+    rejected_tag = publish_command(
+        database,
+        ingredient_id=created.ingredient_id,
+        based_on_version_id=result.ingredient_version_id,
+        dietary_tag_ids=(database.tag_id, retired_new_tag),
+    )
+    with pytest.raises(ApplicationServiceError):
+        asyncio.run(publish_ingredient_version(database.sessions, context(database), rejected_tag))

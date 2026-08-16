@@ -41,6 +41,7 @@ from cookops.application.event_metadata import (
 from cookops.application.event_prices import UpdateEventPriceEstimatesCommand
 from cookops.application.events import CreateEventCommand, UpdateEventBaseAttendanceCommand
 from cookops.application.ingredient_lifecycle import SetIngredientLifecycleCommand
+from cookops.application.ingredient_versions import PublishIngredientVersionCommand
 from cookops.application.ingredients import CreateIngredientCommand, InitialPrice
 from cookops.application.receipts import (
     CreateReceiptCommand,
@@ -543,6 +544,27 @@ class CreateIngredientPayload(BaseModel):
     dietary_tag_ids: tuple[UUID, ...] = ()
     default_store_section_id: UUID | None = None
     initial_price: InitialIngredientPricePayload | None = None
+    logical_operation_id: UUID | None = None
+
+    @field_validator("mass_per_canonical_quantity", mode="before")
+    @classmethod
+    def mass_must_be_decimal_string(cls, value: object) -> object:
+        if not isinstance(value, str):
+            raise ValueError("must be a decimal string")
+        return value
+
+
+class PublishIngredientVersionPayload(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    ingredient_id: UUID
+    based_on_version_id: UUID
+    ingredient_version_id: UUID
+    name: str
+    canonical_unit_id: UUID
+    mass_per_canonical_quantity: Decimal
+    dietary_tag_ids: tuple[UUID, ...] = ()
+    default_store_section_id: UUID | None = None
     logical_operation_id: UUID | None = None
 
     @field_validator("mass_per_canonical_quantity", mode="before")
@@ -1185,6 +1207,22 @@ def _push_command(command: PushCommandRequest, organization_id: UUID) -> SyncCom
                     if price
                     else None
                 ),
+                logical_operation_id=ingredient_payload.logical_operation_id,
+            )
+        if command.command_kind == "ingredient.publish_version":
+            ingredient_payload = PublishIngredientVersionPayload.model_validate(command.payload)
+            return PublishIngredientVersionCommand(
+                mutation_id=command.mutation_id,
+                ingredient_id=ingredient_payload.ingredient_id,
+                based_on_version_id=ingredient_payload.based_on_version_id,
+                ingredient_version_id=ingredient_payload.ingredient_version_id,
+                organization_id=organization_id,
+                name=ingredient_payload.name,
+                canonical_unit_id=ingredient_payload.canonical_unit_id,
+                mass_per_canonical_quantity=ingredient_payload.mass_per_canonical_quantity,
+                client_wall_time=command.client_wall_time,
+                dietary_tag_ids=ingredient_payload.dietary_tag_ids,
+                default_store_section_id=ingredient_payload.default_store_section_id,
                 logical_operation_id=ingredient_payload.logical_operation_id,
             )
         if command.command_kind == "ingredient.lifecycle":

@@ -12,6 +12,7 @@ import {
   type IngredientCreateInput,
 } from "./ingredient-create";
 import { queueIngredientLifecycle } from "./ingredient-lifecycle";
+import { queueIngredientVersionPublish, type IngredientVersionPublishInput } from "./ingredient-version-publish";
 import { pullOrganization, SyncRequestError } from "./sync-bootstrap";
 
 type CatalogState =
@@ -220,6 +221,20 @@ function IngredientLifecycleControl({
   );
 }
 
+function IngredientVersionEditor({ ingredient, catalog, organizationId, userId }: { ingredient: IngredientCatalogProjection["ingredients"][number]; catalog: IngredientCatalogProjection; organizationId: string; userId: string }) {
+  const { t } = useTranslation();
+  const current = ingredient.versions?.find((version) => version.id === ingredient.versionId);
+  const [input, setInput] = useState<IngredientVersionPublishInput>({ ingredientId: ingredient.id, basedOnVersionId: ingredient.versionId, name: ingredient.name, canonicalUnitId: ingredient.canonicalUnitId ?? "", massPerCanonicalQuantity: ingredient.massPerCanonicalQuantity, dietaryTagIds: ingredient.dietaryTagIds ?? [], defaultStoreSectionId: ingredient.defaultStoreSectionId ?? null });
+  const [message, setMessage] = useState<string>();
+  if (ingredient.retired) return null;
+  async function submit(event: React.FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    try { await queueIngredientVersionPublish(userId, organizationId, input); setMessage(t("ingredientsCatalog.versionQueued")); }
+    catch { setMessage(t("ingredientsCatalog.errors.unavailable")); }
+  }
+  return <details><summary>{t("ingredientsCatalog.editVersion")}</summary><p>{t("ingredientsCatalog.history")}: {ingredient.versions?.length ?? 1}</p>{ingredient.versions?.length ? <ul aria-label={t("ingredientsCatalog.history")}><li>{t("ingredientsCatalog.currentVersion")}: {ingredient.versionId}</li>{ingredient.versions.filter((version) => version.id !== ingredient.versionId).map((version) => <li key={version.id}>{version.id} · {version.name} · {version.canonicalUnitName} · {version.mass}{version.basedOnVersionId ? ` · ${t("ingredientsCatalog.basedOn")}: ${version.basedOnVersionId}` : ""}</li>)}</ul> : null}{current ? <p>{current.name} · {current.canonicalUnitName} · {current.mass}</p> : null}<form onSubmit={(event) => void submit(event)}><label>{t("ingredientsCatalog.name")}<input value={input.name} required onChange={(event) => setInput({ ...input, name: event.target.value })} /></label><label>{t("ingredientsCatalog.canonicalUnit")}<select value={input.canonicalUnitId} required onChange={(event) => setInput({ ...input, canonicalUnitId: event.target.value })}>{catalog.units.map((unit) => <option key={unit.id} value={unit.id}>{unit.name}</option>)}</select></label><label>{t("ingredientsCatalog.mass")}<input inputMode="decimal" value={input.massPerCanonicalQuantity} required onChange={(event) => setInput({ ...input, massPerCanonicalQuantity: event.target.value })} /></label><fieldset><legend>{t("ingredientsCatalog.dietaryTags")}</legend>{catalog.dietaryTags.map((tag) => <label key={tag.id}><input type="checkbox" checked={input.dietaryTagIds.includes(tag.id)} onChange={(event) => setInput({ ...input, dietaryTagIds: event.target.checked ? [...input.dietaryTagIds, tag.id] : input.dietaryTagIds.filter((id) => id !== tag.id) })} />{tag.name}</label>)}</fieldset><button type="submit">{t("ingredientsCatalog.publishVersion")}</button></form>{message ? <p role="status">{message}</p> : null}</details>;
+}
+
 export function IngredientCatalog({
   organizationId,
   userId,
@@ -319,6 +334,7 @@ export function IngredientCatalog({
                 organizationId={organizationId}
                 userId={userId}
               />
+              <IngredientVersionEditor ingredient={ingredient} catalog={state.catalog} organizationId={organizationId} userId={userId} />
             </li>
           ))}
         </ul>

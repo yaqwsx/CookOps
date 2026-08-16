@@ -17,6 +17,7 @@ import {
 import { replayRecipeVersionPublish } from "./recipe-publish";
 import { replayIngredientCreate } from "./ingredient-create";
 import { replayIngredientLifecycle } from "./ingredient-lifecycle";
+import { replayIngredientVersionPublish } from "./ingredient-version-publish";
 import { replayScheduledIngredientOverride } from "./scheduled-ingredient-override";
 import { replayReceiptCommand } from "./receipt-metadata";
 import { replayCatalogConfiguration } from "./catalog-configuration";
@@ -146,7 +147,7 @@ function canonical(
     lifecycle: fields.retired_at || fields.archived_at ? "retired" : "active",
     fields,
     fieldClocks: object(fields.field_clocks) ? fields.field_clocks : {},
-    immutable: false,
+    immutable: fields.immutable === true,
     updatedAt,
   };
 }
@@ -280,6 +281,9 @@ async function replayOptimisticCommands(
     }
     if (command.commandType === "ingredient.lifecycle") {
       await replayIngredientLifecycle(userId, organizationId, command);
+    }
+    if (command.commandType === "ingredient.publish_version") {
+      await replayIngredientVersionPublish(userId, organizationId, command);
     }
     if (command.commandType === "scheduled_recipe.attendance")
       await replayScheduledRecipeAttendance(userId, organizationId, command);

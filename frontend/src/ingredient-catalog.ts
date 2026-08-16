@@ -7,8 +7,12 @@ export type CatalogIngredient = {
   name: string;
   canonicalUnitName: string;
   massPerCanonicalQuantity: string;
+  canonicalUnitId?: string;
+  dietaryTagIds?: string[];
+  defaultStoreSectionId?: string | null;
   retired?: boolean;
   historical?: boolean;
+  versions?: { id: string; name: string; canonicalUnitName: string; mass: string; basedOnVersionId?: string; canonicalUnitId: string; dietaryTagIds: string[]; defaultStoreSectionId: string | null }[];
 };
 export type IngredientUnit = {
   id: string;
@@ -42,7 +46,7 @@ export async function readIngredientCatalog(
     readVisibleRecords(userId, organizationId, "ingredient", includeRetired),
     readVisibleRecords(userId, organizationId, "ingredient_version"),
     readVisibleRecords(userId, organizationId, "unit_definition"),
-    readVisibleRecords(userId, organizationId, "dietary_tag"),
+    readVisibleRecords(userId, organizationId, "dietary_tag", true),
   ]);
   const units = records
     .filter((record) => {
@@ -96,6 +100,12 @@ export async function readIngredientCatalog(
         candidate && text(candidate, "ingredient_id") === root.entityId
           ? candidate
           : undefined;
+      const history = [...versionById.values()]
+        .filter((version) => text(version, "ingredient_id") === root.entityId)
+        .map((version) => ({ id: version.entityId, name: text(version, "name"), canonicalUnitName: unitNames.get(text(version, "canonical_unit_id") ?? "") ?? "—", mass: text(version, "mass_per_canonical_quantity") ?? "", basedOnVersionId: text(version, "based_on_version_id"), canonicalUnitId: text(version, "canonical_unit_id") ?? "", dietaryTagIds: Array.isArray(version.fields.dietary_tag_ids) ? version.fields.dietary_tag_ids.filter((id): id is string => typeof id === "string") : [], defaultStoreSectionId: text(version, "default_store_section_id") ?? null }))
+        .filter((version): version is { id: string; name: string; canonicalUnitName: string; mass: string; basedOnVersionId: string | undefined; canonicalUnitId: string; dietaryTagIds: string[]; defaultStoreSectionId: string | null } => Boolean(version.name && version.mass))
+        .sort((left, right) => left.id.localeCompare(right.id));
+      const currentTags = version && Array.isArray(version.fields.dietary_tag_ids) ? version.fields.dietary_tag_ids.filter((id): id is string => typeof id === "string") : [];
       return {
         id: root.entityId,
         versionId,
@@ -103,7 +113,10 @@ export async function readIngredientCatalog(
         canonicalUnitId: version && text(version, "canonical_unit_id"),
         massPerCanonicalQuantity:
           version && text(version, "mass_per_canonical_quantity"),
+        ...(currentTags.length ? { dietaryTagIds: currentTags } : {}),
+        ...(version && text(version, "default_store_section_id") ? { defaultStoreSectionId: text(version, "default_store_section_id") } : {}),
         ...(includeRetired ? { retired: root.lifecycle === "retired" } : {}),
+        ...(history.length > 1 ? { versions: history } : {}),
       };
     })
     .filter(
@@ -115,6 +128,9 @@ export async function readIngredientCatalog(
         name: string;
         canonicalUnitId: string;
         massPerCanonicalQuantity: string;
+        dietaryTagIds: string[];
+        defaultStoreSectionId?: string;
+        versions?: { id: string; name: string; canonicalUnitName: string; mass: string; basedOnVersionId: string | undefined; canonicalUnitId: string; dietaryTagIds: string[]; defaultStoreSectionId: string | null }[];
       } =>
         Boolean(
           item.name &&

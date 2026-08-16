@@ -279,6 +279,32 @@ def _ingredient_lifecycle_command(
     )
 
 
+def _ingredient_publish_command(
+    *,
+    mutation_id: UUID,
+    ingredient_id: UUID,
+    based_on_version_id: UUID,
+    unit_id: UUID,
+    **payload: object,
+) -> dict[str, object]:
+    values = {
+        "ingredient_id": str(ingredient_id),
+        "based_on_version_id": str(based_on_version_id),
+        "ingredient_version_id": str(uuid4()),
+        "name": "Published tomatoes",
+        "canonical_unit_id": str(unit_id),
+        "mass_per_canonical_quantity": "1",
+        "dietary_tag_ids": [],
+        **payload,
+    }
+    return _command(
+        mutation_id=mutation_id,
+        event_id=uuid4(),
+        kind="ingredient.publish_version",
+        **values,
+    )
+
+
 def _schedule_recipe_command(
     *,
     mutation_id: UUID,
@@ -2556,6 +2582,66 @@ def test_push_creates_an_ingredient_through_the_typed_sync_adapter(
         rejected = client.post("/api/v1/sync/push", json=invalid).json()["outcomes"][0]
         assert rejected["status"] == "rejected"
         assert rejected["error"]["code"] == "validation_failed"
+
+
+def test_push_publishes_ingredient_version_strictly_and_replays(
+    sync_database: SyncDatabase,
+) -> None:
+    installation_id = _installation(sync_database)
+    with sync_database.engine.connect() as connection:
+        unit_id = connection.scalar(
+            select(UnitDefinition.id).where(
+                UnitDefinition.organization_id.is_(None), UnitDefinition.code == "g"
+            )
+        )
+    assert isinstance(unit_id, UUID)
+    create = _ingredient_command(mutation_id=uuid4(), unit_id=unit_id)
+    with TestClient(create_app(_settings()), base_url="https://testserver") as client:
+        _sign_in(client, "dummy-member")
+        created = client.post(
+            "/api/v1/sync/push", json=_body(sync_database, installation_id, [create])
+        ).json()["outcomes"][0]
+        assert created["status"] == "accepted"
+        payload = cast(dict[str, object], create["payload"])
+        publish = _ingredient_publish_command(
+            mutation_id=uuid4(),
+            ingredient_id=UUID(str(payload["ingredient_id"])),
+            based_on_version_id=UUID(str(payload["ingredient_version_id"])),
+            unit_id=unit_id,
+        )
+        body = _body(sync_database, installation_id, [publish])
+        outcome = client.post("/api/v1/sync/push", json=body).json()["outcomes"][0]
+        assert (outcome["command_kind"], outcome["status"]) == (
+            "ingredient.publish_version", "accepted"
+        )
+        assert client.post("/api/v1/sync/push", json=body).json()["outcomes"][0]["replayed"]
+        malformed_number = _ingredient_publish_command(
+            mutation_id=uuid4(), ingredient_id=UUID(str(payload["ingredient_id"])),
+            based_on_version_id=UUID(str(payload["ingredient_version_id"])), unit_id=unit_id,
+            mass_per_canonical_quantity=1,
+        )
+        assert client.post(
+            "/api/v1/sync/push",
+            json=_body(sync_database, installation_id, [malformed_number]),
+        ).json()["outcomes"][0]["status"] == "rejected"
+        malformed_boolean = _ingredient_publish_command(
+            mutation_id=uuid4(), ingredient_id=UUID(str(payload["ingredient_id"])),
+            based_on_version_id=UUID(str(payload["ingredient_version_id"])), unit_id=unit_id,
+            dietary_tag_ids=True,
+        )
+        assert client.post(
+            "/api/v1/sync/push",
+            json=_body(sync_database, installation_id, [malformed_boolean]),
+        ).json()["outcomes"][0]["status"] == "rejected"
+        malformed_extra = _ingredient_publish_command(
+            mutation_id=uuid4(), ingredient_id=UUID(str(payload["ingredient_id"])),
+            based_on_version_id=UUID(str(payload["ingredient_version_id"])), unit_id=unit_id,
+        )
+        cast(dict[str, object], malformed_extra["payload"])["unexpected"] = True
+        assert client.post(
+            "/api/v1/sync/push",
+            json=_body(sync_database, installation_id, [malformed_extra]),
+        ).json()["outcomes"][0]["status"] == "rejected"
 
 
 def test_push_applies_idempotent_receipt_metadata_commands(
