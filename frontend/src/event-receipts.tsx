@@ -147,6 +147,8 @@ function ReceiptItem({
   const { t } = useTranslation();
   const [editing, setEditing] = useState(false);
   const [error, setError] = useState(false);
+  const [attaching, setAttaching] = useState(false);
+  const attachingRef = useRef(false);
   const busy = useRef(false);
   async function lifecycle() {
     if (busy.current) return;
@@ -164,19 +166,32 @@ function ReceiptItem({
       busy.current = false;
     }
   }
-  async function attach(file: File | undefined) {
-    if (!file) return;
+  async function attach(input: HTMLInputElement) {
+    if (attachingRef.current) {
+      setError(true);
+      return;
+    }
+    const files = Array.from(input.files ?? []);
+    if (!files.length) return;
+    attachingRef.current = true;
+    setAttaching(true);
+    setError(false);
     try {
-      const pending = await queueReceiptAttachment(
-        userId,
-        organizationId,
-        receipt.id,
-        await prepareReceiptImage(file),
-      );
-      onQueued(pending);
-      setError(false);
+      for (const file of files) {
+        const pending = await queueReceiptAttachment(
+          userId,
+          organizationId,
+          receipt.id,
+          await prepareReceiptImage(file),
+        );
+        onQueued(pending);
+      }
     } catch {
       setError(true);
+    } finally {
+      input.value = "";
+      attachingRef.current = false;
+      setAttaching(false);
     }
   }
   async function attachmentLifecycle(
@@ -241,7 +256,9 @@ function ReceiptItem({
             <input
               accept="image/*"
               capture="environment"
-              onChange={(event) => void attach(event.target.files?.[0])}
+              disabled={attaching}
+              multiple
+              onChange={(event) => void attach(event.currentTarget)}
               type="file"
             />
           </label>
