@@ -4,6 +4,7 @@ import {
   type CatalogIngredient,
 } from "./ingredient-catalog";
 import { readVisibleRecords } from "./visible-records";
+import { add, decimal, divide, money, multiply, zeroFraction } from "./event-cost-projections";
 
 export type CatalogRecipe = {
   id: string;
@@ -33,10 +34,42 @@ export type RecipeCatalogProjection = {
   scalingUnits: RecipeScalingUnit[];
   ingredients: CatalogIngredient[];
   tags: { id: string; name: string }[];
+  costs: Record<string, RecipeCostProjection>;
 };
+type RecipeCostUnit = { id: string; dimension: string; baseUnitFactor?: string };
+export type RecipeCostProjection = { currency: string; total: string | null; missingCount: number };
+
+export function projectRecipeCost(recipe: CatalogRecipe, ingredients: CatalogIngredient[], units: RecipeCostUnit[], currency: string): RecipeCostProjection {
+  const byVersion = new Map(ingredients.map((ingredient) => [ingredient.versionId, ingredient]));
+  const byUnit = new Map(units.map((unit) => [unit.id, unit]));
+  let total = zeroFraction;
+  let missingCount = 0;
+  for (const line of recipe.ingredientLines) {
+    const ingredient = byVersion.get(line.ingredientVersionId);
+    const price = ingredient?.currentPrice;
+    const quantity = decimal(line.baseQuantity);
+    const amount = price && decimal(price.amount);
+    const pricedQuantity = price && decimal(price.quantity);
+    const source = ingredient?.canonicalUnitId ? byUnit.get(ingredient.canonicalUnitId) : undefined;
+    const target = price ? byUnit.get(price.unitId) : undefined;
+    const sourceFactor = source?.baseUnitFactor && decimal(source.baseUnitFactor);
+    const targetFactor = target?.baseUnitFactor && decimal(target.baseUnitFactor);
+    const factor = source && target && source.id === target.id
+      ? decimal("1")
+      : sourceFactor && targetFactor && source.dimension === target.dimension
+        ? divide(sourceFactor, targetFactor)
+        : undefined;
+    const cost = quantity && amount && pricedQuantity && price?.currency === currency && factor
+      ? divide(multiply(amount, multiply(quantity, factor)), pricedQuantity)
+      : undefined;
+    if (cost) total = add(total, cost);
+    else missingCount++;
+  }
+  return { currency, total: missingCount ? null : money(total), missingCount };
+}
 
 const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
-const decimal = /^(?:0|[1-9]\d*)(?:\.\d+)?$/;
+const decimalPattern = /^(?:0|[1-9]\d*)(?:\.\d+)?$/;
 
 function text(record: CanonicalRecord, key: string) {
   const value = record.fields[key];
@@ -50,7 +83,7 @@ export async function readRecipeCatalog(
   includeRetired = false,
 ): Promise<RecipeCatalogProjection> {
   if (!uuid.test(userId) || !uuid.test(organizationId))
-    return { recipes: [], scalingUnits: [], ingredients: [], tags: [] };
+    return { recipes: [], scalingUnits: [], ingredients: [], tags: [], costs: {} };
   const [
     recipeRecords,
     versionRecords,
@@ -156,7 +189,7 @@ export async function readRecipeCatalog(
                     text(line, "organization_id") === organizationId) &&
                   text(line, "recipe_version_id") === versionId &&
                   typeof text(line, "ingredient_version_id") === "string" &&
-                  decimal.test(text(line, "base_quantity") ?? "") &&
+                  decimalPattern.test(text(line, "base_quantity") ?? "") &&
                   (line.fields.scaling_behavior === "proportional" ||
                     line.fields.scaling_behavior === "fixed") &&
                   typeof line.fields.include_in_portion_weight === "boolean",
@@ -216,7 +249,7 @@ export async function readRecipeCatalog(
           recipe.baseScalingAmount &&
           uuid.test(recipe.versionId) &&
           uuid.test(recipe.scalingUnitId) &&
-          decimal.test(recipe.baseScalingAmount) &&
+          decimalPattern.test(recipe.baseScalingAmount) &&
           (recipe.description === null ||
             typeof recipe.description === "string"),
       ),
@@ -291,27 +324,36 @@ export async function readRecipeCatalog(
           !currentIngredientVersionIds.has(record.entityId) &&
           text(record, "name") &&
           text(record, "canonical_unit_id") &&
-          decimal.test(text(record, "mass_per_canonical_quantity") ?? ""),
+          decimalPattern.test(text(record, "mass_per_canonical_quantity") ?? ""),
       );
     })
     .map((record) => {
       const ingredientId = text(record, "ingredient_id") ?? "";
       const root = ingredientRoots.get(ingredientId);
+      const currentIngredient = ingredientCatalog.ingredients.find((item) => item.id === ingredientId);
       return {
         id: ingredientId,
         versionId: record.entityId,
         name: text(record, "name") ?? "",
         canonicalUnitName: text(record, "canonical_unit_id") ?? "",
+        canonicalUnitId: text(record, "canonical_unit_id") ?? "",
         massPerCanonicalQuantity:
           text(record, "mass_per_canonical_quantity") ?? "",
         historical: true,
+        ...(currentIngredient?.currentPrice ? { currentPrice: currentIngredient.currentPrice } : {}),
         ...(root?.lifecycle === "retired" ? { retired: true } : {}),
       } satisfies CatalogIngredient;
     });
+  const ingredients = [...ingredientCatalog.ingredients, ...historicalIngredients];
+  const costs = Object.fromEntries(recipes.map((recipe) => [
+    recipe.id,
+    projectRecipeCost(recipe, ingredients, ingredientCatalog.units, ingredientCatalog.organizationDefaultCurrency),
+  ]));
   return {
     recipes,
     scalingUnits,
-    ingredients: [...ingredientCatalog.ingredients, ...historicalIngredients],
+    ingredients,
     tags,
+    costs,
   };
 }

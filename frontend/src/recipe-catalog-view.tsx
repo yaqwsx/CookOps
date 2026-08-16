@@ -555,6 +555,22 @@ export function RecipeCatalog({
                   amount: recipe.baseScalingAmount,
                 })}
               </p>
+              {state.catalog.costs[recipe.id]?.total ? (
+                <p role="status">
+                  {t("recipesCatalog.estimatedCost", {
+                    amount: new Intl.NumberFormat(undefined, {
+                      style: "currency",
+                      currency: state.catalog.costs[recipe.id].currency,
+                    }).format(Number(state.catalog.costs[recipe.id].total)),
+                  })}
+                </p>
+              ) : (
+                <p role="status">
+                  {t("recipesCatalog.incompleteCost", {
+                    count: state.catalog.costs[recipe.id]?.missingCount ?? 0,
+                  })}
+                </p>
+              )}
               {recipe.description ? <p>{recipe.description}</p> : null}
               <RecipeEditor
                 catalog={state.catalog}

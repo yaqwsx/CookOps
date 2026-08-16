@@ -154,6 +154,8 @@ const resources = {
         tags: "Štítky",
         saved: "Recept je uložen místně a bude synchronizován.",
         scaling: "Základ: {{amount}}",
+        estimatedCost: "Odhadovaná cena: {{amount}}",
+        incompleteCost: "Cena není úplná ({{count}} surovin bez platné ceny).",
         showRetired: "Zobrazit vyřazené recepty",
         retired: "Vyřazený recept",
         retiredIngredientWarning:
@@ -625,6 +627,8 @@ const resources = {
         tags: "Tags",
         saved: "The recipe is saved locally and will synchronize.",
         scaling: "Base: {{amount}}",
+        estimatedCost: "Estimated cost: {{amount}}",
+        incompleteCost: "Cost incomplete ({{count}} ingredients lack a valid price).",
         showRetired: "Show retired recipes",
         retired: "Retired recipe",
         retiredIngredientWarning:

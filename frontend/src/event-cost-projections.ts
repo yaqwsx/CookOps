@@ -5,7 +5,8 @@ import { readEventScopedRecords } from "./archive-cache";
 
 const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
-type Fraction = { numerator: bigint; denominator: bigint };
+export type Fraction = { numerator: bigint; denominator: bigint };
+export const zeroFraction: Fraction = { numerator: 0n, denominator: 1n };
 type ResolvedLine = { ingredientVersionId: string; quantity: Fraction };
 
 export type EventCostsProjection = {
@@ -27,7 +28,7 @@ function text(record: CanonicalRecord, key: string): string | undefined {
   return typeof value === "string" ? value : undefined;
 }
 
-function decimal(value: unknown): Fraction | undefined {
+export function decimal(value: unknown): Fraction | undefined {
   const parsed = parseDecimal(value);
   if (!parsed) return undefined;
   return {
@@ -36,14 +37,14 @@ function decimal(value: unknown): Fraction | undefined {
   };
 }
 
-function multiply(left: Fraction, right: Fraction): Fraction {
+export function multiply(left: Fraction, right: Fraction): Fraction {
   return {
     numerator: left.numerator * right.numerator,
     denominator: left.denominator * right.denominator,
   };
 }
 
-function divide(left: Fraction, right: Fraction): Fraction | undefined {
+export function divide(left: Fraction, right: Fraction): Fraction | undefined {
   if (right.numerator === 0n) return undefined;
   return {
     numerator: left.numerator * right.denominator,
@@ -51,7 +52,7 @@ function divide(left: Fraction, right: Fraction): Fraction | undefined {
   };
 }
 
-function add(left: Fraction, right: Fraction): Fraction {
+export function add(left: Fraction, right: Fraction): Fraction {
   return {
     numerator:
       left.numerator * right.denominator + right.numerator * left.denominator,
@@ -75,7 +76,7 @@ function maxZeroSubtract(left: Fraction, right: Fraction): Fraction {
 }
 
 /** Display a rounded advisory monetary value without converting it to a JS number. */
-function money(value: Fraction): string {
+export function money(value: Fraction): string {
   const sign = value.numerator < 0n ? "-" : "";
   const absolute =
     value.numerator < 0n ? { ...value, numerator: -value.numerator } : value;

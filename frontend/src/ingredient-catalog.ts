@@ -102,6 +102,11 @@ export async function readIngredientCatalog(
       const versionId = text(root, "current_version_id");
       const priceId = text(root, "current_price_estimate_id");
       const price = priceId ? priceById.get(priceId) : undefined;
+      const validPrice = price &&
+        text(price, "ingredient_id") === root.entityId &&
+        price.fields.state === "available"
+        ? price
+        : undefined;
       const candidate = versionId ? versionById.get(versionId) : undefined;
       const version =
         candidate && text(candidate, "ingredient_id") === root.entityId
@@ -124,7 +129,7 @@ export async function readIngredientCatalog(
         ...(version && text(version, "default_store_section_id") ? { defaultStoreSectionId: text(version, "default_store_section_id") } : {}),
         ...(includeRetired ? { retired: root.lifecycle === "retired" } : {}),
         ...(history.length > 1 ? { versions: history } : {}),
-        ...(price && text(price, "price_amount") && text(price, "priced_quantity") && text(price, "priced_unit_id") && text(price, "currency") ? { currentPrice: { amount: text(price, "price_amount"), quantity: text(price, "priced_quantity"), unitId: text(price, "priced_unit_id"), currency: text(price, "currency") } } : {}),
+        ...(validPrice && text(validPrice, "price_amount") && text(validPrice, "priced_quantity") && text(validPrice, "priced_unit_id") && text(validPrice, "currency") ? { currentPrice: { amount: text(validPrice, "price_amount"), quantity: text(validPrice, "priced_quantity"), unitId: text(validPrice, "priced_unit_id"), currency: text(validPrice, "currency") } } : {}),
       };
     })
     .filter(

@@ -98,6 +98,7 @@ describe("offline recipe creation", () => {
       scalingUnits: [{ id: unitId, name: "person" }],
       ingredients: [],
       tags: [],
+      costs: { [recipeId]: { currency: "", total: "0.00", missingCount: 0 } },
       recipes: [
         expect.objectContaining({
           id: recipeId,

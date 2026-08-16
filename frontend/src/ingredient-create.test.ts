@@ -118,6 +118,7 @@ describe("offline ingredient creation", () => {
     await expect(
       readIngredientCatalog(userId, organizationId),
     ).resolves.toEqual({
+      organizationDefaultCurrency: "",
       units: [
         { id: unitId, name: "g", dimension: "mass", baseUnitFactor: "1" },
       ],

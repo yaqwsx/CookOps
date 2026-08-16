@@ -91,6 +91,25 @@ vi.mock("./recipe-catalog", () => ({
         name: "Quick meals",
       },
     ],
+    units: [],
+    organizationDefaultCurrency: "EUR",
+    costs: {
+      "6ce17d2f-8365-4b1f-a80b-34d10425d51c": {
+        currency: "EUR",
+        total: null,
+        missingCount: 1,
+      },
+      "7ce17d2f-8365-4b1f-a80b-34d10425d51c": {
+        currency: "EUR",
+        total: "0.00",
+        missingCount: 0,
+      },
+      "9ce17d2f-8365-4b1f-a80b-34d10425d51c": {
+        currency: "EUR",
+        total: "0.00",
+        missingCount: 0,
+      },
+    },
   })),
 }));
 vi.mock("./sync-bootstrap", () => ({
