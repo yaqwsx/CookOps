@@ -70,6 +70,9 @@ const resources = {
         budget: "Rozpočet",
         open: "Otevřít plán",
         lifecycle: { active: "Aktivní", archived: "Archivovaná" },
+        archiveSearch: "Hledat v archivovaných akcích podle názvu nebo ID",
+        clearArchiveSearch: "Vymazat hledání archivovaných akcí",
+        archiveSearchEmpty: "Archivované akci neodpovídají hledání.",
       },
       eventsCreate: {
         heading: "Nová akce",
@@ -566,6 +569,9 @@ const resources = {
         budget: "Budget",
         open: "Open planner",
         lifecycle: { active: "Active", archived: "Archived" },
+        archiveSearch: "Search archived events by name or ID",
+        clearArchiveSearch: "Clear archived event search",
+        archiveSearchEmpty: "No archived events match the search.",
       },
       eventsCreate: {
         heading: "New event",

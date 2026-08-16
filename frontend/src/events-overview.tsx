@@ -131,6 +131,7 @@ export function EventOverview({
   const { t } = useTranslation();
   const [state, setState] = useState<EventOverviewState>("loading");
   const [events, setEvents] = useState<EventSummary[]>([]);
+  const [archiveQuery, setArchiveQuery] = useState("");
   const [canCreate, setCanCreate] = useState(false);
   const generation = useRef(0);
   const synchronize = useCallback(async () => {
@@ -183,6 +184,16 @@ export function EventOverview({
     };
   }, [organizationId, synchronize, userId]);
 
+  const hasArchivedEvents = events.some((event) => event.lifecycle === "archived");
+  const normalizedArchiveQuery = archiveQuery.trim().normalize("NFC").toLocaleLowerCase();
+  const visibleEvents = events.filter((event) =>
+    event.lifecycle === "active" ||
+    !normalizedArchiveQuery ||
+    [event.name, event.id].some((value) =>
+      value.normalize("NFC").toLocaleLowerCase().includes(normalizedArchiveQuery),
+    ),
+  );
+
   if (state === "loading" && events.length === 0) {
     return (
       <p aria-live="polite" role="status">
@@ -228,8 +239,29 @@ export function EventOverview({
           {t("eventsOverview.offline")}
         </p>
       ) : null}
+      {hasArchivedEvents ? (
+        <div className="event-overview__archive-search">
+          <label htmlFor="archived-event-search">
+            {t("eventsOverview.archiveSearch")}
+          </label>
+          <input
+            id="archived-event-search"
+            onChange={(event) => setArchiveQuery(event.target.value)}
+            type="search"
+            value={archiveQuery}
+          />
+          {archiveQuery ? (
+            <button
+              onClick={() => setArchiveQuery("")}
+              type="button"
+            >
+              {t("eventsOverview.clearArchiveSearch")}
+            </button>
+          ) : null}
+        </div>
+      ) : null}
       <div className="event-list">
-        {events.map((event) => (
+        {visibleEvents.map((event) => (
           <EventCard
             event={event}
             key={event.id}
@@ -240,6 +272,9 @@ export function EventOverview({
           />
         ))}
       </div>
+      {hasArchivedEvents && visibleEvents.every((event) => event.lifecycle === "active") && normalizedArchiveQuery ? (
+        <p role="status">{t("eventsOverview.archiveSearchEmpty")}</p>
+      ) : null}
       {state === "error" ? (
         <div className="event-overview-error" role="alert">
           <p>{t("eventsOverview.error")}</p>

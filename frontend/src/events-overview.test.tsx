@@ -36,16 +36,17 @@ async function clearDatabase() {
 async function addEvent(
   fields: Record<string, unknown>,
   table: "canonical" | "overlay" = "canonical",
+  id = eventId,
 ) {
   const record = {
     userId,
     organizationId,
     entityType: "event",
-    entityId: eventId,
+    entityId: id,
     recordSchemaVersion: 1,
     lifecycle: "active" as const,
     fields: {
-      id: eventId,
+      id,
       organization_id: organizationId,
       name: "Letní vaření",
       start_date: "2026-08-10",
@@ -132,6 +133,56 @@ describe("EventOverview", () => {
       ),
     ).toBeInTheDocument();
     expect(pullOrganization).toHaveBeenCalledWith(userId, organizationId);
+  });
+
+  it("filters archived summaries by trimmed case-insensitive name or id while keeping active events visible", async () => {
+    await addEvent({ name: "Active event", lifecycle: "active" });
+    await addEvent(
+      { name: "Čokoládový ples", lifecycle: "archived", archived_at: "2026-08-13" },
+      "canonical",
+      "11111111-1111-4111-8111-111111111111",
+    );
+    await addEvent(
+      { name: "Other archive", lifecycle: "archived", archived_at: "2026-08-14" },
+      "canonical",
+      "22222222-2222-4222-8222-222222222222",
+    );
+    const user = userEvent.setup();
+    render(
+      <EventOverview onUnauthenticated={vi.fn()} organizationId={organizationId} userId={userId} />,
+    );
+
+    expect(await screen.findByRole("heading", { name: "Active event" })).toBeInTheDocument();
+    expect(screen.getByRole("searchbox")).toBeInTheDocument();
+    await user.type(screen.getByRole("searchbox"), "  ČOKOLÁDOVÝ  ");
+    expect(screen.getByRole("heading", { name: "Active event" })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "Čokoládový ples" })).toBeInTheDocument();
+    expect(screen.queryByRole("heading", { name: "Other archive" })).not.toBeInTheDocument();
+
+    await user.clear(screen.getByRole("searchbox"));
+    await user.type(screen.getByRole("searchbox"), "22222222-2222-4222-8222-222222222222");
+    expect(screen.getByRole("heading", { name: "Active event" })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "Other archive" })).toBeInTheDocument();
+    expect(screen.queryByRole("heading", { name: "Čokoládový ples" })).not.toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: "Vymazat hledání archivovaných akcí" }));
+    expect(screen.getByRole("heading", { name: "Čokoládový ples" })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "Other archive" })).toBeInTheDocument();
+  });
+
+  it("shows an accessible empty state and no search when archived events are absent", async () => {
+    await addEvent({ name: "Only active", lifecycle: "active" });
+    const user = userEvent.setup();
+    render(
+      <EventOverview onUnauthenticated={vi.fn()} organizationId={organizationId} userId={userId} />,
+    );
+    expect(await screen.findByRole("heading", { name: "Only active" })).toBeInTheDocument();
+    expect(screen.queryByRole("searchbox")).not.toBeInTheDocument();
+
+    await addEvent({ name: "Archived later", lifecycle: "archived", archived_at: "2026-08-13" }, "canonical", "33333333-3333-4333-8333-333333333333");
+    await waitFor(() => expect(screen.getByRole("searchbox")).toBeInTheDocument());
+    await user.type(screen.getByRole("searchbox"), "missing");
+    expect(screen.getByRole("status")).toHaveTextContent("Archivované akci neodpovídají hledání.");
   });
 
   it("keeps cached events readable offline without attempting synchronization", async () => {
