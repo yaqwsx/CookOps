@@ -1,4 +1,4 @@
-import { render, screen } from "@testing-library/react";
+import { createEvent, fireEvent, render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
@@ -64,6 +64,16 @@ const emptyPlannerCollections = {
 describe("EventPlanner", () => {
   afterEach(() => vi.clearAllMocks());
 
+  function dataTransfer() {
+    const values = new Map<string, string>();
+    return {
+      effectAllowed: "",
+      dropEffect: "",
+      setData: (type: string, value: string) => values.set(type, value),
+      getData: (type: string) => values.get(type) ?? "",
+    } as unknown as DataTransfer;
+  }
+
   it("uses labelled non-drag controls to queue the existing typed command", async () => {
     await i18n.changeLanguage(defaultLocale);
     readEventPlanner.mockResolvedValue({
@@ -109,6 +119,96 @@ describe("EventPlanner", () => {
         recipeId: ids.recipe,
       },
     );
+  });
+
+  it("schedules a catalog recipe dropped onto an active meal role", async () => {
+    await i18n.changeLanguage(defaultLocale);
+    readEventPlanner.mockResolvedValue({
+      name: "Letní vaření", startDate: "2026-08-10", endDate: "2026-08-10", attendance: 12, lifecycle: "active",
+      days: [{ id: ids.day, date: "2026-08-10", note: null }],
+      roles: [{ id: ids.role, name: "Večeře", position: "a", retired: false, custom: false }],
+      recipes: [{ id: ids.recipe, versionId: "7d8b2b21-c378-4574-9e46-9338c81305ef", name: "Chili" }],
+      scheduled: [], ...emptyPlannerCollections,
+    });
+    pullOrganization.mockResolvedValue(false);
+    render(<EventPlanner eventId={ids.event} onUnauthenticated={vi.fn()} organizationId={ids.organization} userId="a6a58bd6-214e-49af-8fae-e5f974bf8e08" />);
+    const transfer = dataTransfer();
+    const source = (await screen.findAllByRole("listitem")).find((item) => item.draggable);
+    if (!source) throw new Error("drag source missing");
+    fireEvent.dragStart(source, { dataTransfer: transfer });
+    const target = screen.getByRole("region", { name: "Večeře" });
+    const dragOver = createEvent.dragOver(target, { dataTransfer: transfer });
+    fireEvent(target, dragOver);
+    expect(dragOver.defaultPrevented).toBe(true);
+    expect(screen.getByText("Pusťte recept sem")).toBeVisible();
+    fireEvent.drop(target, { dataTransfer: transfer });
+    expect(queueRecipeSchedule).toHaveBeenCalledWith("a6a58bd6-214e-49af-8fae-e5f974bf8e08", ids.organization, { eventId: ids.event, eventDayId: ids.day, eventMealRoleId: ids.role, recipeId: ids.recipe });
+  });
+
+  it("ignores malformed or foreign drag payloads", async () => {
+    await i18n.changeLanguage(defaultLocale);
+    readEventPlanner.mockResolvedValue({
+      name: "Letní vaření", startDate: "2026-08-10", endDate: "2026-08-10", attendance: 12, lifecycle: "active",
+      days: [{ id: ids.day, date: "2026-08-10", note: null }],
+      roles: [{ id: ids.role, name: "Večeře", position: "a", retired: false, custom: false }],
+      recipes: [{ id: ids.recipe, versionId: "7d8b2b21-c378-4574-9e46-9338c81305ef", name: "Chili" }],
+      scheduled: [], ...emptyPlannerCollections,
+    });
+    pullOrganization.mockResolvedValue(false);
+    render(<EventPlanner eventId={ids.event} onUnauthenticated={vi.fn()} organizationId={ids.organization} userId="a6a58bd6-214e-49af-8fae-e5f974bf8e08" />);
+    const source = (await screen.findAllByRole("listitem")).find((item) => item.draggable);
+    if (!source) throw new Error("drag source missing");
+    const transfer = dataTransfer();
+    fireEvent.dragStart(source, { dataTransfer: transfer });
+    transfer.setData("application/x-cookops-planner", "{broken");
+    const target = screen.getByRole("region", { name: "Večeře" });
+    fireEvent.dragOver(target, { dataTransfer: transfer });
+    fireEvent.drop(target, { dataTransfer: transfer });
+    await Promise.resolve();
+    expect(queueRecipeSchedule).not.toHaveBeenCalled();
+    expect(queueScheduledRecipeMove).not.toHaveBeenCalled();
+  });
+
+  it("does not drag retired cards or drop onto an archived planner", async () => {
+    await i18n.changeLanguage(defaultLocale);
+    readEventPlanner.mockResolvedValue({
+      name: "Archivovaná akce", startDate: "2026-08-10", endDate: "2026-08-10", attendance: 12, lifecycle: "archived",
+      days: [{ id: ids.day, date: "2026-08-10", note: null }],
+      roles: [{ id: ids.role, name: "Večeře", position: "a", retired: false, custom: false }], recipes: [],
+      scheduled: [{ id: ids.recipe, recipeId: ids.recipe, name: "Chili", dinerCount: 12, dayId: ids.day, roleId: ids.role, retired: true, position: "a" }], ...emptyPlannerCollections,
+    });
+    pullOrganization.mockResolvedValue(false);
+    render(<EventPlanner eventId={ids.event} onUnauthenticated={vi.fn()} organizationId={ids.organization} userId="a6a58bd6-214e-49af-8fae-e5f974bf8e08" />);
+    const card = (await screen.findAllByRole("listitem")).find((item) => item.textContent?.includes("Chili"));
+    if (!card) throw new Error("retired card missing");
+    const transfer = dataTransfer();
+    fireEvent.dragStart(card, { dataTransfer: transfer });
+    fireEvent.drop(screen.getByRole("region", { name: "Večeře" }), { dataTransfer: transfer });
+    expect(queueRecipeSchedule).not.toHaveBeenCalled();
+    expect(queueScheduledRecipeMove).not.toHaveBeenCalled();
+  });
+
+  it("moves a visible scheduled card dropped onto another active slot", async () => {
+    await i18n.changeLanguage(defaultLocale);
+    const secondDay = "8d8b2b21-c378-4574-9e46-9338c81305ef";
+    const secondRole = "9d8b2b21-c378-4574-9e46-9338c81305ef";
+    readEventPlanner.mockResolvedValue({
+      name: "Letní vaření", startDate: "2026-08-10", endDate: "2026-08-11", attendance: 12, lifecycle: "active",
+      days: [{ id: ids.day, date: "2026-08-10", note: null }, { id: secondDay, date: "2026-08-11", note: null }],
+      roles: [{ id: ids.role, name: "Večeře", position: "a", retired: false, custom: false }, { id: secondRole, name: "Oběd", position: "b", retired: false, custom: false }],
+      recipes: [],
+      scheduled: [{ id: ids.recipe, recipeId: ids.recipe, recipeVersionId: "7d8b2b21-c378-4574-9e46-9338c81305ef", name: "Chili", dinerCount: 12, dayId: ids.day, roleId: ids.role, position: "a", retired: false, lines: [], localAddedIngredients: [], catalogUpdateAvailable: false, catalogUpdateChanges: { added: 0, removed: 0, changed: 0 }, catalogScaleImpact: { reset: false } }],
+      ...emptyPlannerCollections,
+    });
+    pullOrganization.mockResolvedValue(false);
+    render(<EventPlanner eventId={ids.event} onUnauthenticated={vi.fn()} organizationId={ids.organization} userId="a6a58bd6-214e-49af-8fae-e5f974bf8e08" />);
+    const transfer = dataTransfer();
+    const source = (await screen.findAllByRole("listitem")).find((item) => item.draggable);
+    const targets = screen.getAllByRole("region", { name: "Oběd" });
+    if (!source || !targets[1]) throw new Error("drag target missing");
+    fireEvent.dragStart(source, { dataTransfer: transfer });
+    fireEvent.drop(targets[1], { dataTransfer: transfer });
+    expect(queueScheduledRecipeMove).toHaveBeenCalledWith("a6a58bd6-214e-49af-8fae-e5f974bf8e08", ids.organization, { scheduledRecipeId: ids.recipe, eventId: ids.event, eventDayId: secondDay, eventMealRoleId: secondRole, positionKey: "a" });
   });
 
   it("saves a day note through an accessible native textarea", async () => {

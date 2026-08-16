@@ -842,6 +842,12 @@ h1 {
   border-top: 1px solid #eee8de;
 }
 
+.planner-role--drop-target {
+  padding: 0.75rem;
+  outline: 0.2rem dashed #8b5e3c;
+  background: #fff8ed;
+}
+
 .planner-role ul {
   padding-left: 1.2rem;
 }

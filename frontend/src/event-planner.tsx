@@ -28,6 +28,28 @@ import { queueEventMealRoleCreate, queueEventMealRoleLifecycle, queueEventMealRo
 import { pullOrganization, SyncRequestError } from "./sync-bootstrap";
 import { ensureArchivedEventCached } from "./archive-cache";
 
+const plannerDragMime = "application/x-cookops-planner";
+type PlannerDragPayload = { kind: "recipe" | "scheduled"; id: string };
+const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+function writePlannerDrag(event: React.DragEvent, payload: PlannerDragPayload) {
+  event.dataTransfer.setData(plannerDragMime, JSON.stringify(payload));
+  event.dataTransfer.effectAllowed = "move";
+}
+
+function readPlannerDrag(event: React.DragEvent): PlannerDragPayload | undefined {
+  try {
+    const payload = JSON.parse(event.dataTransfer.getData(plannerDragMime)) as unknown;
+    if (typeof payload !== "object" || payload === null) return undefined;
+    const value = payload as Record<string, unknown>;
+    return (value.kind === "recipe" || value.kind === "scheduled") && typeof value.id === "string" && uuid.test(value.id)
+      ? { kind: value.kind, id: value.id }
+      : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
 type PlannerState = "loading" | "ready" | "offline" | "error";
 
 function EventSummary({ planner }: { planner: EventPlannerProjection }) {
@@ -317,11 +339,15 @@ function AddRecipe({
   eventId,
   organizationId,
   userId,
+  onRecipeDragStart,
+  onDragEnd,
 }: {
   planner: EventPlannerProjection;
   eventId: string;
   organizationId: string;
   userId: string;
+  onRecipeDragStart: (event: React.DragEvent, recipeId: string) => void;
+  onDragEnd: () => void;
 }) {
   const { t } = useTranslation();
   const [dayId, setDayId] = useState("");
@@ -418,6 +444,19 @@ function AddRecipe({
       <button type="submit">{t("planner.add")}</button>
       {error ? <p role="alert">{t(`planner.errors.${error}`)}</p> : null}
       {saved ? <p role="status">{t("planner.saved")}</p> : null}
+      <p>{t("planner.dragInstructions")}</p>
+      <ul aria-label={t("planner.dragRecipes")}>
+        {planner.recipes.map((recipe) => (
+          <li
+            draggable
+            key={recipe.id}
+            onDragEnd={onDragEnd}
+            onDragStart={(event) => onRecipeDragStart(event, recipe.id)}
+          >
+            {recipe.name}
+          </li>
+        ))}
+      </ul>
     </form>
   );
 }
@@ -775,6 +814,7 @@ export function EventPlanner({
   const { t } = useTranslation();
   const [state, setState] = useState<PlannerState>("loading");
   const [planner, setPlanner] = useState<EventPlannerProjection>();
+  const [dropTarget, setDropTarget] = useState<string>();
   const generation = useRef(0);
   const synchronize = useCallback(async () => {
     const current = generation.current;
@@ -821,6 +861,51 @@ export function EventPlanner({
         </button>
       </div>
     );
+  function startRecipeDrag(event: React.DragEvent, recipeId: string) {
+    if (planner?.lifecycle !== "active" || !planner?.recipes.some((recipe) => recipe.id === recipeId)) return;
+    const payload = { kind: "recipe" as const, id: recipeId };
+    writePlannerDrag(event, payload);
+  }
+  function startScheduledDrag(event: React.DragEvent, scheduledId: string) {
+    if (!planner) return;
+    const item = planner.scheduled.find((candidate) => candidate.id === scheduledId);
+    if (planner.lifecycle !== "active" || !item || item.retired) return;
+    const payload = { kind: "scheduled" as const, id: scheduledId };
+    writePlannerDrag(event, payload);
+  }
+  function clearDrag() {
+    setDropTarget(undefined);
+  }
+  function validDrop(payload: PlannerDragPayload | undefined, dayId: string, roleId: string) {
+    if (!planner) return false;
+    if (planner.lifecycle !== "active" || !planner.days.some((day) => day.id === dayId) || !planner.roles.some((role) => role.id === roleId)) return false;
+    if (!payload) return false;
+    return payload.kind === "recipe"
+      ? planner.recipes.some((recipe) => recipe.id === payload.id)
+      : planner.scheduled.some((item) => item.id === payload.id && !item.retired);
+  }
+  function allowDrop(event: React.DragEvent, dayId: string, roleId: string) {
+    const payload = readPlannerDrag(event);
+    if (!validDrop(payload, dayId, roleId)) return;
+    event.preventDefault();
+    event.dataTransfer.dropEffect = "move";
+    setDropTarget(`${dayId}:${roleId}`);
+  }
+  async function drop(event: React.DragEvent, dayId: string, roleId: string) {
+    event.preventDefault();
+    const payload = readPlannerDrag(event);
+    clearDrag();
+    if (!validDrop(payload, dayId, roleId) || !payload) return;
+    try {
+      if (payload.kind === "recipe") {
+        await queueRecipeSchedule(userId, organizationId, { eventId, eventDayId: dayId, eventMealRoleId: roleId, recipeId: payload.id });
+      } else {
+        await queueScheduledRecipeMove(userId, organizationId, { scheduledRecipeId: payload.id, eventId, eventDayId: dayId, eventMealRoleId: roleId, positionKey: "a" });
+      }
+    } catch {
+      // The existing planner remains authoritative when a drop races with a lifecycle change.
+    }
+  }
   return (
     <section className="event-workspace" aria-labelledby="planner-heading">
       <EventSummary planner={planner} />
@@ -857,6 +942,8 @@ export function EventPlanner({
         organizationId={organizationId}
         planner={planner}
         userId={userId}
+        onRecipeDragStart={startRecipeDrag}
+        onDragEnd={clearDrag}
       />
       <AddDay eventId={eventId} organizationId={organizationId} userId={userId} active={planner.lifecycle === "active"} />
       <RestoreDay eventId={eventId} organizationId={organizationId} planner={planner} userId={userId} />
@@ -882,15 +969,19 @@ export function EventPlanner({
               );
               return (
                 <section
-                  className="planner-role"
+                  className={`planner-role${dropTarget === `${day.id}:${role.id}` ? " planner-role--drop-target" : ""}`}
                   key={role.id}
                   aria-labelledby={`role-${day.id}-${role.id}`}
+                  onDragLeave={() => dropTarget === `${day.id}:${role.id}` && setDropTarget(undefined)}
+                  onDragOver={(event) => allowDrop(event, day.id, role.id)}
+                  onDrop={(event) => void drop(event, day.id, role.id)}
                 >
                   <h4 id={`role-${day.id}-${role.id}`}>{role.name}</h4>
+                  {dropTarget === `${day.id}:${role.id}` ? <p role="status">{t("planner.dropHere")}</p> : null}
                   {scheduled.length ? (
                     <ul>
                       {scheduled.map((item) => (
-                        <li key={item.id}>
+                        <li draggable={!item.retired && planner.lifecycle === "active"} key={item.id} onDragEnd={clearDrag} onDragStart={(event) => startScheduledDrag(event, item.id)}>
                           {item.name} ·{" "}
                           {t("planner.diners", { count: item.dinerCount })}
                           {item.retired ? ` · ${t("planner.retired")}` : null}
