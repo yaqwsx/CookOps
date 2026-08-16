@@ -27,6 +27,7 @@ from cookops.application.event_day_creation import CreateEventDayCommand
 from cookops.application.event_day_lifecycle import SetEventDayLifecycleCommand
 from cookops.application.event_day_note import SetEventDayNoteCommand
 from cookops.application.event_day_visibility import SetEventDayVisibilityCommand
+from cookops.application.event_dietary_exceptions import CreateEventDietaryExceptionCommand
 from cookops.application.event_duplication import DuplicateEventCommand
 from cookops.application.event_lifecycle import SetEventLifecycleCommand
 from cookops.application.event_meal_role_creation import CreateEventMealRoleCommand
@@ -327,9 +328,7 @@ class RefreshShoppingListPayload(BaseModel):
 
     @field_validator("scheduled_recipe_ids")
     @classmethod
-    def scheduled_recipe_ids_must_be_unique(
-        cls, value: tuple[UUID, ...]
-    ) -> tuple[UUID, ...]:
+    def scheduled_recipe_ids_must_be_unique(cls, value: tuple[UUID, ...]) -> tuple[UUID, ...]:
         if len(set(value)) != len(value):
             raise ValueError("scheduled recipe IDs must be unique")
         return value
@@ -631,6 +630,16 @@ class EventDayLifecyclePayload(BaseModel):
     logical_operation_id: UUID | None = None
 
 
+class CreateEventDietaryExceptionPayload(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    exception_id: UUID
+    event_id: UUID
+    name: str = Field(min_length=1, max_length=200)
+    note: str | None = Field(default=None, max_length=131072)
+    tag_ids: tuple[UUID, ...] = ()
+    logical_operation_id: UUID | None = None
+
+
 class CreateEventMealRolePayload(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -700,8 +709,7 @@ class AddedScheduledIngredientOverridePayload(_ScheduledIngredientOverridePayloa
 
 
 ScheduledIngredientOverridePayload = Annotated[
-    ReplacementScheduledIngredientOverridePayload
-    | AddedScheduledIngredientOverridePayload,
+    ReplacementScheduledIngredientOverridePayload | AddedScheduledIngredientOverridePayload,
     Field(discriminator="override_kind"),
 ]
 scheduled_ingredient_override_payload_adapter = TypeAdapter(ScheduledIngredientOverridePayload)
@@ -1263,6 +1271,19 @@ def _push_command(command: PushCommandRequest, organization_id: UUID) -> SyncCom
                 operation=lifecycle_payload.operation,
                 client_wall_time=command.client_wall_time,
                 logical_operation_id=lifecycle_payload.logical_operation_id,
+            )
+        if command.command_kind == "event_dietary_exception.create":
+            payload = CreateEventDietaryExceptionPayload.model_validate(command.payload)
+            return CreateEventDietaryExceptionCommand(
+                mutation_id=command.mutation_id,
+                exception_id=payload.exception_id,
+                organization_id=organization_id,
+                event_id=payload.event_id,
+                name=payload.name,
+                note=payload.note,
+                tag_ids=payload.tag_ids,
+                client_wall_time=command.client_wall_time,
+                logical_operation_id=payload.logical_operation_id,
             )
         if command.command_kind == "event_day.note":
             note_payload = EventDayNotePayload.model_validate(command.payload)

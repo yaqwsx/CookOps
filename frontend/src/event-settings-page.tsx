@@ -6,6 +6,7 @@ import { EventAttendance } from "./event-attendance-form";
 import { EventLifecycle } from "./event-lifecycle-form";
 import { EventMetadata } from "./event-metadata-form";
 import { EventPriceRefreshControl } from "./event-price-refresh-control";
+import { EventDietaryExceptions } from "./event-dietary-exception-form";
 import {
   canCreateEvents,
   readVisibleEventSummaries,
@@ -89,6 +90,7 @@ export function EventSettingsPage({
             organizationId={organizationId}
             userId={userId}
           />
+          <EventDietaryExceptions eventId={event.id} organizationId={organizationId} userId={userId} />
           {canManage ? (
             <EventLifecycle
               eventId={event.id}

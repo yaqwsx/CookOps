@@ -29,6 +29,7 @@ import {
   replayAdHocShoppingItemUpdate,
 } from "./ad-hoc-shopping-item";
 import { replayShoppingListRename } from "./shopping-list";
+import { replayEventDietaryExceptionCreate } from "./event-dietary-exception";
 
 const supportedEntityKinds = new Set([
   "organization",
@@ -48,6 +49,8 @@ const supportedEntityKinds = new Set([
   "event",
   "event_day",
   "event_meal_role",
+  "event_dietary_exception",
+  "event_dietary_exception_tag",
   "scheduled_recipe",
   "scheduled_ingredient_override",
   "event_ingredient_price",
@@ -209,6 +212,17 @@ async function replayOptimisticCommands(
     }
     if (command.commandType === "event.metadata")
       await replayEventMetadataUpdate(userId, organizationId, command);
+    if (command.commandType === "event_dietary_exception.create") {
+      try {
+        await replayEventDietaryExceptionCreate(
+          userId,
+          organizationId,
+          command,
+        );
+      } catch {
+        /* keep rejected overlay absent */
+      }
+    }
     if (
       command.commandType === "event.update_base_attendance" &&
       typeof eventId === "string" &&

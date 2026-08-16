@@ -634,7 +634,7 @@ class IngredientVersion(Base):
     )
 
     id: Mapped[UUID] = mapped_column(Uuid, primary_key=True)
-    organization_id: Mapped[UUID] = mapped_column(Uuid)
+    organization_id: Mapped[UUID] = mapped_column(ForeignKey("organizations.id", ondelete="RESTRICT"))
     ingredient_id: Mapped[UUID] = mapped_column(Uuid)
     based_on_version_id: Mapped[UUID | None] = mapped_column(Uuid)
     name: Mapped[str] = mapped_column(String(200))
@@ -671,7 +671,7 @@ class IngredientVersionDietaryTag(Base):
 
     ingredient_version_id: Mapped[UUID] = mapped_column(Uuid, primary_key=True)
     dietary_tag_id: Mapped[UUID] = mapped_column(Uuid, primary_key=True)
-    organization_id: Mapped[UUID] = mapped_column(Uuid)
+    organization_id: Mapped[UUID] = mapped_column(ForeignKey("organizations.id", ondelete="RESTRICT"))
 
 
 class IngredientPriceEstimate(Base):
@@ -981,6 +981,95 @@ class Event(Base):
     current_archive_snapshot_id: Mapped[UUID | None] = mapped_column(Uuid)
     archived_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     archived_by_user_id: Mapped[UUID | None] = mapped_column(
+        ForeignKey("users.id", ondelete="RESTRICT")
+    )
+
+
+class EventDietaryException(Base):
+    __tablename__ = "event_dietary_exceptions"
+    __table_args__ = (
+        CheckConstraint(
+            "btrim(name) <> '' AND name = btrim(name)", name="ck_event_dietary_exceptions_name"
+        ),
+        CheckConstraint(
+            "note IS NULL OR octet_length(note) <= 131072", name="ck_event_dietary_exceptions_note"
+        ),
+        CheckConstraint(
+            "(retired_at IS NULL AND retired_by_user_id IS NULL) OR "
+            "(retired_at IS NOT NULL AND retired_by_user_id IS NOT NULL)",
+            name="ck_event_dietary_exceptions_retirement",
+        ),
+        ForeignKeyConstraint(
+            ["event_id", "organization_id"],
+            ["events.id", "events.organization_id"],
+            ondelete="RESTRICT",
+            name="fk_event_dietary_exceptions_event_org",
+        ),
+        UniqueConstraint("id", "organization_id", name="uq_event_dietary_exceptions_id_org"),
+        Index("ix_event_dietary_exceptions_event_active", "event_id", "retired_at"),
+    )
+    id: Mapped[UUID] = mapped_column(
+        Uuid, primary_key=True, default=uuid4, server_default=text("gen_random_uuid()")
+    )
+    organization_id: Mapped[UUID] = mapped_column(
+        ForeignKey("organizations.id", ondelete="RESTRICT")
+    )
+    event_id: Mapped[UUID] = mapped_column(Uuid)
+    name: Mapped[str] = mapped_column(String(200))
+    note: Mapped[str | None] = mapped_column(Text)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=text("CURRENT_TIMESTAMP")
+    )
+    created_by_user_id: Mapped[UUID] = mapped_column(ForeignKey("users.id", ondelete="RESTRICT"))
+    retired_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    retired_by_user_id: Mapped[UUID | None] = mapped_column(
+        ForeignKey("users.id", ondelete="RESTRICT")
+    )
+
+
+class EventDietaryExceptionTag(Base):
+    __tablename__ = "event_dietary_exception_tags"
+    __table_args__ = (
+        CheckConstraint(
+            "(retired_at IS NULL AND retired_by_user_id IS NULL) OR "
+            "(retired_at IS NOT NULL AND retired_by_user_id IS NOT NULL)",
+            name="ck_event_dietary_exception_tags_retirement",
+        ),
+        ForeignKeyConstraint(
+            ["exception_id", "organization_id"],
+            ["event_dietary_exceptions.id", "event_dietary_exceptions.organization_id"],
+            ondelete="RESTRICT",
+            name="fk_event_dietary_exception_tags_exception_org",
+        ),
+        ForeignKeyConstraint(
+            ["dietary_tag_id", "organization_id"],
+            ["dietary_tags.id", "dietary_tags.organization_id"],
+            ondelete="RESTRICT",
+            name="fk_event_dietary_exception_tags_tag_org",
+        ),
+        UniqueConstraint("id", "organization_id", name="uq_event_dietary_exception_tags_id_org"),
+        Index(
+            "uq_event_dietary_exception_tags_active_pair",
+            "exception_id",
+            "dietary_tag_id",
+            unique=True,
+            postgresql_where=text("retired_at IS NULL"),
+        ),
+    )
+    id: Mapped[UUID] = mapped_column(
+        Uuid, primary_key=True, default=uuid4, server_default=text("gen_random_uuid()")
+    )
+    organization_id: Mapped[UUID] = mapped_column(
+        ForeignKey("organizations.id", ondelete="RESTRICT")
+    )
+    exception_id: Mapped[UUID] = mapped_column(Uuid)
+    dietary_tag_id: Mapped[UUID] = mapped_column(Uuid)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=text("CURRENT_TIMESTAMP")
+    )
+    created_by_user_id: Mapped[UUID] = mapped_column(ForeignKey("users.id", ondelete="RESTRICT"))
+    retired_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    retired_by_user_id: Mapped[UUID | None] = mapped_column(
         ForeignKey("users.id", ondelete="RESTRICT")
     )
 

@@ -392,6 +392,15 @@ const resources = {
         loading: "Načítáme nastavení akce…",
         unavailable: "Nastavení této akce není v místní projekci k dispozici.",
       },
+      eventDietaryExceptions: {
+        heading: "Dietní výjimky",
+        name: "Jméno",
+        note: "Poznámka",
+        tags: "Dietní štítky",
+        create: "Přidat výjimku",
+        list: "Seznam dietních výjimek",
+        error: "Výjimku se nepodařilo uložit místně.",
+      },
       synchronization: {
         caughtUp: "Synchronizováno",
         offline: "Bez připojení",
@@ -823,6 +832,15 @@ const resources = {
         archivedReadOnly: "Archived events are read-only.",
         loading: "Loading event settings…",
         unavailable: "This event's settings are not available in the cached projection.",
+      },
+      eventDietaryExceptions: {
+        heading: "Dietary exceptions",
+        name: "Name",
+        note: "Note",
+        tags: "Dietary tags",
+        create: "Add exception",
+        list: "Dietary exception list",
+        error: "The exception could not be saved locally.",
       },
       synchronization: {
         caughtUp: "Synchronized",

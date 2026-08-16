@@ -55,6 +55,11 @@ from cookops.application.event_day_visibility import (
     SetEventDayVisibilityCommand,
     set_event_day_visibility,
 )
+from cookops.application.event_dietary_exceptions import (
+    CreateEventDietaryExceptionCommand,
+    EventDietaryExceptionCreationResult,
+    create_event_dietary_exception,
+)
 from cookops.application.event_duplication import (
     DuplicateEventCommand,
     DuplicateEventResult,
@@ -223,6 +228,8 @@ from cookops.persistence.models import (
     DietaryTag,
     Event,
     EventDay,
+    EventDietaryException,
+    EventDietaryExceptionTag,
     EventIngredientPrice,
     EventIngredientPriceSnapshot,
     EventMealRole,
@@ -361,6 +368,7 @@ SyncCommand = (
     | CreateEventDayCommand
     | SetEventDayLifecycleCommand
     | CreateEventMealRoleCommand
+    | CreateEventDietaryExceptionCommand
     | SetEventMealRolePositionCommand
     | SetEventMealRoleNameCommand
     | SetEventMealRoleLifecycleCommand
@@ -409,6 +417,7 @@ def _command_kind(
         | CreateEventDayCommand
         | SetEventDayLifecycleCommand
         | CreateEventMealRoleCommand
+        | CreateEventDietaryExceptionCommand
         | SetEventMealRolePositionCommand
         | SetEventMealRoleNameCommand
         | SetEventMealRoleLifecycleCommand
@@ -463,6 +472,8 @@ def _command_kind(
         return "event_day.lifecycle"
     if isinstance(command, CreateEventMealRoleCommand):
         return "event_meal_role.create"
+    if isinstance(command, CreateEventDietaryExceptionCommand):
+        return "event_dietary_exception.create"
     if isinstance(command, SetEventMealRolePositionCommand):
         return "event_meal_role.position"
     if isinstance(command, SetEventMealRoleNameCommand):
@@ -826,6 +837,7 @@ class SynchronizationCommandService:
                 | EventDayCreationResult
                 | EventDayLifecycleResult
                 | EventMealRoleCreationResult
+                | EventDietaryExceptionCreationResult
                 | EventMealRolePositionResult
                 | EventMealRoleNameResult
                 | EventMealRoleLifecycleResult
@@ -871,6 +883,10 @@ class SynchronizationCommandService:
                 result = await set_event_day_lifecycle(self._session_factory, context, command)
             elif isinstance(command, CreateEventMealRoleCommand):
                 result = await create_event_meal_role(self._session_factory, context, command)
+            elif isinstance(command, CreateEventDietaryExceptionCommand):
+                result = await create_event_dietary_exception(
+                    self._session_factory, context, command
+                )
             elif isinstance(command, SetEventMealRolePositionCommand):
                 result = await set_event_meal_role_position(self._session_factory, context, command)
             elif isinstance(command, SetEventMealRoleNameCommand):
@@ -904,9 +920,7 @@ class SynchronizationCommandService:
                     self._session_factory, context, command
                 )
             elif isinstance(command, SetScheduledRecipeContextCommand):
-                result = await set_scheduled_recipe_context(
-                    self._session_factory, context, command
-                )
+                result = await set_scheduled_recipe_context(self._session_factory, context, command)
             elif isinstance(command, SetScheduledRecipeLifecycleCommand):
                 result = await set_scheduled_recipe_lifecycle(
                     self._session_factory, context, command
@@ -958,9 +972,7 @@ class SynchronizationCommandService:
                     else await restore_receipt(self._session_factory, context, command)
                 )
             elif isinstance(command, CatalogConfigurationCommand):
-                result = await mutate_catalog_configuration(
-                    self._session_factory, context, command
-                )
+                result = await mutate_catalog_configuration(self._session_factory, context, command)
             else:
                 result = await create_shopping_list(self._session_factory, context, command)
         except ApplicationServiceError as error:
@@ -1088,6 +1100,7 @@ class SynchronizationCommandService:
             | ReceiptResult
             | CatalogConfigurationResult
             | EventMealRoleCreationResult
+            | EventDietaryExceptionCreationResult
             | EventMealRolePositionResult
             | EventMealRoleNameResult
             | EventMealRoleLifecycleResult
@@ -1136,6 +1149,8 @@ class SynchronizationCommandService:
                 if isinstance(result, ScheduledRecipeLifecycleResult)
                 else "event_meal_role.position"
                 if isinstance(result, EventMealRolePositionResult)
+                else "event_dietary_exception.create"
+                if isinstance(result, EventDietaryExceptionCreationResult)
                 else "event_meal_role.name"
                 if isinstance(result, EventMealRoleNameResult)
                 else "event_meal_role.lifecycle"
@@ -2060,6 +2075,49 @@ async def _bootstrap_records(
         }
         record["field_clocks"] = _clock_fields(clocks, "event_meal_role", item.id)
         append("event_meal_role", item.id, record)
+    for item in (
+        await session.execute(
+            select(EventDietaryException)
+            .where(EventDietaryException.event_id.in_(active_ids))
+            .order_by(EventDietaryException.id)
+        )
+    ).scalars():
+        record = {
+            "id": str(item.id),
+            "event_id": str(item.event_id),
+            "name": item.name,
+            "note": item.note,
+            "created_at": item.created_at.isoformat(),
+            "created_by_user_id": str(item.created_by_user_id),
+            "retired_at": _time(item.retired_at),
+            "retired_by_user_id": _uuid(item.retired_by_user_id),
+            "field_clocks": _clock_fields(clocks, "event_dietary_exception", item.id),
+        }
+        append("event_dietary_exception", item.id, record)
+    for item in (
+        await session.execute(
+            select(EventDietaryExceptionTag)
+            .where(
+                EventDietaryExceptionTag.exception_id.in_(
+                    select(EventDietaryException.id).where(
+                        EventDietaryException.event_id.in_(active_ids)
+                    )
+                )
+            )
+            .order_by(EventDietaryExceptionTag.id)
+        )
+    ).scalars():
+        record = {
+            "id": str(item.id),
+            "exception_id": str(item.exception_id),
+            "dietary_tag_id": str(item.dietary_tag_id),
+            "created_at": item.created_at.isoformat(),
+            "created_by_user_id": str(item.created_by_user_id),
+            "retired_at": _time(item.retired_at),
+            "retired_by_user_id": _uuid(item.retired_by_user_id),
+            "field_clocks": _clock_fields(clocks, "event_dietary_exception_tag", item.id),
+        }
+        append("event_dietary_exception_tag", item.id, record)
     for item in (
         await session.execute(
             select(ScheduledRecipe)

@@ -17,6 +17,7 @@ from cookops.main import create_app
 from cookops.persistence.models import (
     AdHocShoppingItem,
     ClientInstallation,
+    DietaryTag,
     Event,
     EventArchiveSnapshot,
     EventDay,
@@ -73,6 +74,50 @@ def _installation(database: SyncDatabase) -> UUID:
             )
         )
     return installation_id
+
+
+def test_dietary_exception_create_replays_and_bootstraps_clocks(
+    sync_database: SyncDatabase,
+) -> None:
+    event_id, tag_id, exception_id, mutation_id = (uuid4() for _ in range(4))
+    with sync_database.engine.begin() as connection:
+        actor_id = connection.scalar(
+            select(OrganizationMembership.user_id).where(
+                OrganizationMembership.organization_id == sync_database.organization_id
+            )
+        )
+        assert actor_id is not None
+        connection.execute(insert(Event).values(
+            id=event_id, organization_id=sync_database.organization_id, name="Dietary event",
+            start_date=date(2026, 8, 1), end_date=date(2026, 8, 1),
+            base_expected_attendance=1, budget_amount=0, currency="CZK",
+            created_by_user_id=actor_id,
+        ))
+        connection.execute(insert(DietaryTag).values(
+            id=tag_id, organization_id=sync_database.organization_id, name="Vegan",
+            normalized_name="vegan", color=None, created_by_user_id=actor_id,
+        ))
+    installation_id = _installation(sync_database)
+    with TestClient(create_app(_settings()), base_url="https://testserver") as client:
+        _sign_in(client, "dummy-member")
+        command = _command(
+            mutation_id=mutation_id, event_id=event_id,
+            kind="event_dietary_exception.create", exception_id=str(exception_id),
+            name="Alex", note="café", tag_ids=[str(tag_id)],
+        )
+        command["payload"]["event_id"] = str(event_id)
+        body = _body(sync_database, installation_id, [command])
+        first = client.post("/api/v1/sync/push", json=body).json()["outcomes"][0]
+        assert first["status"] == "accepted"
+        assert client.post("/api/v1/sync/push", json=body).json()["outcomes"][0]["replayed"]
+        bootstrap = client.post(
+            "/api/v1/sync/bootstrap",
+            json={"organization_id": str(sync_database.organization_id)},
+        ).json()
+        record = next(
+            item for item in bootstrap["records"] if item["entity_id"] == str(exception_id)
+        )
+        assert set(record["payload"]["record"]["field_clocks"]) == {"name", "note", "lifecycle"}
 
 
 def _command(

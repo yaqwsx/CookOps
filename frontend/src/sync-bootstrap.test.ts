@@ -71,6 +71,120 @@ function organizationRecord() {
 describe("bootstrapOrganization", () => {
   beforeEach(clearDatabase);
 
+  it("accepts dietary exception and association records and replays pending create", async () => {
+    const eventId = "event-dietary";
+    const tagId = "tag-dietary";
+    const exceptionId = "exception-dietary";
+    await localDb.canonicalRecords.bulkPut([
+      {
+        userId,
+        organizationId,
+        entityType: "event",
+        entityId: eventId,
+        recordSchemaVersion: 1,
+        lifecycle: "active",
+        fields: { id: eventId, lifecycle: "active" },
+        fieldClocks: {},
+        immutable: false,
+        updatedAt: "2026-08-07T10:00:00.000Z",
+      },
+      {
+        userId,
+        organizationId,
+        entityType: "dietary_tag",
+        entityId: tagId,
+        recordSchemaVersion: 1,
+        lifecycle: "active",
+        fields: { id: tagId, name: "Vegan" },
+        fieldClocks: {},
+        immutable: false,
+        updatedAt: "2026-08-07T10:00:00.000Z",
+      },
+    ]);
+    await localDb.outbox.add({
+      id: "dietary-create",
+      userId,
+      organizationId,
+      commandType: "event_dietary_exception.create",
+      payload: {
+        event_id: eventId,
+        exception_id: exceptionId,
+        name: "Alex",
+        note: null,
+        tag_ids: [tagId],
+      },
+      actionAt: "2026-08-07T11:00:00.000Z",
+      createdAt: "2026-08-07T11:00:00.000Z",
+      state: "pending",
+    });
+    await bootstrapOrganization(userId, organizationId, {
+      fetch: vi.fn<typeof fetch>(async () =>
+        response([
+          organizationRecord(),
+          {
+            organization_id: organizationId,
+            entity_id: eventId,
+            entity_kind: "event",
+            operation: "upsert",
+            payload: {
+              record_schema_version: 1,
+              record: { id: eventId, lifecycle: "active", archived_at: null },
+            },
+          },
+          {
+            organization_id: organizationId,
+            entity_id: tagId,
+            entity_kind: "dietary_tag",
+            operation: "upsert",
+            payload: {
+              record_schema_version: 1,
+              record: { id: tagId, name: "Vegan", retired_at: null },
+            },
+          },
+          {
+            organization_id: organizationId,
+            entity_id: exceptionId,
+            entity_kind: "event_dietary_exception",
+            operation: "upsert",
+            payload: {
+              record_schema_version: 1,
+              record: {
+                id: exceptionId,
+                event_id: eventId,
+                name: "Alex",
+                note: null,
+                retired_at: null,
+              },
+            },
+          },
+          {
+            organization_id: organizationId,
+            entity_id: `${exceptionId}:${tagId}`,
+            entity_kind: "event_dietary_exception_tag",
+            operation: "upsert",
+            payload: {
+              record_schema_version: 1,
+              record: {
+                id: `${exceptionId}:${tagId}`,
+                exception_id: exceptionId,
+                dietary_tag_id: tagId,
+                retired_at: null,
+              },
+            },
+          },
+        ]),
+      ),
+    });
+    await expect(
+      localDb.optimisticOverlays.get([
+        userId,
+        organizationId,
+        "event_dietary_exception",
+        exceptionId,
+      ]),
+    ).resolves.toBeTruthy();
+  });
+
   it("replays a pending recipe create as both root and immutable initial version", async () => {
     const recipeId = "3d8b2b21-c378-4574-9e46-9338c81305ef";
     const versionId = "4d8b2b21-c378-4574-9e46-9338c81305ef";
