@@ -222,11 +222,23 @@ function IngredientLifecycleControl({
   );
 }
 
-function IngredientVersionEditor({ ingredient, catalog, organizationId, userId }: { ingredient: IngredientCatalogProjection["ingredients"][number]; catalog: IngredientCatalogProjection; organizationId: string; userId: string }) {
+function IngredientVersionEditor({ ingredient, catalog, organizationId, userId, discardToken = 0, onDirtyChange }: { ingredient: IngredientCatalogProjection["ingredients"][number]; catalog: IngredientCatalogProjection; organizationId: string; userId: string; discardToken?: number; onDirtyChange?: (dirty: boolean) => void }) {
   const { t } = useTranslation();
   const current = ingredient.versions?.find((version) => version.id === ingredient.versionId);
   const [input, setInput] = useState<IngredientVersionPublishInput>({ ingredientId: ingredient.id, basedOnVersionId: ingredient.versionId, name: ingredient.name, canonicalUnitId: ingredient.canonicalUnitId ?? "", massPerCanonicalQuantity: ingredient.massPerCanonicalQuantity, dietaryTagIds: ingredient.dietaryTagIds ?? [], defaultStoreSectionId: ingredient.defaultStoreSectionId ?? null });
   const [message, setMessage] = useState<string>();
+  const initialInput = { ingredientId: ingredient.id, basedOnVersionId: ingredient.versionId, name: ingredient.name, canonicalUnitId: ingredient.canonicalUnitId ?? "", massPerCanonicalQuantity: ingredient.massPerCanonicalQuantity, dietaryTagIds: ingredient.dietaryTagIds ?? [], defaultStoreSectionId: ingredient.defaultStoreSectionId ?? null } satisfies IngredientVersionPublishInput;
+  const previousDiscardToken = useRef(discardToken);
+  const dirty = JSON.stringify(input) !== JSON.stringify(initialInput);
+  useEffect(() => {
+    onDirtyChange?.(dirty);
+    return () => onDirtyChange?.(false);
+  }, [dirty, onDirtyChange]);
+  useEffect(() => {
+    if (previousDiscardToken.current === discardToken) return;
+    previousDiscardToken.current = discardToken;
+    setInput(initialInput);
+  }, [discardToken, initialInput]);
   if (ingredient.retired) return null;
   async function submit(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -236,11 +248,23 @@ function IngredientVersionEditor({ ingredient, catalog, organizationId, userId }
   return <details><summary>{t("ingredientsCatalog.editVersion")}</summary><p>{t("ingredientsCatalog.history")}: {ingredient.versions?.length ?? 1}</p>{ingredient.versions?.length ? <ul aria-label={t("ingredientsCatalog.history")}><li>{t("ingredientsCatalog.currentVersion")}: {ingredient.versionId}</li>{ingredient.versions.filter((version) => version.id !== ingredient.versionId).map((version) => <li key={version.id}>{version.id} · {version.name} · {version.canonicalUnitName} · {version.mass}{version.basedOnVersionId ? ` · ${t("ingredientsCatalog.basedOn")}: ${version.basedOnVersionId}` : ""}</li>)}</ul> : null}{current ? <p>{current.name} · {current.canonicalUnitName} · {current.mass}</p> : null}<form onSubmit={(event) => void submit(event)}><label>{t("ingredientsCatalog.name")}<input value={input.name} required onChange={(event) => setInput({ ...input, name: event.target.value })} /></label><label>{t("ingredientsCatalog.canonicalUnit")}<select value={input.canonicalUnitId} required onChange={(event) => setInput({ ...input, canonicalUnitId: event.target.value })}>{catalog.units.map((unit) => <option key={unit.id} value={unit.id}>{unit.name}</option>)}</select></label><label>{t("ingredientsCatalog.mass")}<input inputMode="decimal" value={input.massPerCanonicalQuantity} required onChange={(event) => setInput({ ...input, massPerCanonicalQuantity: event.target.value })} /></label><fieldset><legend>{t("ingredientsCatalog.dietaryTags")}</legend>{catalog.dietaryTags.map((tag) => <label key={tag.id}><input type="checkbox" checked={input.dietaryTagIds.includes(tag.id)} onChange={(event) => setInput({ ...input, dietaryTagIds: event.target.checked ? [...input.dietaryTagIds, tag.id] : input.dietaryTagIds.filter((id) => id !== tag.id) })} />{tag.name}</label>)}</fieldset><button type="submit">{t("ingredientsCatalog.publishVersion")}</button></form>{message ? <p role="status">{message}</p> : null}</details>;
 }
 
-function IngredientPriceEditor({ ingredient, catalog, organizationId, userId }: { ingredient: IngredientCatalogProjection["ingredients"][number]; catalog: IngredientCatalogProjection; organizationId: string; userId: string }) {
+function IngredientPriceEditor({ ingredient, catalog, organizationId, userId, discardToken = 0, onDirtyChange }: { ingredient: IngredientCatalogProjection["ingredients"][number]; catalog: IngredientCatalogProjection; organizationId: string; userId: string; discardToken?: number; onDirtyChange?: (dirty: boolean) => void }) {
   const { t } = useTranslation();
   const compatible = catalog.units.filter((unit) => unit.dimension === catalog.units.find((item) => item.id === ingredient.canonicalUnitId)?.dimension);
   const [input, setInput] = useState<IngredientPricePublishInput>({ ingredientId: ingredient.id, amount: ingredient.currentPrice?.amount ?? "", pricedQuantity: ingredient.currentPrice?.quantity ?? "1", unitId: ingredient.currentPrice?.unitId ?? compatible[0]?.id ?? "", currency: catalog.organizationDefaultCurrency });
   const [message, setMessage] = useState<string>();
+  const initialInput = { ingredientId: ingredient.id, amount: ingredient.currentPrice?.amount ?? "", pricedQuantity: ingredient.currentPrice?.quantity ?? "1", unitId: ingredient.currentPrice?.unitId ?? compatible[0]?.id ?? "", currency: catalog.organizationDefaultCurrency } satisfies IngredientPricePublishInput;
+  const previousDiscardToken = useRef(discardToken);
+  const dirty = JSON.stringify(input) !== JSON.stringify(initialInput);
+  useEffect(() => {
+    onDirtyChange?.(dirty);
+    return () => onDirtyChange?.(false);
+  }, [dirty, onDirtyChange]);
+  useEffect(() => {
+    if (previousDiscardToken.current === discardToken) return;
+    previousDiscardToken.current = discardToken;
+    setInput(initialInput);
+  }, [discardToken, initialInput]);
   if (ingredient.retired) return null;
   async function submit(event: React.FormEvent<HTMLFormElement>) { event.preventDefault(); try { await queueIngredientPricePublish(userId, organizationId, input); setMessage(t("ingredientsCatalog.priceQueued")); } catch { setMessage(t("ingredientsCatalog.errors.unavailable")); } }
   return <details><summary>{t("ingredientsCatalog.priceHeading")}</summary><p>{ingredient.currentPrice ? t("ingredientsCatalog.currentPrice", { amount: ingredient.currentPrice.amount, quantity: ingredient.currentPrice.quantity, unit: compatible.find((unit) => unit.id === ingredient.currentPrice?.unitId)?.name ?? "—", currency: ingredient.currentPrice.currency }) : t("ingredientsCatalog.noPrice")}</p><form onSubmit={(event) => void submit(event)}><label>{t("ingredientsCatalog.priceAmount")}<input inputMode="decimal" pattern="(?:0|[1-9][0-9]*)(?:\.[0-9]+)?" required value={input.amount} onChange={(event) => setInput({ ...input, amount: event.target.value })} /></label><label>{t("ingredientsCatalog.priceQuantity")}<input inputMode="decimal" required value={input.pricedQuantity} onChange={(event) => setInput({ ...input, pricedQuantity: event.target.value })} /></label><label>{t("ingredientsCatalog.priceUnit")}<select required value={input.unitId} onChange={(event) => setInput({ ...input, unitId: event.target.value })}>{compatible.map((unit) => <option key={unit.id} value={unit.id}>{unit.name}</option>)}</select></label><button disabled={!compatible.length} type="submit">{t("ingredientsCatalog.publishPrice")}</button></form>{message ? <p role="status">{message}</p> : null}</details>;
@@ -250,10 +274,20 @@ export function IngredientCatalog({
   organizationId,
   userId,
   onUnauthenticated,
+  onBackToCatalog,
+  onOpenIngredient,
+  selectedIngredientId,
+  discardToken,
+  onDirtyChange,
 }: {
   organizationId: string;
   userId: string;
   onUnauthenticated: () => void;
+  onBackToCatalog?: () => void;
+  onOpenIngredient?: (ingredientId: string) => void;
+  selectedIngredientId?: string;
+  discardToken?: number;
+  onDirtyChange?: (dirty: boolean) => void;
 }) {
   const { t } = useTranslation();
   const [state, setState] = useState<CatalogState>({ status: "loading" });
@@ -303,6 +337,55 @@ export function IngredientCatalog({
   const ingredients = state.catalog.ingredients.filter(
     (ingredient) => showRetired || !ingredient.retired,
   );
+  if (selectedIngredientId === "__invalid__")
+    return (
+      <div className="ingredient-catalog">
+        {onBackToCatalog ? (
+          <a
+            href={`/organizations/${organizationId}/ingredients`}
+            onClick={(event) => {
+              event.preventDefault();
+              onBackToCatalog();
+            }}
+          >
+            {t("ingredientsCatalog.backToCatalog")}
+          </a>
+        ) : null}
+        <p role="status">{t("ingredientsCatalog.unavailable")}</p>
+      </div>
+    );
+  if (selectedIngredientId) {
+    const selected = state.catalog.ingredients.find(
+      (ingredient) => ingredient.id.toLowerCase() === selectedIngredientId,
+    );
+    return (
+      <div className="ingredient-catalog">
+        {onBackToCatalog ? (
+          <a
+            href={`/organizations/${organizationId}/ingredients`}
+            onClick={(event) => {
+              event.preventDefault();
+              onBackToCatalog();
+            }}
+          >
+            {t("ingredientsCatalog.backToCatalog")}
+          </a>
+        ) : null}
+        {!selected ? (
+          <p role="status">{t("ingredientsCatalog.unavailable")}</p>
+        ) : (
+          <IngredientDetail
+            catalog={state.catalog}
+            ingredient={selected}
+            organizationId={organizationId}
+            userId={userId}
+            discardToken={discardToken}
+            onDirtyChange={onDirtyChange}
+          />
+        )}
+      </div>
+    );
+  }
   return (
     <div className="ingredient-catalog">
       <p className="ingredient-catalog__scope">
@@ -330,7 +413,21 @@ export function IngredientCatalog({
         <ul className="ingredient-list">
           {ingredients.map((ingredient) => (
             <li key={ingredient.id}>
-              <h3>{ingredient.name}</h3>
+              <h3>
+                {onOpenIngredient ? (
+                  <a
+                    href={`/organizations/${organizationId}/ingredients/${ingredient.id}`}
+                    onClick={(event) => {
+                      event.preventDefault();
+                      onOpenIngredient(ingredient.id);
+                    }}
+                  >
+                    {ingredient.name}
+                  </a>
+                ) : (
+                  ingredient.name
+                )}
+              </h3>
               {ingredient.retired ? (
                 <p>{t("ingredientsCatalog.retired")}</p>
               ) : null}
@@ -352,5 +449,77 @@ export function IngredientCatalog({
         </ul>
       )}
     </div>
+  );
+}
+
+function IngredientDetail({
+  catalog,
+  ingredient,
+  organizationId,
+  userId,
+  discardToken,
+  onDirtyChange,
+}: {
+  catalog: IngredientCatalogProjection;
+  ingredient: IngredientCatalogProjection["ingredients"][number];
+  organizationId: string;
+  userId: string;
+  discardToken?: number;
+  onDirtyChange?: (dirty: boolean) => void;
+}) {
+  const { t } = useTranslation();
+  const [dirtyEditors, setDirtyEditors] = useState<Set<string>>(() => new Set());
+  const reportDirty = useCallback((key: string, dirty: boolean) => {
+    setDirtyEditors((current) => {
+      const next = new Set(current);
+      if (dirty) next.add(key);
+      else next.delete(key);
+      return next;
+    });
+  }, []);
+  const reportVersionDirty = useCallback(
+    (dirty: boolean) => reportDirty("version", dirty),
+    [reportDirty],
+  );
+  const reportPriceDirty = useCallback(
+    (dirty: boolean) => reportDirty("price", dirty),
+    [reportDirty],
+  );
+  useEffect(() => {
+    onDirtyChange?.(dirtyEditors.size > 0);
+    return () => onDirtyChange?.(false);
+  }, [dirtyEditors, onDirtyChange]);
+  return (
+    <article aria-labelledby="ingredient-detail-heading">
+      <h2 id="ingredient-detail-heading">{ingredient.name}</h2>
+      {ingredient.retired ? <p>{t("ingredientsCatalog.retired")}</p> : null}
+      <p>
+        {t("ingredientsCatalog.canonical", {
+          unit: ingredient.canonicalUnitName,
+          mass: ingredient.massPerCanonicalQuantity,
+        })}
+      </p>
+      <IngredientLifecycleControl
+        ingredient={ingredient}
+        organizationId={organizationId}
+        userId={userId}
+      />
+      <IngredientVersionEditor
+        catalog={catalog}
+        ingredient={ingredient}
+        organizationId={organizationId}
+        userId={userId}
+        discardToken={discardToken}
+        onDirtyChange={reportVersionDirty}
+      />
+      <IngredientPriceEditor
+        catalog={catalog}
+        ingredient={ingredient}
+        organizationId={organizationId}
+        userId={userId}
+        discardToken={discardToken}
+        onDirtyChange={reportPriceDirty}
+      />
+    </article>
   );
 }

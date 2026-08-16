@@ -75,6 +75,32 @@ vi.mock("./recipe-catalog-view", () => ({
   ),
 }));
 
+vi.mock("./ingredient-catalog-view", () => ({
+  IngredientCatalog: ({
+    onBackToCatalog,
+    onDirtyChange,
+    selectedIngredientId,
+  }: {
+    onBackToCatalog?: () => void;
+    onDirtyChange?: (dirty: boolean) => void;
+    selectedIngredientId?: string;
+  }) => (
+    <section aria-label="ingredient-route">
+      <span>{selectedIngredientId ?? "catalog"}</span>
+      {onBackToCatalog ? (
+        <button onClick={onBackToCatalog} type="button">
+          Back to ingredient catalog
+        </button>
+      ) : null}
+      {selectedIngredientId && selectedIngredientId !== "__invalid__" ? (
+        <button onClick={() => onDirtyChange?.(true)} type="button">
+          Make ingredient dirty
+        </button>
+      ) : null}
+    </section>
+  ),
+}));
+
 const alice = {
   id: "a6a58bd6-214e-49af-8fae-e5f974bf8e08",
   display_name: "Alice Member",
@@ -429,6 +455,52 @@ describe("development authentication", () => {
         `/organizations/${primaryOrganization.id}/events`,
       ),
     );
+  });
+
+  it("routes direct ingredient detail and keeps malformed ids in the ingredient shell", async () => {
+    const user = userEvent.setup();
+    const ingredientId = "7ce17d2f-8365-4b1f-a80b-34d10425d51c";
+    window.history.replaceState(
+      null,
+      "",
+      `/organizations/${primaryOrganization.id}/ingredients/${ingredientId}`,
+    );
+    mockAnonymousDevelopmentSession();
+    render(<App />);
+    await user.click(
+      await screen.findByRole("button", {
+        name: "Přihlásit se jako Alice Member",
+      }),
+    );
+    expect(await screen.findByRole("region", { name: "ingredient-route" })).toHaveTextContent(ingredientId);
+    await user.click(screen.getByRole("button", { name: "Back to ingredient catalog" }));
+    expect(window.location.pathname).toBe(`/organizations/${primaryOrganization.id}/ingredients`);
+
+    window.history.replaceState(
+      null,
+      "",
+      `/organizations/${primaryOrganization.id}/ingredients/not-a-uuid`,
+    );
+    fireEvent(window, new PopStateEvent("popstate"));
+    expect(await screen.findByRole("region", { name: "ingredient-route" })).toHaveTextContent("__invalid__");
+  });
+
+  it("guards ingredient detail navigation when an editor is dirty", async () => {
+    const user = userEvent.setup();
+    const ingredientId = "7ce17d2f-8365-4b1f-a80b-34d10425d51c";
+    window.history.replaceState(null, "", `/organizations/${primaryOrganization.id}/ingredients/${ingredientId}`);
+    mockAnonymousDevelopmentSession();
+    const confirmMock = vi.spyOn(window, "confirm");
+    render(<App />);
+    await user.click(await screen.findByRole("button", { name: "Přihlásit se jako Alice Member" }));
+    await user.click(await screen.findByRole("button", { name: "Make ingredient dirty" }));
+    confirmMock.mockReturnValue(false);
+    await user.click(screen.getByRole("button", { name: "Back to ingredient catalog" }));
+    expect(window.location.pathname).toContain(`/ingredients/${ingredientId}`);
+    confirmMock.mockReturnValue(true);
+    await user.click(screen.getByRole("button", { name: "Back to ingredient catalog" }));
+    expect(window.location.pathname).toBe(`/organizations/${primaryOrganization.id}/ingredients`);
+    confirmMock.mockRestore();
   });
 
   it("requires discarding an edit before browser back leaves the route", async () => {

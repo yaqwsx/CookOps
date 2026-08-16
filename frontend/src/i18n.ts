@@ -237,6 +237,9 @@ const resources = {
         history: "Historie verzí",
         currentVersion: "Aktuální verze",
         basedOn: "Vychází z",
+        discardChanges: "Zahodit neuložené změny?",
+        backToCatalog: "Zpět do katalogu surovin",
+        unavailable: "Tato surovina není v tomto katalogu dostupná.",
         errors: {
           name: "Zadejte název do 200 znaků.",
           unit: "Vyberte uloženou jednotku.",
@@ -734,6 +737,9 @@ const resources = {
         history: "Version history",
         currentVersion: "Current version",
         basedOn: "Based on",
+        discardChanges: "Discard unsaved changes?",
+        backToCatalog: "Back to ingredient catalog",
+        unavailable: "This ingredient is not available in this catalog.",
         errors: {
           name: "Enter a name of at most 200 characters.",
           unit: "Select a stored unit.",
