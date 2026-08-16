@@ -415,6 +415,7 @@ export function RecipeCatalog({
   const { t } = useTranslation();
   const [state, setState] = useState<CatalogState>({ status: "loading" });
   const [showRetired, setShowRetired] = useState(false);
+  const [query, setQuery] = useState("");
 
   useEffect(() => {
     const subscription = liveQuery(() =>
@@ -465,9 +466,38 @@ export function RecipeCatalog({
         </button>
       </div>
     );
-  const recipes = state.catalog.recipes.filter(
+  const visibleRecipes = state.catalog.recipes.filter(
     (recipe) => showRetired || !recipe.retired,
   );
+  const normalizedQuery = query.normalize("NFC").trim().toLocaleLowerCase();
+  const tagNameById = new Map(
+    state.catalog.tags.map((tag) => [tag.id, tag.name]),
+  );
+  const ingredientNameByVersion = new Map(
+    state.catalog.ingredients.map((ingredient) => [
+      ingredient.versionId,
+      ingredient.name,
+    ]),
+  );
+  const recipes = visibleRecipes.filter((recipe) => {
+    if (!normalizedQuery) return true;
+    const tagNames = recipe.recipeTagIds
+      .map((id) => tagNameById.get(id))
+      .filter((name): name is string => Boolean(name));
+    const ingredientNames = recipe.ingredientLines
+      .map((line) => ingredientNameByVersion.get(line.ingredientVersionId))
+      .filter((name): name is string => Boolean(name));
+    return [
+      recipe.name,
+      recipe.description ?? "",
+      ...tagNames,
+      ...ingredientNames,
+    ]
+      .join("\n")
+      .normalize("NFC")
+      .toLocaleLowerCase()
+      .includes(normalizedQuery);
+  });
   return (
     <div className="recipe-catalog">
       <p className="recipe-catalog__scope">{t("recipesCatalog.scope")}</p>
@@ -487,8 +517,27 @@ export function RecipeCatalog({
         />
         {t("recipesCatalog.showRetired")}
       </label>
+      <label>
+        {t("recipesCatalog.search")}
+        <input
+          aria-label={t("recipesCatalog.search")}
+          onChange={(event) => setQuery(event.target.value)}
+          placeholder={t("recipesCatalog.searchPlaceholder")}
+          type="search"
+          value={query}
+        />
+      </label>
+      {query ? (
+        <button onClick={() => setQuery("")} type="button">
+          {t("recipesCatalog.clearSearch")}
+        </button>
+      ) : null}
       {!recipes.length ? (
-        <p role="status">{t("recipesCatalog.empty")}</p>
+        <p role="status">
+          {visibleRecipes.length
+            ? t("recipesCatalog.searchEmpty")
+            : t("recipesCatalog.empty")}
+        </p>
       ) : (
         <ul className="recipe-list">
           {recipes.map((recipe) => (

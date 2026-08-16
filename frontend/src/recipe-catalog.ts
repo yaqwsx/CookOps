@@ -65,7 +65,7 @@ export async function readRecipeCatalog(
     readVisibleRecords(userId, organizationId, "recipe", includeRetired),
     readVisibleRecords(userId, organizationId, "recipe_version"),
     readVisibleRecords(userId, organizationId, "unit_definition"),
-    readVisibleRecords(userId, organizationId, "recipe_tag"),
+    readVisibleRecords(userId, organizationId, "recipe_tag", true),
     readIngredientCatalog(userId, organizationId, true),
     readVisibleRecords(userId, organizationId, "recipe_ingredient_line"),
     readVisibleRecords(userId, organizationId, "recipe_version_tag"),
@@ -245,10 +245,14 @@ export async function readRecipeCatalog(
       (left, right) =>
         left.name.localeCompare(right.name) || left.id.localeCompare(right.id),
     );
+  const referencedTagIds = new Set(
+    recipes.flatMap((recipe) => recipe.recipeTagIds),
+  );
   const tags = tagRecords
     .filter(
       (record) =>
-        record.lifecycle === "active" &&
+        (record.lifecycle === "active" ||
+          referencedTagIds.has(record.entityId)) &&
         text(record, "organization_id") === organizationId,
     )
     .map((record) => ({ id: record.entityId, name: text(record, "name") }))

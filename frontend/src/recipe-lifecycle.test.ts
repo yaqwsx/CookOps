@@ -64,6 +64,51 @@ beforeEach(async () => {
 });
 
 describe("offline recipe lifecycle", () => {
+  it("keeps a retired referenced tag searchable in the catalog projection", async () => {
+    const tagId = "1ce17d2f-8365-4b1f-a80b-34d10425d51c";
+    await localDb.canonicalRecords.bulkAdd([
+      {
+        userId,
+        organizationId,
+        entityType: "recipe_tag",
+        entityId: tagId,
+        recordSchemaVersion: 1,
+        lifecycle: "retired",
+        fields: {
+          id: tagId,
+          organization_id: organizationId,
+          name: "Seasonal",
+        },
+        fieldClocks: {},
+        immutable: false,
+        updatedAt: "2026-08-10T12:00:00.000000Z",
+      },
+      {
+        userId,
+        organizationId,
+        entityType: "recipe_version_tag",
+        entityId: "2ce17d2f-8365-4b1f-a80b-34d10425d51c",
+        recordSchemaVersion: 1,
+        lifecycle: "active",
+        fields: {
+          id: "2ce17d2f-8365-4b1f-a80b-34d10425d51c",
+          organization_id: organizationId,
+          recipe_version_id: versionId,
+          recipe_tag_id: tagId,
+        },
+        fieldClocks: {},
+        immutable: true,
+        updatedAt: "2026-08-10T12:00:00.000000Z",
+      },
+    ]);
+    await expect(
+      readRecipeCatalog(userId, organizationId),
+    ).resolves.toMatchObject({
+      tags: [{ id: tagId, name: "Seasonal" }],
+      recipes: [expect.objectContaining({ recipeTagIds: [tagId] })],
+    });
+  });
+
   async function addIngredient(retired: boolean, organization = organizationId) {
     await localDb.canonicalRecords.bulkAdd([
       {

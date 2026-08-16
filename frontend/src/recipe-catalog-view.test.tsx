@@ -37,6 +37,32 @@ vi.mock("./recipe-catalog", () => ({
         ],
         hasRetiredIngredientReference: true,
         catalogUpdateAvailable: true,
+        recipeTagIds: ["1ce17d2f-8365-4b1f-a80b-34d10425d51c"],
+      },
+      {
+        id: "7ce17d2f-8365-4b1f-a80b-34d10425d51c",
+        retired: false,
+        versionId: "8ce17d2f-8365-4b1f-a80b-34d10425d51c",
+        name: "Pasta",
+        description: "Family tomato dinner",
+        scalingUnitId: "8ce17d2f-8365-4b1f-a80b-34d10425d51c",
+        baseScalingAmount: "1",
+        ingredientLines: [],
+        hasRetiredIngredientReference: false,
+        catalogUpdateAvailable: false,
+        recipeTagIds: [],
+      },
+      {
+        id: "9ce17d2f-8365-4b1f-a80b-34d10425d51c",
+        retired: true,
+        versionId: "ace17d2f-8365-4b1f-a80b-34d10425d51c",
+        name: "Archived cake",
+        description: "Old recipe",
+        scalingUnitId: "8ce17d2f-8365-4b1f-a80b-34d10425d51c",
+        baseScalingAmount: "1",
+        ingredientLines: [],
+        hasRetiredIngredientReference: false,
+        catalogUpdateAvailable: false,
         recipeTagIds: [],
       },
     ],
@@ -59,7 +85,12 @@ vi.mock("./recipe-catalog", () => ({
         retired: true,
       },
     ],
-    tags: [],
+    tags: [
+      {
+        id: "1ce17d2f-8365-4b1f-a80b-34d10425d51c",
+        name: "Quick meals",
+      },
+    ],
   })),
 }));
 vi.mock("./sync-bootstrap", () => ({
@@ -95,7 +126,13 @@ describe("recipe retired ingredient warning", () => {
         onUnauthenticated={() => undefined}
       />,
     );
-    await user.click(await screen.findByRole("button", { name: "Upravit recept" }));
+    await user.type(
+      await screen.findByRole("searchbox", { name: "Hledat recepty" }),
+      "soup",
+    );
+    await user.click(
+      await screen.findByRole("button", { name: "Upravit recept" }),
+    );
     const ingredientSelect = screen.getByRole("combobox", { name: "Surovina" });
     expect(ingredientSelect).toHaveTextContent("Historical carrot");
     expect(screen.getByRole("option", { name: "Historical carrot" })).toBeVisible();
@@ -104,5 +141,59 @@ describe("recipe retired ingredient warning", () => {
     const newIngredientSelect = screen.getByRole("combobox", { name: "Surovina" });
     expect(newIngredientSelect).toHaveTextContent("Current carrot");
     expect(newIngredientSelect).not.toHaveTextContent("Historical carrot");
+  });
+
+  it("matches description, tag, and ingredient with normalized search", async () => {
+    const user = userEvent.setup();
+    render(
+      <RecipeCatalog
+        organizationId="5ce17d2f-8365-4b1f-a80b-34d10425d51c"
+        userId="a6a58bd6-214e-49af-8fae-e5f974bf8e08"
+        onUnauthenticated={() => undefined}
+      />,
+    );
+    const search = await screen.findByRole("searchbox", {
+      name: "Hledat recepty",
+    });
+    await user.type(search, "  FAMILY ");
+    expect(screen.getByRole("heading", { name: "Pasta" })).toBeVisible();
+    expect(
+      screen.queryByRole("heading", { name: "Soup" }),
+    ).not.toBeInTheDocument();
+    await user.clear(search);
+    await user.type(search, "quick");
+    expect(screen.getByRole("heading", { name: "Soup" })).toBeVisible();
+    await user.clear(search);
+    await user.type(search, "CARROT");
+    expect(screen.getByRole("heading", { name: "Soup" })).toBeVisible();
+    await user.clear(search);
+    await user.type(search, "missing");
+    expect(
+      screen.getByText("Hledání neodpovídá žádnému receptu."),
+    ).toBeVisible();
+  });
+
+  it("keeps retired filtering independent from search", async () => {
+    const user = userEvent.setup();
+    render(
+      <RecipeCatalog
+        organizationId="5ce17d2f-8365-4b1f-a80b-34d10425d51c"
+        userId="a6a58bd6-214e-49af-8fae-e5f974bf8e08"
+        onUnauthenticated={() => undefined}
+      />,
+    );
+    const search = await screen.findByRole("searchbox", {
+      name: "Hledat recepty",
+    });
+    await user.type(search, "archived");
+    expect(
+      screen.getByText("Hledání neodpovídá žádnému receptu."),
+    ).toBeVisible();
+    await user.click(
+      screen.getByRole("checkbox", { name: "Zobrazit vyřazené recepty" }),
+    );
+    expect(
+      screen.getByRole("heading", { name: "Archived cake" }),
+    ).toBeVisible();
   });
 });
