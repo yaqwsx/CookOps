@@ -1,5 +1,6 @@
 import type { EventSummary } from "./api/events";
 import { type CanonicalRecord, localDb } from "./local-db";
+import { readVisibleRecords } from "./visible-records";
 
 function text(value: unknown): string | null {
   return typeof value === "string" && value.length > 0 ? value : null;
@@ -40,6 +41,7 @@ function eventSummary(
     (fields.general_note !== undefined && generalNote === null) ||
     typeof attendance !== "number" ||
     !Number.isSafeInteger(attendance) ||
+    attendance < 0 ||
     (lifecycle !== "active" && lifecycle !== "archived") ||
     (archivedAt !== null && typeof archivedAt !== "string") ||
     (currentArchiveSnapshotId !== undefined &&
@@ -70,20 +72,7 @@ export async function readVisibleEventSummaries(
   userId: string,
   organizationId: string,
 ): Promise<EventSummary[]> {
-  const key = [userId, organizationId, "event"] as const;
-  const [canonical, overlays] = await Promise.all([
-    localDb.canonicalRecords
-      .where("[userId+organizationId+entityType]")
-      .equals(key)
-      .toArray(),
-    localDb.optimisticOverlays
-      .where("[userId+organizationId+entityType]")
-      .equals(key)
-      .toArray(),
-  ]);
-  const visible = new Map(canonical.map((record) => [record.entityId, record]));
-  for (const overlay of overlays) visible.set(overlay.entityId, overlay);
-  return [...visible.values()]
+  return (await readVisibleRecords(userId, organizationId, "event", true))
     .map((record) => eventSummary(record, organizationId))
     .filter((event): event is EventSummary => event !== null)
     .sort(

@@ -2,6 +2,7 @@ import { liveQuery } from "dexie";
 import { useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
 import type { EventSummary } from "./api/events";
+import { EventAttendance } from "./event-attendance-form";
 import { EventLifecycle } from "./event-lifecycle-form";
 import { EventMetadata } from "./event-metadata-form";
 import {
@@ -76,6 +77,12 @@ export function EventSettingsPage({
             organizationId={organizationId}
             userId={userId}
           />
+          <EventAttendance
+            attendance={event.baseExpectedAttendance}
+            eventId={event.id}
+            organizationId={organizationId}
+            userId={userId}
+          />
           {canManage ? (
             <EventLifecycle
               eventId={event.id}
@@ -89,6 +96,10 @@ export function EventSettingsPage({
         <>
           <aside role="status">{t("eventSettings.archivedReadOnly")}</aside>
           <dl>
+            <div>
+              <dt>{t("eventsEdit.attendance")}</dt>
+              <dd>{event.baseExpectedAttendance}</dd>
+            </div>
             <div>
               <dt>{t("eventsEdit.name")}</dt>
               <dd>{event.name}</dd>

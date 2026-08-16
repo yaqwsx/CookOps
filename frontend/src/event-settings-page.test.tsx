@@ -1,8 +1,15 @@
 import { render, screen } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { readVisibleEventSummaries } from "./event-projections";
 import { EventSettingsPage } from "./event-settings-page";
 import i18n, { defaultLocale } from "./i18n";
 import { localDb } from "./local-db";
+
+const { queueEventAttendanceUpdate } = vi.hoisted(() => ({
+  queueEventAttendanceUpdate: vi.fn().mockResolvedValue(undefined),
+}));
+vi.mock("./event-attendance", () => ({ queueEventAttendanceUpdate }));
 
 vi.mock("./event-lifecycle-form", () => ({
   EventLifecycle: () => <button type="button">lifecycle</button>,
@@ -15,6 +22,7 @@ async function addEvent(
   eventId: string,
   name: string,
   lifecycle: "active" | "archived" = "active",
+  attendance = 3,
 ) {
   await localDb.canonicalRecords.put({
     userId,
@@ -32,7 +40,7 @@ async function addEvent(
       name,
       start_date: "2026-08-10",
       end_date: "2026-08-10",
-      base_expected_attendance: 3,
+      base_expected_attendance: attendance,
       budget_amount: "10",
       currency: "CZK",
       lifecycle,
@@ -67,7 +75,12 @@ describe("EventSettingsPage", () => {
 
   it("keeps projection identity scoped when route changes from event A to B", async () => {
     await addEvent("aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa", "Event A");
-    await addEvent("bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb", "Event B");
+    await addEvent(
+      "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb",
+      "Event B",
+      "active",
+      7,
+    );
     const { rerender } = render(
       <EventSettingsPage
         eventId="aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"
@@ -98,6 +111,99 @@ describe("EventSettingsPage", () => {
     );
     expect(await screen.findByDisplayValue("Event B")).toBeInTheDocument();
     expect(screen.queryByDisplayValue("Event A")).not.toBeInTheDocument();
+    expect(
+      screen.getByRole("spinbutton", { name: "Expected attendance" }),
+    ).toHaveValue(7);
+  });
+
+  it("queues active attendance and keeps archived attendance read-only", async () => {
+    const activeId = "11111111-1111-4111-8111-111111111111";
+    const archivedId = "22222222-2222-4222-8222-222222222222";
+    await addEvent(activeId, "Active", "active", 7);
+    await addEvent(archivedId, "Archived", "archived");
+    const { rerender } = render(
+      <EventSettingsPage
+        eventId={activeId}
+        onOpenCosts={vi.fn()}
+        onOpenPlanner={vi.fn()}
+        organizationId={organizationId}
+        userId={userId}
+      />,
+    );
+    const input = await screen.findByLabelText("Očekávaná účast");
+    expect(input).toHaveValue(7);
+    await userEvent
+      .setup()
+      .click(screen.getByRole("button", { name: "Uložit účast" }));
+    expect(queueEventAttendanceUpdate).toHaveBeenCalledWith(
+      userId,
+      organizationId,
+      activeId,
+      "7",
+    );
+    rerender(
+      <EventSettingsPage
+        eventId={archivedId}
+        onOpenCosts={vi.fn()}
+        onOpenPlanner={vi.fn()}
+        organizationId={organizationId}
+        userId={userId}
+      />,
+    );
+    expect(
+      await screen.findByText("Archivovaná akce je jen pro čtení."),
+    ).toBeInTheDocument();
+    expect(screen.queryByLabelText("Očekávaná účast")).not.toBeInTheDocument();
+    expect(screen.getByText("3")).toBeInTheDocument();
+  });
+
+  it("does not revive archived events from stale overlays or expose invalid attendance", async () => {
+    const eventId = "33333333-3333-4333-8333-333333333333";
+    await addEvent(eventId, "Archived", "archived");
+    const canonical = await localDb.canonicalRecords.get([
+      userId,
+      organizationId,
+      "event",
+      eventId,
+    ]);
+    if (!canonical) throw new Error("canonical event missing");
+    await localDb.canonicalRecords.put({ ...canonical, lifecycle: "retired" });
+    await localDb.optimisticOverlays.put({
+      ...canonical,
+      lifecycle: "active",
+      fields: { ...canonical.fields, lifecycle: "active", name: "Revived" },
+    });
+    render(
+      <EventSettingsPage
+        eventId={eventId}
+        onOpenCosts={vi.fn()}
+        onOpenPlanner={vi.fn()}
+        organizationId={organizationId}
+        userId={userId}
+      />,
+    );
+    expect(
+      await screen.findByText("Archivovaná akce je jen pro čtení."),
+    ).toBeInTheDocument();
+    expect(screen.queryByDisplayValue("Revived")).not.toBeInTheDocument();
+    expect(screen.queryByLabelText("Očekávaná účast")).not.toBeInTheDocument();
+
+    await localDb.canonicalRecords.put({
+      ...canonical,
+      entityId: "44444444-4444-4444-8444-444444444444",
+      fields: {
+        ...canonical.fields,
+        id: "44444444-4444-4444-8444-444444444444",
+        base_expected_attendance: -1,
+      },
+    });
+    await expect(
+      readVisibleEventSummaries(userId, organizationId),
+    ).resolves.not.toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ id: "44444444-4444-4444-8444-444444444444" }),
+      ]),
+    );
   });
 
   it("gates lifecycle actions by organization capability and labels archived read-only state", async () => {
