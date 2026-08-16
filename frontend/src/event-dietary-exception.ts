@@ -28,6 +28,10 @@ function clockRank(value: string): bigint {
   if (!match) throw new Error("clock");
   const base = Date.parse(`${match[1]}${match[3]}`);
   if (Number.isNaN(base)) throw new Error("clock");
+  const [date, time] = match[1].split("T");
+  const [year, month, day] = date.split("-").map(Number);
+  const [hour, minute, second] = time.split(":").map(Number);
+  if (month < 1 || month > 12 || day < 1 || day > new Date(Date.UTC(year, month, 0)).getUTCDate() || hour > 23 || minute > 59 || second > 59) throw new Error("clock");
   const fraction = BigInt((match[2] ?? "").padEnd(6, "0").slice(0, 6));
   return BigInt(base) * 1000n + fraction;
 }
@@ -274,10 +278,56 @@ export async function replayEventDietaryExceptionCreate(
   });
 }
 
+export async function queueEventDietaryExceptionLifecycle(
+  userId: string, organizationId: string, eventId: string, exceptionId: string,
+  operation: "retire" | "restore", mutationId = crypto.randomUUID(),
+): Promise<void> {
+  if (!uuid.test(eventId) || !uuid.test(exceptionId) || !["retire", "restore"].includes(operation)) throw new Error("validation");
+  await localDb.transaction("rw", localDb.canonicalRecords, localDb.optimisticOverlays, localDb.outbox, async () => {
+    const canonicalEvent = await localDb.canonicalRecords.get([userId, organizationId, "event", eventId]);
+    const event = await readVisibleCanonicalRecord(userId, organizationId, "event", eventId);
+    const exception = (await readVisibleEventDietaryExceptions(userId, organizationId, eventId, true)).find((item) => item.entityId === exceptionId);
+    if ((canonicalEvent && !active(canonicalEvent)) || !active(event)) throw new Error("event");
+    if (!exception || exception.fields.event_id !== eventId) throw new Error("exception");
+    const command: OutboxCommand = {
+      id: mutationId, userId, organizationId, commandType: "event_dietary_exception.lifecycle",
+      payload: { exception_id: exceptionId, event_id: eventId, operation },
+      actionAt: new Date().toISOString(), createdAt: new Date().toISOString(), state: "pending",
+    };
+    await appendOutboxCommand(command);
+    await replayEventDietaryExceptionLifecycle(userId, organizationId, command);
+  });
+}
+
+export async function replayEventDietaryExceptionLifecycle(userId: string, organizationId: string, command: OutboxCommand) {
+  if (!uuid.test(command.id) || typeof command.actionAt !== "string" || !command.payload || typeof command.payload !== "object" || Array.isArray(command.payload) || Object.keys(command.payload).length !== 3) throw new Error("validation");
+  const { exception_id: exceptionId, event_id: eventId, operation } = command.payload;
+  if (typeof exceptionId !== "string" || !uuid.test(exceptionId) || typeof eventId !== "string" || !uuid.test(eventId) || (operation !== "retire" && operation !== "restore")) throw new Error("validation");
+  let candidateRank: bigint;
+  try { candidateRank = clockRank(command.actionAt); } catch { throw new Error("clock"); }
+  const canonicalEvent = await localDb.canonicalRecords.get([userId, organizationId, "event", eventId]);
+  const event = await readVisibleCanonicalRecord(userId, organizationId, "event", eventId);
+  const visible = await readVisibleEventDietaryExceptions(userId, organizationId, eventId, true);
+  const current = visible.find((record) => record.entityId === exceptionId);
+  if ((canonicalEvent && !active(canonicalEvent)) || !active(event) || !current || current.fields.event_id !== eventId) throw new Error("archived");
+  const clock = current.fieldClocks.lifecycle;
+  if (clock && typeof clock === "object") {
+    const value = clock as Record<string, unknown>;
+    const winnerTime = typeof value.winning_client_wall_time === "string" ? value.winning_client_wall_time : typeof value.actionAt === "string" ? value.actionAt : null;
+    const winnerId = typeof value.winning_mutation_id === "string" ? value.winning_mutation_id : typeof value.mutationId === "string" ? value.mutationId : null;
+    if (!winnerTime || !winnerId || !uuid.test(winnerId)) throw new Error("clock");
+    let winnerRank: bigint;
+    try { winnerRank = clockRank(winnerTime); } catch { throw new Error("clock"); }
+    if (winnerRank > candidateRank || winnerRank === candidateRank && winnerId >= command.id) return;
+  }
+  await localDb.optimisticOverlays.put({ ...current, lifecycle: operation === "retire" ? "retired" : "active", updatedAt: command.actionAt, fields: { ...current.fields, retired_at: operation === "retire" ? command.actionAt : null }, fieldClocks: { ...current.fieldClocks, lifecycle: { mutationId: command.id, actionAt: command.actionAt } } });
+}
+
 export async function readVisibleEventDietaryExceptions(
   userId: string,
   organizationId: string,
   eventId: string,
+  includeRetired = false,
 ) {
   const records = await localDb.canonicalRecords
     .where("[userId+organizationId+entityType]")
@@ -307,7 +357,7 @@ export async function readVisibleEventDietaryExceptions(
     ]),
   );
   return [...merged.values()]
-    .filter((record) => record.fields.event_id === eventId && active(record))
+    .filter((record) => record.fields.event_id === eventId && (includeRetired || active(record)))
     .map((record) => {
       const ids = Array.isArray(record.fields.tag_ids)
         ? record.fields.tag_ids.filter(

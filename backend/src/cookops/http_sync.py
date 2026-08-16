@@ -27,6 +27,9 @@ from cookops.application.event_day_creation import CreateEventDayCommand
 from cookops.application.event_day_lifecycle import SetEventDayLifecycleCommand
 from cookops.application.event_day_note import SetEventDayNoteCommand
 from cookops.application.event_day_visibility import SetEventDayVisibilityCommand
+from cookops.application.event_dietary_exception_lifecycle import (
+    SetEventDietaryExceptionLifecycleCommand,
+)
 from cookops.application.event_dietary_exceptions import (
     CreateEventDietaryExceptionCommand,
     UpdateEventDietaryExceptionCommand,
@@ -705,6 +708,14 @@ class UpdateEventDietaryExceptionPayload(BaseModel):
     name: str = Field(min_length=1, max_length=200)
     note: str | None = Field(default=None, max_length=131072)
     tag_ids: tuple[UUID, ...] = ()
+    logical_operation_id: UUID | None = None
+
+
+class EventDietaryExceptionLifecyclePayload(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    exception_id: UUID
+    event_id: UUID
+    operation: Literal["retire", "restore"]
     logical_operation_id: UUID | None = None
 
 
@@ -1395,6 +1406,17 @@ def _push_command(command: PushCommandRequest, organization_id: UUID) -> SyncCom
                 name=payload.name,
                 note=payload.note,
                 tag_ids=payload.tag_ids,
+                client_wall_time=command.client_wall_time,
+                logical_operation_id=payload.logical_operation_id,
+            )
+        if command.command_kind == "event_dietary_exception.lifecycle":
+            payload = EventDietaryExceptionLifecyclePayload.model_validate(command.payload)
+            return SetEventDietaryExceptionLifecycleCommand(
+                mutation_id=command.mutation_id,
+                exception_id=payload.exception_id,
+                organization_id=organization_id,
+                event_id=payload.event_id,
+                operation=payload.operation,
                 client_wall_time=command.client_wall_time,
                 logical_operation_id=payload.logical_operation_id,
             )

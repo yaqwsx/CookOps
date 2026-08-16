@@ -230,6 +230,37 @@ def test_dietary_exception_create_replays_and_bootstraps_clocks(
         assert archived_again["status"] == "rejected" and archived_again["error"] == archived_first["error"]
 
 
+def test_dietary_exception_lifecycle_retire_restore_lww_and_retained_rejection(
+    sync_database: SyncDatabase,
+) -> None:
+    event_id, tag_id, exception_id = (uuid4() for _ in range(3))
+    with sync_database.engine.begin() as connection:
+        actor_id = connection.scalar(select(OrganizationMembership.user_id).where(OrganizationMembership.organization_id == sync_database.organization_id))
+        assert isinstance(actor_id, UUID)
+        connection.execute(insert(Event).values(id=event_id, organization_id=sync_database.organization_id, name="Lifecycle event", start_date=date(2026, 8, 1), end_date=date(2026, 8, 1), base_expected_attendance=1, budget_amount=0, currency="CZK", created_by_user_id=actor_id))
+        connection.execute(insert(DietaryTag).values(id=tag_id, organization_id=sync_database.organization_id, name="Vegan", normalized_name="vegan", created_by_user_id=actor_id))
+    installation_id = _installation(sync_database)
+    with TestClient(create_app(_settings()), base_url="https://testserver") as client:
+        _sign_in(client, "dummy-member")
+        create = _command(mutation_id=uuid4(), event_id=event_id, kind="event_dietary_exception.create", exception_id=str(exception_id), name="Vegan", tag_ids=[str(tag_id)])
+        assert client.post("/api/v1/sync/push", json=_body(sync_database, installation_id, [create])).json()["outcomes"][0]["status"] == "accepted"
+        association_ids = [row[0] for row in sync_database.engine.connect().execute(select(EventDietaryExceptionTag.id).where(EventDietaryExceptionTag.exception_id == exception_id)).all()]
+        retire = _command(mutation_id=uuid4(), event_id=event_id, kind="event_dietary_exception.lifecycle", exception_id=str(exception_id), operation="retire")
+        retired = client.post("/api/v1/sync/push", json=_body(sync_database, installation_id, [retire])).json()["outcomes"][0]
+        assert retired["status"] == "accepted"
+        assert client.post("/api/v1/sync/push", json=_body(sync_database, installation_id, [retire])).json()["outcomes"][0]["replayed"]
+        stale = _command(mutation_id=uuid4(), event_id=event_id, kind="event_dietary_exception.lifecycle", exception_id=str(exception_id), operation="restore")
+        stale["client_wall_time"] = "2020-01-01T00:00:00+00:00"
+        assert client.post("/api/v1/sync/push", json=_body(sync_database, installation_id, [stale])).json()["outcomes"][0]["status"] == "partially_superseded"
+        restore = _command(mutation_id=uuid4(), event_id=event_id, kind="event_dietary_exception.lifecycle", exception_id=str(exception_id), operation="restore")
+        assert client.post("/api/v1/sync/push", json=_body(sync_database, installation_id, [restore])).json()["outcomes"][0]["status"] == "accepted"
+        rejected = _command(mutation_id=uuid4(), event_id=event_id, kind="event_dietary_exception.lifecycle", exception_id=str(uuid4()), operation="retire")
+        first = client.post("/api/v1/sync/push", json=_body(sync_database, installation_id, [rejected])).json()["outcomes"][0]
+        again = client.post("/api/v1/sync/push", json=_body(sync_database, installation_id, [rejected])).json()["outcomes"][0]
+        assert first["status"] == again["status"] == "rejected" and first["error"] == again["error"]
+        assert [row[0] for row in sync_database.engine.connect().execute(select(EventDietaryExceptionTag.id).where(EventDietaryExceptionTag.exception_id == exception_id)).all()] == association_ids
+
+
 def _command(
     *, mutation_id: UUID, event_id: UUID, kind: str = "event.create", **payload: object
 ) -> dict[str, object]:
@@ -258,6 +289,10 @@ def _command(
         }
     elif kind == "event_dietary_exception.update":
         payload = {"event_id": str(event_id), "exception_id": str(uuid4()), "name": "Updated", "note": None, "tag_ids": [], **payload}
+    elif kind == "event_dietary_exception.create":
+        payload = {"event_id": str(event_id), "exception_id": str(uuid4()), "name": "Vegan", "note": None, "tag_ids": [], **payload}
+    elif kind == "event_dietary_exception.lifecycle":
+        payload = {"event_id": str(event_id), "exception_id": str(uuid4()), "operation": "retire", **payload}
     elif kind == "shopping_list.create":
         payload = {
             "shopping_list_id": str(uuid4()),

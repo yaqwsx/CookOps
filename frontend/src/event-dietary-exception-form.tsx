@@ -5,6 +5,7 @@ import { localDb } from "./local-db";
 import {
   queueEventDietaryExceptionCreate,
   queueEventDietaryExceptionUpdate,
+  queueEventDietaryExceptionLifecycle,
   readVisibleEventDietaryExceptions,
 } from "./event-dietary-exception";
 
@@ -25,7 +26,7 @@ export function EventDietaryExceptions({
   const [editingId, setEditingId] = useState<string | null>(null);
   const [tags, setTags] = useState<{ id: string; name: string }[]>([]);
   const [exceptions, setExceptions] = useState<
-    { entityId: string; fields: Record<string, unknown> }[]
+    { entityId: string; lifecycle: string; fields: Record<string, unknown> }[]
   >([]);
   useEffect(() => {
     const subscription = liveQuery(async () => {
@@ -34,7 +35,7 @@ export function EventDietaryExceptions({
           .where("[userId+organizationId+entityType]")
           .equals([userId, organizationId, "dietary_tag"])
           .toArray(),
-        readVisibleEventDietaryExceptions(userId, organizationId, eventId),
+        readVisibleEventDietaryExceptions(userId, organizationId, eventId, true),
       ]);
       return {
         available: available
@@ -124,7 +125,10 @@ export function EventDietaryExceptions({
               ? ` — ${item.fields.selected_tag_names.join(", ")}`
               : ""}
             {item.fields.note ? ` — ${String(item.fields.note)}` : ""}
-            <button type="button" aria-label={t("eventDietaryExceptions.edit")} onClick={() => { setEditingId(item.entityId); setName(String(item.fields.name ?? "")); setNote(String(item.fields.note ?? "")); setTagIds(Array.isArray(item.fields.selected_tag_ids) ? item.fields.selected_tag_ids.filter((id): id is string => typeof id === "string") : []); }}>{t("eventDietaryExceptions.edit")}</button>
+            {item.lifecycle === "active" ? <button type="button" aria-label={t("eventDietaryExceptions.edit")} onClick={() => { setEditingId(item.entityId); setName(String(item.fields.name ?? "")); setNote(String(item.fields.note ?? "")); setTagIds(Array.isArray(item.fields.selected_tag_ids) ? item.fields.selected_tag_ids.filter((id): id is string => typeof id === "string") : []); }}>{t("eventDietaryExceptions.edit")}</button> : null}
+            <button type="button" onClick={() => void queueEventDietaryExceptionLifecycle(userId, organizationId, eventId, item.entityId, item.lifecycle === "active" ? "retire" : "restore").catch(() => setError(true))}>
+              {item.lifecycle === "active" ? t("eventDietaryExceptions.retire") : t("eventDietaryExceptions.restore")}
+            </button>
           </li>
         ))}
       </ul>
