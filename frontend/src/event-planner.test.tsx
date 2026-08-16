@@ -1,4 +1,4 @@
-import { createEvent, fireEvent, render, screen } from "@testing-library/react";
+import { createEvent, fireEvent, render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
@@ -178,7 +178,7 @@ describe("EventPlanner", () => {
       name: "Archivovaná akce", startDate: "2026-08-10", endDate: "2026-08-10", attendance: 12, lifecycle: "archived",
       days: [{ id: ids.day, date: "2026-08-10", note: null }],
       roles: [{ id: ids.role, name: "Večeře", position: "a", retired: false, custom: false }], recipes: [],
-      scheduled: [{ id: ids.recipe, recipeId: ids.recipe, name: "Chili", dinerCount: 12, dayId: ids.day, roleId: ids.role, retired: true, position: "a", dietaryWarnings: [{ exceptionName: "Alex", tagNames: ["vegan"], tagDescriptors: [{ id: "dietary-vegan", seedKey: "vegan" }], ingredientNames: ["Tofu"] }] }], ...emptyPlannerCollections,
+      scheduled: [{ id: ids.recipe, recipeId: ids.recipe, name: "Chili", dinerCount: 12, dayId: ids.day, roleId: ids.role, retired: true, position: "a", detailLines: [], preparedWeight: null, perDinerWeight: null, hasLocalOverrides: false, dietaryWarnings: [{ exceptionName: "Alex", tagNames: ["vegan"], tagDescriptors: [{ id: "dietary-vegan", seedKey: "vegan" }], ingredientNames: ["Tofu"] }] }], ...emptyPlannerCollections,
     });
     pullOrganization.mockResolvedValue(false);
     render(<EventPlanner eventId={ids.event} onUnauthenticated={vi.fn()} organizationId={ids.organization} userId="a6a58bd6-214e-49af-8fae-e5f974bf8e08" />);
@@ -201,7 +201,7 @@ describe("EventPlanner", () => {
       days: [{ id: ids.day, date: "2026-08-10", note: null }, { id: secondDay, date: "2026-08-11", note: null }],
       roles: [{ id: ids.role, name: "Večeře", position: "a", retired: false, custom: false }, { id: secondRole, name: "Oběd", position: "b", retired: false, custom: false }],
       recipes: [],
-      scheduled: [{ id: ids.recipe, recipeId: ids.recipe, recipeVersionId: "7d8b2b21-c378-4574-9e46-9338c81305ef", name: "Chili", dinerCount: 12, dayId: ids.day, roleId: ids.role, position: "a", retired: false, lines: [], localAddedIngredients: [], dietaryWarnings: [{ exceptionName: "Alex", tagNames: ["Vegan"], ingredientNames: ["Tofu"] }], catalogUpdateAvailable: false, catalogUpdateChanges: { added: 0, removed: 0, changed: 0 }, catalogScaleImpact: { reset: false } }],
+      scheduled: [{ id: ids.recipe, recipeId: ids.recipe, recipeVersionId: "7d8b2b21-c378-4574-9e46-9338c81305ef", name: "Chili", dinerCount: 12, dayId: ids.day, roleId: ids.role, position: "a", retired: false, detailLines: [], preparedWeight: null, perDinerWeight: null, hasLocalOverrides: false, lines: [], localAddedIngredients: [], dietaryWarnings: [{ exceptionName: "Alex", tagNames: ["Vegan"], ingredientNames: ["Tofu"] }], catalogUpdateAvailable: false, catalogUpdateChanges: { added: 0, removed: 0, changed: 0 }, catalogScaleImpact: { reset: false } }],
       ...emptyPlannerCollections,
     });
     pullOrganization.mockResolvedValue(false);
@@ -287,6 +287,10 @@ describe("EventPlanner", () => {
           position: "a",
           recipeId: ids.recipe,
           recipeVersionId: "7d8b2b21-c378-4574-9e46-9338c81305ef",
+          detailLines: [],
+          preparedWeight: null,
+          perDinerWeight: null,
+          hasLocalOverrides: false,
           catalogUpdateAvailable: true,
           catalogUpdateChanges: { added: 1, removed: 0, changed: 0 },
           catalogScaleImpact: { currentUnitId: "a", targetUnitId: "b", currentUnitName: "porce", targetUnitName: "osoba", reset: false, targetBase: "1", suggestedAmount: "12" },
@@ -343,6 +347,10 @@ describe("EventPlanner", () => {
           roleId: ids.role,
           position: "a",
           lines: [],
+          detailLines: [],
+          preparedWeight: null,
+          perDinerWeight: null,
+          hasLocalOverrides: false,
         },
       ],
       ...emptyPlannerCollections,
@@ -394,6 +402,10 @@ describe("EventPlanner", () => {
         roleId: ids.role,
         position: "a",
         lines: [],
+        detailLines: [],
+        preparedWeight: null,
+        perDinerWeight: null,
+        hasLocalOverrides: false,
         localAddedIngredients: [],
         catalogUpdateAvailable: true,
         catalogUpdateChanges: { added: 1, removed: 0, changed: 1 },
@@ -433,6 +445,10 @@ describe("EventPlanner", () => {
           dayId: ids.day,
           roleId: ids.role,
           position: "a",
+          detailLines: [],
+          preparedWeight: null,
+          perDinerWeight: null,
+          hasLocalOverrides: false,
         },
       ],
       ...emptyPlannerCollections,
@@ -488,6 +504,10 @@ describe("EventPlanner", () => {
           dayId: ids.day,
           roleId: ids.role,
           position: "a",
+          detailLines: [{ id: "cd8b2b21-c378-4574-9e46-9338c81305ef", name: "Místní surovina: Paprika", quantity: "1", unitName: null, note: null }],
+          preparedWeight: null,
+          perDinerWeight: null,
+          hasLocalOverrides: false,
           lines: [{ id: "bd8b2b21-c378-4574-9e46-9338c81305ef", quantity: "1", ingredientId: pinnedIngredientId }],
           localAddedIngredients: [
             {
@@ -509,8 +529,12 @@ describe("EventPlanner", () => {
         userId="a6a58bd6-214e-49af-8fae-e5f974bf8e08"
       />,
     );
+    const card = (await screen.findAllByRole("listitem")).find((item) => item.textContent?.includes("Chili"));
+    if (!card) throw new Error("Scheduled recipe card is missing");
+    await user.click(within(card).getByText("Podrobnosti receptu"));
     await user.click(await screen.findByText("Přidat místní surovinu"));
-    expect(screen.getByText("Místní surovina: Paprika · 1")).toBeVisible();
+    expect(within(card).getAllByText("Místní surovina: Paprika: 1")).toHaveLength(1);
+    expect(within(card).getByText("Místní surovina: Paprika: 1")).toBeVisible();
     expect(screen.queryByRole("option", { name: "Pinto" })).not.toBeInTheDocument();
     const addQuantity = screen.getAllByLabelText("Množství").at(-1);
     if (!addQuantity) throw new Error("Added ingredient quantity is missing");
@@ -529,5 +553,23 @@ describe("EventPlanner", () => {
         includeInPortionWeight: true,
       },
     );
+  });
+
+  it("expands pinned recipe details and keeps archived cards read-only", async () => {
+    await i18n.changeLanguage(defaultLocale);
+    readEventPlanner.mockResolvedValue({
+      name: "Archivovaná akce", startDate: "2026-08-10", endDate: "2026-08-10", attendance: 2, lifecycle: "archived",
+      days: [{ id: ids.day, date: "2026-08-10", note: null }], roles: [{ id: ids.role, name: "Večeře", position: "a", retired: false, custom: false }], recipes: [],
+      scheduled: [{ id: ids.recipe, recipeId: ids.recipe, recipeVersionId: "old-version", recipeVersionName: "Pinned soup", recipeDescription: "# Pinned\n<script>bad()</script>", scalingUnitName: "portion", scaleMode: "manual", hasLocalOverrides: true, detailLines: [{ id: "line", name: "Paprika", quantity: "2", unitName: "ks", note: "nakrájet" }], preparedWeight: "3", perDinerWeight: "1.5", dinerCount: 2, consumptionPercentage: "100", selectedScaleAmount: "3", dayId: ids.day, roleId: ids.role, position: "a", retired: false, lines: [], localAddedIngredients: [], catalogUpdateAvailable: false, catalogUpdateChanges: { added: 0, removed: 0, changed: 0 }, catalogScaleImpact: { reset: false } }], ...emptyPlannerCollections,
+    });
+    pullOrganization.mockResolvedValue(false);
+    render(<EventPlanner eventId={ids.event} onUnauthenticated={vi.fn()} organizationId={ids.organization} userId="a6a58bd6-214e-49af-8fae-e5f974bf8e08" />);
+    const details = await screen.findByText("Podrobnosti receptu");
+    expect(screen.getByText("Paprika: 2 ks · nakrájet")).not.toBeVisible();
+    await userEvent.setup().click(details);
+    expect(screen.getByText("Paprika: 2 ks · nakrájet")).toBeVisible();
+    expect(screen.getByText("Připravená hmotnost: 3 · na strávníka 1.5")).toBeVisible();
+    expect(screen.getByText(/# Pinned/)).toHaveTextContent("<script>bad()</script>");
+    expect(screen.queryByRole("button", { name: "Upravit škálování" })).not.toBeInTheDocument();
   });
 });

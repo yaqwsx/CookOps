@@ -2,6 +2,7 @@ import { localDb, type CanonicalRecord } from "./local-db";
 import { readVisibleRecords } from "./visible-records";
 import { parseArchivedDietaryTagDescriptor } from "./archive-cache";
 import { decimal as parseDecimal } from "./shopping-projections";
+import { divide, multiply, type Fraction } from "./exact-decimal";
 
 export type PlannerRecipe = { id: string; versionId: string; name: string; scalingUnitId: string; scalingUnitName: string; baseScalingAmount: string; roundSuggestionsUp: boolean };
 export type PlannerIngredient = { id: string; versionId: string; name: string };
@@ -24,6 +25,14 @@ export type PlannedRecipe = {
   catalogScaleImpact: { currentUnitId: string | undefined; targetUnitId: string | undefined; currentUnitName: string | undefined; targetUnitName: string | undefined; reset: boolean; targetBase: string | undefined; suggestedAmount: string | undefined };
   lines: { id: string; quantity: string; ingredientId?: string }[];
   localAddedIngredients: { id: string; name: string; quantity: string }[];
+  recipeDescription?: string;
+  recipeVersionName?: string;
+  scalingUnitName?: string;
+  scaleMode?: "suggested" | "manual";
+  hasLocalOverrides: boolean;
+  detailLines: { id: string; name: string; quantity: string; unitName: string; note?: string; includeInPortionWeight?: boolean; massPerCanonicalQuantity?: string; localOverride?: true }[];
+  preparedWeight: string | null;
+  perDinerWeight: string | null;
   dietaryWarnings?: { exceptionName: string; tagNames: string[]; ingredientNames: string[]; tagDescriptors?: { id: string; seedKey?: string; name?: string }[] }[];
 };
 export type EventPlannerProjection = {
@@ -79,6 +88,25 @@ export function suggestedScale(attendance: number, consumption: string, code: st
 function value(record: CanonicalRecord, key: string): string | undefined {
   const item = record.fields[key];
   return typeof item === "string" ? item : undefined;
+}
+
+function scaledQuantity(quantity: string, selected: string, base: string, fixed: boolean): string | undefined {
+  if (fixed) return quantity;
+  const source = parseDecimal(quantity);
+  const ratio = parseDecimal(selected);
+  const divisor = parseDecimal(base);
+  if (!source || !ratio || !divisor || divisor.value === 0n) return undefined;
+  return formatTerminatingFraction(divide(multiply({ numerator: source.value, denominator: 10n ** BigInt(source.scale) }, { numerator: ratio.value, denominator: 10n ** BigInt(ratio.scale) }), { numerator: divisor.value, denominator: 10n ** BigInt(divisor.scale) }) as Fraction);
+}
+function formatTerminatingFraction(value: Fraction): string | undefined {
+  if (value.denominator === 0n) return undefined;
+  let denominator = value.denominator;
+  for (const factor of [2n, 5n]) while (denominator % factor === 0n) denominator /= factor;
+  if (denominator !== 1n) return undefined;
+  const whole = value.numerator / value.denominator;
+  let remainder = value.numerator % value.denominator, digits = "";
+  while (remainder !== 0n) { remainder *= 10n; digits += (remainder / value.denominator).toString(); remainder %= value.denominator; }
+  return remainder === 0n ? (digits ? `${whole}.${digits}` : `${whole}`) : undefined;
 }
 
 function hasId(record: CanonicalRecord): boolean {
@@ -240,6 +268,7 @@ export async function readEventPlanner(
       )
       .map((record) => [record.entityId, value(record, "name")]),
   );
+  const versionRecordsById = new Map(versionRecords.map((record) => [record.entityId, record]));
   const recipes = recipeRecords
     .filter(
       (record) =>
@@ -275,7 +304,6 @@ export async function readEventPlanner(
       (left, right) =>
         left.name.localeCompare(right.name) || left.id.localeCompare(right.id),
     );
-  const names = new Map(recipes.map((recipe) => [recipe.id, recipe.name]));
   const ingredientVersions = new Map(
     ingredientVersionRecords
       .filter(
@@ -362,8 +390,12 @@ export async function readEventPlanner(
   );
   const lines = new Map<
     string,
-    { id: string; quantity: string; ingredientId?: string }[]
+    PlannedRecipe["lines"]
   >();
+  const detailLines = new Map<PlannedRecipe["recipeVersionId"], PlannedRecipe["detailLines"]>();
+  const rootsById = new Map(ingredientRecords.filter((record) => hasId(record) && value(record, "organization_id") === organizationId).map((record) => [record.entityId, record]));
+  const ingredientUnitNames = new Map(unitRecords.filter((unit) => hasId(unit) && (value(unit, "organization_id") === organizationId || unit.fields.organization_id === null) && unit.fields.allows_ingredient_quantity === true).map((unit) => [unit.entityId, value(unit, "custom_name") ?? value(unit, "code")]).filter((entry): entry is [string, string] => Boolean(entry[1])));
+  const scalingUnitNames = new Map(unitRecords.filter((unit) => hasId(unit) && (value(unit, "organization_id") === organizationId || unit.fields.organization_id === null) && unit.fields.allows_recipe_scaling === true).map((unit) => [unit.entityId, value(unit, "custom_name") ?? value(unit, "code")]).filter((entry): entry is [string, string] => Boolean(entry[1])));
   for (const record of lineRecords) {
     const versionId = value(record, "recipe_version_id");
     const baseQuantity = value(record, "base_quantity");
@@ -377,6 +409,19 @@ export async function readEventPlanner(
         ...(lines.get(versionId) ?? []),
         { id: lineKey, quantity: baseQuantity, ingredientId },
       ]);
+    const version = versionId ? versionRecordsById.get(versionId) : undefined;
+    const ingredientVersionId = value(record, "ingredient_version_id");
+    const ingredient = ingredientVersionId ? ingredientVersions.get(ingredientVersionId) : undefined;
+    const ingredientName = ingredient && value(ingredient, "name");
+    const unitId = value(record, "preferred_display_unit_id") ?? (ingredient && value(ingredient, "canonical_unit_id"));
+    const unitName = unitId ? ingredientUnitNames.get(unitId) : undefined;
+    const ingredientRoot = ingredient && rootsById.get(value(ingredient, "ingredient_id") ?? "");
+    const parsedBaseQuantity = parseDecimal(baseQuantity);
+    const includeInPortionWeight = record.fields.include_in_portion_weight;
+    if (hasId(record) && value(record, "organization_id") === organizationId && versionId && version?.immutable === true && hasId(version) && value(version, "organization_id") === organizationId && ingredient?.immutable === true && hasId(ingredient) && value(ingredient, "organization_id") === organizationId && ingredientRoot && ingredientName && unitName && baseQuantity && parsedBaseQuantity && parsedBaseQuantity.value >= 0n && (includeInPortionWeight === undefined || typeof includeInPortionWeight === "boolean") && lineKey && uuid.test(lineKey)) {
+      const note = typeof record.fields.note === "string" && record.fields.note ? record.fields.note : undefined;
+      detailLines.set(versionId, [...(detailLines.get(versionId) ?? []), { id: lineKey, name: ingredientName, quantity: baseQuantity, unitName, ...(note ? { note } : {}), includeInPortionWeight: includeInPortionWeight !== false, ...(value(ingredient, "mass_per_canonical_quantity") ? { massPerCanonicalQuantity: value(ingredient, "mass_per_canonical_quantity") } : {}) }]);
+    }
   }
 
   const dietaryTagNames = new Map(
@@ -413,7 +458,7 @@ export async function readEventPlanner(
   if (warningExceptions.length) {
     const nonzero = (quantity: unknown) => {
       const parsed = parseDecimal(quantity);
-      return Boolean(parsed && parsed.value !== 0n);
+      return Boolean(parsed && parsed.value >= 0n && parsed.value !== 0n);
     };
     for (const item of scheduledRecords) {
       if (item.lifecycle !== "active" || value(item, "organization_id") !== organizationId || value(item, "event_id") !== eventId) continue;
@@ -456,7 +501,7 @@ export async function readEventPlanner(
   }
   const localAddedIngredients = new Map<
     string,
-    { id: string; name: string; quantity: string }[]
+    { id: string; name: string; quantity: string; unitName?: string; includeInPortionWeight: boolean; massPerCanonicalQuantity?: string; localOverride?: true }[]
   >();
   for (const record of overrideRecords) {
     const scheduledRecipeId = value(record, "scheduled_recipe_id");
@@ -465,17 +510,24 @@ export async function readEventPlanner(
       value(record, "ingredient_version_id") ?? "",
     );
     const name = version && value(version, "name");
+    const ingredientRoot = version && rootsById.get(value(version, "ingredient_id") ?? "");
+    const parsedQuantity = parseDecimal(quantity);
+    const includeInPortionWeight = record.fields.include_in_portion_weight;
     if (
       hasId(record) &&
+      record.lifecycle === "active" &&
+      value(record, "organization_id") === organizationId &&
       value(record, "event_id") === eventId &&
       record.fields.override_kind === "add" &&
       scheduledRecipeId &&
       quantity &&
-      name
+      parsedQuantity && parsedQuantity.value >= 0n &&
+      name && ingredientRoot && ingredientUnitNames.has(value(version, "canonical_unit_id") ?? "") &&
+      (includeInPortionWeight === undefined || typeof includeInPortionWeight === "boolean")
     )
       localAddedIngredients.set(scheduledRecipeId, [
         ...(localAddedIngredients.get(scheduledRecipeId) ?? []),
-        { id: record.entityId, name, quantity },
+        { id: record.entityId, name, quantity, includeInPortionWeight: includeInPortionWeight !== false, unitName: ingredientUnitNames.get(value(version, "canonical_unit_id") ?? "") as string, massPerCanonicalQuantity: value(version, "mass_per_canonical_quantity"), localOverride: true },
       ]);
   }
   const scheduled = (scheduledRecords
@@ -485,13 +537,45 @@ export async function readEventPlanner(
         belongsToOrganization(record, organizationId) &&
         value(record, "event_id") === eventId,
     )
-    .map((record) => ({
+    .map((record) => {
+      const pinnedVersion = versionRecordsById.get(value(record, "recipe_version_id") ?? "");
+      const recipeRoot = recipeRecords.find((candidate) => candidate.entityId === value(record, "recipe_id"));
+      const pinnedBase = pinnedVersion && value(pinnedVersion, "base_scaling_amount");
+      const parsedPinnedBase = parseDecimal(pinnedBase);
+      const pinnedVersionValid = pinnedVersion?.immutable === true && hasId(pinnedVersion) && recipeRoot !== undefined && hasId(recipeRoot) && value(recipeRoot, "organization_id") === organizationId && value(pinnedVersion, "organization_id") === organizationId && value(pinnedVersion, "recipe_id") === value(record, "recipe_id") && typeof value(pinnedVersion, "name") === "string" && Boolean(value(pinnedVersion, "name")) && Boolean(parsedPinnedBase && parsedPinnedBase.value > 0n) && scalingUnitNames.has(value(pinnedVersion, "scaling_unit_id") ?? "");
+      const pinnedUnitName = pinnedVersionValid ? scalingUnitNames.get(value(pinnedVersion, "scaling_unit_id") ?? "") : undefined;
+      const resolvedDetailLines = pinnedVersionValid ? (detailLines.get(value(record, "recipe_version_id") ?? "") ?? []).flatMap((line) => {
+        const source = lineRecords.find((candidate) => value(candidate, "line_key") === line.id && value(candidate, "recipe_version_id") === value(record, "recipe_version_id"));
+        const replacement = source && overrideRecords.find((candidate) => candidate.lifecycle === "active" && value(candidate, "organization_id") === organizationId && value(candidate, "event_id") === eventId && value(candidate, "scheduled_recipe_id") === record.entityId && candidate.fields.override_kind === "replace" && value(candidate, "target_line_key") === line.id);
+        const quantity = replacement ? value(replacement, "quantity") : line.quantity;
+        const parsedQuantity = quantity ? parseDecimal(quantity) : undefined;
+        const scaled = quantity && source ? scaledQuantity(quantity, value(record, "selected_scale_amount") ?? "", value(pinnedVersion, "base_scaling_amount") ?? "", value(source, "scaling_behavior") === "fixed") : undefined;
+        const replacementVersionId = replacement ? value(replacement, "ingredient_version_id") : undefined;
+        const resolved = replacementVersionId ? ingredientVersions.get(replacementVersionId) : undefined;
+        const replacementValid = !replacementVersionId || Boolean(
+          resolved &&
+          uuid.test(replacementVersionId) &&
+          rootsById.get(value(resolved, "ingredient_id") ?? "") &&
+          value(resolved, "name") &&
+          ingredientUnitNames.get(value(resolved, "canonical_unit_id") ?? ""),
+        );
+        const resolvedMetadata = replacementVersionId && resolved && replacementValid ? { name: value(resolved, "name"), unitName: ingredientUnitNames.get(value(resolved, "canonical_unit_id") ?? ""), massPerCanonicalQuantity: value(resolved, "mass_per_canonical_quantity") } : undefined;
+        const name = resolvedMetadata?.name ?? line.name;
+        const unitName = resolvedMetadata?.unitName ?? line.unitName;
+        return parsedQuantity && parsedQuantity.value >= 0n && scaled && parseDecimal(scaled)?.value !== 0n && name && unitName && replacementValid ? [{ ...line, quantity: scaled, name, unitName, ...(replacement ? { localOverride: true as const } : {}), ...(resolvedMetadata ? { massPerCanonicalQuantity: resolvedMetadata.massPerCanonicalQuantity } : {}) }] : [];
+      }).concat((localAddedIngredients.get(record.entityId) ?? []).flatMap((ingredient) => parseDecimal(ingredient.quantity)?.value !== 0n ? [ingredient] : []) as typeof detailLines extends Map<string, infer T> ? T : never) : [];
+      const toFraction = (value: string): Fraction | undefined => { const parsed = parseDecimal(value); return parsed ? { numerator: parsed.value, denominator: 10n ** BigInt(parsed.scale) } : undefined; };
+      const weightValues = resolvedDetailLines.filter((line) => line.includeInPortionWeight).map((line) => { const quantity = toFraction(line.quantity), mass = toFraction(line.massPerCanonicalQuantity ?? ""); return quantity && mass && mass.numerator > 0n ? multiply(quantity, mass) : undefined; });
+      const weightTotal = weightValues.length === resolvedDetailLines.filter((line) => line.includeInPortionWeight).length && weightValues.every(Boolean) && weightValues.length ? weightValues.reduce<Fraction>((sum, value) => ({ numerator: sum.numerator * (value as Fraction).denominator + (value as Fraction).numerator * sum.denominator, denominator: sum.denominator * (value as Fraction).denominator }), { numerator: 0n, denominator: 1n }) : undefined;
+      const preparedWeight = weightTotal ? formatTerminatingFraction(weightTotal) ?? null : null;
+      const perDinerWeight = preparedWeight && typeof record.fields.diner_count === "number" && record.fields.diner_count > 0 ? formatTerminatingFraction(divide(weightTotal as Fraction, { numerator: BigInt(record.fields.diner_count), denominator: 1n }) as Fraction) ?? null : null;
+      return ({
       id: record.entityId,
       recipeId: value(record, "recipe_id") ?? "",
       recipeVersionId: value(record, "recipe_version_id") ?? "",
       dayId: value(record, "event_day_id"),
       roleId: value(record, "event_meal_role_id"),
-      name: names.get(value(record, "recipe_id") ?? ""),
+      name: pinnedVersionValid ? value(pinnedVersion, "name") ?? "" : "",
       catalogUpdateAvailable:
         catalogUpdateRecipeVersionIds.has(value(record, "recipe_version_id") ?? "") ||
         currentVersionByRecipe.get(value(record, "recipe_id") ?? "") !==
@@ -527,18 +611,26 @@ export async function readEventPlanner(
       })(),
       lines: lines.get(value(record, "recipe_version_id") ?? "") ?? [],
       localAddedIngredients: localAddedIngredients.get(record.entityId) ?? [],
+      recipeDescription: pinnedVersionValid && typeof pinnedVersion?.fields.description === "string" ? pinnedVersion.fields.description : undefined,
+      recipeVersionName: pinnedVersionValid ? value(pinnedVersion, "name") : undefined,
+      scalingUnitName: pinnedUnitName,
+      scaleMode: record.fields.scale_mode === "manual" || record.fields.scale_mode === "suggested" ? record.fields.scale_mode : undefined,
+      hasLocalOverrides: overrideRecords.some((override) => override.lifecycle === "active" && value(override, "organization_id") === organizationId && value(override, "event_id") === eventId && value(override, "scheduled_recipe_id") === record.entityId),
+      detailLines: resolvedDetailLines,
+      preparedWeight,
+      perDinerWeight,
       dietaryWarnings: dietaryWarningsByScheduled.get(record.entityId) ?? [],
       dinerCount: record.fields.diner_count,
       consumptionPercentage: value(record, "consumption_percentage"),
       selectedScaleAmount: value(record, "selected_scale_amount"),
       position: value(record, "position_key"),
       retired: record.lifecycle === "retired",
-    }))
+      });
+    })
     .filter((item) =>
       Boolean(
         item.dayId &&
           item.roleId &&
-          item.name &&
           item.position &&
           uuid.test(item.dayId) &&
           uuid.test(item.roleId) &&

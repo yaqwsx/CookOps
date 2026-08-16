@@ -62,19 +62,23 @@ function cache(options: {
   lineVersion?: Partial<CanonicalRecord>;
   recipeCurrentVersionId?: string;
   recipeCurrentVersion?: Partial<CanonicalRecord>;
+  recipeVersionBaseScalingAmount?: string;
   scheduledDinerCount?: number;
   dietary?: CanonicalRecord[];
   overrides?: CanonicalRecord[];
   dietaryTag?: Partial<CanonicalRecord>;
+  extraRecords?: Partial<Record<string, CanonicalRecord[]>>;
 }) {
   const currentVersion = record("ingredient_version", ids.currentVersion, {
     ingredient_id: ids.ingredient,
     name: "Current",
+    canonical_unit_id: "eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee",
     ...(options.currentVersion?.fields ?? {}),
   }, options.currentVersion);
   const oldVersion = record("ingredient_version", ids.oldVersion, {
     ingredient_id: ids.ingredient,
     name: "Old",
+    canonical_unit_id: "eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee",
     ...(options.ingredientVersion?.fields ?? {}),
   }, options.ingredientVersion);
   const root = record("ingredient", ids.ingredient, {
@@ -85,18 +89,18 @@ function cache(options: {
     event_day: [record("event_day", ids.day, { event_id: ids.event, calendar_date: "2026-08-15", is_visible: true })],
     event_meal_role: [record("event_meal_role", ids.role, { event_id: ids.event, position_key: "a", custom_name: "Dinner", built_in_translation_key: null })],
     recipe: [record("recipe", ids.recipe, { current_version_id: options.recipeCurrentVersionId ?? ids.recipeVersion })],
-    recipe_version: [record("recipe_version", ids.recipeVersion, { recipe_id: ids.recipe, name: "Soup", scaling_unit_id: "eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee", base_scaling_amount: "1" }), ...(options.recipeCurrentVersionId ? [record("recipe_version", options.recipeCurrentVersionId, { recipe_id: ids.recipe, name: "Soup new", scaling_unit_id: "ffffffff-ffff-4fff-8fff-ffffffffffff", base_scaling_amount: "1", estimated_diners_per_scaling_unit: "2", round_suggestions_up: false }, options.recipeCurrentVersion)] : [])],
-    recipe_ingredient_line: [record("recipe_ingredient_line", ids.line, { recipe_version_id: ids.recipeVersion, ingredient_version_id: options.lineVersionId ?? ids.oldVersion, base_quantity: "1", line_key: ids.line }), ...(options.recipeCurrentVersionId ? [record("recipe_ingredient_line", "dddddddd-dddd-4ddd-8ddd-dddddddddddd", { recipe_version_id: options.recipeCurrentVersionId, ingredient_version_id: ids.oldVersion, base_quantity: "2", line_key: ids.line })] : [])],
+    recipe_version: [record("recipe_version", ids.recipeVersion, { recipe_id: ids.recipe, name: "Soup", scaling_unit_id: "eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee", base_scaling_amount: options.recipeVersionBaseScalingAmount ?? "1" }), ...(options.recipeCurrentVersionId ? [record("recipe_version", options.recipeCurrentVersionId, { recipe_id: ids.recipe, name: "Soup new", scaling_unit_id: "ffffffff-ffff-4fff-8fff-ffffffffffff", base_scaling_amount: "1", estimated_diners_per_scaling_unit: "2", round_suggestions_up: false }, options.recipeCurrentVersion)] : [])],
+    recipe_ingredient_line: [record("recipe_ingredient_line", ids.line, { recipe_version_id: ids.recipeVersion, ingredient_version_id: options.lineVersionId ?? ids.oldVersion, base_quantity: "1", line_key: ids.line }, options.lineVersion), ...(options.recipeCurrentVersionId ? [record("recipe_ingredient_line", "dddddddd-dddd-4ddd-8ddd-dddddddddddd", { recipe_version_id: options.recipeCurrentVersionId, ingredient_version_id: ids.oldVersion, base_quantity: "2", line_key: ids.line })] : [])],
     scheduled_recipe: [record("scheduled_recipe", ids.scheduled, { event_id: ids.event, event_day_id: ids.day, event_meal_role_id: ids.role, recipe_id: ids.recipe, recipe_version_id: ids.recipeVersion, diner_count: options.scheduledDinerCount ?? 2, consumption_percentage: "100", selected_scale_amount: "2", position_key: "a" })],
     ingredient: [root],
     ingredient_version: [oldVersion, currentVersion],
     scheduled_ingredient_override: options.overrides ?? [],
-    unit_definition: [record("unit_definition", "eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee", { code: "portion", custom_name: "portion" }), record("unit_definition", "ffffffff-ffff-4fff-8fff-ffffffffffff", { code: "portion", custom_name: "portion" })],
+    unit_definition: [record("unit_definition", "eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee", { code: "portion", custom_name: "portion", allows_ingredient_quantity: true, allows_recipe_scaling: true }), record("unit_definition", "ffffffff-ffff-4fff-8fff-ffffffffffff", { code: "portion", custom_name: "portion", allows_ingredient_quantity: true, allows_recipe_scaling: true })],
     dietary_tag: [record("dietary_tag", ids.tag, { name: "Vegan", ...(options.dietaryTag?.fields ?? {}) }, options.dietaryTag)],
     event_dietary_exception: options.dietary?.filter((item) => item.entityType === "event_dietary_exception") ?? [],
     event_dietary_exception_tag: options.dietary?.filter((item) => item.entityType === "event_dietary_exception_tag") ?? [],
   };
-  readVisibleRecords.mockImplementation(async (_user: string, _org: string, entityType: string) => records[entityType] ?? []);
+  readVisibleRecords.mockImplementation(async (_user: string, _org: string, entityType: string) => [...(records[entityType] ?? []), ...(options.extraRecords?.[entityType] ?? [])]);
 }
 
 describe("readEventPlanner catalog update projection", () => {
@@ -130,6 +134,73 @@ describe("readEventPlanner catalog update projection", () => {
     cache({ recipeCurrentVersionId: target, scheduledDinerCount: 7 });
     const planner = await readEventPlanner(userId, organizationId, ids.event);
     expect(planner?.scheduled[0]?.catalogScaleImpact.suggestedAmount).toBe("3.5");
+  });
+
+  it("uses the pinned immutable version for detail and drops malformed detail records", async () => {
+    const newer = "dddddddd-dddd-4ddd-8ddd-dddddddddddd";
+    cache({ recipeCurrentVersionId: newer, recipeCurrentVersion: { fields: { name: "New catalog name" } }, lineVersionId: ids.oldVersion, lineVersion: { fields: { note: "pinned note" } } });
+    const planner = await readEventPlanner(userId, organizationId, ids.event);
+    expect(planner?.scheduled[0]).toMatchObject({ recipeVersionName: "Soup", detailLines: [{ name: "Old" }] });
+    expect(planner?.scheduled[0]?.recipeVersionName).not.toBe("New catalog name");
+    const records = await readVisibleRecords(userId, organizationId, "recipe_version");
+    const malformed = records.find((record: CanonicalRecord) => record.entityId === ids.recipeVersion);
+    if (malformed) malformed.immutable = false;
+    const retained = await readEventPlanner(userId, organizationId, ids.event);
+    expect(retained?.scheduled).toHaveLength(1);
+    expect(retained?.scheduled[0]?.detailLines).toEqual([]);
+  });
+
+  it("keeps weight unavailable when cached mass metadata is incomplete", async () => {
+    cache({ ingredientVersion: { fields: { mass_per_canonical_quantity: "not-a-mass" } } });
+    const planner = await readEventPlanner(userId, organizationId, ids.event);
+    expect(planner?.scheduled[0]).toMatchObject({ preparedWeight: null, perDinerWeight: null });
+    cache({ ingredientVersion: { fields: { mass_per_canonical_quantity: "-0.5" } } });
+    const negativeMassPlanner = await readEventPlanner(userId, organizationId, ids.event);
+    expect(negativeMassPlanner?.scheduled[0]).toMatchObject({ preparedWeight: null, perDinerWeight: null });
+  });
+
+  it("resolves detail quantities, units, overrides, and exact weights", async () => {
+    const fixedLine = "abababab-abab-4aba-8aba-abababababab", replacementVersion = "acacacac-acac-4aca-8aca-acacacacacac", replacementRoot = "adadadad-adad-4ada-8dad-adadadadadad", replacementUnit = "aeaeaeae-aeae-4aea-8eae-aeaeaeaeaeae", addVersion = "afafafaf-afaf-4afa-8faf-afafafafafaf", addRoot = "babababa-baba-4bab-8bab-babababababa", addUnit = "bcbcbcbc-bcbc-4bcb-8bcb-bcbcbcbcbcbc";
+    const add = (id: string, version: string, quantity: string, include: boolean, lifecycle: "active" | "retired" = "active") => record("scheduled_ingredient_override", id, { event_id: ids.event, scheduled_recipe_id: ids.scheduled, override_kind: "add", ingredient_version_id: version, quantity, include_in_portion_weight: include }, { lifecycle });
+    cache({ scheduledDinerCount: 4, ingredientVersion: { fields: { mass_per_canonical_quantity: "0.1" } }, currentVersion: { fields: { mass_per_canonical_quantity: "0.1" } }, lineVersion: { fields: { scaling_behavior: "proportional", include_in_portion_weight: true } }, extraRecords: {
+      recipe_ingredient_line: [record("recipe_ingredient_line", fixedLine, { recipe_version_id: ids.recipeVersion, ingredient_version_id: ids.currentVersion, base_quantity: "1.25", line_key: fixedLine, scaling_behavior: "fixed", include_in_portion_weight: true })],
+      ingredient: [record("ingredient", replacementRoot, { current_version_id: replacementVersion }), record("ingredient", addRoot, { current_version_id: addVersion })],
+      ingredient_version: [record("ingredient_version", replacementVersion, { ingredient_id: replacementRoot, name: "Replacement", canonical_unit_id: replacementUnit, mass_per_canonical_quantity: "0.125" }), record("ingredient_version", addVersion, { ingredient_id: addRoot, name: "Added", canonical_unit_id: addUnit, mass_per_canonical_quantity: "0.2" })],
+      unit_definition: [record("unit_definition", replacementUnit, { code: "ml", custom_name: "ml", allows_ingredient_quantity: true }), record("unit_definition", addUnit, { code: "g", custom_name: "g", allows_ingredient_quantity: true })],
+      scheduled_ingredient_override: [record("scheduled_ingredient_override", "cdcdcdcd-cdcd-4cdc-8dcd-cdcdcdcdcdcd", { event_id: ids.event, scheduled_recipe_id: ids.scheduled, override_kind: "replace", target_line_key: ids.line, ingredient_version_id: replacementVersion, quantity: "0.75" }, { immutable: false }), add("cececece-cece-4cec-8ece-cececececece", addVersion, "0.625", true), add("cfcfcfcf-cfcf-4fcf-8fcf-cfcfcfcfcfcf", addVersion, "0.5", false), add("d0d0d0d0-d0d0-4d0d-8d0d-d0d0d0d0d0d0", addVersion, "0", true), add("d1d1d1d1-d1d1-4d1d-8d1d-d1d1d1d1d1d1", addVersion, "1", true, "retired")],
+    } });
+    const planner = await readEventPlanner(userId, organizationId, ids.event);
+    expect(planner?.scheduled[0]?.detailLines.map((line) => ({ name: line.name, quantity: line.quantity, unit: line.unitName }))).toEqual(expect.arrayContaining([{ name: "Replacement", quantity: "1.5", unit: "ml" }, { name: "Current", quantity: "1.25", unit: "portion" }, { name: "Added", quantity: "0.625", unit: "g" }]));
+    expect(planner?.scheduled[0]?.detailLines).toHaveLength(4);
+    expect(planner?.scheduled[0]?.preparedWeight).toBe("0.4375");
+    expect(planner?.scheduled[0]?.perDinerWeight).toBe("0.109375");
+  });
+
+  it("fails closed for negative override quantities and malformed inclusion", async () => {
+    const replacement = record("scheduled_ingredient_override", "cdcdcdcd-cdcd-4cdc-8dcd-cdcdcdcdcdcd", { event_id: ids.event, scheduled_recipe_id: ids.scheduled, override_kind: "replace", target_line_key: ids.line, ingredient_version_id: ids.currentVersion, quantity: "-1" }, { immutable: false });
+    const added = record("scheduled_ingredient_override", "cececece-cece-4cec-8ece-cececececece", { event_id: ids.event, scheduled_recipe_id: ids.scheduled, override_kind: "add", ingredient_version_id: ids.oldVersion, quantity: "-1" }, { immutable: false });
+    const malformed = record("scheduled_ingredient_override", "cfcfcfcf-cfcf-4fcf-8fcf-cfcfcfcfcfcf", { event_id: ids.event, scheduled_recipe_id: ids.scheduled, override_kind: "add", ingredient_version_id: ids.oldVersion, quantity: "1", include_in_portion_weight: "yes" }, { immutable: false });
+    cache({ overrides: [replacement, added, malformed] });
+    const planner = await readEventPlanner(userId, organizationId, ids.event);
+    expect(planner?.scheduled[0]?.detailLines).toEqual([]);
+    expect(planner?.scheduled[0]?.preparedWeight).toBeNull();
+  });
+
+  it("keeps pinned ingredient metadata for quantity-only replacements and rejects invalid IDs", async () => {
+    const quantityOnly = record("scheduled_ingredient_override", "cdcdcdcd-cdcd-4cdc-8dcd-cdcdcdcdcdcd", { event_id: ids.event, scheduled_recipe_id: ids.scheduled, override_kind: "replace", target_line_key: ids.line, quantity: "2" }, { immutable: false });
+    cache({ overrides: [quantityOnly] });
+    const retained = await readEventPlanner(userId, organizationId, ids.event);
+    expect(retained?.scheduled[0]?.detailLines[0]).toMatchObject({ name: "Old", unitName: "portion", quantity: "4" });
+
+    const invalid = record("scheduled_ingredient_override", "cececece-cece-4cec-8ece-cececececece", { event_id: ids.event, scheduled_recipe_id: ids.scheduled, override_kind: "replace", target_line_key: ids.line, ingredient_version_id: "not-a-uuid", quantity: "2" }, { immutable: false });
+    cache({ overrides: [invalid] });
+    expect((await readEventPlanner(userId, organizationId, ids.event))?.scheduled[0]?.detailLines).toEqual([]);
+  });
+
+  it("scales detail quantities when the pinned base is 0.5", async () => {
+    cache({ recipeVersionBaseScalingAmount: "0.5" });
+    const planner = await readEventPlanner(userId, organizationId, ids.event);
+    expect(planner?.scheduled[0]?.detailLines[0]?.quantity).toBe("4");
   });
 });
 

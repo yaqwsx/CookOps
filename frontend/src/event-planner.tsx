@@ -100,35 +100,17 @@ export function EventCosts({
   eventId,
   organizationId,
   userId,
+  providedCosts,
 }: {
   planner: EventPlannerProjection;
   eventId: string;
   organizationId: string;
   userId: string;
+  providedCosts?: EventCostsProjection;
 }) {
   const { t } = useTranslation();
-  const identity = `${userId}:${organizationId}:${eventId}`;
-  const [costsState, setCostsState] = useState<{
-    identity: string;
-    costs?: EventCostsProjection;
-  }>();
-  const [errorState, setErrorState] = useState({ identity, error: false });
-  // biome-ignore lint/correctness/useExhaustiveDependencies: identity is derived from the listed route dependencies.
-  useEffect(() => {
-    const effectIdentity = identity;
-    const subscription = liveQuery(async () => ({
-      costs: await readEventCosts(userId, organizationId, eventId),
-    })).subscribe({
-      next: (next) => {
-        setCostsState({ identity: effectIdentity, costs: next.costs });
-      },
-      error: () => setErrorState({ identity: effectIdentity, error: true }),
-    });
-    return () => subscription.unsubscribe();
-  }, [eventId, organizationId, userId]);
-  const costs = costsState?.identity === identity ? costsState.costs : undefined;
-  const error = errorState.identity === identity && errorState.error;
-  if (!costs) return null;
+  if (!providedCosts) return null;
+  const costs = providedCosts;
   return (
     <section className="event-costs" aria-labelledby="event-costs-heading">
       <h2 id="event-costs-heading">{t("costs.heading")}</h2>
@@ -189,7 +171,6 @@ export function EventCosts({
       {planner.lifecycle === "active" ? (
         <EventPriceRefreshControl eventId={eventId} organizationId={organizationId} userId={userId} />
       ) : null}
-      {error ? <p role="alert">{t("costs.unavailable")}</p> : null}
       {planner.scheduled.length ? (
         <ul className="event-costs__recipes">
           {planner.scheduled.map((item) => {
@@ -814,6 +795,9 @@ export function EventPlanner({
   const { t } = useTranslation();
   const [state, setState] = useState<PlannerState>("loading");
   const [planner, setPlanner] = useState<EventPlannerProjection>();
+  const identity = `${userId}:${organizationId}:${eventId}`;
+  const [recipeCosts, setRecipeCosts] = useState<{ identity: string; costs?: EventCostsProjection }>();
+  const [recipeCostsError, setRecipeCostsError] = useState({ identity, error: false });
   const [dropTarget, setDropTarget] = useState<string>();
   const generation = useRef(0);
   const synchronize = useCallback(async () => {
@@ -838,6 +822,10 @@ export function EventPlanner({
       next: (next) => active && setPlanner(next),
       error: () => active && setState("error"),
     });
+    const effectIdentity = identity;
+    setRecipeCosts(undefined);
+    setRecipeCostsError({ identity: effectIdentity, error: false });
+    const costSubscription = liveQuery(() => readEventCosts(userId, organizationId, eventId)).subscribe({ next: (next) => active && setRecipeCosts({ identity: effectIdentity, costs: next }), error: () => active && setRecipeCostsError({ identity: effectIdentity, error: true }) });
     const offline = () => setState("offline");
     window.addEventListener("online", synchronize);
     window.addEventListener("offline", offline);
@@ -846,10 +834,11 @@ export function EventPlanner({
       active = false;
       generation.current += 1;
       subscription.unsubscribe();
+      costSubscription.unsubscribe();
       window.removeEventListener("online", synchronize);
       window.removeEventListener("offline", offline);
     };
-  }, [eventId, organizationId, synchronize, userId]);
+  }, [eventId, identity, organizationId, synchronize, userId]);
   if (!planner && state === "loading")
     return <p role="status">{t("planner.loading")}</p>;
   if (!planner)
@@ -936,7 +925,9 @@ export function EventPlanner({
         organizationId={organizationId}
         planner={planner}
         userId={userId}
+        providedCosts={recipeCosts?.identity === identity ? recipeCosts.costs : undefined}
       />
+      {recipeCostsError.identity === identity && recipeCostsError.error ? <p role="alert">{t("costs.unavailable")}</p> : null}
       <AddRecipe
         eventId={eventId}
         organizationId={organizationId}
@@ -988,6 +979,18 @@ export function EventPlanner({
                           {item.catalogUpdateAvailable ? (
                             <span role="status"> · {t("planner.catalogUpdateAvailable")}</span>
                           ) : null}
+                          <details className="planner-recipe-detail">
+                            <summary>{t("planner.recipeDetail")}</summary>
+                            {item.recipeVersionName ? <p><strong>{t("planner.recipeVersion")}</strong>: {item.recipeVersionName}</p> : null}
+                            {item.recipeDescription ? <><p><strong>{t("planner.recipeDescriptionMarkdown")}</strong></p><pre>{item.recipeDescription}</pre></> : null}
+                            <p>{t("planner.scaleDetail", { amount: item.selectedScaleAmount, unit: item.scalingUnitName ?? "—" })}{item.scaleMode ? ` · ${t(`planner.scaleMode.${item.scaleMode}`)}` : ""}</p>
+                            <p>{item.preparedWeight && item.perDinerWeight ? t("planner.weightDetail", { total: item.preparedWeight, perDiner: item.perDinerWeight }) : t("planner.weightUnavailable")}</p>
+                            {recipeCosts?.identity === identity && recipeCosts.costs?.scheduled.get(item.id) ? <p>{t("planner.recipeCost", { total: recipeCosts.costs.scheduled.get(item.id)?.total ?? "—", perDiner: recipeCosts.costs.scheduled.get(item.id)?.perDiner ?? "—" })}{recipeCosts.costs.scheduled.get(item.id)?.missing ? ` · ${t("planner.recipeCostMissing")}` : ""}</p> : null}
+                            {item.hasLocalOverrides ? <p role="status">{t("planner.localOverrides")}</p> : null}
+                            {item.detailLines.length ? <ul aria-label={t("planner.ingredients")}>
+                              {item.detailLines.map((line) => <li key={line.id}>{line.name}: {line.quantity}{line.unitName ? ` ${line.unitName}` : ""}{line.note ? ` · ${line.note}` : ""}{line.localOverride ? <span className="planner-local-override"> · {t("planner.localOverrideMarker")}</span> : null}</li>)}
+                            </ul> : null}
+                          </details>
                           {(item.dietaryWarnings?.length ?? 0) ? (
                             <ul role="alert" aria-label={t("planner.dietaryWarnings")}>
                               {(item.dietaryWarnings ?? []).map((warning) => {
@@ -1037,18 +1040,6 @@ export function EventPlanner({
                             scheduled={item}
                           />
                           </>}
-                          {(item.localAddedIngredients?.length ?? 0) ? (
-                            <ul className="planner-local-ingredients">
-                              {(item.localAddedIngredients ?? []).map((ingredient) => (
-                                <li key={ingredient.id}>
-                                  {t("planner.localIngredient", {
-                                    name: ingredient.name,
-                                    quantity: ingredient.quantity,
-                                  })}
-                                </li>
-                              ))}
-                            </ul>
-                          ) : null}
                           <AddedOverride
                             active={planner.lifecycle === "active"}
                             eventId={eventId}

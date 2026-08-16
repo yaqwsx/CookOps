@@ -3,6 +3,7 @@ import { useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
 
 import { EventCosts } from "./event-planner";
+import { readEventCosts, type EventCostsProjection } from "./event-cost-projections";
 import {
   readEventPlanner,
   type EventPlannerProjection,
@@ -27,17 +28,25 @@ export function EventCostsPage({
     identity: string;
     planner?: EventPlannerProjection;
   }>();
+  const [costsState, setCostsState] = useState<{ identity: string; costs?: EventCostsProjection }>();
   const [errorState, setErrorState] = useState({ identity, error: false });
+  const [costsErrorState, setCostsErrorState] = useState({ identity, error: false });
   // biome-ignore lint/correctness/useExhaustiveDependencies: identity is derived from the listed route dependencies.
   useEffect(() => {
     const effectIdentity = identity;
+    setCostsErrorState({ identity: effectIdentity, error: false });
     const subscription = liveQuery(() =>
       readEventPlanner(userId, organizationId, eventId),
     ).subscribe({
       next: (next) => setPlannerState({ identity: effectIdentity, planner: next }),
       error: () => setErrorState({ identity: effectIdentity, error: true }),
     });
-    return () => subscription.unsubscribe();
+    const costsSubscription = liveQuery(() => readEventCosts(userId, organizationId, eventId)).subscribe({
+      next: (next) => setCostsState({ identity: effectIdentity, costs: next }),
+      error: () => setCostsErrorState({ identity: effectIdentity, error: true }),
+    });
+    setCostsState(undefined);
+    return () => { subscription.unsubscribe(); costsSubscription.unsubscribe(); };
   }, [eventId, organizationId, userId]);
   const planner = plannerState?.identity === identity ? plannerState.planner : undefined;
   const error = errorState.identity === identity && errorState.error;
@@ -58,7 +67,9 @@ export function EventCostsPage({
         organizationId={organizationId}
         planner={planner}
         userId={userId}
+        providedCosts={costsState?.identity === identity ? costsState.costs : undefined}
       />
+      {costsErrorState.identity === identity && costsErrorState.error ? <p role="alert">{t("costs.unavailable")}</p> : null}
     </>
   );
 }
