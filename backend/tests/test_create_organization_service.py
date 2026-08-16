@@ -21,6 +21,8 @@ from cookops.application.organizations import (
     ApplicationServiceError,
     CreateOrganizationCommand,
     ExecutionContext,
+    SetOrganizationLifecycleCommand,
+    change_organization_lifecycle,
     create_organization,
 )
 from cookops.persistence.models import (
@@ -119,6 +121,21 @@ def context(database: ServiceDatabase) -> ExecutionContext:
         client_installation_id=database.installation_id,
         oauth_client_id="mcp-client",
         oauth_grant_id="mcp-grant",
+    )
+
+
+def lifecycle_command(
+    *,
+    mutation_id: UUID | None = None,
+    organization_id: UUID | None = None,
+    operation: object = "retire",
+    client_wall_time: object | None = None,
+) -> SetOrganizationLifecycleCommand:
+    return SetOrganizationLifecycleCommand(
+        mutation_id=mutation_id or uuid4(),
+        organization_id=organization_id or uuid4(),
+        operation=operation,  # type: ignore[arg-type]
+        client_wall_time=client_wall_time or datetime.now(UTC),  # type: ignore[arg-type]
     )
 
 
@@ -726,3 +743,81 @@ def test_invalid_input_is_rejected_before_writes(
             )
         )
     assert mismatch.value.code == "idempotency_mismatch"
+
+
+def test_organization_lifecycle_replays_accepted_and_rejected_results(
+    service_database: ServiceDatabase,
+) -> None:
+    organization_id = uuid4()
+    asyncio.run(
+        create_organization(
+            service_database.sessions,
+            context(service_database),
+            organization_command(organization_id=organization_id),
+        )
+    )
+    accepted = lifecycle_command(organization_id=organization_id)
+    first = asyncio.run(
+        change_organization_lifecycle(
+            service_database.sessions, context(service_database), accepted
+        )
+    )
+    replay = asyncio.run(
+        change_organization_lifecycle(
+            service_database.sessions, context(service_database), accepted
+        )
+    )
+    assert first.organization_id == replay.organization_id == organization_id
+    assert first.name == replay.name
+    assert replay.replayed is True
+
+    rejected = lifecycle_command(organization_id=uuid4())
+    with pytest.raises(ApplicationServiceError) as first_error:
+        asyncio.run(
+            change_organization_lifecycle(
+                service_database.sessions, context(service_database), rejected
+            )
+        )
+    with pytest.raises(ApplicationServiceError) as replay_error:
+        asyncio.run(
+            change_organization_lifecycle(
+                service_database.sessions, context(service_database), rejected
+            )
+        )
+    assert first_error.value.code == replay_error.value.code == "validation_failed"
+    assert first_error.value.field_violations == replay_error.value.field_violations
+    with service_database.sync_engine.connect() as connection:
+        mutation = connection.execute(
+            select(Mutation.outcome, Mutation.is_system_administration_scope).where(
+                Mutation.id == rejected.mutation_id
+            )
+        ).one()
+    assert mutation.outcome == "rejected"
+    assert mutation.is_system_administration_scope is True
+
+
+@pytest.mark.parametrize(
+    "command",
+    [
+        lifecycle_command(operation="invalid"),
+        lifecycle_command(client_wall_time=datetime.now()),
+        lifecycle_command(organization_id="not-a-uuid"),  # type: ignore[arg-type]
+    ],
+)
+def test_invalid_lifecycle_direct_commands_are_rejected_and_replayed(
+    service_database: ServiceDatabase,
+    command: SetOrganizationLifecycleCommand,
+) -> None:
+    with pytest.raises(ApplicationServiceError) as first:
+        asyncio.run(
+            change_organization_lifecycle(
+                service_database.sessions, context(service_database), command
+            )
+        )
+    with pytest.raises(ApplicationServiceError) as replay:
+        asyncio.run(
+            change_organization_lifecycle(
+                service_database.sessions, context(service_database), command
+            )
+        )
+    assert first.value.field_violations == replay.value.field_violations

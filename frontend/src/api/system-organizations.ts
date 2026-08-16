@@ -38,3 +38,34 @@ export async function createSystemOrganization(
   }
   return (await response.json()) as { id: string; name: string };
 }
+
+export type SystemOrganization = {
+  id: string;
+  name: string;
+  description: string | null;
+  default_currency: string;
+  retired_at: string | null;
+  retired_by_user_id: string | null;
+};
+
+export async function getSystemOrganizations(): Promise<SystemOrganization[]> {
+  const response = await fetch("/api/v1/system/organizations", { credentials: "same-origin" });
+  if (!response.ok) throw new SystemOrganizationRequestError(response.status);
+  return (await response.json()) as SystemOrganization[];
+}
+
+export async function changeSystemOrganizationLifecycle(
+  userId: string, id: string, operation: "retire" | "restore",
+): Promise<SystemOrganization> {
+  const response = await fetch(`/api/v1/system/organizations/${id}/lifecycle`, {
+    method: "POST", credentials: "same-origin", headers: { "content-type": "application/json" },
+    body: JSON.stringify({
+      operation,
+      mutation_id: crypto.randomUUID(),
+      client_installation_id: await readOrCreateBrowserInstallationId(userId),
+      client_wall_time: new Date().toISOString(),
+    }),
+  });
+  if (!response.ok) throw new SystemOrganizationRequestError(response.status);
+  return (await response.json()) as SystemOrganization;
+}

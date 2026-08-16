@@ -8,6 +8,7 @@ future Google adapter; they do not bypass authorization.
 
 from dataclasses import dataclass
 from datetime import datetime
+from typing import Literal
 from uuid import UUID
 
 from fastapi import APIRouter, HTTPException, Request, Response, status
@@ -26,7 +27,10 @@ from cookops.application.organizations import (
     ApplicationServiceError,
     CreateOrganizationCommand,
     ExecutionContext,
+    SetOrganizationLifecycleCommand,
+    change_organization_lifecycle,
     create_organization,
+    list_organizations_for_system_admin,
 )
 from cookops.config import Environment, Settings
 from cookops.persistence.models import SystemRoleAssignment, User
@@ -124,6 +128,26 @@ class CreatedOrganizationResponse(BaseModel):
     name: str
     description: str | None
     default_currency: str
+
+
+class SystemOrganizationResponse(CreatedOrganizationResponse):
+    retired_at: datetime | None
+    retired_by_user_id: UUID | None
+
+
+class OrganizationLifecycleRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid", strict=True)
+    operation: Literal["retire", "restore"]
+    mutation_id: UUID
+    client_installation_id: UUID
+    client_wall_time: datetime
+
+    @field_validator("client_wall_time")
+    @classmethod
+    def timezone_required(cls, value: datetime) -> datetime:
+        if value.tzinfo is None or value.utcoffset() is None:
+            raise ValueError("must include a timezone")
+        return value
 
 
 def _services(request: Request) -> BrowserAuthenticationServices:
@@ -323,6 +347,22 @@ def create_organization_administration_router(settings: Settings) -> APIRouter:
         if allowed is None:
             raise HTTPException(status_code=403, detail={"code": "forbidden"})
 
+    def application_error(error: ApplicationServiceError) -> HTTPException:
+        if error.code == "forbidden":
+            return HTTPException(status_code=403, detail={"code": error.code})
+        if error.code == "validation_failed":
+            return HTTPException(
+                status_code=422,
+                detail={
+                    "code": error.code,
+                    "field_violations": [
+                        {"path": item.path, "code": item.code}
+                        for item in error.field_violations
+                    ],
+                },
+            )
+        return HTTPException(status_code=409, detail={"code": error.code})
+
     @router.get("/organizations/access", status_code=204)
     async def access(request: Request) -> Response:
         value = services(request)
@@ -367,6 +407,51 @@ def create_organization_administration_router(settings: Settings) -> APIRouter:
             name=result.name,
             description=result.description,
             default_currency=result.default_currency,
+        )
+
+    @router.get("/organizations", response_model=tuple[SystemOrganizationResponse, ...])
+    async def list_all(request: Request) -> tuple[SystemOrganizationResponse, ...]:
+        value = services(request)
+        actor_id = await actor(request, value)
+        try:
+            result = await list_organizations_for_system_admin(
+                value.session_factory, ExecutionContext(actor_id, UUID(int=0))
+            )
+        except ApplicationServiceError as error:
+            raise application_error(error) from error
+        return tuple(
+            SystemOrganizationResponse(
+                id=item.organization_id, name=item.name, description=item.description,
+                default_currency=item.default_currency, retired_at=item.retired_at,
+                retired_by_user_id=item.retired_by_user_id,
+            ) for item in result
+        )
+
+    @router.post(
+        "/organizations/{organization_id}/lifecycle", response_model=SystemOrganizationResponse
+    )
+    async def lifecycle(
+        organization_id: UUID, body: OrganizationLifecycleRequest, request: Request
+    ) -> SystemOrganizationResponse:
+        value = services(request)
+        actor_id = await actor(request, value)
+        try:
+            result = await change_organization_lifecycle(
+                value.session_factory,
+                ExecutionContext(actor_id, body.client_installation_id),
+                SetOrganizationLifecycleCommand(
+                    mutation_id=body.mutation_id,
+                    organization_id=organization_id,
+                    operation=body.operation,
+                    client_wall_time=body.client_wall_time,
+                ),
+            )
+        except ApplicationServiceError as error:
+            raise application_error(error) from error
+        return SystemOrganizationResponse(
+            id=result.organization_id, name=result.name, description=result.description,
+            default_currency=result.default_currency, retired_at=result.retired_at,
+            retired_by_user_id=result.retired_by_user_id,
         )
 
     return router

@@ -92,6 +92,25 @@ class CreateOrganizationResult:
 
 
 @dataclass(frozen=True, slots=True)
+class OrganizationLifecycleResult:
+    organization_id: UUID
+    name: str
+    description: str | None
+    default_currency: str
+    retired_at: datetime | None
+    retired_by_user_id: UUID | None
+    replayed: bool
+
+
+@dataclass(frozen=True, slots=True)
+class SetOrganizationLifecycleCommand:
+    mutation_id: UUID
+    organization_id: UUID
+    operation: Literal["retire", "restore"]
+    client_wall_time: datetime
+
+
+@dataclass(frozen=True, slots=True)
 class FieldViolation:
     path: str
     code: str
@@ -545,3 +564,235 @@ async def create_organization(
     if result is None:
         raise RuntimeError("Organization creation produced no outcome")
     return result
+
+
+def _lifecycle_hash_value(value: object) -> object:
+    if isinstance(value, UUID):
+        return str(value)
+    if isinstance(value, datetime):
+        try:
+            return value.isoformat()
+        except Exception:
+            pass
+    if value is None or isinstance(value, (str, int, float, bool)):
+        return value
+    return {"invalid_type": type(value).__qualname__}
+
+
+def _lifecycle_request_hash(command: SetOrganizationLifecycleCommand) -> bytes:
+    payload = {
+        "client_wall_time": _lifecycle_hash_value(command.client_wall_time),
+        "command_kind": "organization.lifecycle",
+        "command_schema_version": 1,
+        "operation": _lifecycle_hash_value(command.operation),
+        "organization_id": _lifecycle_hash_value(command.organization_id),
+    }
+    return hashlib.sha256(
+        json.dumps(payload, ensure_ascii=False, separators=(",", ":"), sort_keys=True).encode()
+    ).digest()
+
+
+def _lifecycle_result(mutation: Mutation, *, replayed: bool) -> OrganizationLifecycleResult:
+    payload = mutation.outcome_payload
+    record = payload.get("organization") if payload is not None else None
+    if not isinstance(record, dict):
+        raise RuntimeError("Accepted organization lifecycle mutation has invalid outcome payload")
+    try:
+        retired_at = record.get("retired_at")
+        retired_by = record.get("retired_by_user_id")
+        return OrganizationLifecycleResult(
+            UUID(_required_str(record, "id")),
+            _required_str(record, "name"),
+            record.get("description") if isinstance(record.get("description"), str) else None,
+            _required_str(record, "default_currency"),
+            datetime.fromisoformat(retired_at) if isinstance(retired_at, str) else None,
+            UUID(retired_by) if isinstance(retired_by, str) else None,
+            replayed,
+        )
+    except (KeyError, TypeError, ValueError) as error:
+        raise RuntimeError(
+            "Accepted organization lifecycle mutation has invalid outcome payload"
+        ) from error
+
+
+def _lifecycle_mutation(
+    command: SetOrganizationLifecycleCommand,
+    context: ExecutionContext,
+    request_hash: bytes,
+    payload: dict[str, object],
+    *,
+    outcome: Literal["accepted", "rejected"] = "accepted",
+) -> Mutation:
+    organization_id = (
+        command.organization_id if isinstance(command.organization_id, UUID) else UUID(int=0)
+    )
+    wall_time = command.client_wall_time
+    try:
+        wall_time = (
+            wall_time.astimezone(UTC)
+            if isinstance(wall_time, datetime)
+            and wall_time.tzinfo is not None
+            and wall_time.utcoffset() is not None
+            else datetime(1970, 1, 1, tzinfo=UTC)
+        )
+    except Exception:
+        wall_time = datetime(1970, 1, 1, tzinfo=UTC)
+    return Mutation(
+        id=command.mutation_id,
+        logical_operation_id=None,
+        organization_id=None,
+        is_system_administration_scope=True,
+        actor_user_id=context.actor_user_id,
+        actor_role="system_admin",
+        client_installation_id=context.client_installation_id,
+        oauth_client_id=context.oauth_client_id,
+        oauth_grant_id=context.oauth_grant_id,
+        client_wall_time=wall_time,
+        command_schema_version=1,
+        command_kind="organization.lifecycle",
+        target_identities=[{"entity_kind": "organization", "entity_id": str(organization_id)}],
+        request_hash=request_hash,
+        outcome=outcome,
+        outcome_payload=payload,
+    )
+
+
+async def change_organization_lifecycle(
+    session_factory: async_sessionmaker[AsyncSession],
+    context: ExecutionContext,
+    command: SetOrganizationLifecycleCommand,
+) -> OrganizationLifecycleResult:
+    """Retire or restore an organization as a system-administration mutation."""
+    violations: list[FieldViolation] = []
+    if not isinstance(command.mutation_id, UUID):
+        violations.append(FieldViolation("mutation_id", "must_be_uuid"))
+    if not isinstance(command.organization_id, UUID):
+        violations.append(FieldViolation("organization_id", "must_be_uuid"))
+    if not isinstance(command.operation, str) or command.operation not in ("retire", "restore"):
+        violations.append(FieldViolation("operation", "must_be_retire_or_restore"))
+    try:
+        wall_time_has_timezone = (
+            isinstance(command.client_wall_time, datetime)
+            and command.client_wall_time.tzinfo is not None
+            and command.client_wall_time.utcoffset() is not None
+        )
+    except Exception:
+        wall_time_has_timezone = False
+    if not wall_time_has_timezone:
+        violations.append(FieldViolation("client_wall_time", "must_include_timezone"))
+    request_hash = _lifecycle_request_hash(command)
+    if not isinstance(command.mutation_id, UUID):
+        raise _validation_error(tuple(violations))
+    async with session_factory() as session, session.begin():
+        await session.execute(
+            insert(ClientInstallation)
+            .values(
+                id=context.client_installation_id,
+                user_id=context.actor_user_id,
+                installation_kind="agent" if context.oauth_client_id is not None else "browser",
+            )
+            .on_conflict_do_nothing(index_elements=("id",))
+        )
+        await _authorize(session, context)
+        await session.execute(
+            text("SELECT pg_advisory_xact_lock(:lock_key)"),
+            {"lock_key": _advisory_lock_key("mutation", command.mutation_id)},
+        )
+        retained = await session.get(Mutation, command.mutation_id)
+        deferred_error: ApplicationServiceError | None = None
+        if retained is not None:
+            if (
+                retained.actor_user_id != context.actor_user_id
+                or retained.command_kind != "organization.lifecycle"
+                or retained.command_schema_version != 1
+                or retained.request_hash != request_hash
+            ):
+                raise ApplicationServiceError("idempotency_mismatch", retry_same_identity=False)
+            if retained.outcome == "accepted":
+                return _lifecycle_result(retained, replayed=True)
+            if retained.outcome == "rejected":
+                deferred_error = _retained_error(retained)
+            else:
+                raise RuntimeError("Organization lifecycle retained an unsupported outcome")
+        elif violations:
+            deferred_error = _validation_error(tuple(violations))
+            session.add(
+                _lifecycle_mutation(
+                    command,
+                    context,
+                    request_hash,
+                    _error_payload(deferred_error),
+                    outcome="rejected",
+                )
+            )
+        else:
+            await session.execute(
+                text("SELECT pg_advisory_xact_lock(:lock_key)"),
+                {"lock_key": _advisory_lock_key("organization", command.organization_id)},
+            )
+            organization = await session.scalar(
+                select(Organization)
+                .where(Organization.id == command.organization_id)
+                .with_for_update()
+            )
+            if organization is None:
+                deferred_error = _validation_error(
+                    (FieldViolation("organization_id", "not_found"),)
+                )
+                session.add(
+                    _lifecycle_mutation(
+                        command,
+                        context,
+                        request_hash,
+                        _error_payload(deferred_error),
+                        outcome="rejected",
+                    )
+                )
+            else:
+                if command.operation == "retire":
+                    organization.retired_at = datetime.now(UTC)
+                    organization.retired_by_user_id = context.actor_user_id
+                else:
+                    organization.retired_at = None
+                    organization.retired_by_user_id = None
+                record = {
+                    "id": str(organization.id),
+                    "name": organization.name,
+                    "description": organization.description,
+                    "default_currency": organization.default_currency,
+                    "retired_at": (
+                        organization.retired_at.isoformat() if organization.retired_at else None
+                    ),
+                    "retired_by_user_id": (
+                        str(organization.retired_by_user_id)
+                        if organization.retired_by_user_id
+                        else None
+                    ),
+                }
+                session.add(
+                    _lifecycle_mutation(command, context, request_hash, {"organization": record})
+                )
+                return _lifecycle_result(
+                    Mutation(id=command.mutation_id, outcome_payload={"organization": record}),
+                    replayed=False,
+                )
+    if deferred_error is not None:
+        raise deferred_error
+    raise RuntimeError("Organization lifecycle produced no outcome")
+
+
+async def list_organizations_for_system_admin(
+    session_factory: async_sessionmaker[AsyncSession], context: ExecutionContext
+) -> tuple[OrganizationLifecycleResult, ...]:
+    async with session_factory() as session, session.begin():
+        await _authorize(session, context, require_installation=False)
+        rows = await session.scalars(
+            select(Organization).order_by(Organization.name, Organization.id)
+        )
+        return tuple(
+            OrganizationLifecycleResult(
+                item.id, item.name, item.description, item.default_currency,
+                item.retired_at, item.retired_by_user_id, False,
+            )
+            for item in rows
+        )

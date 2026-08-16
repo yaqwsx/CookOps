@@ -1,7 +1,7 @@
-import { useState, type FormEvent } from "react";
+import { useEffect, useState, type FormEvent } from "react";
 import { useTranslation } from "react-i18next";
 
-import { createSystemOrganization, SystemOrganizationRequestError } from "./api/system-organizations";
+import { changeSystemOrganizationLifecycle, createSystemOrganization, getSystemOrganizations, SystemOrganizationRequestError, type SystemOrganization } from "./api/system-organizations";
 
 export function SystemOrganizationCreate({
   userId,
@@ -17,6 +17,16 @@ export function SystemOrganizationCreate({
   const [pending, setPending] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [saved, setSaved] = useState(false);
+  const [organizations, setOrganizations] = useState<SystemOrganization[]>([]);
+  const [listError, setListError] = useState(false);
+  const [pendingLifecycle, setPendingLifecycle] = useState<string | null>(null);
+
+  async function refresh() {
+    try { setOrganizations(await getSystemOrganizations()); setListError(false); }
+    catch { setListError(true); }
+  }
+
+  useEffect(() => { void refresh(); }, [userId]);
 
   async function submit(event: FormEvent) {
     event.preventDefault();
@@ -42,6 +52,7 @@ export function SystemOrganizationCreate({
       setCurrency("CZK");
       setSaved(true);
       onCreated();
+      await refresh();
     } catch (caught) {
       setError(
         caught instanceof SystemOrganizationRequestError && caught.status === 403
@@ -51,6 +62,15 @@ export function SystemOrganizationCreate({
     } finally {
       setPending(false);
     }
+  }
+
+  async function changeLifecycle(organization: SystemOrganization) {
+    const operation = organization.retired_at ? "restore" : "retire";
+    if (operation === "retire" && !window.confirm(t("systemOrganizations.retireConfirm", { name: organization.name }))) return;
+    setPendingLifecycle(organization.id);
+    try { await changeSystemOrganizationLifecycle(userId, organization.id, operation); await refresh(); onCreated(); }
+    catch { setListError(true); }
+    finally { setPendingLifecycle(null); }
   }
 
   return (
@@ -73,6 +93,25 @@ export function SystemOrganizationCreate({
         {error ? <p role="alert">{error}</p> : null}
         {saved ? <p role="status">{t("systemOrganizations.saved")}</p> : null}
       </form>
+      <section aria-labelledby="system-organizations-list-heading">
+        <h2 id="system-organizations-list-heading">{t("systemOrganizations.listHeading")}</h2>
+        {listError ? <p role="alert">{t("systemOrganizations.error")} <button onClick={() => void refresh()} type="button">{t("authentication.retry")}</button></p> : null}
+        <ul>
+          {organizations.map((organization) => (
+            <li key={organization.id}>
+              {organization.name} — {organization.retired_at ? t("systemOrganizations.retired") : t("systemOrganizations.active")}
+              <button disabled={pendingLifecycle === organization.id} onClick={() => void changeLifecycle(organization)} type="button">
+                <span aria-hidden="true">
+                  {organization.retired_at ? t("systemOrganizations.restore") : t("systemOrganizations.retire")}
+                </span>
+                <span className="sr-only">
+                  {t(organization.retired_at ? "systemOrganizations.restore" : "systemOrganizations.retire")} {organization.name}
+                </span>
+              </button>
+            </li>
+          ))}
+        </ul>
+      </section>
     </section>
   );
 }

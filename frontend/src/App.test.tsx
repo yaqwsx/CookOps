@@ -858,6 +858,8 @@ describe("development authentication", () => {
     window.COOKOPS_RUNTIME_CONFIG = { authentication: { provider: "dummy" } };
     let signedIn = false;
     let organizationReads = 0;
+    let lifecycleRetired = false;
+    let lifecycleReads = 0;
     const createdId = "8c4c9065-0fb3-490f-8c31-bef5103c1b1b";
     vi.stubGlobal(
       "fetch",
@@ -874,6 +876,19 @@ describe("development authentication", () => {
           return response(null, 204);
         }
         if (path === "/api/v1/system/organizations/access") return response(null, 204);
+        if (path === "/api/v1/system/organizations" && !init?.method) {
+          lifecycleReads += 1;
+          return response([
+            {
+              id: createdId,
+              name: "New kitchen",
+              description: null,
+              default_currency: "CZK",
+              retired_at: lifecycleRetired ? "2026-08-16T12:00:00Z" : null,
+              retired_by_user_id: lifecycleRetired ? alice.id : null,
+            },
+          ]);
+        }
         if (path === "/api/v1/organizations") {
           organizationReads += 1;
           return response({
@@ -885,6 +900,25 @@ describe("development authentication", () => {
         }
         if (path === "/api/v1/system/organizations" && init?.method === "POST") {
           return response({ id: createdId, name: "New kitchen" }, 201);
+        }
+        if (
+          path === `/api/v1/system/organizations/${createdId}/lifecycle` &&
+          init?.method === "POST"
+        ) {
+          const lifecycleBody = JSON.parse(init.body as string);
+          expect(lifecycleBody.operation).toBe(lifecycleRetired ? "restore" : "retire");
+          expect(lifecycleBody.mutation_id).toEqual(expect.any(String));
+          expect(lifecycleBody.client_installation_id).toEqual(expect.any(String));
+          expect(lifecycleBody.client_wall_time).toEqual(expect.any(String));
+          lifecycleRetired = !lifecycleRetired;
+          return response({
+            id: createdId,
+            name: "New kitchen",
+            description: null,
+            default_currency: "CZK",
+            retired_at: lifecycleRetired ? "2026-08-16T12:00:00Z" : null,
+            retired_by_user_id: lifecycleRetired ? alice.id : null,
+          });
         }
         throw new Error(`Unexpected request: ${path}`);
       }),
@@ -901,6 +935,14 @@ describe("development authentication", () => {
         screen.getByRole("option", { name: "New kitchen" }),
       ).toBeInTheDocument(),
     );
+    expect(lifecycleReads).toBeGreaterThan(0);
+    const confirm = vi.spyOn(window, "confirm").mockReturnValue(true);
+    await user.click(screen.getByRole("button", { name: "Ukončit organizaci New kitchen" }));
+    expect(confirm).toHaveBeenCalledWith("Opravdu chcete ukončit organizaci New kitchen?");
+    expect(await screen.findByText("New kitchen — Ukončená")).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Obnovit organizaci New kitchen" }));
+    expect(await screen.findByText("New kitchen — Aktivní")).toBeInTheDocument();
+    confirm.mockRestore();
   });
 
   it("does not expose the system organization surface to a non-admin", async () => {
