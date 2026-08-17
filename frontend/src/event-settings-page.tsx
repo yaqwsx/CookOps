@@ -18,12 +18,16 @@ export function EventSettingsPage({
   userId,
   onOpenCosts,
   onOpenPlanner,
+  onOpenReceipts,
+  onOpenShopping,
 }: {
   eventId: string;
   organizationId: string;
   userId: string;
   onOpenCosts: () => void;
   onOpenPlanner: () => void;
+  onOpenReceipts: () => void;
+  onOpenShopping: () => void;
 }) {
   const { t } = useTranslation();
   const identity = `${userId}:${organizationId}:${eventId}`;
@@ -61,6 +65,12 @@ export function EventSettingsPage({
         </button>
         <button onClick={onOpenCosts} type="button">
           {t("eventSettings.costs")}
+        </button>
+        <button onClick={onOpenShopping} type="button">
+          {t("eventSettings.shopping")}
+        </button>
+        <button onClick={onOpenReceipts} type="button">
+          {t("eventSettings.receipts")}
         </button>
       </nav>
       <h2 id="event-settings-heading">{t("eventSettings.heading")}</h2>

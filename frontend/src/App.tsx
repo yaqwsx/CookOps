@@ -691,6 +691,8 @@ function AuthenticatedShell({
                     eventId={eventId}
                     onOpenCosts={() => openCosts(eventId)}
                     onOpenPlanner={() => openEvent(eventId)}
+                    onOpenReceipts={() => openReceipts(eventId)}
+                    onOpenShopping={() => openShopping(eventId)}
                     organizationId={organizationId}
                     userId={identity.id}
                   />

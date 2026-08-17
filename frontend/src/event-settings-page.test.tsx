@@ -86,6 +86,8 @@ describe("EventSettingsPage", () => {
         eventId="aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"
         onOpenCosts={vi.fn()}
         onOpenPlanner={vi.fn()}
+        onOpenReceipts={vi.fn()}
+        onOpenShopping={vi.fn()}
         organizationId={organizationId}
         userId={userId}
       />,
@@ -105,6 +107,8 @@ describe("EventSettingsPage", () => {
         eventId="bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb"
         onOpenCosts={vi.fn()}
         onOpenPlanner={vi.fn()}
+        onOpenReceipts={vi.fn()}
+        onOpenShopping={vi.fn()}
         organizationId={organizationId}
         userId={userId}
       />,
@@ -114,6 +118,35 @@ describe("EventSettingsPage", () => {
     expect(
       screen.getByRole("spinbutton", { name: "Expected attendance" }),
     ).toHaveValue(7);
+  });
+
+  it("navigates to every event workspace section", async () => {
+    const onOpenPlanner = vi.fn();
+    const onOpenCosts = vi.fn();
+    const onOpenShopping = vi.fn();
+    const onOpenReceipts = vi.fn();
+    await addEvent("99999999-9999-4999-8999-999999999999", "Event");
+    render(
+      <EventSettingsPage
+        eventId="99999999-9999-4999-8999-999999999999"
+        onOpenCosts={onOpenCosts}
+        onOpenPlanner={onOpenPlanner}
+        onOpenReceipts={onOpenReceipts}
+        onOpenShopping={onOpenShopping}
+        organizationId={organizationId}
+        userId={userId}
+      />,
+    );
+    expect(await screen.findByDisplayValue("Event")).toBeInTheDocument();
+    const user = userEvent.setup();
+    await user.click(screen.getByRole("button", { name: "Nákupy" }));
+    await user.click(screen.getByRole("button", { name: "Účtenky" }));
+    expect(
+      screen.getByRole("button", { name: "Zpět na plán" }),
+    ).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Náklady" })).toBeInTheDocument();
+    expect(onOpenShopping).toHaveBeenCalledOnce();
+    expect(onOpenReceipts).toHaveBeenCalledOnce();
   });
 
   it("queues active attendance and keeps archived attendance read-only", async () => {
@@ -126,6 +159,8 @@ describe("EventSettingsPage", () => {
         eventId={activeId}
         onOpenCosts={vi.fn()}
         onOpenPlanner={vi.fn()}
+        onOpenReceipts={vi.fn()}
+        onOpenShopping={vi.fn()}
         organizationId={organizationId}
         userId={userId}
       />,
@@ -146,6 +181,8 @@ describe("EventSettingsPage", () => {
         eventId={archivedId}
         onOpenCosts={vi.fn()}
         onOpenPlanner={vi.fn()}
+        onOpenReceipts={vi.fn()}
+        onOpenShopping={vi.fn()}
         organizationId={organizationId}
         userId={userId}
       />,
@@ -178,6 +215,8 @@ describe("EventSettingsPage", () => {
         eventId={eventId}
         onOpenCosts={vi.fn()}
         onOpenPlanner={vi.fn()}
+        onOpenReceipts={vi.fn()}
+        onOpenShopping={vi.fn()}
         organizationId={organizationId}
         userId={userId}
       />,
@@ -217,6 +256,8 @@ describe("EventSettingsPage", () => {
         eventId="cccccccc-cccc-4ccc-8ccc-cccccccccccc"
         onOpenCosts={vi.fn()}
         onOpenPlanner={vi.fn()}
+        onOpenReceipts={vi.fn()}
+        onOpenShopping={vi.fn()}
         organizationId={organizationId}
         userId={userId}
       />,
@@ -237,6 +278,8 @@ describe("EventSettingsPage", () => {
         eventId="dddddddd-dddd-4ddd-8ddd-dddddddddddd"
         onOpenCosts={vi.fn()}
         onOpenPlanner={vi.fn()}
+        onOpenReceipts={vi.fn()}
+        onOpenShopping={vi.fn()}
         organizationId={organizationId}
         userId={userId}
       />,
@@ -254,6 +297,8 @@ describe("EventSettingsPage", () => {
         eventId="eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee"
         onOpenCosts={vi.fn()}
         onOpenPlanner={vi.fn()}
+        onOpenReceipts={vi.fn()}
+        onOpenShopping={vi.fn()}
         organizationId={organizationId}
         userId={userId}
       />,
