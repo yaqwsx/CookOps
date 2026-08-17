@@ -1,6 +1,10 @@
 import { beforeEach, describe, expect, it } from "vitest";
 
-import { queueEventCreate, validateEventCreate } from "./event-create";
+import {
+  parseCalendarDate,
+  queueEventCreate,
+  validateEventCreate,
+} from "./event-create";
 import { readVisibleEventSummaries } from "./event-projections";
 import { localDb } from "./local-db";
 
@@ -41,6 +45,13 @@ async function addOrganization(currency = "CZK") {
 
 describe("offline event creation", () => {
   beforeEach(clearDatabase);
+
+  it("accepts Python-compatible years below 100 without Date.UTC coercion", () => {
+    expect(parseCalendarDate("0001-01-01")).toBe("0001-01-01");
+    expect(parseCalendarDate("0099-12-31")).toBe("0099-12-31");
+    expect(parseCalendarDate("0000-01-01")).toBeUndefined();
+    expect(parseCalendarDate("0099-02-29")).toBeUndefined();
+  });
 
   it("accepts only values that fit the event-create command contract", () => {
     expect(validateEventCreate(validInput)).toBeUndefined();

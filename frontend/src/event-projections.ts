@@ -1,4 +1,5 @@
 import type { EventSummary } from "./api/events";
+import { parseCalendarDate } from "./event-create";
 import { type CanonicalRecord, localDb } from "./local-db";
 import { readVisibleRecords } from "./visible-records";
 
@@ -14,6 +15,8 @@ function eventSummary(
   const name = text(fields.name);
   const startDate = text(fields.start_date);
   const endDate = text(fields.end_date);
+  const validStartDate = parseCalendarDate(startDate);
+  const validEndDate = parseCalendarDate(endDate);
   const budgetAmount = text(fields.budget_amount);
   const currency = text(fields.currency);
   const location =
@@ -33,8 +36,10 @@ function eventSummary(
     (fields.organization_id !== undefined &&
       fields.organization_id !== organizationId) ||
     !name ||
-    !startDate ||
-    !endDate ||
+    validStartDate === undefined ||
+    validEndDate === undefined ||
+    validEndDate < validStartDate ||
+    (Date.parse(`${validEndDate}T00:00:00Z`) - Date.parse(`${validStartDate}T00:00:00Z`)) / 86400000 >= 366 ||
     !budgetAmount ||
     !currency ||
     (fields.location !== undefined && location === null) ||
@@ -54,8 +59,8 @@ function eventSummary(
     id: record.entityId,
     organizationId,
     name,
-    startDate,
-    endDate,
+    startDate: validStartDate,
+    endDate: validEndDate,
     baseExpectedAttendance: attendance,
     budgetAmount,
     location,

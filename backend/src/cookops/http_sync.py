@@ -19,6 +19,7 @@ from pydantic import (
     TypeAdapter,
     ValidationError,
     field_validator,
+    model_validator,
 )
 
 from cookops.application.browser_sessions import BrowserSessionService
@@ -189,6 +190,18 @@ class BootstrapResponse(BaseModel):
     records: tuple[BootstrapRecordResponse, ...]
 
 
+def _wire_date(cls: type[BaseModel], value: object) -> date:
+    if not isinstance(value, str) or len(value) != 10 or value[4] != "-" or value[7] != "-":
+        raise ValueError("must be YYYY-MM-DD")
+    try:
+        parsed = date.fromisoformat(value)
+    except ValueError as error:
+        raise ValueError("must be YYYY-MM-DD") from error
+    if parsed.isoformat() != value:
+        raise ValueError("must be YYYY-MM-DD")
+    return parsed
+
+
 class PushCommandRequest(BaseModel):
     """Forward-compatible command envelope; each known payload is validated below."""
 
@@ -238,6 +251,8 @@ class CreateEventPayload(BaseModel):
     general_note: str | None = None
     logical_operation_id: UUID | None = None
 
+    _dates_must_be_wire_dates = field_validator("start_date", "end_date", mode="before")(_wire_date)
+
     @field_validator("budget_amount", mode="before")
     @classmethod
     def budget_amount_must_be_decimal_string(cls, value: object) -> object:
@@ -259,10 +274,20 @@ class UpdateEventMetadataPayload(BaseModel):
 
     event_id: UUID
     name: str = Field(min_length=1, max_length=200)
+    start_date: date | None = None
+    end_date: date | None = None
     location: str | None = Field(default=None, max_length=300)
     budget_amount: Decimal
     general_note: str | None = Field(default=None, max_length=4000)
     logical_operation_id: UUID | None = None
+
+    _dates_must_be_wire_dates = field_validator("start_date", "end_date", mode="before")(_wire_date)
+
+    @model_validator(mode="after")
+    def dates_must_be_supplied_together(self) -> "UpdateEventMetadataPayload":
+        if (self.start_date is None) != (self.end_date is None):
+            raise ValueError("start_date and end_date must be supplied together")
+        return self
 
     @field_validator("budget_amount", mode="before")
     @classmethod
@@ -957,6 +982,8 @@ def _push_command(command: PushCommandRequest, organization_id: UUID) -> SyncCom
                 event_id=metadata_payload.event_id,
                 organization_id=organization_id,
                 name=metadata_payload.name,
+                start_date=metadata_payload.start_date,
+                end_date=metadata_payload.end_date,
                 location=metadata_payload.location,
                 budget_amount=metadata_payload.budget_amount,
                 general_note=metadata_payload.general_note,

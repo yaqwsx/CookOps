@@ -27,16 +27,22 @@ export function isNonnegativeSafeInteger(value: string): boolean {
   return integer.test(value) && Number.isSafeInteger(Number(value));
 }
 
-function dateMilliseconds(value: string): number | undefined {
-  if (!calendarDate.test(value)) return undefined;
+export function parseCalendarDate(value: unknown): string | undefined {
+  if (typeof value !== "string" || !calendarDate.test(value)) return undefined;
   const [year, month, day] = value.split("-").map(Number);
-  const timestamp = Date.UTC(year, month - 1, day);
-  const date = new Date(timestamp);
+  if (year === 0) return undefined;
+  const date = new Date(0);
+  date.setUTCFullYear(year, month - 1, day);
   return date.getUTCFullYear() === year &&
     date.getUTCMonth() === month - 1 &&
     date.getUTCDate() === day
-    ? timestamp
+    ? value
     : undefined;
+}
+
+function dateMilliseconds(value: string): number | undefined {
+  const parsed = parseCalendarDate(value);
+  return parsed === undefined ? undefined : Date.parse(`${parsed}T00:00:00Z`);
 }
 
 export function validateEventCreate(

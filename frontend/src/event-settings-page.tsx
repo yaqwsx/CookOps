@@ -76,6 +76,8 @@ export function EventSettingsPage({
             generalNote={event.generalNote ?? null}
             location={event.location ?? null}
             name={event.name}
+            startDate={event.startDate}
+            endDate={event.endDate}
             organizationId={organizationId}
             userId={userId}
           />

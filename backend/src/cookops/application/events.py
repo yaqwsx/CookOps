@@ -824,31 +824,10 @@ def _event_change_records(
     event: Event,
     days: tuple[EventDay, ...],
     meal_roles: tuple[EventMealRole, ...],
-    attendance_clock: FieldClock,
+    field_clocks: tuple[FieldClock, ...],
 ) -> tuple[tuple[str, UUID, dict[str, object]], ...]:
-    event_record = _event_change_record(event, attendance_clock)[2]
-    day_records: tuple[tuple[str, UUID, dict[str, object]], ...] = tuple(
-        (
-            "event_day",
-            day.id,
-            {
-                "id": str(day.id),
-                "event_id": str(event.id),
-                "calendar_date": day.calendar_date.isoformat(),
-                "note": day.note,
-                "is_visible": day.is_visible,
-                "provenance": day.provenance,
-                "created_at": day.created_at.isoformat(),
-                "created_by_user_id": str(day.created_by_user_id),
-                "retired_at": day.retired_at.isoformat() if day.retired_at else None,
-                "retired_by_user_id": (
-                    str(day.retired_by_user_id) if day.retired_by_user_id else None
-                ),
-                "field_clocks": {"note": None, "is_visible": None},
-            },
-        )
-        for day in days
-    )
+    event_record = _event_change_record(event, field_clocks=field_clocks)[2]
+    day_records = tuple(_event_day_change_record(event, day) for day in days)
     role_change_records: tuple[tuple[str, UUID, dict[str, object]], ...] = tuple(
         (
             "event_meal_role",
@@ -877,6 +856,26 @@ def _event_change_records(
         for meal_role in meal_roles
     )
     return (("event", event.id, event_record), *day_records, *role_change_records)
+
+
+def _event_day_change_record(event: Event, day: EventDay) -> tuple[str, UUID, dict[str, object]]:
+    return (
+        "event_day",
+        day.id,
+        {
+            "id": str(day.id),
+            "event_id": str(event.id),
+            "calendar_date": day.calendar_date.isoformat(),
+            "note": day.note,
+            "is_visible": day.is_visible,
+            "provenance": day.provenance,
+            "created_at": day.created_at.isoformat(),
+            "created_by_user_id": str(day.created_by_user_id),
+            "retired_at": day.retired_at.isoformat() if day.retired_at else None,
+            "retired_by_user_id": str(day.retired_by_user_id) if day.retired_by_user_id else None,
+            "field_clocks": {"note": None, "is_visible": None},
+        },
+    )
 
 
 def _retained_error(mutation: Mutation) -> ApplicationServiceError:
@@ -1199,7 +1198,23 @@ async def create_event(
                     winning_client_wall_time=prepared.client_wall_time,
                     winning_mutation_id=prepared.mutation_id,
                 )
-                session.add(attendance_clock)
+                start_date_clock = FieldClock(
+                    organization_id=prepared.organization_id,
+                    entity_kind="event",
+                    entity_id=event.id,
+                    field_name="start_date",
+                    winning_client_wall_time=prepared.client_wall_time,
+                    winning_mutation_id=prepared.mutation_id,
+                )
+                end_date_clock = FieldClock(
+                    organization_id=prepared.organization_id,
+                    entity_kind="event",
+                    entity_id=event.id,
+                    field_name="end_date",
+                    winning_client_wall_time=prepared.client_wall_time,
+                    winning_mutation_id=prepared.mutation_id,
+                )
+                session.add_all((attendance_clock, start_date_clock, end_date_clock))
                 day_entities = tuple(
                     EventDay(
                         id=day.id,
@@ -1230,7 +1245,7 @@ async def create_event(
                     event,
                     day_entities,
                     meal_role_entities,
-                    attendance_clock,
+                    (attendance_clock, start_date_clock, end_date_clock),
                 )
                 first_change_sequence, last_change_sequence = await _reserve_change_range(
                     session,

@@ -23,6 +23,8 @@ async function seed() {
       general_note: null,
       budget_amount: "10",
       lifecycle: "active",
+      start_date: "2026-08-10",
+      end_date: "2026-08-12",
     },
     fieldClocks: {},
     immutable: false,
@@ -43,6 +45,8 @@ describe("event metadata offline command", () => {
       location: "  Prague  ",
       budgetAmount: "25.50",
       generalNote: "Bring pots",
+      startDate: "2026-08-10",
+      endDate: "2026-08-12",
     });
     await expect(localDb.outbox.toArray()).resolves.toEqual([
       expect.objectContaining({
@@ -53,6 +57,8 @@ describe("event metadata offline command", () => {
           location: "Prague",
           budget_amount: "25.50",
           general_note: "Bring pots",
+          start_date: "2026-08-10",
+          end_date: "2026-08-12",
         },
       }),
     ]);
@@ -88,6 +94,26 @@ describe("event metadata offline command", () => {
       payload: { event_id: eventId, name: "Equal timestamp loser", location: null, budget_amount: "10", general_note: null, extra: true },
     });
     await expect(localDb.optimisticOverlays.get([userId, organizationId, "event", eventId])).resolves.toMatchObject({ fields: { name: "Canonical winner" } });
+  });
+
+  it("replays legacy metadata without overwriting the event date range", async () => {
+    await replayEventMetadataUpdate(userId, organizationId, {
+      id: "fce17d2f-8365-4b1f-a80b-34d10425d51c",
+      actionAt: "2026-08-10T12:00:00.000000Z",
+      payload: { event_id: eventId, name: "Legacy", location: null, budget_amount: "11", general_note: null },
+    });
+    await expect(localDb.optimisticOverlays.get([userId, organizationId, "event", eventId])).resolves.toMatchObject({
+      fields: { name: "Legacy", budget_amount: "11", start_date: "2026-08-10", end_date: "2026-08-12" },
+    });
+  });
+
+  it("rejects malformed modern replay dates", async () => {
+    await replayEventMetadataUpdate(userId, organizationId, {
+      id: "fce17d2f-8365-4b1f-a80b-34d10425d51c",
+      actionAt: "2026-08-10T12:00:00.000000Z",
+      payload: { event_id: eventId, name: "Bad", location: null, budget_amount: "11", general_note: null, start_date: "2026-02-30", end_date: "2026-03-01" },
+    });
+    await expect(localDb.optimisticOverlays.get([userId, organizationId, "event", eventId])).resolves.toBeUndefined();
   });
 
   it("ignores an oversized decimal replay before it reaches the overlay", async () => {

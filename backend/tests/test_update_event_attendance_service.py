@@ -1,7 +1,7 @@
 import asyncio
 import os
 from collections.abc import Callable, Iterator
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, date, datetime, timedelta
 from decimal import Decimal
 from typing import cast
 from uuid import UUID, uuid4
@@ -354,6 +354,138 @@ def test_metadata_updates_independent_lww_fields_and_publishes_complete_event_re
     assert stale_result.outcome == "partially_superseded"
     with service_database.sync_engine.connect() as connection:
         assert connection.scalar(select(Event.name).where(Event.id == event_id)) == "Updated event"
+
+
+def test_metadata_date_range_lww_rejection_and_day_reconciliation(
+    service_database: ServiceDatabase,
+) -> None:
+    event_id, _, _ = _create_event_and_scheduled_recipes(service_database)
+    wall_time = datetime.now(UTC)
+    future_end_mutation = uuid4()
+    with service_database.sync_engine.begin() as connection:
+        connection.execute(
+            update(Event).where(Event.id == event_id).values(end_date=date(2026, 7, 1))
+        )
+        connection.execute(
+            update(FieldClock)
+            .where(
+                FieldClock.entity_kind == "event",
+                FieldClock.entity_id == event_id,
+                FieldClock.field_name == "end_date",
+            )
+            .values(
+                winning_client_wall_time=wall_time + timedelta(seconds=2),
+                winning_mutation_id=future_end_mutation,
+            )
+        )
+
+    invalid = UpdateEventMetadataCommand(
+        mutation_id=uuid4(),
+        event_id=event_id,
+        organization_id=service_database.organization_id,
+        name="Summer camp",
+        location=None,
+        budget_amount=Decimal("1250.50"),
+        general_note=None,
+        start_date=date(2026, 7, 4),
+        end_date=date(2026, 7, 4),
+        client_wall_time=wall_time + timedelta(seconds=1),
+    )
+    with pytest.raises(ApplicationServiceError) as error:
+        asyncio.run(
+            update_event_metadata(service_database.sessions, context(service_database), invalid)
+        )
+    assert error.value.code == "validation_failed"
+    with pytest.raises(ApplicationServiceError, match="validation_failed"):
+        asyncio.run(
+            update_event_metadata(service_database.sessions, context(service_database), invalid)
+        )
+    with service_database.sync_engine.connect() as connection:
+        assert connection.execute(
+            select(Event.start_date, Event.end_date).where(Event.id == event_id)
+        ).one() == (date(2026, 7, 1), date(2026, 7, 1))
+        assert connection.scalar(
+            select(Mutation.outcome).where(Mutation.id == invalid.mutation_id)
+        ) == "rejected"
+        assert connection.scalar(
+            select(func.count()).select_from(EventDay).where(EventDay.event_id == event_id)
+        ) == 3
+        assert connection.scalar(
+            select(func.count())
+            .select_from(OrganizationChange)
+            .where(OrganizationChange.mutation_id == invalid.mutation_id)
+        ) == 0
+
+    widened = UpdateEventMetadataCommand(
+        mutation_id=uuid4(),
+        event_id=event_id,
+        organization_id=service_database.organization_id,
+        name="Summer camp",
+        location=None,
+        budget_amount=Decimal("1250.50"),
+        general_note=None,
+        start_date=date(2026, 7, 1),
+        end_date=date(2026, 7, 6),
+        client_wall_time=wall_time + timedelta(seconds=3),
+    )
+    widened_result = asyncio.run(
+        update_event_metadata(service_database.sessions, context(service_database), widened)
+    )
+    assert widened_result.outcome == "accepted"
+    assert (
+        asyncio.run(
+            update_event_metadata(service_database.sessions, context(service_database), widened)
+        )
+    ).replayed
+    with service_database.sync_engine.connect() as connection:
+        assert connection.execute(
+            select(EventDay.calendar_date)
+            .where(EventDay.event_id == event_id)
+            .order_by(EventDay.calendar_date)
+        ).scalars().all() == [date(2026, 7, day) for day in range(1, 7)]
+        generated = connection.execute(
+            select(OrganizationChange.entity_kind, OrganizationChange.payload)
+            .where(OrganizationChange.mutation_id == widened.mutation_id)
+            .order_by(OrganizationChange.sequence)
+        ).all()
+        assert [row.entity_kind for row in generated] == [
+            "event",
+            "event_day",
+            "event_day",
+            "event_day",
+        ]
+        assert all(
+            row.payload["record"]["provenance"] == "range_generated"
+            for row in generated[1:]
+        )
+        assert all(
+            row.payload["record"]["field_clocks"] == {"note": None, "is_visible": None}
+            for row in generated[1:]
+        )
+        assert generated[0].payload["record"]["field_clocks"]["start_date"] == {
+            "winning_client_wall_time": widened.client_wall_time.isoformat(),
+            "winning_mutation_id": str(widened.mutation_id),
+        }
+
+    narrowed = UpdateEventMetadataCommand(
+        mutation_id=uuid4(),
+        event_id=event_id,
+        organization_id=service_database.organization_id,
+        name="Summer camp",
+        location=None,
+        budget_amount=Decimal("1250.50"),
+        general_note=None,
+        start_date=date(2026, 7, 2),
+        end_date=date(2026, 7, 2),
+        client_wall_time=wall_time + timedelta(seconds=4),
+    )
+    assert asyncio.run(
+        update_event_metadata(service_database.sessions, context(service_database), narrowed)
+    ).outcome == "accepted"
+    with service_database.sync_engine.connect() as connection:
+        assert connection.scalar(
+            select(func.count()).select_from(EventDay).where(EventDay.event_id == event_id)
+        ) == 6
 
 
 def test_concurrent_attendance_updates_are_lww_and_create_complete_groups(

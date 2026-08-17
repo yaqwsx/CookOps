@@ -122,6 +122,8 @@ const resources = {
       eventsEdit: {
         attendance: "Očekávaná účast",
         name: "Název akce",
+        startDate: "Začátek akce",
+        endDate: "Konec akce",
         location: "Místo",
         budget: "Rozpočet",
         note: "Poznámka",
@@ -691,6 +693,8 @@ const resources = {
       eventsEdit: {
         attendance: "Expected attendance",
         name: "Event name",
+        startDate: "Event start date",
+        endDate: "Event end date",
         location: "Location",
         budget: "Budget",
         note: "Note",

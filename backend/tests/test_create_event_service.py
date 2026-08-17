@@ -225,14 +225,28 @@ def test_create_event_copies_current_presets_and_range_days(
         ).one()
         assert event[:5] == ("Výprava", 42, Decimal("1250.50"), "EUR", service_database.actor_id)
         event_created_at = event[5]
-        attendance_clock = connection.execute(
-            select(FieldClock.winning_client_wall_time, FieldClock.winning_mutation_id).where(
+        event_clocks = connection.execute(
+            select(
+                FieldClock.field_name,
+                FieldClock.winning_client_wall_time,
+                FieldClock.winning_mutation_id,
+            ).where(
                 FieldClock.organization_id == service_database.organization_id,
                 FieldClock.entity_kind == "event",
                 FieldClock.entity_id == command.event_id,
-                FieldClock.field_name == "base_expected_attendance",
             )
-        ).one()
+        ).all()
+        assert {row.field_name for row in event_clocks} == {
+            "base_expected_attendance",
+            "start_date",
+            "end_date",
+        }
+        assert {
+            row.winning_mutation_id for row in event_clocks
+        } == {command.mutation_id}
+        assert {
+            row.winning_client_wall_time for row in event_clocks
+        } == {command.client_wall_time}
         days = connection.execute(
             select(EventDay.calendar_date, EventDay.provenance, EventDay.is_visible)
             .where(EventDay.event_id == command.event_id)
@@ -367,12 +381,11 @@ def test_create_event_copies_current_presets_and_range_days(
                 "archived_by_user_id": None,
                 "created_by_user_id": str(service_database.actor_id),
                 "field_clocks": {
-                    "base_expected_attendance": {
-                        "winning_client_wall_time": (
-                            attendance_clock.winning_client_wall_time.isoformat()
-                        ),
-                        "winning_mutation_id": str(attendance_clock.winning_mutation_id),
+                    field: {
+                        "winning_client_wall_time": command.client_wall_time.isoformat(),
+                        "winning_mutation_id": str(command.mutation_id),
                     }
+                    for field in ("base_expected_attendance", "start_date", "end_date")
                 },
             },
         }

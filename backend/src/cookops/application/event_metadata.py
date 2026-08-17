@@ -4,7 +4,7 @@ import hashlib
 import json
 import unicodedata
 from dataclasses import dataclass
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, date, datetime, timedelta
 from decimal import Decimal
 from uuid import UUID
 
@@ -12,8 +12,10 @@ from sqlalchemy import select, text
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from cookops.application.events import (
+    MAX_EVENT_DAY_COUNT,
     _authorize_and_lock_organization,
     _canonical_decimal_string,
+    _event_day_change_record,
     _reserve_change_range,
 )
 from cookops.application.organizations import (
@@ -22,11 +24,11 @@ from cookops.application.organizations import (
     FieldViolation,
     _advisory_lock_key,
 )
-from cookops.persistence.models import Event, FieldClock, Mutation, OrganizationChange
+from cookops.persistence.models import Event, EventDay, FieldClock, Mutation, OrganizationChange
 
 COMMAND_KIND = "event.metadata"
 COMMAND_SCHEMA_VERSION = 1
-_FIELDS = ("name", "location", "budget_amount", "general_note")
+_FIELDS = ("name", "location", "budget_amount", "general_note", "start_date", "end_date")
 MAX_DECIMAL_LITERAL_LENGTH = 100
 
 
@@ -62,6 +64,8 @@ class UpdateEventMetadataCommand:
     budget_amount: Decimal
     general_note: str | None
     client_wall_time: datetime
+    start_date: date | None = None
+    end_date: date | None = None
     logical_operation_id: UUID | None = None
 
 
@@ -90,6 +94,8 @@ def _hash_value(value: object) -> object:
         return str(value)
     if isinstance(value, datetime) and value.tzinfo and value.utcoffset() is not None:
         return value.astimezone(UTC).isoformat()
+    if isinstance(value, date):
+        return value.isoformat()
     if isinstance(value, Decimal):
         return _canonical_decimal_string(value) if _bounded_decimal(value) else str(value)
     if isinstance(value, str):
@@ -208,6 +214,24 @@ async def update_event_metadata(
         violations.append(FieldViolation("location", "must_be_at_most_300_characters"))
     if note is not None and (len(note) > 4000 or "\0" in note):
         violations.append(FieldViolation("general_note", "must_be_at_most_4000_characters"))
+    supplied_dates = command.start_date is not None or command.end_date is not None
+    valid_start_date = isinstance(command.start_date, date) and not isinstance(
+        command.start_date, datetime
+    )
+    valid_end_date = isinstance(command.end_date, date) and not isinstance(
+        command.end_date, datetime
+    )
+    if supplied_dates and not valid_start_date:
+        violations.append(FieldViolation("start_date", "must_be_calendar_date"))
+    if supplied_dates and not valid_end_date:
+        violations.append(FieldViolation("end_date", "must_be_calendar_date"))
+    if supplied_dates and valid_start_date and valid_end_date:
+        if command.end_date < command.start_date:
+            violations.append(FieldViolation("end_date", "must_not_precede_start_date"))
+        elif (command.end_date - command.start_date).days >= MAX_EVENT_DAY_COUNT:
+            violations.append(
+                FieldViolation("end_date", f"must_not_exceed_{MAX_EVENT_DAY_COUNT}_days")
+            )
     for field, value in (("name", name), ("location", location), ("general_note", note)):
         if value is not None:
             try:
@@ -316,73 +340,159 @@ async def update_event_metadata(
                     "location": location,
                     "budget_amount": command.budget_amount,
                     "general_note": note,
+                    "start_date": command.start_date,
+                    "end_date": command.end_date,
                 }
-                wins: set[str] = set()
-                for field in _FIELDS:
-                    clock = by_field.get(field)
-                    if clock is None or (when, mutation_id) > (
-                        clock.winning_client_wall_time,
-                        clock.winning_mutation_id,
-                    ):
-                        setattr(event, field, values[field])
-                        wins.add(field)
-                        if clock is None:
-                            clock = FieldClock(
-                                organization_id=organization_id,
-                                entity_kind="event",
-                                entity_id=event.id,
-                                field_name=field,
-                                winning_client_wall_time=when,
-                                winning_mutation_id=mutation_id,
-                            )
-                            session.add(clock)
-                            clocks.append(clock)
-                        else:
-                            clock.winning_client_wall_time, clock.winning_mutation_id = (
-                                when,
-                                mutation_id,
-                            )
-                clocks.sort(key=lambda clock: clock.field_name)
-                outcome = "accepted" if wins == set(_FIELDS) else "partially_superseded"
-                first, last = await _reserve_change_range(session, organization_id, mutation_id, 1)
-                session.add(
-                    OrganizationChange(
-                        organization_id=organization_id,
-                        sequence=first,
-                        mutation_id=mutation_id,
-                        entity_id=event.id,
-                        entity_kind="event",
-                        operation="upsert",
-                        payload={"record_schema_version": 1, "record": _record(event, clocks)},
+                fields = _FIELDS if supplied_dates else _FIELDS[:-2]
+                date_wins = {
+                    field: (
+                        by_field.get(field) is None
+                        or (when, mutation_id)
+                        > (
+                            by_field[field].winning_client_wall_time,
+                            by_field[field].winning_mutation_id,
+                        )
                     )
+                    for field in ("start_date", "end_date")
+                }
+                candidate_dates = (
+                    command.start_date
+                    if valid_start_date and date_wins["start_date"]
+                    else event.start_date,
+                    command.end_date
+                    if valid_end_date and date_wins["end_date"]
+                    else event.end_date,
                 )
-                session.add(
-                    Mutation(
-                        id=mutation_id,
-                        logical_operation_id=command.logical_operation_id
-                        if isinstance(command.logical_operation_id, UUID)
-                        else None,
-                        organization_id=organization_id,
-                        is_system_administration_scope=False,
-                        actor_user_id=context.actor_user_id,
-                        actor_role=actor_role,
-                        client_installation_id=context.client_installation_id,
-                        oauth_client_id=context.oauth_client_id,
-                        oauth_grant_id=context.oauth_grant_id,
-                        client_wall_time=when,
-                        command_schema_version=COMMAND_SCHEMA_VERSION,
-                        command_kind=COMMAND_KIND,
-                        target_identities=[{"entity_kind": "event", "entity_id": str(event.id)}],
-                        request_hash=request_hash,
-                        outcome=outcome,
-                        outcome_payload={"outcome": outcome},
-                        first_change_sequence=first,
-                        last_change_sequence=last,
+                if candidate_dates[1] < candidate_dates[0]:
+                    deferred = ApplicationServiceError(
+                        "validation_failed",
+                        field_violations=(
+                            FieldViolation("end_date", "must_not_precede_start_date"),
+                        ),
+                        retry_same_identity=False,
                     )
-                )
-                result = EventMetadataResult(
-                    mutation_id, event.id, organization_id, first, last, False, outcome
-                )
+                    fields = ()
+                elif (candidate_dates[1] - candidate_dates[0]).days >= MAX_EVENT_DAY_COUNT:
+                    deferred = ApplicationServiceError(
+                        "validation_failed",
+                        field_violations=(
+                            FieldViolation(
+                                "end_date", f"must_not_exceed_{MAX_EVENT_DAY_COUNT}_days"
+                            ),
+                        ),
+                        retry_same_identity=False,
+                    )
+                    fields = ()
+                if deferred is None:
+                    wins: set[str] = set()
+                    for field in fields:
+                        clock = by_field.get(field)
+                        if clock is None or (when, mutation_id) > (
+                            clock.winning_client_wall_time,
+                            clock.winning_mutation_id,
+                        ):
+                            setattr(event, field, values[field])
+                            wins.add(field)
+                            if clock is None:
+                                clock = FieldClock(
+                                    organization_id=organization_id,
+                                    entity_kind="event",
+                                    entity_id=event.id,
+                                    field_name=field,
+                                    winning_client_wall_time=when,
+                                    winning_mutation_id=mutation_id,
+                                )
+                                session.add(clock)
+                                clocks.append(clock)
+                            else:
+                                clock.winning_client_wall_time, clock.winning_mutation_id = (
+                                    when,
+                                    mutation_id,
+                                )
+                    clocks.sort(key=lambda clock: clock.field_name)
+                    outcome = "accepted" if wins == set(fields) else "partially_superseded"
+                    existing_days = {
+                        day.calendar_date: day
+                        for day in (
+                            await session.scalars(
+                                select(EventDay)
+                                .where(EventDay.event_id == event.id, EventDay.retired_at.is_(None))
+                                .with_for_update()
+                            )
+                        ).all()
+                    }
+                    days: list[EventDay] = []
+                    current = event.start_date
+                    while current <= event.end_date:
+                        if current not in existing_days:
+                            day = EventDay(
+                                event_id=event.id,
+                                calendar_date=current,
+                                is_visible=True,
+                                provenance="range_generated",
+                                created_by_user_id=context.actor_user_id,
+                            )
+                            session.add(day)
+                            days.append(day)
+                        current += timedelta(days=1)
+                    await session.flush()
+                    changes: list[tuple[UUID, str, dict[str, object]]] = [
+                        (
+                            event.id,
+                            "event",
+                            {"record_schema_version": 1, "record": _record(event, clocks)},
+                        )
+                    ]
+                    changes.extend(
+                        (day_id, kind, {"record_schema_version": 1, "record": record})
+                        for kind, day_id, record in (
+                            _event_day_change_record(event, day) for day in days
+                        )
+                    )
+                    first, last = await _reserve_change_range(
+                        session, organization_id, mutation_id, len(changes)
+                    )
+                    session.add_all(
+                        OrganizationChange(
+                            organization_id=organization_id,
+                            sequence=first + index,
+                            mutation_id=mutation_id,
+                            entity_id=entity_id,
+                            entity_kind=kind,
+                            operation="upsert",
+                            payload=payload,
+                        )
+                        for index, (entity_id, kind, payload) in enumerate(changes)
+                    )
+                    session.add(
+                        Mutation(
+                            id=mutation_id,
+                            logical_operation_id=command.logical_operation_id
+                            if isinstance(command.logical_operation_id, UUID)
+                            else None,
+                            organization_id=organization_id,
+                            is_system_administration_scope=False,
+                            actor_user_id=context.actor_user_id,
+                            actor_role=actor_role,
+                            client_installation_id=context.client_installation_id,
+                            oauth_client_id=context.oauth_client_id,
+                            oauth_grant_id=context.oauth_grant_id,
+                            client_wall_time=when,
+                            command_schema_version=COMMAND_SCHEMA_VERSION,
+                            command_kind=COMMAND_KIND,
+                            target_identities=[
+                                {"entity_kind": "event", "entity_id": str(event.id)}
+                            ],
+                            request_hash=request_hash,
+                            outcome=outcome,
+                            outcome_payload={"outcome": outcome},
+                            first_change_sequence=first,
+                            last_change_sequence=last,
+                        )
+                    )
+                    result = EventMetadataResult(
+                        mutation_id, event.id, organization_id, first, last, False, outcome
+                    )
         if deferred is not None and retained is None:
             session.add(
                 Mutation(
