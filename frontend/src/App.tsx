@@ -641,6 +641,7 @@ function AuthenticatedShell({
           systemAdmin ? (
             <SystemOrganizationCreate
               onCreated={() => void loadOrganizations()}
+              onUnauthenticated={onUnauthenticated}
               userId={identity.id}
             />
           ) : (

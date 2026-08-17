@@ -2,13 +2,16 @@ import { useEffect, useState, type FormEvent } from "react";
 import { useTranslation } from "react-i18next";
 
 import { changeSystemOrganizationLifecycle, createSystemOrganization, editSystemOrganization, getSystemOrganizations, SystemOrganizationRequestError, type SystemOrganization } from "./api/system-organizations";
+import { OrganizationMemberships } from "./organization-membership";
 
 export function SystemOrganizationCreate({
   userId,
   onCreated,
+  onUnauthenticated = () => undefined,
 }: {
   userId: string;
   onCreated: () => void;
+  onUnauthenticated?: () => void;
 }) {
   const { t } = useTranslation();
   const [name, setName] = useState("");
@@ -26,9 +29,16 @@ export function SystemOrganizationCreate({
   const [editCurrency, setEditCurrency] = useState("CZK");
   const [editError, setEditError] = useState<string | null>(null);
   const [pendingEdit, setPendingEdit] = useState(false);
+  const [selectedOrganizationId, setSelectedOrganizationId] = useState<string | null>(null);
+  const selectedOrganization = organizations.find(({ id }) => id === selectedOrganizationId);
 
   async function refresh() {
-    try { setOrganizations(await getSystemOrganizations()); setListError(false); }
+    try {
+      const next = await getSystemOrganizations();
+      setOrganizations(next);
+      setSelectedOrganizationId((current) => current && next.some((organization) => organization.id === current && !organization.retired_at) ? current : null);
+      setListError(false);
+    }
     catch { setListError(true); }
   }
 
@@ -163,6 +173,15 @@ export function SystemOrganizationCreate({
               ) : null}
               {editingId !== organization.id ? <>
                 {organization.name} — {organization.retired_at ? t("systemOrganizations.retired") : t("systemOrganizations.active")}
+                {!organization.retired_at ? <button
+                  aria-label={t("systemOrganizations.manageAdministratorsFor", { name: organization.name })}
+                  aria-pressed={selectedOrganizationId === organization.id}
+                  disabled={pendingEdit}
+                  onClick={() => setSelectedOrganizationId(organization.id)}
+                  type="button"
+                >
+                  {t("systemOrganizations.manageAdministrators")}
+                </button> : null}
                 <button aria-label={t("systemOrganizations.editName", { name: organization.name })} onClick={() => beginEdit(organization)} type="button">
                   {t("systemOrganizations.edit")}
                 </button>
@@ -179,6 +198,16 @@ export function SystemOrganizationCreate({
           ))}
         </ul>
       </section>
+      {selectedOrganization ? (
+        <OrganizationMemberships
+          onUnauthenticated={onUnauthenticated}
+          organizationId={selectedOrganization.id}
+          organizationName={selectedOrganization.name}
+          systemAdmin
+          systemAdminManagement
+          userId={userId}
+        />
+      ) : null}
     </section>
   );
 }
