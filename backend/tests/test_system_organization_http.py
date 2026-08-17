@@ -40,6 +40,17 @@ def _lifecycle_body(operation: str, *, mutation_id: str | None = None) -> dict[s
     }
 
 
+def _edit_body(name: str, *, mutation_id: str | None = None) -> dict[str, object]:
+    return {
+        "mutation_id": mutation_id or str(uuid4()),
+        "client_installation_id": str(uuid4()),
+        "client_wall_time": datetime.now(UTC).isoformat(),
+        "name": name,
+        "description": "Edited through HTTP",
+        "default_currency": "EUR",
+    }
+
+
 def test_system_admin_can_create_and_non_admin_cannot(
     dummy_auth_database: DummyAuthDatabase,  # noqa: F811
 ) -> None:
@@ -224,6 +235,18 @@ def test_system_admin_can_list_retire_and_restore_organizations(
         assert restored.json()["retired_at"] is None
         assert restored.json()["retired_by_user_id"] is None
 
+        edit_body = _edit_body("Updated kitchen")
+        edited = client.patch(
+            f"/api/v1/system/organizations/{dummy_auth_database.organization_id}",
+            json=edit_body,
+        )
+        assert edited.status_code == 200
+        assert edited.json()["name"] == "Updated kitchen"
+        assert edited.json()["retired_at"] is None
+        assert client.patch(
+            f"/api/v1/system/organizations/{dummy_auth_database.organization_id}",
+            json=edit_body,
+        ).json() == edited.json()
         unknown = client.post(
             f"/api/v1/system/organizations/{uuid4()}/lifecycle",
             json=_lifecycle_body("retire"),
@@ -232,6 +255,10 @@ def test_system_admin_can_list_retire_and_restore_organizations(
 
         assert client.post("/auth/session/logout").status_code == 204
         assert client.get("/api/v1/system/organizations").status_code == 401
+        assert client.patch(
+            f"/api/v1/system/organizations/{dummy_auth_database.organization_id}",
+            json=_edit_body("Unauthenticated edit"),
+        ).status_code == 401
         assert client.post(
             f"/api/v1/system/organizations/{dummy_auth_database.organization_id}/lifecycle",
             json=_lifecycle_body("retire"),
@@ -244,4 +271,8 @@ def test_system_admin_can_list_retire_and_restore_organizations(
         assert client.post(
             f"/api/v1/system/organizations/{dummy_auth_database.organization_id}/lifecycle",
             json=_lifecycle_body("retire"),
+        ).status_code == 403
+        assert client.patch(
+            f"/api/v1/system/organizations/{dummy_auth_database.organization_id}",
+            json=_edit_body("Unauthorized edit"),
         ).status_code == 403

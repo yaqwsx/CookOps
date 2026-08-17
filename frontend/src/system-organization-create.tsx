@@ -1,7 +1,7 @@
 import { useEffect, useState, type FormEvent } from "react";
 import { useTranslation } from "react-i18next";
 
-import { changeSystemOrganizationLifecycle, createSystemOrganization, getSystemOrganizations, SystemOrganizationRequestError, type SystemOrganization } from "./api/system-organizations";
+import { changeSystemOrganizationLifecycle, createSystemOrganization, editSystemOrganization, getSystemOrganizations, SystemOrganizationRequestError, type SystemOrganization } from "./api/system-organizations";
 
 export function SystemOrganizationCreate({
   userId,
@@ -20,6 +20,12 @@ export function SystemOrganizationCreate({
   const [organizations, setOrganizations] = useState<SystemOrganization[]>([]);
   const [listError, setListError] = useState(false);
   const [pendingLifecycle, setPendingLifecycle] = useState<string | null>(null);
+  const [editingId, setEditingId] = useState<string | null>(null);
+  const [editName, setEditName] = useState("");
+  const [editDescription, setEditDescription] = useState("");
+  const [editCurrency, setEditCurrency] = useState("CZK");
+  const [editError, setEditError] = useState<string | null>(null);
+  const [pendingEdit, setPendingEdit] = useState(false);
 
   async function refresh() {
     try { setOrganizations(await getSystemOrganizations()); setListError(false); }
@@ -73,6 +79,43 @@ export function SystemOrganizationCreate({
     finally { setPendingLifecycle(null); }
   }
 
+  function beginEdit(organization: SystemOrganization) {
+    setEditingId(organization.id);
+    setEditName(organization.name);
+    setEditDescription(organization.description ?? "");
+    setEditCurrency(organization.default_currency);
+    setEditError(null);
+  }
+
+  async function saveEdit(event: FormEvent) {
+    event.preventDefault();
+    if (!editingId) return;
+    setEditError(null);
+    if (!editName.trim() || editName.trim().length > 200) {
+      setEditError(t("systemOrganizations.errors.name"));
+      return;
+    }
+    if (!/^[A-Za-z]{3}$/.test(editCurrency)) {
+      setEditError(t("systemOrganizations.errors.currency"));
+      return;
+    }
+    setPendingEdit(true);
+    try {
+      await editSystemOrganization(userId, editingId, {
+        name: editName.trim(),
+        description: editDescription || null,
+        defaultCurrency: editCurrency.toUpperCase(),
+      });
+      setEditingId(null);
+      await refresh();
+      onCreated();
+    } catch (caught) {
+      setEditError(t("systemOrganizations.editError"));
+    } finally {
+      setPendingEdit(false);
+    }
+  }
+
   return (
     <section aria-labelledby="system-organization-heading">
       <h2 id="system-organization-heading">{t("systemOrganizations.heading")}</h2>
@@ -99,8 +142,32 @@ export function SystemOrganizationCreate({
         <ul>
           {organizations.map((organization) => (
             <li key={organization.id}>
-              {organization.name} — {organization.retired_at ? t("systemOrganizations.retired") : t("systemOrganizations.active")}
-              <button disabled={pendingLifecycle === organization.id} onClick={() => void changeLifecycle(organization)} type="button">
+              {editingId === organization.id ? (
+                <form onSubmit={(event) => void saveEdit(event)}>
+                  <label>
+                    {t("systemOrganizations.name")}
+                    <input aria-label={t("systemOrganizations.editName", { name: organization.name })} maxLength={200} onChange={(event) => setEditName(event.target.value)} value={editName} />
+                  </label>
+                  <label>
+                    {t("systemOrganizations.description")}
+                    <textarea maxLength={10000} onChange={(event) => setEditDescription(event.target.value)} value={editDescription} />
+                  </label>
+                  <label>
+                    {t("systemOrganizations.currency")}
+                    <input maxLength={3} onChange={(event) => setEditCurrency(event.target.value)} value={editCurrency} />
+                  </label>
+                  <button disabled={pendingEdit} type="submit">{t("systemOrganizations.saveEdit")}</button>
+                  <button disabled={pendingEdit} onClick={() => setEditingId(null)} type="button">{t("systemOrganizations.cancelEdit")}</button>
+                  {editError ? <p role="alert">{editError}</p> : null}
+                </form>
+              ) : null}
+              {editingId !== organization.id ? <>
+                {organization.name} — {organization.retired_at ? t("systemOrganizations.retired") : t("systemOrganizations.active")}
+                <button aria-label={t("systemOrganizations.editName", { name: organization.name })} onClick={() => beginEdit(organization)} type="button">
+                  {t("systemOrganizations.edit")}
+                </button>
+              </> : null}
+              <button disabled={pendingLifecycle === organization.id || pendingEdit} onClick={() => void changeLifecycle(organization)} type="button">
                 <span aria-hidden="true">
                   {organization.retired_at ? t("systemOrganizations.restore") : t("systemOrganizations.retire")}
                 </span>

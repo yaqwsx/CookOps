@@ -111,6 +111,27 @@ class SetOrganizationLifecycleCommand:
 
 
 @dataclass(frozen=True, slots=True)
+class EditOrganizationCommand:
+    mutation_id: UUID
+    organization_id: UUID
+    name: str
+    client_wall_time: datetime
+    default_currency: str = "CZK"
+    description: str | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class EditOrganizationResult:
+    organization_id: UUID
+    name: str
+    description: str | None
+    default_currency: str
+    retired_at: datetime | None
+    retired_by_user_id: UUID | None
+    replayed: bool
+
+
+@dataclass(frozen=True, slots=True)
 class FieldViolation:
     path: str
     code: str
@@ -151,7 +172,9 @@ class _PreparedCommand:
     violations: tuple[FieldViolation, ...]
 
 
-def _prepare_command(command: CreateOrganizationCommand) -> _PreparedCommand:
+def _prepare_command(
+    command: CreateOrganizationCommand | EditOrganizationCommand,
+) -> _PreparedCommand:
     name = unicodedata.normalize("NFC", command.name).strip()
     currency = command.default_currency.strip().upper()
     description = (
@@ -162,6 +185,8 @@ def _prepare_command(command: CreateOrganizationCommand) -> _PreparedCommand:
     violations: list[FieldViolation] = []
     if not name or len(name) > 200:
         violations.append(FieldViolation("name", "must_be_nonblank_and_at_most_200_characters"))
+    if description is not None and len(description) > 10_000:
+        violations.append(FieldViolation("description", "must_be_at_most_10000_characters"))
     if currency not in Currency.__members__:
         violations.append(FieldViolation("default_currency", "must_be_iso_4217_code"))
     wall_time_has_timezone = (
@@ -181,7 +206,7 @@ def _prepare_command(command: CreateOrganizationCommand) -> _PreparedCommand:
         ),
         default_currency=currency,
         description=description,
-        logical_operation_id=command.logical_operation_id,
+        logical_operation_id=getattr(command, "logical_operation_id", None),
         violations=tuple(violations),
     )
 
@@ -592,27 +617,33 @@ def _lifecycle_request_hash(command: SetOrganizationLifecycleCommand) -> bytes:
     ).digest()
 
 
-def _lifecycle_result(mutation: Mutation, *, replayed: bool) -> OrganizationLifecycleResult:
-    payload = mutation.outcome_payload
-    record = payload.get("organization") if payload is not None else None
+def _organization_fields(record: object, error_message: str) -> tuple[
+    UUID, str, str | None, str, datetime | None, UUID | None
+]:
     if not isinstance(record, dict):
-        raise RuntimeError("Accepted organization lifecycle mutation has invalid outcome payload")
+        raise RuntimeError(error_message)
     try:
         retired_at = record.get("retired_at")
         retired_by = record.get("retired_by_user_id")
-        return OrganizationLifecycleResult(
+        return (
             UUID(_required_str(record, "id")),
             _required_str(record, "name"),
             record.get("description") if isinstance(record.get("description"), str) else None,
             _required_str(record, "default_currency"),
             datetime.fromisoformat(retired_at) if isinstance(retired_at, str) else None,
             UUID(retired_by) if isinstance(retired_by, str) else None,
-            replayed,
         )
     except (KeyError, TypeError, ValueError) as error:
-        raise RuntimeError(
-            "Accepted organization lifecycle mutation has invalid outcome payload"
-        ) from error
+        raise RuntimeError(error_message) from error
+
+
+def _lifecycle_result(mutation: Mutation, *, replayed: bool) -> OrganizationLifecycleResult:
+    payload = mutation.outcome_payload
+    record = payload.get("organization") if payload is not None else None
+    fields = _organization_fields(
+        record, "Accepted organization lifecycle mutation has invalid outcome payload"
+    )
+    return OrganizationLifecycleResult(*fields, replayed)
 
 
 def _lifecycle_mutation(
@@ -655,6 +686,189 @@ def _lifecycle_mutation(
         outcome=outcome,
         outcome_payload=payload,
     )
+
+
+def _edit_request_hash(command: _PreparedCommand) -> bytes:
+    payload = {
+        "client_wall_time": command.client_wall_time.isoformat().replace("+00:00", "Z"),
+        "command_kind": "organization.edit",
+        "command_schema_version": 1,
+        "default_currency": command.default_currency,
+        "description": command.description,
+        "name": command.name,
+        "organization_id": str(command.organization_id),
+    }
+    return hashlib.sha256(
+        json.dumps(payload, ensure_ascii=False, separators=(",", ":"), sort_keys=True).encode()
+    ).digest()
+
+
+def _edit_result(mutation: Mutation, *, replayed: bool) -> EditOrganizationResult:
+    payload = mutation.outcome_payload
+    record = payload.get("organization") if payload is not None else None
+    fields = _organization_fields(
+        record, "Accepted organization edit mutation has invalid outcome payload"
+    )
+    return EditOrganizationResult(*fields, replayed)
+
+
+def _edit_mutation(
+    command: _PreparedCommand,
+    context: ExecutionContext,
+    request_hash: bytes,
+    payload: dict[str, object],
+    *,
+    outcome: Literal["accepted", "rejected"] = "accepted",
+) -> Mutation:
+    return Mutation(
+        id=command.mutation_id,
+        logical_operation_id=None,
+        organization_id=None,
+        is_system_administration_scope=True,
+        actor_user_id=context.actor_user_id,
+        actor_role="system_admin",
+        client_installation_id=context.client_installation_id,
+        oauth_client_id=context.oauth_client_id,
+        oauth_grant_id=context.oauth_grant_id,
+        client_wall_time=command.client_wall_time,
+        command_schema_version=1,
+        command_kind="organization.edit",
+        target_identities=[
+            {"entity_kind": "organization", "entity_id": str(command.organization_id)}
+        ],
+        request_hash=request_hash,
+        outcome=outcome,
+        outcome_payload=payload,
+    )
+
+
+async def edit_organization(
+    session_factory: async_sessionmaker[AsyncSession],
+    context: ExecutionContext,
+    command: EditOrganizationCommand,
+) -> EditOrganizationResult:
+    """Edit organization details as a system-administration mutation."""
+    prepared = _prepare_command(command)
+    request_hash = _edit_request_hash(prepared)
+    violations = list(prepared.violations)
+    if not isinstance(command.mutation_id, UUID):
+        raise _validation_error(tuple(violations))
+
+    async with session_factory() as session, session.begin():
+        if not violations:
+            await session.execute(
+                insert(ClientInstallation)
+                .values(
+                    id=context.client_installation_id,
+                    user_id=context.actor_user_id,
+                    installation_kind=(
+                        "agent" if context.oauth_client_id is not None else "browser"
+                    ),
+                )
+                .on_conflict_do_nothing(index_elements=("id",))
+            )
+        await _authorize(session, context, require_installation=not violations)
+        if violations:
+            expected_installation_kind = (
+                "agent" if context.oauth_client_id is not None else "browser"
+            )
+            installation_exists = await session.scalar(
+                select(ClientInstallation.id).where(
+                    ClientInstallation.id == context.client_installation_id,
+                    ClientInstallation.user_id == context.actor_user_id,
+                    ClientInstallation.disabled_at.is_(None),
+                    ClientInstallation.installation_kind == expected_installation_kind,
+                )
+            )
+            if installation_exists is None:
+                raise _validation_error(tuple(violations))
+        await session.execute(
+            text("SELECT pg_advisory_xact_lock(:lock_key)"),
+            {"lock_key": _advisory_lock_key("mutation", command.mutation_id)},
+        )
+        retained = await session.get(Mutation, command.mutation_id)
+        deferred_error: ApplicationServiceError | None = None
+        if retained is not None:
+            if (
+                retained.actor_user_id != context.actor_user_id
+                or retained.command_kind != "organization.edit"
+                or retained.command_schema_version != 1
+                or retained.request_hash != request_hash
+            ):
+                raise ApplicationServiceError("idempotency_mismatch", retry_same_identity=False)
+            if retained.outcome == "accepted":
+                return _edit_result(retained, replayed=True)
+            if retained.outcome == "rejected":
+                deferred_error = _retained_error(retained)
+            else:
+                raise RuntimeError("Organization edit retained an unsupported outcome")
+        elif violations:
+            deferred_error = _validation_error(tuple(violations))
+            session.add(
+                _edit_mutation(
+                    command=prepared,
+                    context=context,
+                    request_hash=request_hash,
+                    payload=_error_payload(deferred_error),
+                    outcome="rejected",
+                )
+            )
+        else:
+            await session.execute(
+                text("SELECT pg_advisory_xact_lock(:lock_key)"),
+                {"lock_key": _advisory_lock_key("organization", prepared.organization_id)},
+            )
+            organization = await session.scalar(
+                select(Organization)
+                .where(Organization.id == prepared.organization_id)
+                .with_for_update()
+            )
+            if organization is None:
+                deferred_error = _validation_error(
+                    (FieldViolation("organization_id", "not_found"),)
+                )
+                session.add(
+                    _edit_mutation(
+                        command=prepared,
+                        context=context,
+                        request_hash=request_hash,
+                        payload=_error_payload(deferred_error),
+                        outcome="rejected",
+                    )
+                )
+            else:
+                organization.name = prepared.name
+                organization.description = prepared.description
+                organization.default_currency = prepared.default_currency
+                record = {
+                    "id": str(organization.id),
+                    "name": organization.name,
+                    "description": organization.description,
+                    "default_currency": organization.default_currency,
+                    "retired_at": organization.retired_at.isoformat()
+                    if organization.retired_at
+                    else None,
+                    "retired_by_user_id": str(organization.retired_by_user_id)
+                    if organization.retired_by_user_id
+                    else None,
+                }
+                session.add(
+                    _edit_mutation(
+                        command=prepared,
+                        context=context,
+                        request_hash=request_hash,
+                        payload={"organization": record},
+                    )
+                )
+                return EditOrganizationResult(
+                    *_organization_fields(
+                        record, "Accepted organization edit mutation has invalid outcome payload"
+                    ),
+                    replayed=False,
+                )
+    if deferred_error is not None:
+        raise deferred_error
+    raise RuntimeError("Organization edit produced no outcome")
 
 
 async def change_organization_lifecycle(

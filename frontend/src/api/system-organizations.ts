@@ -69,3 +69,23 @@ export async function changeSystemOrganizationLifecycle(
   if (!response.ok) throw new SystemOrganizationRequestError(response.status);
   return (await response.json()) as SystemOrganization;
 }
+
+export async function editSystemOrganization(
+  userId: string,
+  id: string,
+  input: { name: string; description: string | null; defaultCurrency: string },
+): Promise<SystemOrganization> {
+  const response = await fetch(`/api/v1/system/organizations/${id}`, {
+    method: "PATCH", credentials: "same-origin", headers: { "content-type": "application/json" },
+    body: JSON.stringify({
+      mutation_id: crypto.randomUUID(),
+      client_installation_id: await readOrCreateBrowserInstallationId(userId),
+      client_wall_time: new Date().toISOString(),
+      name: input.name,
+      description: input.description,
+      default_currency: input.defaultCurrency,
+    }),
+  });
+  if (!response.ok) throw new SystemOrganizationRequestError(response.status);
+  return (await response.json()) as SystemOrganization;
+}

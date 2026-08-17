@@ -20,10 +20,12 @@ from alembic import command as alembic_command
 from cookops.application.organizations import (
     ApplicationServiceError,
     CreateOrganizationCommand,
+    EditOrganizationCommand,
     ExecutionContext,
     SetOrganizationLifecycleCommand,
     change_organization_lifecycle,
     create_organization,
+    edit_organization,
 )
 from cookops.persistence.models import (
     ClientInstallation,
@@ -151,6 +153,25 @@ def organization_command(
     return CreateOrganizationCommand(
         mutation_id=mutation_id or uuid4(),
         organization_id=organization_id or uuid4(),
+        name=name,
+        description=description,
+        default_currency=default_currency,
+        client_wall_time=client_wall_time or datetime.now(UTC),
+    )
+
+
+def edit_command(
+    *,
+    mutation_id: UUID | None = None,
+    organization_id: UUID,
+    name: str = "Edited kitchen",
+    default_currency: str = "EUR",
+    client_wall_time: datetime | None = None,
+    description: str | None = "Edited description",
+) -> EditOrganizationCommand:
+    return EditOrganizationCommand(
+        mutation_id=mutation_id or uuid4(),
+        organization_id=organization_id,
         name=name,
         description=description,
         default_currency=default_currency,
@@ -794,6 +815,144 @@ def test_organization_lifecycle_replays_accepted_and_rejected_results(
         ).one()
     assert mutation.outcome == "rejected"
     assert mutation.is_system_administration_scope is True
+
+
+def test_edit_organization_preserves_lifecycle_and_replays(
+    service_database: ServiceDatabase,
+) -> None:
+    organization_id = uuid4()
+    asyncio.run(
+        create_organization(
+            service_database.sessions,
+            context(service_database),
+            organization_command(organization_id=organization_id, name="Original"),
+        )
+    )
+    asyncio.run(
+        change_organization_lifecycle(
+            service_database.sessions,
+            context(service_database),
+            lifecycle_command(organization_id=organization_id),
+        )
+    )
+    with service_database.sync_engine.connect() as connection:
+        before = connection.execute(
+            select(
+                Organization.created_by_user_id,
+                Organization.retired_at,
+                Organization.retired_by_user_id,
+            ).where(Organization.id == organization_id)
+        ).one()
+
+    edited = edit_command(organization_id=organization_id)
+    result = asyncio.run(
+        edit_organization(service_database.sessions, context(service_database), edited)
+    )
+    replay = asyncio.run(
+        edit_organization(service_database.sessions, context(service_database), edited)
+    )
+    assert result.name == replay.name == "Edited kitchen"
+    assert replay.replayed is True
+    with service_database.sync_engine.connect() as connection:
+        after = connection.execute(
+            select(
+                Organization.created_by_user_id,
+                Organization.retired_at,
+                Organization.retired_by_user_id,
+            ).where(Organization.id == organization_id)
+        ).one()
+    assert after == before
+
+    changed = edit_command(
+        organization_id=organization_id,
+        mutation_id=edited.mutation_id,
+        name="Another valid name",
+        client_wall_time=edited.client_wall_time,
+    )
+    with pytest.raises(ApplicationServiceError, match="idempotency_mismatch"):
+        asyncio.run(
+            edit_organization(service_database.sessions, context(service_database), changed)
+        )
+
+
+def test_edit_accepts_nfc_equivalent_retry_and_rejects_oversized_description(
+    service_database: ServiceDatabase,
+) -> None:
+    organization_id = uuid4()
+    asyncio.run(
+        create_organization(
+            service_database.sessions,
+            context(service_database),
+            organization_command(organization_id=organization_id),
+        )
+    )
+    edit_time = datetime.now(UTC)
+    command = edit_command(
+        organization_id=organization_id,
+        name="Cafe\u0301",
+        client_wall_time=edit_time,
+        description="One line",
+    )
+    first = asyncio.run(
+        edit_organization(service_database.sessions, context(service_database), command)
+    )
+    equivalent = edit_command(
+        organization_id=organization_id,
+        mutation_id=command.mutation_id,
+        name="  Café ",
+        client_wall_time=edit_time,
+        description="One line",
+    )
+    replay = asyncio.run(
+        edit_organization(service_database.sessions, context(service_database), equivalent)
+    )
+    assert first.name == replay.name == "Café"
+    assert replay.replayed is True
+
+    fresh_installation_id = uuid4()
+    oversized = edit_command(organization_id=organization_id, description="x" * 10_001)
+    invalid_context = ExecutionContext(
+        actor_user_id=service_database.actor_id,
+        client_installation_id=fresh_installation_id,
+        oauth_client_id="mcp-client",
+        oauth_grant_id="mcp-grant",
+    )
+    with pytest.raises(ApplicationServiceError) as first_error:
+        asyncio.run(
+            edit_organization(service_database.sessions, invalid_context, oversized)
+        )
+    with pytest.raises(ApplicationServiceError) as replay_error:
+        asyncio.run(
+            edit_organization(service_database.sessions, invalid_context, oversized)
+        )
+    assert first_error.value.field_violations == replay_error.value.field_violations
+    assert first_error.value.field_violations[0].path == "description"
+    with service_database.sync_engine.connect() as connection:
+        assert connection.scalar(
+            select(ClientInstallation.id).where(ClientInstallation.id == fresh_installation_id)
+        ) is None
+        assert connection.scalar(
+            select(Mutation.id).where(Mutation.id == oversized.mutation_id)
+        ) is None
+
+    with pytest.raises(ApplicationServiceError) as existing_error:
+        asyncio.run(
+            edit_organization(service_database.sessions, context(service_database), oversized)
+        )
+    assert existing_error.value.field_violations == first_error.value.field_violations
+    with pytest.raises(ApplicationServiceError) as existing_replay:
+        asyncio.run(
+            edit_organization(service_database.sessions, context(service_database), oversized)
+        )
+    assert existing_replay.value.field_violations == existing_error.value.field_violations
+    with service_database.sync_engine.connect() as connection:
+        mutation = connection.execute(
+            select(Mutation.outcome, Mutation.client_installation_id).where(
+                Mutation.id == oversized.mutation_id
+            )
+        ).one()
+    assert mutation.outcome == "rejected"
+    assert mutation.client_installation_id == service_database.installation_id
 
 
 @pytest.mark.parametrize(

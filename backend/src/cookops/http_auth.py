@@ -12,6 +12,7 @@ from typing import Literal
 from uuid import UUID
 
 from fastapi import APIRouter, HTTPException, Request, Response, status
+from iso4217 import Currency
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
@@ -26,10 +27,12 @@ from cookops.application.human_authentication import (
 from cookops.application.organizations import (
     ApplicationServiceError,
     CreateOrganizationCommand,
+    EditOrganizationCommand,
     ExecutionContext,
     SetOrganizationLifecycleCommand,
     change_organization_lifecycle,
     create_organization,
+    edit_organization,
     list_organizations_for_system_admin,
 )
 from cookops.config import Environment, Settings
@@ -109,8 +112,6 @@ class CreateOrganizationRequest(BaseModel):
     @field_validator("default_currency")
     @classmethod
     def iso_currency(cls, value: str) -> str:
-        from iso4217 import Currency
-
         if value.strip().upper() not in Currency.__members__:
             raise ValueError("must be an ISO 4217 currency code")
         return value
@@ -141,6 +142,38 @@ class OrganizationLifecycleRequest(BaseModel):
     mutation_id: UUID
     client_installation_id: UUID
     client_wall_time: datetime
+
+    @field_validator("client_wall_time")
+    @classmethod
+    def timezone_required(cls, value: datetime) -> datetime:
+        if value.tzinfo is None or value.utcoffset() is None:
+            raise ValueError("must include a timezone")
+        return value
+
+
+class OrganizationEditRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid", strict=True)
+
+    mutation_id: UUID
+    client_installation_id: UUID
+    client_wall_time: datetime
+    name: str = Field(min_length=1, max_length=200)
+    description: str | None = Field(default=None, max_length=10_000)
+    default_currency: str = Field(default="CZK", min_length=3, max_length=3)
+
+    @field_validator("name")
+    @classmethod
+    def canonical_name(cls, value: str) -> str:
+        if not value.strip() or len(value.strip()) > 200:
+            raise ValueError("must be nonblank and at most 200 characters")
+        return value
+
+    @field_validator("default_currency")
+    @classmethod
+    def iso_currency(cls, value: str) -> str:
+        if value.strip().upper() not in Currency.__members__:
+            raise ValueError("must be an ISO 4217 currency code")
+        return value
 
     @field_validator("client_wall_time")
     @classmethod
@@ -425,6 +458,33 @@ def create_organization_administration_router(settings: Settings) -> APIRouter:
                 default_currency=item.default_currency, retired_at=item.retired_at,
                 retired_by_user_id=item.retired_by_user_id,
             ) for item in result
+        )
+
+    @router.patch("/organizations/{organization_id}", response_model=SystemOrganizationResponse)
+    async def edit(
+        organization_id: UUID, body: OrganizationEditRequest, request: Request
+    ) -> SystemOrganizationResponse:
+        value = services(request)
+        actor_id = await actor(request, value)
+        try:
+            result = await edit_organization(
+                value.session_factory,
+                ExecutionContext(actor_id, body.client_installation_id),
+                EditOrganizationCommand(
+                    mutation_id=body.mutation_id,
+                    organization_id=organization_id,
+                    name=body.name,
+                    description=body.description,
+                    default_currency=body.default_currency,
+                    client_wall_time=body.client_wall_time,
+                ),
+            )
+        except ApplicationServiceError as error:
+            raise application_error(error) from error
+        return SystemOrganizationResponse(
+            id=result.organization_id, name=result.name, description=result.description,
+            default_currency=result.default_currency, retired_at=result.retired_at,
+            retired_by_user_id=result.retired_by_user_id,
         )
 
     @router.post(
