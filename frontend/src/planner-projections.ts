@@ -250,8 +250,7 @@ export async function readEventPlanner(
       position: value(record, "position_key"),
       retired: record.lifecycle === "retired",
       custom: record.fields.built_in_translation_key === null,
-      name:
-        value(record, "custom_name") ??
+      name: value(record, "custom_name") ??
         value(record, "built_in_translation_key"),
     }))
     .filter((role): role is PlannerRole => Boolean(role.name && role.position))

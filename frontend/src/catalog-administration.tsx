@@ -6,20 +6,22 @@ import {
   type CatalogKind,
 } from "./catalog-configuration";
 import { readVisibleRecords } from "./visible-records";
+import { mealRoleLabels } from "./meal-role-labels";
 
 const kinds: CatalogKind[] = [
   "recipe_tag",
   "dietary_tag",
   "store_section",
   "unit_definition",
+  "organization_meal_role_preset",
 ];
 const labels: Record<CatalogKind, { cs: string; en: string }> = {
   recipe_tag: { cs: "Štítky receptů", en: "Recipe tags" },
   dietary_tag: { cs: "Dietní štítky", en: "Dietary tags" },
   store_section: { cs: "Oddělení obchodu", en: "Store sections" },
   unit_definition: { cs: "Vlastní jednotky", en: "Custom units" },
+  organization_meal_role_preset: { cs: "Role jídel", en: "Meal roles" },
 };
-
 export function CatalogAdministration({
   userId,
   organizationId,
@@ -36,6 +38,7 @@ export function CatalogAdministration({
     dietary_tag: [],
     store_section: [],
     unit_definition: [],
+    organization_meal_role_preset: [],
   });
   useEffect(() => {
     const subscription = liveQuery(
@@ -66,7 +69,7 @@ export function CatalogAdministration({
           key={kind}
           kind={kind}
           label={labels[kind][locale]}
-          records={records[kind]}
+          records={(kind === "store_section" || kind === "organization_meal_role_preset" ? [...records[kind]].sort((a, b) => String(a.fields.position_key ?? "").localeCompare(String(b.fields.position_key ?? "")) || a.entityId.localeCompare(b.entityId)) : records[kind])}
           userId={userId}
           organizationId={organizationId}
           locale={locale}
@@ -100,6 +103,7 @@ function CatalogGroup({
       name,
       ...(kind === "recipe_tag" || kind === "dietary_tag" ? { color } : {}),
       ...(kind === "store_section" ? { position_key: "z" } : {}),
+      ...(kind === "organization_meal_role_preset" ? { position_key: "z" } : {}),
       ...(kind === "unit_definition"
         ? { allows_ingredient_quantity: true, allows_recipe_scaling: true }
         : {}),
@@ -167,6 +171,12 @@ function CatalogRow({
     String(record.fields.position_key ?? "z"),
   );
   const [color, setColor] = useState(String(record.fields.color ?? "#336699"));
+  const builtInKey = typeof record.fields.built_in_translation_key === "string"
+    ? record.fields.built_in_translation_key
+    : undefined;
+  const displayName = builtInKey
+    ? (mealRoleLabels[builtInKey]?.[locale] ?? builtInKey)
+    : String(record.fields.name ?? record.fields.custom_name ?? record.fields.code ?? "");
   const save = async (event: React.FormEvent) => {
     event.preventDefault();
     await queueCatalogConfiguration(
@@ -175,8 +185,8 @@ function CatalogRow({
       kind,
       "update",
       {
-        name,
-        ...(kind === "store_section" ? { position_key: position } : {}),
+        ...(builtInKey ? { built_in_translation_key: builtInKey } : { name }),
+        ...(kind === "store_section" || kind === "organization_meal_role_preset" ? { position_key: position } : {}),
         ...(kind === "recipe_tag" || kind === "dietary_tag" ? { color } : {}),
       },
       record.entityId,
@@ -184,9 +194,7 @@ function CatalogRow({
   };
   return (
     <li>
-      {String(
-        record.fields.name ?? record.fields.custom_name ?? record.fields.code,
-      )}{" "}
+      {displayName}{" "}
       {record.lifecycle === "retired"
         ? `(${locale === "cs" ? "vyřazeno" : "retired"})`
         : ""}
@@ -215,16 +223,11 @@ function CatalogRow({
         <details>
           <summary>{locale === "cs" ? "Upravit" : "Edit"}</summary>
           <form onSubmit={(event) => void save(event)}>
-            <label>
+            {!builtInKey && <label>
               {locale === "cs" ? "Název" : "Name"}
-              <input
-                maxLength={200}
-                required
-                value={name}
-                onChange={(event) => setName(event.target.value)}
-              />
-            </label>
-            {kind === "store_section" && (
+              <input maxLength={200} required value={name} onChange={(event) => setName(event.target.value)} />
+            </label>}
+            {(kind === "store_section" || kind === "organization_meal_role_preset") && (
               <label>
                 {locale === "cs" ? "Pořadí" : "Position"}
                 <input

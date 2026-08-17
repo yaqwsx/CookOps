@@ -20,6 +20,7 @@ from cookops.application.events import (
     _reserve_change_range,
 )
 from cookops.application.organizations import (
+    MEAL_ROLE_PRESETS,
     ApplicationServiceError,
     ExecutionContext,
     FieldViolation,
@@ -30,6 +31,7 @@ from cookops.persistence.models import (
     FieldClock,
     Mutation,
     OrganizationChange,
+    OrganizationMealRolePreset,
     RecipeTag,
     StoreSection,
     UnitDefinition,
@@ -37,7 +39,9 @@ from cookops.persistence.models import (
 
 COMMAND_SCHEMA_VERSION = 1
 COMMAND_KIND = "catalog_configuration.mutate"
-CatalogKind = Literal["store_section", "recipe_tag", "dietary_tag", "unit_definition"]
+CatalogKind = Literal[
+    "store_section", "recipe_tag", "dietary_tag", "unit_definition", "organization_meal_role_preset"
+]
 CatalogOperation = Literal["create", "update", "retire", "restore"]
 
 _models = {
@@ -45,15 +49,18 @@ _models = {
     "recipe_tag": RecipeTag,
     "dietary_tag": DietaryTag,
     "unit_definition": UnitDefinition,
+    "organization_meal_role_preset": OrganizationMealRolePreset,
 }
 _fields = {
     "store_section": ("name", "position_key"),
     "recipe_tag": ("name", "color"),
     "dietary_tag": ("name", "color"),
     "unit_definition": ("custom_name",),
+    "organization_meal_role_preset": ("built_in_translation_key", "custom_name", "position_key"),
 }
 _color = re.compile(r"^#[0-9A-Fa-f]{6}$")
 _position = re.compile(r"^[0-9A-Za-z]+$")
+_BUILTIN_TRANSLATION_KEYS = frozenset(key for key, _ in MEAL_ROLE_PRESETS)
 
 
 @dataclass(frozen=True, slots=True)
@@ -69,6 +76,7 @@ class CatalogConfigurationCommand:
     position_key: str | None = None
     allows_ingredient_quantity: bool | None = None
     allows_recipe_scaling: bool | None = None
+    built_in_translation_key: str | None = None
     logical_operation_id: UUID | None = None
 
 
@@ -109,8 +117,10 @@ def _prepared(
     if command.operation in ("create", "update"):
         if command.entity_kind == "store_section":
             values["name"] = _text(command.name, "name", errors)
-            if not isinstance(command.position_key, str) or not _position.fullmatch(
-                command.position_key
+            if (
+                not isinstance(command.position_key, str)
+                or len(command.position_key) > 255
+                or not _position.fullmatch(command.position_key)
             ):
                 errors.append(FieldViolation("position_key", "must_be_sortable_position_key"))
             else:
@@ -125,6 +135,39 @@ def _prepared(
                 values["color"] = command.color
             if command.entity_kind == "recipe_tag" and command.color is None:
                 errors.append(FieldViolation("color", "must_be_hex_color"))
+        elif command.entity_kind == "organization_meal_role_preset":
+            if command.built_in_translation_key is not None:
+                if not isinstance(command.built_in_translation_key, str) or not re.fullmatch(
+                    r"[a-z][a-z0-9_.-]*", command.built_in_translation_key
+                ):
+                    errors.append(
+                        FieldViolation("built_in_translation_key", "must_be_translation_key")
+                    )
+                elif command.built_in_translation_key not in _BUILTIN_TRANSLATION_KEYS:
+                    errors.append(
+                        FieldViolation(
+                            "built_in_translation_key", "must_be_supported_translation_key"
+                        )
+                    )
+                values["built_in_translation_key"] = command.built_in_translation_key
+                values["custom_name"] = None
+            else:
+                values["custom_name"] = _text(command.name, "name", errors)
+                values["built_in_translation_key"] = None
+            if (
+                not isinstance(command.position_key, str)
+                or len(command.position_key) > 255
+                or not _position.fullmatch(command.position_key)
+            ):
+                errors.append(FieldViolation("position_key", "must_be_sortable_position_key"))
+            else:
+                values["position_key"] = command.position_key
+            if (
+                command.operation == "create"
+                and values.get("built_in_translation_key") is None
+                and not values.get("custom_name")
+            ):
+                errors.append(FieldViolation("name", "must_be_nonblank_and_at_most_200_characters"))
         else:
             values["custom_name"] = _text(command.name, "name", errors)
             if command.operation == "create":
@@ -224,7 +267,15 @@ async def _record(
             color=row.color,
         )
     else:
-        base.update(
+        if command.entity_kind == "organization_meal_role_preset":
+            base.update(
+                built_in_translation_key=row.built_in_translation_key,
+                custom_name=row.custom_name,
+                normalized_custom_name=row.normalized_custom_name,
+                position_key=row.position_key,
+            )
+        else:
+            base.update(
             code=row.code,
             custom_name=row.custom_name,
             normalized_custom_name=row.normalized_custom_name,
@@ -361,16 +412,60 @@ async def mutate_catalog_configuration(
                 if row is not None:
                     deferred = _error((FieldViolation("entity_id", "already_exists"),))
                 else:
-                    name_field = (
+                    duplicate = None
+                    if command.entity_kind == "organization_meal_role_preset":
+                        natural_key = (
+                            ("builtin", cast(str, values["built_in_translation_key"]))
+                            if values["built_in_translation_key"] is not None
+                            else ("custom", cast(str, values["custom_name"]).lower())
+                        )
+                        await session.execute(
+                            text("SELECT pg_advisory_xact_lock(:key)"),
+                            {"key": _advisory_lock_key(
+                                f"catalog-preset:{natural_key[0]}:{natural_key[1]}",
+                                command.organization_id,
+                            )},
+                        )
+                        duplicate = await session.scalar(
+                            select(OrganizationMealRolePreset.id).where(
+                                OrganizationMealRolePreset.organization_id
+                                == command.organization_id,
+                                (
+                                    OrganizationMealRolePreset.built_in_translation_key
+                                    == natural_key[1]
+                                )
+                                if natural_key[0] == "builtin"
+                                else OrganizationMealRolePreset.normalized_custom_name
+                                == natural_key[1],
+                            )
+                        )
+                        if duplicate is not None:
+                            deferred = _error((FieldViolation("name", "already_exists"),))
+                        elif deferred is None:
+                            row = OrganizationMealRolePreset(
+                                id=command.entity_id,
+                                organization_id=command.organization_id,
+                                built_in_translation_key=values["built_in_translation_key"],
+                                custom_name=values["custom_name"],
+                                normalized_custom_name=(
+                                    cast(str, values["custom_name"]).lower()
+                                    if values["custom_name"]
+                                    else None
+                                ),
+                                position_key=values["position_key"],
+                                created_by_user_id=context.actor_user_id,
+                            )
+                    if command.entity_kind != "organization_meal_role_preset":
+                        name_field = (
                         "custom_name" if command.entity_kind == "unit_definition" else "name"
-                    )
-                    normalized_field = (
-                        "normalized_custom_name"
-                        if command.entity_kind == "unit_definition"
-                        else "normalized_name"
-                    )
-                    normalized = cast(str, values[name_field]).lower()
-                    await session.execute(
+                        )
+                        normalized_field = (
+                            "normalized_custom_name"
+                            if command.entity_kind == "unit_definition"
+                            else "normalized_name"
+                        )
+                        normalized = cast(str, values[name_field]).lower()
+                        await session.execute(
                         text("SELECT pg_advisory_xact_lock(:key)"),
                         {
                             "key": _advisory_lock_key(
@@ -378,13 +473,18 @@ async def mutate_catalog_configuration(
                                 command.organization_id,
                             )
                         },
-                    )
-                    duplicate = await session.scalar(
+                        )
+                        duplicate = await session.scalar(
                         select(model.id).where(
                             model.organization_id == command.organization_id,
-                            getattr(model, normalized_field) == normalized,
+                            (
+                                model.normalized_custom_name
+                                if normalized_field == "normalized_custom_name"
+                                else model.normalized_name
+                            )
+                            == normalized,
                         )
-                    )
+                        )
                     if duplicate is not None:
                         deferred = _error((FieldViolation("name", "already_exists"),))
                     if duplicate is None and command.entity_kind == "store_section":
@@ -415,7 +515,7 @@ async def mutate_catalog_configuration(
                             color=values["color"],
                             created_by_user_id=context.actor_user_id,
                         )
-                    elif duplicate is None:
+                    elif duplicate is None and command.entity_kind == "unit_definition":
                         row = UnitDefinition(
                             id=command.entity_id,
                             organization_id=command.organization_id,
@@ -449,34 +549,83 @@ async def mutate_catalog_configuration(
             elif row is None or row.organization_id != command.organization_id:
                 raise ApplicationServiceError("forbidden", retry_same_identity=True)
             elif command.operation == "update":
+                duplicate = None
                 if row.retired_at is not None:
                     deferred = _error((FieldViolation("entity_id", "retired_reference"),))
                 else:
-                    name_field = (
-                        "custom_name" if command.entity_kind == "unit_definition" else "name"
-                    )
-                    normalized_field = (
-                        "normalized_custom_name"
-                        if command.entity_kind == "unit_definition"
-                        else "normalized_name"
-                    )
-                    normalized = cast(str, values[name_field]).lower()
-                    await session.execute(
-                        text("SELECT pg_advisory_xact_lock(:key)"),
-                        {
-                            "key": _advisory_lock_key(
+                    if command.entity_kind == "organization_meal_role_preset" and (
+                        (
+                            row.built_in_translation_key is not None
+                            and (
+                                values["built_in_translation_key"]
+                                != row.built_in_translation_key
+                                or values["custom_name"] is not None
+                            )
+                        )
+                        or (
+                            row.built_in_translation_key is None
+                            and values["built_in_translation_key"] is not None
+                        )
+                    ):
+                        deferred = _error(
+                            (FieldViolation("built_in_translation_key", "immutable"),)
+                        )
+                    if deferred is None and command.entity_kind == "organization_meal_role_preset":
+                        natural_key = (
+                            ("builtin", cast(str, values["built_in_translation_key"]))
+                            if values["built_in_translation_key"] is not None
+                            else ("custom", cast(str, values["custom_name"]).lower())
+                        )
+                        await session.execute(
+                            text("SELECT pg_advisory_xact_lock(:key)"),
+                            {"key": _advisory_lock_key(
+                                f"catalog-preset:{natural_key[0]}:{natural_key[1]}",
+                                command.organization_id,
+                            )},
+                        )
+                        duplicate = await session.scalar(
+                            select(OrganizationMealRolePreset.id).where(
+                                OrganizationMealRolePreset.organization_id
+                                == command.organization_id,
+                                (
+                                    OrganizationMealRolePreset.built_in_translation_key
+                                    == natural_key[1]
+                                )
+                                if natural_key[0] == "builtin"
+                                else OrganizationMealRolePreset.normalized_custom_name
+                                == natural_key[1],
+                                OrganizationMealRolePreset.id != command.entity_id,
+                            )
+                        )
+                    elif deferred is None:
+                        name_field = (
+                            "custom_name" if command.entity_kind == "unit_definition" else "name"
+                        )
+                        normalized_field = (
+                            "normalized_custom_name"
+                            if command.entity_kind == "unit_definition"
+                            else "normalized_name"
+                        )
+                        normalized = cast(str, values[name_field]).lower()
+                        await session.execute(
+                            text("SELECT pg_advisory_xact_lock(:key)"),
+                            {"key": _advisory_lock_key(
                                 f"catalog-name:{command.entity_kind}:{normalized}",
                                 command.organization_id,
-                            )
-                        },
-                    )
-                    duplicate = await session.scalar(
-                        select(model.id).where(
-                            model.organization_id == command.organization_id,
-                            getattr(model, normalized_field) == normalized,
-                            model.id != command.entity_id,
+                            )},
                         )
-                    )
+                        duplicate = await session.scalar(
+                            select(model.id).where(
+                                model.organization_id == command.organization_id,
+                                (
+                                    model.normalized_custom_name
+                                    if normalized_field == "normalized_custom_name"
+                                    else model.normalized_name
+                                )
+                                == normalized,
+                                model.id != command.entity_id,
+                            )
+                        )
                     if duplicate is not None:
                         deferred = _error((FieldViolation("name", "already_exists"),))
                     clocks = {
@@ -498,13 +647,17 @@ async def mutate_catalog_configuration(
                         if deferred is None and _clock_wins(clocks.get(field), command):
                             applied = True
                             setattr(row, field, value)
-                            if field in ("name", "custom_name"):
+                            if field in ("name", "custom_name") and hasattr(row, "normalized_name"):
                                 setattr(
                                     row,
                                     "normalized_name"
                                     if field == "name"
                                     else "normalized_custom_name",
                                     cast(str, value).lower(),
+                                )
+                            elif field == "custom_name":
+                                row.normalized_custom_name = (
+                                    cast(str, value).lower() if value else None
                                 )
                             session.add(
                                 FieldClock(

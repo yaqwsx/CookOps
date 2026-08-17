@@ -851,13 +851,20 @@ class CatalogConfigurationPayload(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
     entity_id: UUID
-    entity_kind: Literal["store_section", "recipe_tag", "dietary_tag", "unit_definition"]
+    entity_kind: Literal[
+        "store_section",
+        "recipe_tag",
+        "dietary_tag",
+        "unit_definition",
+        "organization_meal_role_preset",
+    ]
     operation: Literal["create", "update", "retire", "restore"]
     name: str | None = None
     color: str | None = None
     position_key: str | None = None
     allows_ingredient_quantity: StrictBool | None = None
     allows_recipe_scaling: StrictBool | None = None
+    built_in_translation_key: str | None = None
     logical_operation_id: UUID | None = None
 
 
@@ -1596,6 +1603,7 @@ def _push_command(command: PushCommandRequest, organization_id: UUID) -> SyncCom
                 position_key=catalog_payload.position_key,
                 allows_ingredient_quantity=catalog_payload.allows_ingredient_quantity,
                 allows_recipe_scaling=catalog_payload.allows_recipe_scaling,
+                built_in_translation_key=catalog_payload.built_in_translation_key,
                 logical_operation_id=catalog_payload.logical_operation_id,
             )
     except ValidationError:

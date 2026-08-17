@@ -26,8 +26,8 @@ from cookops.persistence.models import (
     Event,
     EventArchiveSnapshot,
     EventDay,
-    EventMealRole,
     EventDietaryExceptionTag,
+    EventMealRole,
     FieldClock,
     Ingredient,
     IngredientVersion,
@@ -758,6 +758,73 @@ def test_push_replicates_catalog_configuration_and_replays_identity(
                 )
             )
         ) == {"name", "color", "lifecycle"}
+
+
+def test_push_replicates_meal_role_preset_with_strict_payload_and_position_clock(
+    sync_database: SyncDatabase, tmp_path: Path
+) -> None:
+    installation_id = _installation(sync_database)
+    preset_id = uuid4()
+    command = {
+        "mutation_id": str(uuid4()),
+        "command_kind": "catalog_configuration.mutate",
+        "command_schema_version": 1,
+        "client_wall_time": datetime.now(UTC).isoformat(),
+        "payload": {
+            "entity_id": str(preset_id),
+            "entity_kind": "organization_meal_role_preset",
+            "operation": "create",
+            "name": "Supper",
+            "position_key": "z",
+        },
+    }
+    settings = _settings().model_copy(update={"receipt_media_root": tmp_path / "media"})
+    with TestClient(create_app(settings), base_url="https://testserver") as client:
+        _sign_in(client, "dummy-member")
+        accepted = client.post(
+            "/api/v1/sync/push", json=_body(sync_database, installation_id, [command])
+        ).json()["outcomes"][0]
+        assert accepted["status"] == "accepted"
+        bootstrap = client.post("/api/v1/sync/bootstrap", json={"organization_id": str(sync_database.organization_id)}).json()
+        record = next(
+            item["payload"]["record"]
+            for item in bootstrap["records"]
+            if item["entity_kind"] == "organization_meal_role_preset"
+            and item["entity_id"] == str(preset_id)
+        )
+        assert record["custom_name"] == "Supper"
+        assert record["position_key"] == "z"
+        assert set(record["field_clocks"]) == {
+            "custom_name",
+            "position_key",
+            "built_in_translation_key",
+            "lifecycle",
+        }
+
+        updated = {
+            **command,
+            "mutation_id": str(uuid4()),
+            "payload": {**command["payload"], "operation": "update", "position_key": "aa"},
+        }
+        assert client.post(
+            "/api/v1/sync/push", json=_body(sync_database, installation_id, [updated])
+        ).json()["outcomes"][0]["status"] == "accepted"
+        oversized = {
+            **command,
+            "mutation_id": str(uuid4()),
+            "payload": {**command["payload"], "position_key": "a" * 256},
+        }
+        assert client.post(
+            "/api/v1/sync/push", json=_body(sync_database, installation_id, [oversized])
+        ).json()["outcomes"][0]["error"]["code"] == "validation_failed"
+
+        malformed = {
+            **command,
+            "mutation_id": str(uuid4()),
+            "payload": {**command["payload"], "unexpected": True},
+        }
+        rejected = client.post("/api/v1/sync/push", json=_body(sync_database, installation_id, [malformed])).json()["outcomes"][0]
+        assert rejected["status"] == "rejected"
 
 
 def test_catalog_configuration_future_time_is_retained(

@@ -18,6 +18,68 @@ beforeEach(async () => {
 });
 
 describe("catalog configuration outbox", () => {
+  it("queues preset create, edit/reorder, retire, and restore operations", async () => {
+    const id = "6ce17d2f-8365-4b1f-a80b-34d10425d51c";
+    await queueCatalogConfiguration(userId, organizationId, "organization_meal_role_preset", "create", { name: "Breakfast", position_key: "a" }, id);
+    await queueCatalogConfiguration(userId, organizationId, "organization_meal_role_preset", "update", { name: "Brunch", position_key: "b" }, id);
+    await queueCatalogConfiguration(userId, organizationId, "organization_meal_role_preset", "retire", {}, id);
+    await queueCatalogConfiguration(userId, organizationId, "organization_meal_role_preset", "restore", {}, id);
+
+    const commands = await localDb.outbox.toArray();
+    expect(commands.map((command) => command.payload.operation).sort((a, b) => ["create", "update", "retire", "restore"].indexOf(String(a)) - ["create", "update", "retire", "restore"].indexOf(String(b)))).toEqual([
+      "create", "update", "retire", "restore",
+    ]);
+    expect(commands.find((command) => command.payload.operation === "create")?.payload).toMatchObject({ entity_kind: "organization_meal_role_preset", name: "Breakfast", position_key: "a" });
+    await expect(localDb.optimisticOverlays.get([userId, organizationId, "organization_meal_role_preset", id])).resolves.toMatchObject({
+      lifecycle: "active",
+      fields: { name: "Brunch", custom_name: "Brunch", built_in_translation_key: null, position_key: "b", retired_at: null },
+    });
+  });
+
+  it("replays preset fields with LWW clocks and preserves lifecycle", async () => {
+    const id = "7ce17d2f-8365-4b1f-a80b-34d10425d51c";
+    await localDb.canonicalRecords.put({
+      userId, organizationId, entityType: "organization_meal_role_preset", entityId: id,
+      recordSchemaVersion: 1, lifecycle: "active", immutable: false, updatedAt: "2026-08-08T00:00:00Z",
+      fields: { id, organization_id: organizationId, custom_name: "Old", position_key: "a", retired_at: null },
+      fieldClocks: { custom_name: { actionAt: "2026-08-08T00:00:00Z", mutationId: "old" } },
+    });
+    await replayCatalogConfiguration(userId, organizationId, {
+      id: "8ce17d2f-8365-4b1f-a80b-34d10425d51c", actionAt: "2026-08-08T00:00:01.000000001Z",
+      payload: { entity_id: id, entity_kind: "organization_meal_role_preset", operation: "update", name: "New", position_key: "z" },
+    });
+    await expect(localDb.optimisticOverlays.get([userId, organizationId, "organization_meal_role_preset", id])).resolves.toMatchObject({
+      lifecycle: "active", fields: { custom_name: "New", built_in_translation_key: null, position_key: "z", retired_at: null },
+    });
+  });
+  it("keeps built-in preset custom_name null on create, update, and replay", async () => {
+    const id = "9ce17d2f-8365-4b1f-a80b-34d10425d51c";
+    await queueCatalogConfiguration(userId, organizationId, "organization_meal_role_preset", "create", {
+      built_in_translation_key: "meal_role.breakfast", position_key: "a",
+    }, id);
+    await queueCatalogConfiguration(userId, organizationId, "organization_meal_role_preset", "update", {
+      built_in_translation_key: "meal_role.breakfast", position_key: "b",
+    }, id);
+    for (const command of await localDb.outbox.toArray()) {
+      expect(command.payload).not.toHaveProperty("custom_name", undefined);
+    }
+    await replayCatalogConfiguration(userId, organizationId, {
+      id: "ace17d2f-8365-4b1f-a80b-34d10425d51c", actionAt: "2026-08-18T00:00:01.000000001Z",
+      payload: { entity_id: id, entity_kind: "organization_meal_role_preset", operation: "update", built_in_translation_key: "meal_role.breakfast", position_key: "c" },
+    });
+    await expect(localDb.optimisticOverlays.get([userId, organizationId, "organization_meal_role_preset", id])).resolves.toMatchObject({
+      fields: { built_in_translation_key: "meal_role.breakfast", custom_name: null, position_key: "c" },
+    });
+    const replayed = await localDb.optimisticOverlays.get([userId, organizationId, "organization_meal_role_preset", id]);
+    expect(replayed?.fields).not.toHaveProperty("custom_name", undefined);
+  });
+  it("fails closed for malformed replay payloads", async () => {
+    await replayCatalogConfiguration(userId, organizationId, {
+      id: "8ce17d2f-8365-4b1f-a80b-34d10425d51c", actionAt: "2026-08-08T00:00:01Z",
+      payload: { entity_id: "not-an-id", entity_kind: "organization_meal_role_preset", operation: "update", name: "X", position_key: "a", extra: true },
+    });
+    await expect(localDb.optimisticOverlays.toArray()).resolves.toEqual([]);
+  });
   it("keeps a create command and complete optimistic record together", async () => {
     const id = await queueCatalogConfiguration(
       userId,

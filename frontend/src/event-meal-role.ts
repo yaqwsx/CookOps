@@ -1,17 +1,10 @@
 import { appendOutboxCommand, localDb } from "./local-db";
+import { timestampNanoseconds } from "./timestamp";
 
 const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 function validName(name: unknown): name is string {
   return typeof name === "string" && name.length > 0 && Array.from(name).length <= 200 && !name.includes("\0") && !/[\uD800-\uDFFF]/.test(name);
-}
-
-function timestampNanoseconds(value: string): bigint | undefined {
-  const match = /^(.*?)(?:\.(\d+))?(Z|[+-]\d\d:\d\d)$/.exec(value);
-  if (!match) return undefined;
-  const seconds = Date.parse(`${match[1]}${match[3]}`);
-  if (!Number.isFinite(seconds)) return undefined;
-  return BigInt(seconds) * 1_000_000n + BigInt((match[2] ?? "").slice(0, 6).padEnd(6, "0"));
 }
 
 function wins(clock: unknown, mutationId: string, actionAt: string): boolean {

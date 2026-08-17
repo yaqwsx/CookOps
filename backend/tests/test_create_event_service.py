@@ -188,6 +188,13 @@ def event_command(
 def test_create_event_copies_current_presets_and_range_days(
     service_database: ServiceDatabase,
 ) -> None:
+    with service_database.sync_engine.connect() as connection:
+        retired_preset_id = connection.scalar(
+            select(OrganizationMealRolePreset.id).where(
+                OrganizationMealRolePreset.organization_id == service_database.organization_id,
+                OrganizationMealRolePreset.retired_at.is_not(None),
+            )
+        )
     command = event_command(service_database, name="  Výprava  ")
     result = asyncio.run(
         create_event(service_database.sessions, context(service_database), command)
@@ -211,6 +218,7 @@ def test_create_event_copies_current_presets_and_range_days(
         None,
     ]
     assert result.meal_roles[2].custom_name == "  Late supper  "
+    assert retired_preset_id not in {role.source_preset_id for role in result.meal_roles}
 
     with service_database.sync_engine.connect() as connection:
         event = connection.execute(

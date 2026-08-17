@@ -1671,7 +1671,13 @@ async def _bootstrap_records(
                 select(FieldClock).where(
                     FieldClock.organization_id == organization_id,
                     FieldClock.entity_kind.in_(
-                        ("store_section", "recipe_tag", "dietary_tag", "unit_definition")
+                        (
+                            "store_section",
+                            "recipe_tag",
+                            "dietary_tag",
+                            "unit_definition",
+                            "organization_meal_role_preset",
+                        )
                     ),
                 )
             )
@@ -1704,6 +1710,12 @@ async def _bootstrap_records(
                 "recipe_tag": ("name", "color", "lifecycle"),
                 "dietary_tag": ("name", "color", "lifecycle"),
                 "unit_definition": ("custom_name", "lifecycle"),
+                "organization_meal_role_preset": (
+                    "built_in_translation_key",
+                    "custom_name",
+                    "position_key",
+                    "lifecycle",
+                ),
             }[kind]
         }
 
@@ -1762,7 +1774,7 @@ async def _bootstrap_records(
         await session.execute(
             select(OrganizationMealRolePreset)
             .where(OrganizationMealRolePreset.organization_id == organization_id)
-            .order_by(OrganizationMealRolePreset.id)
+            .order_by(OrganizationMealRolePreset.position_key, OrganizationMealRolePreset.id)
         )
     ).scalars():
         append(
@@ -1779,7 +1791,9 @@ async def _bootstrap_records(
                 "created_by_user_id": str(item.created_by_user_id),
                 "retired_at": _time(item.retired_at),
                 "retired_by_user_id": _uuid(item.retired_by_user_id),
-                "field_clocks": configuration_clock_record("recipe_tag", item.id),
+                "field_clocks": configuration_clock_record(
+                    "organization_meal_role_preset", item.id
+                ),
             },
         )
     for item in (
@@ -1802,7 +1816,7 @@ async def _bootstrap_records(
                 "created_by_user_id": str(item.created_by_user_id),
                 "retired_at": _time(item.retired_at),
                 "retired_by_user_id": _uuid(item.retired_by_user_id),
-                "field_clocks": configuration_clock_record("dietary_tag", item.id),
+                "field_clocks": configuration_clock_record("recipe_tag", item.id),
             },
         )
     for item in (
@@ -1826,7 +1840,7 @@ async def _bootstrap_records(
                 "created_by_user_id": str(item.created_by_user_id),
                 "retired_at": _time(item.retired_at),
                 "retired_by_user_id": _uuid(item.retired_by_user_id),
-                "field_clocks": configuration_clock_record("unit_definition", item.id),
+                "field_clocks": configuration_clock_record("dietary_tag", item.id),
             },
         )
     for item in (
