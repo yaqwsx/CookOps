@@ -14,3 +14,35 @@ mount MCP: FastAPI still needs an RFC 7662 verifier before that path may be adde
 The bootstrap PostgreSQL user is used only while the empty volume is initialized.
 The API uses `cookops_api` and the OAuth provider uses `cookops_oauth` in its own
 `oauth` schema; set both URL-safe application passwords independently.
+
+## Operator backup and restore
+
+Set the operator-only `COOKOPS_BACKUP_DIR`, `COOKOPS_BACKUP_ARCHIVE`,
+`COOKOPS_APPLICATION_REVISION`, `COOKOPS_SCHEMA_VERSION`, and `COOKOPS_RESTORE_DIR`
+values in `.env`. Keep both host directories private and outside the web root.
+They must be owned and permissioned for the operator workflow (for example,
+`0700`); the profiled services run as root only to write those private bind
+mounts and are not application services.
+The backup directory is an explicit host bind mount; copy the resulting archive
+off the VPS after creation.
+
+Create a backup with the one-off service:
+
+```sh
+docker compose --profile operations --env-file deploy/.env -f deploy/compose.yaml \
+  run --rm backup
+```
+
+Restore into the new subdirectory named by `COOKOPS_RESTORE_MEDIA_SUBDIR`:
+
+```sh
+docker compose --profile operations --env-file deploy/.env -f deploy/compose.yaml \
+  run --rm restore
+```
+
+The restore command deliberately does not pass `--allow-nonempty`; it refuses
+to replace existing media unless an operator explicitly authorizes that action.
+It does pass `--clean-database`, so it replaces database objects in the selected
+database. Stop the API before restoring, and complete the compatibility and
+database/media-reference checks before switching application storage to the new
+media directory. Neither service publishes a port or exposes a web/API/MCP route.

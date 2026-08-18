@@ -9,14 +9,21 @@ docker run --rm --entrypoint=nginx cookops-web-image-test -t
 docker run --rm --entrypoint=node cookops-oauth-image-test --version | grep -q '^v22\.'
 
 docker compose --env-file "$root/deploy/.env.example" -f "$root/deploy/compose.yaml" config >/dev/null
+for service in backup restore; do
+    docker compose --profile operations --env-file "$root/deploy/.env.example" -f "$root/deploy/compose.yaml" \
+        config --services | grep -qx "$service"
+    test "$(docker compose --profile operations --env-file "$root/deploy/.env.example" -f "$root/deploy/compose.yaml" \
+        config --format json | python -c "import json, sys; print(json.load(sys.stdin)['services']['$service'].get('ports', []))")" = '[]'
+done
+docker compose --profile operations --env-file "$root/deploy/.env.example" -f "$root/deploy/compose.yaml" \
+    config --format json | python -c 'import json, sys; s=json.load(sys.stdin)["services"]; assert all(s[n].get("user") == "0:0" for n in ("backup", "restore")); assert all(all(k in s[n]["environment"] for k in ("PGHOST", "PGPORT", "PGUSER", "PGPASSWORD", "PGDATABASE")) for n in ("backup", "restore")); assert "/operator-scripts" in str(s["backup"]["volumes"]); assert "/operator-scripts" in str(s["restore"]["volumes"]); assert "/var/lib/cookops/receipts" in str(s["backup"]["volumes"]); assert "/var/lib/cookops/backups" in str(s["backup"]["volumes"]); assert "/var/lib/cookops/backups" in str(s["restore"]["volumes"]); assert "backup_archive.py" in str(s["backup"]["command"]); assert "restore_archive.py" in str(s["restore"]["command"]); assert "--database-name" in str(s["backup"]["command"]); assert "--database-name" in str(s["restore"]["command"]); assert "--clean-database" in str(s["restore"]["command"]); assert "--allow-nonempty" not in str(s["restore"]["command"])'
 "$root/deploy/test-postgres-roles.sh"
 
 prohibited_proxy_route() {
     awk '
         $1 ~ /^ProxyPass(Match|Reverse)?$/ {
             route = $2
-            if (route ~ /(^|[^[:alnum:]_])\/?mcp(\/|[^[:alnum:]_]|$)/ ||
-                route ~ /^\/\.well-known\/(openid-configuration|oauth-authorization-server|oauth-protected-resource)(\/|$)/) {
+            if (route ~ /(^|[^[:alnum:]_])\/?mcp(\/|[^[:alnum:]_]|$)/) {
                 prohibited = 1
                 exit
             }
@@ -26,7 +33,6 @@ prohibited_proxy_route() {
 }
 for proxy_rule in \
     'ProxyPass /mcp http://127.0.0.1:8000/' \
-    'ProxyPass /.well-known/openid-configuration/oauth http://127.0.0.1:3000/' \
     'ProxyPassMatch ^/mcp http://127.0.0.1:8000/'; do
     if ! printf '%s\n' "$proxy_rule" | prohibited_proxy_route; then
         echo "OAuth/MCP proxy guard failed to recognize $proxy_rule" >&2

@@ -186,7 +186,8 @@ def _verify_files(files: list[dict[str, Any]], root: Path) -> None:
 
 def create_backup(
     *,
-    database_url: str,
+    database_url: str | None = None,
+    database_name: str | None = None,
     pg_dump: str,
     media_root: Path,
     output: Path,
@@ -194,6 +195,9 @@ def create_backup(
     schema_version: str,
     created_at: str | None = None,
 ) -> None:
+    database = database_url or database_name
+    if not database:
+        raise ValueError("database_url or database_name is required")
     output = output.absolute()
     output_parent = output.parent
     if not output_parent.is_dir():
@@ -205,7 +209,7 @@ def create_backup(
     try:
         dump = temporary / "database.dump"
         subprocess.run(
-            [pg_dump, "--dbname", database_url, "--format=custom", "--file", str(dump)],
+            [pg_dump, "--dbname", database, "--format=custom", "--file", str(dump)],
             check=True,
         )
         _assert_regular_file(dump, temporary)
@@ -252,7 +256,9 @@ def create_backup(
 
 def _parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--database-url", required=True)
+    database = parser.add_mutually_exclusive_group(required=True)
+    database.add_argument("--database-url")
+    database.add_argument("--database-name")
     parser.add_argument("--pg-dump", default="pg_dump")
     parser.add_argument("--media-root", type=Path, required=True)
     parser.add_argument("--output", type=Path, required=True)

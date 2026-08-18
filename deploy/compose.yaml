@@ -61,6 +61,66 @@ services:
       retries: 6
     logging: *logging
 
+  backup:
+    build: ../backend
+    profiles: [operations]
+    user: "0:0"
+    depends_on:
+      postgres: { condition: service_healthy }
+    command:
+      - /bin/sh
+      - -c
+      - >-
+        exec python /operator-scripts/backup_archive.py
+        --database-name "$${PGDATABASE}"
+        --media-root /var/lib/cookops/receipts
+        --output "/var/lib/cookops/backups/$${COOKOPS_BACKUP_ARCHIVE}"
+        --application-revision "$${COOKOPS_APPLICATION_REVISION}"
+        --schema-version "$${COOKOPS_SCHEMA_VERSION}"
+    volumes:
+      - ../scripts:/operator-scripts:ro
+      - receipt-media:/var/lib/cookops/receipts:ro
+      - ${COOKOPS_BACKUP_DIR:?set COOKOPS_BACKUP_DIR}:/var/lib/cookops/backups
+    environment:
+      PGHOST: postgres
+      PGPORT: "5432"
+      PGUSER: ${POSTGRES_USER:?set POSTGRES_USER}
+      PGPASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD}
+      PGDATABASE: ${POSTGRES_DB:?set POSTGRES_DB}
+      COOKOPS_BACKUP_ARCHIVE: ${COOKOPS_BACKUP_ARCHIVE:?set COOKOPS_BACKUP_ARCHIVE}
+      COOKOPS_APPLICATION_REVISION: ${COOKOPS_APPLICATION_REVISION:?set COOKOPS_APPLICATION_REVISION}
+      COOKOPS_SCHEMA_VERSION: ${COOKOPS_SCHEMA_VERSION:?set COOKOPS_SCHEMA_VERSION}
+    logging: *logging
+
+  restore:
+    build: ../backend
+    profiles: [operations]
+    user: "0:0"
+    depends_on:
+      postgres: { condition: service_healthy }
+    command:
+      - /bin/sh
+      - -c
+      - >-
+        exec python /operator-scripts/restore_archive.py
+        "/var/lib/cookops/backups/$${COOKOPS_BACKUP_ARCHIVE}"
+        --database-name "$${PGDATABASE}"
+        --clean-database
+        --media-root "/var/lib/cookops/restore/$${COOKOPS_RESTORE_MEDIA_SUBDIR}"
+    volumes:
+      - ../scripts:/operator-scripts:ro
+      - ${COOKOPS_BACKUP_DIR:?set COOKOPS_BACKUP_DIR}:/var/lib/cookops/backups:ro
+      - ${COOKOPS_RESTORE_DIR:?set COOKOPS_RESTORE_DIR}:/var/lib/cookops/restore
+    environment:
+      PGHOST: postgres
+      PGPORT: "5432"
+      PGUSER: ${POSTGRES_USER:?set POSTGRES_USER}
+      PGPASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD}
+      PGDATABASE: ${POSTGRES_DB:?set POSTGRES_DB}
+      COOKOPS_BACKUP_ARCHIVE: ${COOKOPS_BACKUP_ARCHIVE:?set COOKOPS_BACKUP_ARCHIVE}
+      COOKOPS_RESTORE_MEDIA_SUBDIR: ${COOKOPS_RESTORE_MEDIA_SUBDIR:?set COOKOPS_RESTORE_MEDIA_SUBDIR}
+    logging: *logging
+
   oauth-migrate:
     build: ../oauth-server
     command: npm run migrate

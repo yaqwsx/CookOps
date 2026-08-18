@@ -65,7 +65,35 @@ def test_valid_restore_stages_media_and_reports_versions(
 
     assert report == restore.RestoreReport("schema-1", "rev-1")
     assert (target / "objects" / "receipt-1").read_bytes() == b"photo"
-    assert calls and calls[0][:3] == ["fake-pg-restore", "--dbname", "postgresql://example"]
+    assert calls[0][:-1] == [
+        "fake-pg-restore",
+        "--dbname",
+        "postgresql://example",
+        "--exit-on-error",
+    ]
+    assert calls[0][-1].endswith("/database.dump")
+
+
+def test_clean_database_passes_exact_pg_restore_options(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    calls: list[list[str]] = []
+    monkeypatch.setattr(restore.subprocess, "run", lambda command, **_: calls.append(command))
+    restore.restore_archive(
+        archive=_archive(tmp_path),
+        database_name="cookops",
+        pg_restore="fake-pg-restore",
+        media_root=tmp_path / "new-media",
+        clean_database=True,
+    )
+    assert calls[0][:-1] == [
+        "fake-pg-restore",
+        "--dbname",
+        "cookops",
+        "--clean",
+        "--if-exists",
+        "--exit-on-error",
+    ]
 
 
 def test_payload_validation_streams_without_zip_read(

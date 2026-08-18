@@ -247,11 +247,16 @@ def _publish_media(stage: Path, target: Path) -> None:
 def restore_archive(
     *,
     archive: Path,
-    database_url: str,
+    database_url: str | None = None,
+    database_name: str | None = None,
     pg_restore: str,
     media_root: Path,
     allow_nonempty: bool = False,
+    clean_database: bool = False,
 ) -> RestoreReport:
+    database = database_url or database_name
+    if not database:
+        raise ValueError("database_url or database_name is required")
     archive = archive.absolute()
     media_root = media_root.absolute()
     with ZipFile(archive) as zip_file:
@@ -265,10 +270,11 @@ def restore_archive(
         try:
             staged_media = _extract_media(zip_file, manifest, staging)
             dump = staging / "database.dump"
-            subprocess.run(
-                [pg_restore, "--dbname", database_url, "--exit-on-error", str(dump)],
-                check=True,
-            )
+            command = [pg_restore, "--dbname", database]
+            if clean_database:
+                command.extend(("--clean", "--if-exists"))
+            command.extend(("--exit-on-error", str(dump)))
+            subprocess.run(command, check=True)
             _publish_media(staged_media, media_root)
         finally:
             shutil.rmtree(staging, ignore_errors=True)
@@ -278,12 +284,15 @@ def restore_archive(
 def _parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("archive", type=Path)
-    parser.add_argument("--database-url", required=True)
+    database = parser.add_mutually_exclusive_group(required=True)
+    database.add_argument("--database-url")
+    database.add_argument("--database-name")
     parser.add_argument("--pg-restore", default="pg_restore")
     parser.add_argument(
         "--media-root", "--new-media-root", dest="media_root", type=Path, required=True
     )
     parser.add_argument("--allow-nonempty", action="store_true")
+    parser.add_argument("--clean-database", action="store_true")
     return parser
 
 

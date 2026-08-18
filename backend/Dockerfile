@@ -7,7 +7,11 @@ ENV PATH=/app/.venv/bin:$PATH \
 WORKDIR /app
 
 COPY pyproject.toml uv.lock ./
-RUN pip install --no-cache-dir uv==0.9.28 && uv sync --locked --no-dev --no-install-project
+RUN apt-get update \
+    && apt-get install --no-install-recommends --yes postgresql-client \
+    && rm -rf /var/lib/apt/lists/* \
+    && pip install --no-cache-dir uv==0.9.28 \
+    && uv sync --locked --no-dev --no-install-project
 COPY alembic alembic
 COPY alembic.ini ./
 COPY src src
