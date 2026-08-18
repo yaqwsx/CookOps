@@ -38,6 +38,18 @@ import { CatalogAdministration } from "./catalog-administration";
 
 beforeEach(() => queueCatalogConfiguration.mockClear());
 
+it.each([
+  ["cs", "Správa katalogu", "Role jídel", "Přidat", "Název"],
+  ["en", "Catalog administration", "Meal roles", "Add", "Name"],
+])("localizes catalog administration in %s", async (locale, heading, mealRoles, add, name) => {
+  render(<CatalogAdministration userId="user" organizationId="organization" locale={locale as "cs" | "en"} />);
+  expect(await screen.findByRole("heading", { name: heading })).toBeVisible();
+  expect(screen.getByRole("heading", { name: mealRoles })).toBeVisible();
+  await screen.findByText(locale === "cs" ? "Dopolední svačina" : "Morning snack");
+  expect(screen.getAllByRole("button", { name: add })).toHaveLength(5);
+  expect(screen.getAllByLabelText(name)).toHaveLength(6);
+});
+
 it("creates, edits/reorders, retires, and restores a meal-role preset", async () => {
   const user = userEvent.setup();
   render(<CatalogAdministration userId="user" organizationId="organization" locale="en" />);

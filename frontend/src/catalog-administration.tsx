@@ -1,5 +1,6 @@
 import { liveQuery } from "dexie";
 import { useEffect, useState } from "react";
+import { useTranslation } from "react-i18next";
 
 import {
   queueCatalogConfiguration,
@@ -7,6 +8,7 @@ import {
 } from "./catalog-configuration";
 import { readVisibleRecords } from "./visible-records";
 import { mealRoleLabels } from "./meal-role-labels";
+import "./i18n";
 
 const kinds: CatalogKind[] = [
   "recipe_tag",
@@ -15,12 +17,9 @@ const kinds: CatalogKind[] = [
   "unit_definition",
   "organization_meal_role_preset",
 ];
-const labels: Record<CatalogKind, { cs: string; en: string }> = {
-  recipe_tag: { cs: "Štítky receptů", en: "Recipe tags" },
-  dietary_tag: { cs: "Dietní štítky", en: "Dietary tags" },
-  store_section: { cs: "Oddělení obchodu", en: "Store sections" },
-  unit_definition: { cs: "Vlastní jednotky", en: "Custom units" },
-  organization_meal_role_preset: { cs: "Role jídel", en: "Meal roles" },
+const labelKeys: Record<CatalogKind, string> = {
+  recipe_tag: "recipeTags", dietary_tag: "dietaryTags", store_section: "storeSections",
+  unit_definition: "customUnits", organization_meal_role_preset: "mealRoles",
 };
 export function CatalogAdministration({
   userId,
@@ -31,6 +30,7 @@ export function CatalogAdministration({
   organizationId: string;
   locale: "cs" | "en";
 }) {
+  const { t } = useTranslation();
   const [records, setRecords] = useState<
     Record<CatalogKind, Awaited<ReturnType<typeof readVisibleRecords>>>
   >({
@@ -59,16 +59,14 @@ export function CatalogAdministration({
   }, [userId, organizationId]);
   return (
     <section
-      aria-label={
-        locale === "cs" ? "Správa katalogu" : "Catalog administration"
-      }
+      aria-label={t("catalogAdministration.heading", { lng: locale })}
     >
-      <h3>{locale === "cs" ? "Správa katalogu" : "Catalog administration"}</h3>
+      <h3>{t("catalogAdministration.heading", { lng: locale })}</h3>
       {kinds.map((kind) => (
         <CatalogGroup
           key={kind}
           kind={kind}
-          label={labels[kind][locale]}
+          label={t(`catalogAdministration.${labelKeys[kind]}`, { lng: locale })}
           records={(kind === "store_section" || kind === "organization_meal_role_preset" ? [...records[kind]].sort((a, b) => String(a.fields.position_key ?? "").localeCompare(String(b.fields.position_key ?? "")) || a.entityId.localeCompare(b.entityId)) : records[kind])}
           userId={userId}
           organizationId={organizationId}
@@ -94,6 +92,7 @@ function CatalogGroup({
   organizationId: string;
   locale: "cs" | "en";
 }) {
+  const { t } = useTranslation();
   const [name, setName] = useState("");
   const [color, setColor] = useState("#336699");
   const add = async (event: React.FormEvent) => {
@@ -115,7 +114,7 @@ function CatalogGroup({
       <h4>{label}</h4>
       <form onSubmit={(event) => void add(event)}>
         <label>
-          {locale === "cs" ? "Název" : "Name"}
+          {t("catalogAdministration.name", { lng: locale })}
           <input
             required
             maxLength={200}
@@ -125,7 +124,7 @@ function CatalogGroup({
         </label>
         {(kind === "recipe_tag" || kind === "dietary_tag") && (
           <label>
-            {locale === "cs" ? "Barva" : "Color"}
+            {t("catalogAdministration.color", { lng: locale })}
             <input
               type="color"
               value={color}
@@ -133,7 +132,7 @@ function CatalogGroup({
             />
           </label>
         )}
-        <button type="submit">{locale === "cs" ? "Přidat" : "Add"}</button>
+        <button type="submit">{t("catalogAdministration.add", { lng: locale })}</button>
       </form>
       <ul>
         {records.map((record) => (
@@ -164,6 +163,7 @@ function CatalogRow({
   record: Awaited<ReturnType<typeof readVisibleRecords>>[number];
   userId: string;
 }) {
+  const { t } = useTranslation();
   const [name, setName] = useState(
     String(record.fields.name ?? record.fields.custom_name ?? ""),
   );
@@ -196,7 +196,7 @@ function CatalogRow({
     <li>
       {displayName}{" "}
       {record.lifecycle === "retired"
-        ? `(${locale === "cs" ? "vyřazeno" : "retired"})`
+        ? `(${t("catalogAdministration.retired", { lng: locale })})`
         : ""}
       <button
         type="button"
@@ -212,24 +212,20 @@ function CatalogRow({
         }
       >
         {record.lifecycle === "retired"
-          ? locale === "cs"
-            ? "Obnovit"
-            : "Restore"
-          : locale === "cs"
-            ? "Vyřadit"
-            : "Retire"}
+            ? t("catalogAdministration.restore", { lng: locale })
+            : t("catalogAdministration.retire", { lng: locale })}
       </button>
       {record.lifecycle === "active" && (
         <details>
-          <summary>{locale === "cs" ? "Upravit" : "Edit"}</summary>
+          <summary>{t("catalogAdministration.edit", { lng: locale })}</summary>
           <form onSubmit={(event) => void save(event)}>
             {!builtInKey && <label>
-              {locale === "cs" ? "Název" : "Name"}
+              {t("catalogAdministration.name", { lng: locale })}
               <input maxLength={200} required value={name} onChange={(event) => setName(event.target.value)} />
             </label>}
             {(kind === "store_section" || kind === "organization_meal_role_preset") && (
               <label>
-                {locale === "cs" ? "Pořadí" : "Position"}
+                {t("catalogAdministration.position", { lng: locale })}
                 <input
                   required
                   pattern="[0-9A-Za-z]+"
@@ -240,7 +236,7 @@ function CatalogRow({
             )}
             {(kind === "recipe_tag" || kind === "dietary_tag") && (
               <label>
-                {locale === "cs" ? "Barva" : "Color"}
+                {t("catalogAdministration.color", { lng: locale })}
                 <input
                   type="color"
                   value={color}
@@ -248,7 +244,7 @@ function CatalogRow({
                 />
               </label>
             )}
-            <button type="submit">{locale === "cs" ? "Uložit" : "Save"}</button>
+            <button type="submit">{t("catalogAdministration.save", { lng: locale })}</button>
           </form>
         </details>
       )}

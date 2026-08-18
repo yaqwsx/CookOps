@@ -298,6 +298,12 @@ const resources = {
           unavailable: "Surovinu se nepodařilo uložit místně. Zkuste to znovu.",
         },
       },
+      catalogAdministration: {
+        heading: "Správa katalogu", recipeTags: "Štítky receptů", dietaryTags: "Dietní štítky",
+        storeSections: "Oddělení obchodu", customUnits: "Vlastní jednotky", mealRoles: "Role jídel",
+        name: "Název", color: "Barva", add: "Přidat", retired: "vyřazeno", restore: "Obnovit",
+        retire: "Vyřadit", edit: "Upravit", position: "Pořadí", save: "Uložit",
+      },
       planner: {
         heading: "Plán akce",
         loading: "Načítáme plán akce…",
@@ -878,6 +884,12 @@ const resources = {
           unavailable:
             "The ingredient could not be saved locally. Please try again.",
         },
+      },
+      catalogAdministration: {
+        heading: "Catalog administration", recipeTags: "Recipe tags", dietaryTags: "Dietary tags",
+        storeSections: "Store sections", customUnits: "Custom units", mealRoles: "Meal roles",
+        name: "Name", color: "Color", add: "Add", retired: "retired", restore: "Restore",
+        retire: "Retire", edit: "Edit", position: "Position", save: "Save",
       },
       planner: {
         heading: "Event planner",
