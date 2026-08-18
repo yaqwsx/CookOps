@@ -18,6 +18,7 @@ import {
   type RecipeVersionInput,
 } from "./recipe-publish";
 import { queueRecipeLifecycle } from "./recipe-lifecycle";
+import { queueCatalogConfiguration } from "./catalog-configuration";
 import { pullOrganization, SyncRequestError } from "./sync-bootstrap";
 import { defaultMassForUnit, queueIngredientCreateWithVersion, type IngredientCreateInput } from "./ingredient-create";
 import { rankIngredients } from "./ingredient-fuzzy";
@@ -32,6 +33,7 @@ const initialInput: RecipeCreateInput = {
   description: "",
   scalingUnitId: "",
   baseScalingAmount: "1",
+  recipeTagIds: [],
 };
 const errors = new Set([
   "name",
@@ -144,6 +146,7 @@ function RecipeCreateForm({
           />
         </label>
       </div>
+      <RecipeTagPicker catalog={catalog} organizationId={organizationId} userId={userId} selected={input.recipeTagIds ?? []} onChange={(recipeTagIds) => setInput((current) => ({ ...current, recipeTagIds }))} />
       {!catalog.scalingUnits.length ? (
         <p role="status">{t("recipesCatalog.noScalingUnits")}</p>
       ) : null}
@@ -153,6 +156,59 @@ function RecipeCreateForm({
         {t("recipesCatalog.create")}
       </button>
     </form>
+  );
+}
+
+function RecipeTagPicker({ catalog, organizationId, userId, selected, onChange }: { catalog: RecipeCatalogProjection; organizationId: string; userId: string; selected: string[]; onChange: (ids: string[]) => void }) {
+  const { t } = useTranslation();
+  const [creating, setCreating] = useState(false);
+  const [name, setName] = useState("");
+  const [color, setColor] = useState("#336699");
+  const [error, setError] = useState(false);
+  const [createdTags, setCreatedTags] = useState<{ id: string; name: string }[]>([]);
+  const tags = [
+    ...catalog.tags.filter((tag) => !tag.retired || selected.includes(tag.id)),
+    ...createdTags.filter((tag) => !catalog.tags.some((item) => item.id === tag.id)),
+  ];
+  async function create() {
+    const canonical = name.normalize("NFC").trim();
+    const activeNames = [...catalog.tags.filter((tag) => !tag.retired).map((tag) => tag.name), ...createdTags.map((tag) => tag.name)].map((tag) => tag.normalize("NFC").trim().toLocaleLowerCase());
+    if (!canonical || canonical.length > 200 || !/^#[0-9A-Fa-f]{6}$/.test(color) || activeNames.includes(canonical.toLocaleLowerCase())) {
+      setError(true);
+      return;
+    }
+    try {
+      const id = await queueCatalogConfiguration(userId, organizationId, "recipe_tag", "create", { name: canonical, color });
+      if (id) {
+        setCreatedTags((current) => [...current, { id, name: canonical }]);
+        onChange([...new Set([...selected, id])]);
+      }
+    } catch {
+      setError(true);
+      return;
+    }
+    setName("");
+    setCreating(false);
+    setError(false);
+  }
+  return (
+    <fieldset>
+      <legend>{t("recipesCatalog.tags")}</legend>
+      {tags.map((tag) => (
+        <label key={tag.id}>
+          <input checked={selected.includes(tag.id)} onChange={(event) => onChange(event.target.checked ? [...selected, tag.id] : selected.filter((id) => id !== tag.id))} type="checkbox" />
+          {tag.name}
+        </label>
+      ))}
+      {creating ? (
+        <div>
+          <label>{t("recipesCatalog.newTagName")}<input autoComplete="off" maxLength={200} required value={name} onChange={(event) => setName(event.target.value)} /></label>
+          <label>{t("recipesCatalog.tagColor")}<input type="color" value={color} onChange={(event) => setColor(event.target.value)} /></label>
+          {error ? <p role="alert">{t("recipesCatalog.tagCreateError")}</p> : null}
+          <button onClick={() => void create()} type="button">{t("recipesCatalog.saveTag")}</button>
+        </div>
+      ) : <button onClick={() => setCreating(true)} type="button">{t("recipesCatalog.createTag")}</button>}
+    </fieldset>
   );
 }
 
@@ -559,26 +615,7 @@ function RecipeEditor({
       >
         {t("recipesCatalog.addLine")}
       </button>
-      <fieldset>
-        <legend>{t("recipesCatalog.tags")}</legend>
-        {catalog.tags.map((tag) => (
-          <label key={tag.id}>
-            <input
-              checked={input.recipeTagIds.includes(tag.id)}
-              onChange={(event) =>
-                setInput((current) => ({
-                  ...current,
-                  recipeTagIds: event.target.checked
-                    ? [...current.recipeTagIds, tag.id]
-                    : current.recipeTagIds.filter((id) => id !== tag.id),
-                }))
-              }
-              type="checkbox"
-            />
-            {tag.name}
-          </label>
-        ))}
-      </fieldset>
+      <RecipeTagPicker catalog={catalog} organizationId={organizationId} userId={userId} selected={input.recipeTagIds} onChange={(recipeTagIds) => setInput((current) => ({ ...current, recipeTagIds }))} />
       {error ? <p role="alert">{t(`recipesCatalog.errors.${error}`)}</p> : null}
       {saved ? <p role="status">{t("recipesCatalog.saved")}</p> : null}
       <button type="submit">{t("recipesCatalog.publish")}</button>
@@ -745,6 +782,7 @@ export function RecipeCatalog({
   const [state, setState] = useState<CatalogState>({ status: "loading" });
   const [showRetired, setShowRetired] = useState(false);
   const [query, setQuery] = useState("");
+  const [tagFilter, setTagFilter] = useState("");
   const [dirtyRecipeIds, setDirtyRecipeIds] = useState<Set<string>>(
     () => new Set(),
   );
@@ -811,7 +849,7 @@ export function RecipeCatalog({
     );
   const visibleRecipes = state.catalog.recipes.filter(
     (recipe) =>
-      (showRetired || !recipe.retired) || recipe.id === selectedRecipeId,
+      (showRetired || !recipe.retired) || recipe.id === selectedRecipeId || recipe.id === editRecipeId,
   );
   const normalizedQuery = query.normalize("NFC").trim().toLocaleLowerCase();
   const tagNameById = new Map(
@@ -825,6 +863,7 @@ export function RecipeCatalog({
   );
   const recipes = visibleRecipes.filter((recipe) => {
     if (selectedRecipeId && recipe.id !== selectedRecipeId) return false;
+    if (tagFilter && !recipe.recipeTagIds.includes(tagFilter) && recipe.id !== editRecipeId) return false;
     if (!normalizedQuery) return true;
     const tagNames = recipe.recipeTagIds
       .map((id) => tagNameById.get(id))
@@ -873,6 +912,7 @@ export function RecipeCatalog({
         />
         {t("recipesCatalog.showRetired")}
       </label>
+      <label>{t("recipesCatalog.tagFilter")}<select aria-label={t("recipesCatalog.tagFilter")} value={tagFilter} onChange={(event) => setTagFilter(event.target.value)}><option value="">{t("recipesCatalog.allTags")}</option>{state.catalog.tags.map((tag) => <option key={tag.id} value={tag.id}>{tag.name}</option>)}</select></label>
       <label>
         {t("recipesCatalog.search")}
         <input

@@ -1,7 +1,8 @@
 import { beforeEach, describe, expect, it } from "vitest";
 
 import { readRecipeCatalog } from "./recipe-catalog";
-import { queueRecipeCreate, validateRecipeCreate } from "./recipe-create";
+import { queueRecipeCreate, replayRecipeCreate, validateRecipeCreate } from "./recipe-create";
+import { queueCatalogConfiguration } from "./catalog-configuration";
 import { localDb } from "./local-db";
 
 const userId = "a6a58bd6-214e-49af-8fae-e5f974bf8e08";
@@ -97,6 +98,7 @@ describe("offline recipe creation", () => {
     await expect(readRecipeCatalog(userId, organizationId)).resolves.toEqual({
       scalingUnits: [{ id: unitId, name: "person" }],
       ingredients: [],
+      units: [],
       tags: [],
       costs: { [recipeId]: { currency: "", total: "0.00", missingCount: 0 } },
       recipes: [
@@ -108,6 +110,36 @@ describe("offline recipe creation", () => {
         }),
       ],
     });
+  });
+
+  it("accepts an inline tag overlay and attaches its recipe association", async () => {
+    await addScalingUnit();
+    const tagId = await queueCatalogConfiguration(userId, organizationId, "recipe_tag", "create", { name: "Quick", color: "#336699" });
+    const recipeId = await queueRecipeCreate(userId, organizationId, { ...input, recipeTagIds: [tagId as string] });
+    const command = (await localDb.outbox.toArray()).find((item) => item.commandType === "recipe.create");
+    expect(command?.payload.recipe_tag_ids).toEqual([tagId]);
+    expect((await localDb.optimisticOverlays.toArray()).filter((record) => record.entityType === "recipe_version_tag")).toHaveLength(1);
+    expect(recipeId).toBeTruthy();
+  });
+
+  it("rejects duplicate and retired tags without local writes", async () => {
+    await addScalingUnit();
+    const tagId = "7ce17d2f-8365-4b1f-a80b-34d10425d51c";
+    await localDb.canonicalRecords.add({ userId, organizationId, entityType: "recipe_tag", entityId: tagId, recordSchemaVersion: 1, lifecycle: "active", fields: { id: tagId, organization_id: organizationId, name: "Quick", color: "#336699" }, fieldClocks: {}, immutable: false, updatedAt: "2026-08-07T12:00:00.000Z" });
+    await expect(queueRecipeCreate(userId, organizationId, { ...input, recipeTagIds: [tagId, tagId] })).rejects.toThrow("tags");
+    await localDb.canonicalRecords.update([userId, organizationId, "recipe_tag", tagId], { lifecycle: "retired" });
+    await expect(queueRecipeCreate(userId, organizationId, { ...input, recipeTagIds: [tagId] })).rejects.toThrow("tags");
+    expect(await localDb.outbox.count()).toBe(0);
+  });
+
+  it("replays legacy creates without a recipe_tag_ids field", async () => {
+    await addScalingUnit();
+    await replayRecipeCreate(userId, organizationId, {
+      id: "9ce17d2f-8365-4b1f-a80b-34d10425d51c",
+      actionAt: "2026-08-07T12:00:00.000Z",
+      payload: { recipe_id: "8ce17d2f-8365-4b1f-a80b-34d10425d51c", recipe_version_id: "7ce17d2f-8365-4b1f-a80b-34d10425d51c", name: "Legacy", scaling_unit_id: unitId, base_scaling_amount: "1", ingredient_lines: [] },
+    });
+    expect((await localDb.optimisticOverlays.toArray()).filter((record) => record.entityId === "8ce17d2f-8365-4b1f-a80b-34d10425d51c")).toHaveLength(1);
   });
 
   it("leaves no local partial work when a cached unit is absent or unsuitable", async () => {

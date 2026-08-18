@@ -42,7 +42,7 @@ export type RecipeCatalogProjection = {
   scalingUnits: RecipeScalingUnit[];
   ingredients: CatalogIngredient[];
   units: IngredientUnit[];
-  tags: { id: string; name: string }[];
+  tags: { id: string; name: string; retired?: boolean }[];
   costs: Record<string, RecipeCostProjection>;
 };
 export type RecipeCostUnit = { id: string; name?: string; dimension: string; baseUnitFactor?: string };
@@ -414,8 +414,8 @@ export async function readRecipeCatalog(
           referencedTagIds.has(record.entityId)) &&
         text(record, "organization_id") === organizationId,
     )
-    .map((record) => ({ id: record.entityId, name: text(record, "name") }))
-    .filter((tag): tag is { id: string; name: string } =>
+    .map((record) => ({ id: record.entityId, name: text(record, "name"), ...(record.lifecycle === "retired" ? { retired: true } : {}) }))
+    .filter((tag): tag is { id: string; name: string; retired?: boolean } =>
       Boolean(uuid.test(tag.id) && tag.name),
     );
   const currentIngredientVersionIds = new Set(

@@ -146,12 +146,7 @@ async function writeRecipePublication(
   const lines = payload.ingredient_lines as Array<Record<string, unknown>>;
   const tags = payload.recipe_tag_ids as string[];
   for (const tagId of tags) {
-    const tag = await localDb.canonicalRecords.get([
-      userId,
-      organizationId,
-      "recipe_tag",
-      tagId,
-    ]);
+    const tag = (await localDb.optimisticOverlays.get([userId, organizationId, "recipe_tag", tagId])) ?? (await localDb.canonicalRecords.get([userId, organizationId, "recipe_tag", tagId]));
     if (tag?.lifecycle !== "active") throw new Error("tags");
   }
   for (const line of lines) {
@@ -338,6 +333,7 @@ export async function replayRecipeVersionPublish(
     !Array.isArray(payload.ingredient_lines)
   )
     return;
+  if (!Array.isArray(payload.recipe_tag_ids) || new Set(payload.recipe_tag_ids).size !== payload.recipe_tag_ids.length || !payload.recipe_tag_ids.every((id): id is string => typeof id === "string" && uuid.test(id))) return;
   try {
     await writeRecipePublication(
       userId,

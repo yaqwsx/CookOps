@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it } from "vitest";
 
 import { localDb } from "./local-db";
+import { queueCatalogConfiguration } from "./catalog-configuration";
 import {
   queueRecipeVersionPublish,
   recipeVersionTagId,
@@ -235,5 +236,19 @@ describe("offline recipe version publication", () => {
     await expect(
       recipeVersionTagId("00000000-0000-0000-0000-000000000001", tagId),
     ).resolves.toBe("c2edce83-7abc-5bd5-b677-6fe06cd6b9c4");
+  });
+
+  it("publishes with an inline tag overlay and rejects retired tags", async () => {
+    const createdTagId = await queueCatalogConfiguration(userId, organizationId, "recipe_tag", "create", { name: "Quick", color: "#336699" });
+    await expect(queueRecipeVersionPublish(userId, organizationId, { ...input, recipeTagIds: [createdTagId as string] })).resolves.toMatch(/^[0-9a-f-]{36}$/);
+    expect((await localDb.optimisticOverlays.toArray()).filter((record) => record.entityType === "recipe_version_tag")).toHaveLength(1);
+    await localDb.canonicalRecords.add({ userId, organizationId, entityType: "recipe_tag", entityId: tagId, recordSchemaVersion: 1, lifecycle: "retired", fields: { id: tagId, organization_id: organizationId }, fieldClocks: {}, immutable: false, updatedAt: "2026-01-01T00:00:00Z" });
+    await expect(queueRecipeVersionPublish(userId, organizationId, { ...input, recipeTagIds: [tagId] })).rejects.toThrow();
+  });
+
+  it("prefers an active pending tag overlay over a retired canonical tag", async () => {
+    await localDb.canonicalRecords.add({ userId, organizationId, entityType: "recipe_tag", entityId: tagId, recordSchemaVersion: 1, lifecycle: "retired", fields: { id: tagId, organization_id: organizationId, name: "Quick" }, fieldClocks: {}, immutable: false, updatedAt: "2026-01-01T00:00:00Z" });
+    await localDb.optimisticOverlays.add({ userId, organizationId, entityType: "recipe_tag", entityId: tagId, recordSchemaVersion: 1, lifecycle: "active", fields: { id: tagId, organization_id: organizationId, name: "Quick", color: "#336699" }, fieldClocks: {}, immutable: false, updatedAt: "2026-01-01T00:00:00Z" });
+    await expect(queueRecipeVersionPublish(userId, organizationId, { ...input, recipeTagIds: [tagId] })).resolves.toMatch(/^[0-9a-f-]{36}$/);
   });
 });

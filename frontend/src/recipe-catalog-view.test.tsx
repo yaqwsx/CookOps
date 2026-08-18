@@ -7,6 +7,9 @@ import { RecipeCatalog } from "./recipe-catalog-view";
 import { queueRecipeVersionPublish } from "./recipe-publish";
 import { queueIngredientCreateWithVersion } from "./ingredient-create";
 
+const { queueCatalogConfiguration } = vi.hoisted(() => ({ queueCatalogConfiguration: vi.fn(async () => "2ce17d2f-8365-4b1f-a80b-34d10425d51c") }));
+vi.mock("./catalog-configuration", () => ({ queueCatalogConfiguration }));
+
 vi.mock("dexie", async (importOriginal) => ({
   ...(await importOriginal<typeof import("dexie")>()),
   liveQuery: (query: () => Promise<unknown>) => ({
@@ -166,6 +169,25 @@ describe("recipe retired ingredient warning", () => {
       "Tento recept obsahuje vyřazenou surovinu",
     );
     expect(screen.getByText("Je dostupná aktualizace verzí surovin v katalogu.")).toBeVisible();
+  });
+
+  it("creates and selects a tag inline, while tag filtering composes with text search", async () => {
+    const user = userEvent.setup();
+    render(<RecipeCatalog onUnauthenticated={() => undefined} organizationId="5ce17d2f-8365-4b1f-a80b-34d10425d51c" userId="a6a58bd6-214e-49af-8fae-e5f974bf8e08" />);
+    await screen.findByRole("heading", { name: "Nový recept" });
+    await user.click(screen.getAllByRole("button", { name: "Vytvořit štítek" })[0]);
+    await user.type(screen.getByRole("textbox", { name: "Název nového štítku" }), "Family");
+    await user.click(screen.getByRole("button", { name: "Uložit a vybrat štítek" }));
+    expect(queueCatalogConfiguration).toHaveBeenCalledWith(expect.any(String), expect.any(String), "recipe_tag", "create", { name: "Family", color: "#336699" });
+    expect(screen.getByRole("checkbox", { name: "Family" })).toBeChecked();
+    await user.click(screen.getByRole("button", { name: "Vytvořit štítek" }));
+    await user.type(screen.getByRole("textbox", { name: "Název nového štítku" }), "Family");
+    await user.click(screen.getByRole("button", { name: "Uložit a vybrat štítek" }));
+    expect(queueCatalogConfiguration).toHaveBeenCalledTimes(1);
+    expect(screen.getByText("Štítek je neplatný nebo již existuje.")).toBeVisible();
+    await user.selectOptions(screen.getByRole("combobox", { name: "Filtrovat podle štítku" }), "1ce17d2f-8365-4b1f-a80b-34d10425d51c");
+    await user.type(screen.getByRole("searchbox", { name: "Hledat recepty" }), "Family");
+    expect(screen.queryByRole("heading", { name: "Pasta" })).not.toBeInTheDocument();
   });
 
   it("keeps one Markdown buffer across the safe visual preview", async () => {

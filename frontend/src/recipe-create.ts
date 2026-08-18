@@ -1,4 +1,5 @@
 import { appendOutboxCommand, localDb, type CanonicalRecord } from "./local-db";
+import { recipeVersionTagId } from "./recipe-publish";
 
 const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const decimal = /^(?:0|[1-9]\d*)(?:\.\d+)?$/;
@@ -8,12 +9,14 @@ export type RecipeCreateInput = {
   description: string;
   scalingUnitId: string;
   baseScalingAmount: string;
+  recipeTagIds?: string[];
 };
 export type RecipeCreateValidationError =
   | "name"
   | "description"
   | "scalingUnit"
-  | "baseScalingAmount";
+  | "baseScalingAmount"
+  | "tags";
 
 export function validateRecipeCreate(
   input: RecipeCreateInput,
@@ -27,6 +30,7 @@ export function validateRecipeCreate(
     Number(input.baseScalingAmount) <= 0
   )
     return "baseScalingAmount";
+  if (input.recipeTagIds && (new Set(input.recipeTagIds).size !== input.recipeTagIds.length || !input.recipeTagIds.every((id) => uuid.test(id)))) return "tags";
 }
 
 function recipeOverlay(
@@ -106,6 +110,7 @@ export async function queueRecipeCreate(
     scaling_unit_id: input.scalingUnitId,
     base_scaling_amount: input.baseScalingAmount,
     ingredient_lines: [],
+    recipe_tag_ids: input.recipeTagIds ?? [],
     ...(description ? { description } : {}),
   };
   await localDb.transaction(
@@ -127,9 +132,14 @@ export async function queueRecipeCreate(
         unit.fields.allows_recipe_scaling !== true
       )
         throw new Error("scalingUnit");
+      for (const tagId of payload.recipe_tag_ids) {
+        const tag = (await localDb.optimisticOverlays.get([userId, organizationId, "recipe_tag", tagId])) ?? (await localDb.canonicalRecords.get([userId, organizationId, "recipe_tag", tagId]));
+        if (tag?.lifecycle !== "active") throw new Error("tags");
+      }
       await localDb.optimisticOverlays.bulkPut([
         recipeOverlay(userId, organizationId, mutationId, actionAt, payload),
         versionOverlay(userId, organizationId, mutationId, actionAt, payload),
+        ...(await Promise.all(payload.recipe_tag_ids.map(async (tagId: string) => { const id = await recipeVersionTagId(recipeVersionId, tagId); return { userId, organizationId, entityType: "recipe_version_tag", entityId: id, recordSchemaVersion: 1, lifecycle: "active" as const, immutable: true, fields: { id, recipe_version_id: recipeVersionId, recipe_tag_id: tagId, organization_id: organizationId }, fieldClocks: { optimistic: { mutationId, actionAt } }, updatedAt: actionAt } satisfies CanonicalRecord; }))),
       ]);
       await appendOutboxCommand({
         id: mutationId,
@@ -171,6 +181,10 @@ export async function replayRecipeCreate(
     !decimal.test(payload.base_scaling_amount)
   )
     return;
+  const recipeTagIds = payload.recipe_tag_ids === undefined ? [] : payload.recipe_tag_ids;
+  if (!Array.isArray(recipeTagIds) || new Set(recipeTagIds).size !== recipeTagIds.length || !recipeTagIds.every((id): id is string => typeof id === "string" && uuid.test(id))) return;
+  const tags = await Promise.all(recipeTagIds.map(async (tagId) => (await localDb.optimisticOverlays.get([userId, organizationId, "recipe_tag", tagId])) ?? (await localDb.canonicalRecords.get([userId, organizationId, "recipe_tag", tagId]))));
+  if (tags.some((tag) => tag?.lifecycle !== "active")) return;
   await localDb.optimisticOverlays.bulkPut([
     recipeOverlay(
       userId,
@@ -186,5 +200,6 @@ export async function replayRecipeCreate(
       command.actionAt,
       payload,
     ),
+    ...await Promise.all(recipeTagIds.map(async (tagId) => { const id = await recipeVersionTagId(payload.recipe_version_id as string, tagId); return { userId, organizationId, entityType: "recipe_version_tag", entityId: id, recordSchemaVersion: 1, lifecycle: "active" as const, immutable: true, fields: { id, recipe_version_id: payload.recipe_version_id, recipe_tag_id: tagId, organization_id: organizationId }, fieldClocks: { optimistic: { mutationId: command.id, actionAt: command.actionAt } }, updatedAt: command.actionAt } satisfies CanonicalRecord; })),
   ]);
 }
