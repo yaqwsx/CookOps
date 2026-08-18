@@ -33,6 +33,7 @@ from cookops.http_oauth_interactions import (
     OAuthInteractionHttpServices,
     create_oauth_interaction_router,
 )
+from cookops.http_recipe_copy import RecipeCopyHttpServices, create_recipe_copy_router
 from cookops.http_shopping import ShoppingHttpServices, create_shopping_router
 from cookops.http_sync import SynchronizationHttpServices, create_sync_router
 from cookops.media_storage import LocalReceiptMediaStorage
@@ -185,6 +186,10 @@ def create_app(
             browser_sessions=application.state.browser_authentication.browser_sessions,
             session_factory=session_factory,
         )
+        application.state.recipe_copy = RecipeCopyHttpServices(
+            browser_sessions=application.state.browser_authentication.browser_sessions,
+            session_factory=session_factory,
+        )
         application.state.memberships = MembershipHttpServices(
             browser_sessions=application.state.browser_authentication.browser_sessions,
             session_factory=session_factory,
@@ -214,6 +219,7 @@ def create_app(
     application.include_router(create_organization_administration_router(app_settings))
     application.include_router(create_events_router(app_settings))
     application.include_router(create_ingredient_copy_router(app_settings))
+    application.include_router(create_recipe_copy_router(app_settings))
     application.include_router(create_memberships_router(app_settings))
     application.include_router(create_shopping_router(app_settings))
     application.include_router(create_media_router())
