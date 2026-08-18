@@ -1408,7 +1408,11 @@ async def _authorized(
             ClientInstallation.disabled_at.is_(None),
             ClientInstallation.installation_kind == kind,
         )
-    actor = await session.scalar(actor_statement)
+        actor = await session.scalar(
+            actor_statement.with_for_update(of=(User, ClientInstallation))
+        )
+    else:
+        actor = await session.scalar(actor_statement.with_for_update(of=User))
     organizations = set(
         (
             await session.execute(
@@ -1428,7 +1432,7 @@ async def _authorized(
             SystemRoleAssignment.user_id == context.actor_user_id,
             SystemRoleAssignment.role == "system_admin",
             SystemRoleAssignment.revoked_at.is_(None),
-        )
+        ).with_for_update(of=SystemRoleAssignment)
     )
     if system_admin is not None:
         return True
@@ -1442,6 +1446,7 @@ async def _authorized(
                 OrganizationMembership.organization_id.in_(organizations),
                 OrganizationMembership.state == "active",
             )
+            .with_for_update(of=OrganizationMembership)
         )
     ).all()
     roles: dict[UUID, str] = {row[0]: row[1] for row in rows}

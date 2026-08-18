@@ -4,7 +4,7 @@ import asyncio
 import os
 from datetime import UTC, datetime
 from types import SimpleNamespace
-from uuid import uuid4
+from uuid import UUID, uuid4
 
 import pytest
 from alembic.config import Config
@@ -21,7 +21,11 @@ from cookops.application.ingredient_copy import (
     copy_ingredient_to_organization,
     preview_ingredient_copy,
 )
-from cookops.application.organizations import ApplicationServiceError, ExecutionContext
+from cookops.application.organizations import (
+    ApplicationServiceError,
+    ExecutionContext,
+    FieldViolation,
+)
 from cookops.config import Settings
 from cookops.http_ingredient_copy import IngredientCopyHttpServices
 from cookops.main import create_app
@@ -183,9 +187,10 @@ def context(db):
 
 def test_allowed_preview_is_scoped_and_does_not_mutate(copy_database):
     db = copy_database
-    before = db.engine.connect().execute(
-        select(Ingredient.id).where(Ingredient.id == db.ingredient)
-    ).scalar_one()
+    with db.engine.connect() as connection:
+        before = connection.execute(
+            select(Ingredient.id).where(Ingredient.id == db.ingredient)
+        ).scalar_one()
     preview = asyncio.run(
         preview_ingredient_copy(
             db.sessions,
@@ -397,6 +402,27 @@ def test_source_member_or_destination_member_is_denied(copy_database):
     assert error.value.code == "forbidden"
 
 
+def test_disabled_user_is_denied_without_mutation(copy_database):
+    db = copy_database
+    with db.engine.begin() as connection:
+        connection.execute(
+            User.__table__.update()
+            .where(User.id == db.actor)
+            .values(disabled_at=datetime.now(UTC), disabled_by_user_id=db.actor)
+        )
+    with pytest.raises(ApplicationServiceError) as error:
+        asyncio.run(
+            preview_ingredient_copy(
+                db.sessions,
+                context(db),
+                PreviewIngredientCopyCommand(db.source, db.destination, db.ingredient),
+            )
+        )
+    assert error.value.code == "forbidden"
+    with db.engine.connect() as connection:
+        assert connection.execute(select(OrganizationChange)).first() is None
+
+
 def test_system_admin_can_preview_without_memberships(copy_database):
     db = copy_database
     with db.engine.begin() as connection:
@@ -515,6 +541,259 @@ async def _ready() -> bool:
 
 def _authenticated(user_id):
     return SimpleNamespace(user_id=user_id)
+
+
+def _copy_http_app(db, *, authenticated_user_id=None):
+    settings = Settings(
+        browser_session_cookie_name="cookops_session",
+        browser_origin="https://testserver",
+    )
+    app = create_app(settings, readiness_probe=lambda: _ready())
+    user_id = db.actor if authenticated_user_id is None else authenticated_user_id
+
+    async def authenticate(secret: str):
+        return _authenticated(user_id) if secret == "session" else None
+
+    app.state.ingredient_copy = IngredientCopyHttpServices(
+        browser_sessions=SimpleNamespace(authenticate=authenticate),
+        session_factory=db.sessions,
+    )
+    return app
+
+
+def _http_copy_payload(db, *, mutation_id=None):
+    destination_section, destination_tag = uuid4(), uuid4()
+    with db.engine.begin() as connection:
+        connection.execute(
+            insert(StoreSection).values(
+                id=destination_section,
+                organization_id=db.destination,
+                name="Produce",
+                normalized_name="produce",
+                position_key="a",
+                created_by_user_id=db.actor,
+            )
+        )
+        connection.execute(
+            insert(DietaryTag).values(
+                id=destination_tag,
+                organization_id=db.destination,
+                seed_key="vegan",
+                created_by_user_id=db.actor,
+            )
+        )
+    preview = asyncio.run(
+        preview_ingredient_copy(
+            db.sessions,
+            context(db),
+            PreviewIngredientCopyCommand(db.source, db.destination, db.ingredient),
+        )
+    )
+    targets = {
+        "default_store_section": destination_section,
+        "dietary_tag": destination_tag,
+    }
+    return {
+        "source_organization_id": str(db.source),
+        "ingredient_id": str(db.ingredient),
+        "client_installation_id": str(db.installation),
+        "precondition_fingerprint": preview.precondition_fingerprint,
+        "mappings": [
+            {
+                "kind": item.kind,
+                "source_id": str(item.source_id),
+                "destination_id": str(targets[item.kind]),
+            }
+            for item in preview.mapping_requirements
+        ],
+        "mutation_id": str(mutation_id or uuid4()),
+        "client_wall_time": datetime.now(UTC).isoformat(),
+    }
+
+
+def test_authenticated_http_copy_route_and_replay(copy_database):
+    db = copy_database
+    payload = _http_copy_payload(db)
+    app = _copy_http_app(db)
+    with TestClient(app) as client:
+        first = client.post(
+            f"/api/v1/organizations/{db.destination}/ingredient-copy",
+            json=payload,
+            cookies={"cookops_session": "session"},
+            headers={"origin": "https://testserver"},
+        )
+        second = client.post(
+            f"/api/v1/organizations/{db.destination}/ingredient-copy",
+            json=payload,
+            cookies={"cookops_session": "session"},
+            headers={"origin": "https://testserver"},
+        )
+    assert first.status_code == 200, first.text
+    assert second.status_code == 200, second.text
+    first_body, second_body = first.json(), second.json()
+    assert first_body["replayed"] is False
+    assert second_body["replayed"] is True
+    assert second_body["destination_ingredient_id"] == first_body["destination_ingredient_id"]
+    assert second_body["first_change_sequence"] == first_body["first_change_sequence"]
+    assert second_body["last_change_sequence"] == first_body["last_change_sequence"]
+    with db.engine.connect() as connection:
+        changes = connection.execute(
+            select(OrganizationChange).where(
+                OrganizationChange.mutation_id == UUID(payload["mutation_id"])
+            )
+        ).all()
+        assert len(changes) == first_body["last_change_sequence"] - first_body[
+            "first_change_sequence"
+        ] + 1
+
+
+def test_http_copy_requires_session_and_exact_origin_without_mutation(copy_database):
+    db = copy_database
+    payload = _http_copy_payload(db)
+    app = _copy_http_app(db)
+    route = f"/api/v1/organizations/{db.destination}/ingredient-copy"
+    with TestClient(app) as client:
+        missing_session = client.post(
+            route, json=payload, headers={"origin": "https://testserver"}
+        )
+        wrong_origin = client.post(
+            route,
+            json=payload,
+            cookies={"cookops_session": "session"},
+            headers={"origin": "https://attacker.example"},
+        )
+        absent_origin = client.post(
+            route, json=payload, cookies={"cookops_session": "session"}
+        )
+    assert missing_session.status_code == 401
+    assert wrong_origin.status_code == absent_origin.status_code == 403
+    assert wrong_origin.json() == absent_origin.json() == {"detail": {"code": "forbidden"}}
+    with db.engine.connect() as connection:
+        assert connection.execute(select(OrganizationChange)).first() is None
+
+
+def test_http_copy_forbidden_is_non_enumerating_and_payload_is_strict(copy_database):
+    db = copy_database
+    payload = _http_copy_payload(db)
+    app = _copy_http_app(db, authenticated_user_id=uuid4())
+    route = f"/api/v1/organizations/{db.destination}/ingredient-copy"
+    with TestClient(app) as client:
+        forbidden = client.post(
+            route,
+            json=payload,
+            cookies={"cookops_session": "session"},
+            headers={"origin": "https://testserver"},
+        )
+        extra = client.post(
+            route,
+            json={**payload, "unexpected": True},
+            cookies={"cookops_session": "session"},
+            headers={"origin": "https://testserver"},
+        )
+        malformed = client.post(
+            route,
+            json={**payload, "ingredient_id": 42},
+            cookies={"cookops_session": "session"},
+            headers={"origin": "https://testserver"},
+        )
+    assert forbidden.status_code == 404
+    assert forbidden.json() == {"detail": {"code": "not_found"}}
+    assert extra.status_code == 422
+    assert malformed.status_code == 422
+
+
+@pytest.mark.parametrize("field", ["client_installation_id", "mutation_id"])
+def test_http_copy_rejects_zero_identity_without_mutation(copy_database, field):
+    db = copy_database
+    payload = {**_http_copy_payload(db), field: "00000000-0000-0000-0000-000000000000"}
+    app = _copy_http_app(db)
+    with TestClient(app) as client:
+        response = client.post(
+            f"/api/v1/organizations/{db.destination}/ingredient-copy",
+            json=payload,
+            cookies={"cookops_session": "session"},
+            headers={"origin": "https://testserver"},
+        )
+    assert response.status_code == 422
+    with db.engine.connect() as connection:
+        assert connection.execute(select(OrganizationChange)).first() is None
+
+
+def test_http_command_error_preserves_validation_contract():
+    from cookops.http_ingredient_copy import _command_error
+
+    error = ApplicationServiceError(
+        "validation_failed",
+        field_violations=(FieldViolation("mappings", "missing"),),
+        retry_same_identity=False,
+    )
+    response = _command_error(error)
+    assert response.status_code == 422
+    assert response.detail == {
+        "code": "validation_failed",
+        "field_violations": [{"path": "mappings", "code": "missing"}],
+        "retry_same_identity": False,
+    }
+
+
+def test_http_copy_rejects_unowned_disabled_and_non_browser_installations(copy_database):
+    db = copy_database
+    route = f"/api/v1/organizations/{db.destination}/ingredient-copy"
+    app = _copy_http_app(db)
+    foreign_user, foreign_installation = uuid4(), uuid4()
+    disabled_installation, agent_installation = uuid4(), uuid4()
+    with db.engine.begin() as connection:
+        connection.execute(
+            insert(User).values(
+                id=foreign_user,
+                display_name="Foreign copy actor",
+                verified_email="foreign-copy@example.test",
+                normalized_email="foreign-copy@example.test",
+            )
+        )
+        connection.execute(
+            insert(ClientInstallation).values(
+                id=foreign_installation,
+                user_id=foreign_user,
+                installation_kind="browser",
+            )
+        )
+        connection.execute(
+            insert(ClientInstallation).values(
+                id=disabled_installation,
+                user_id=db.actor,
+                installation_kind="browser",
+                disabled_at=datetime.now(UTC),
+                disabled_by_user_id=db.actor,
+            )
+        )
+        connection.execute(
+            insert(ClientInstallation).values(
+                id=agent_installation,
+                user_id=db.actor,
+                installation_kind="agent",
+            )
+        )
+
+    payload = _http_copy_payload(db)
+    for installation_kind, installation_id in (
+        ("foreign", foreign_installation),
+        ("disabled", disabled_installation),
+        ("agent", agent_installation),
+    ):
+        request_payload = {**payload, "client_installation_id": str(installation_id)}
+        with TestClient(app) as client:
+            response = client.post(
+                route,
+                json=request_payload,
+                cookies={"cookops_session": "session"},
+                headers={"origin": "https://testserver"},
+            )
+        assert response.status_code == 404, (installation_kind, response.text)
+        assert response.json() == {"detail": {"code": "not_found"}}
+
+    with db.engine.connect() as connection:
+        assert connection.execute(select(OrganizationChange)).first() is None
 
 
 def _prepare_multiversion_copy(db):
