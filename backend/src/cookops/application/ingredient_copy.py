@@ -70,90 +70,147 @@ async def preview_ingredient_copy(
                 Ingredient.current_version_id.is_not(None),
             )
         )
-        version = None
+        versions = []
         if source is not None:
-            version = await session.scalar(
-                select(IngredientVersion).where(
-                    IngredientVersion.id == source.current_version_id,
-                    IngredientVersion.ingredient_id == source.id,
-                    IngredientVersion.organization_id == command.source_organization_id,
-                )
+            versions = list(
+                (
+                    await session.execute(
+                        select(IngredientVersion).where(
+                            IngredientVersion.ingredient_id == source.id,
+                            IngredientVersion.organization_id == command.source_organization_id,
+                        )
+                    )
+                ).scalars()
             )
-        if source is None or version is None:
+        version = (
+            next((item for item in versions if item.id == source.current_version_id), None)
+            if source
+            else None
+        )
+        version_by_id = {item.id: item for item in versions}
+        if source is None or version is None or len(version_by_id) != len(versions):
             raise ApplicationServiceError("stale_precondition", retry_same_identity=False)
 
-        tag_ids = tuple(
+        if any(
+            item.based_on_version_id is not None
+            and (
+                item.based_on_version_id not in version_by_id
+                or version_by_id[item.based_on_version_id].ingredient_id != source.id
+                or version_by_id[item.based_on_version_id].organization_id
+                != command.source_organization_id
+            )
+            for item in versions
+        ):
+            raise ApplicationServiceError("stale_precondition", retry_same_identity=False)
+        for item in versions:
+            seen: set[UUID] = set()
+            cursor = item
+            while cursor.based_on_version_id is not None:
+                if cursor.id in seen:
+                    raise ApplicationServiceError("stale_precondition", retry_same_identity=False)
+                seen.add(cursor.id)
+                cursor = version_by_id[cursor.based_on_version_id]
+
+        version_tags = list(
             (
                 await session.execute(
-                    select(IngredientVersionDietaryTag.dietary_tag_id)
-                    .where(
-                        IngredientVersionDietaryTag.ingredient_version_id == version.id,
-                        IngredientVersionDietaryTag.organization_id
-                        == command.source_organization_id,
+                    select(IngredientVersionDietaryTag).where(
+                        IngredientVersionDietaryTag.ingredient_version_id.in_(version_by_id),
                     )
-                    .order_by(IngredientVersionDietaryTag.dietary_tag_id)
                 )
             ).scalars()
         )
-        source_unit = await session.get(UnitDefinition, version.canonical_unit_id)
-        source_section = (
-            await session.scalar(
-                select(StoreSection).where(
-                    StoreSection.id == version.default_store_section_id,
-                    StoreSection.organization_id == command.source_organization_id,
-                    StoreSection.retired_at.is_(None),
-                )
+        if any(
+            item.ingredient_version_id not in version_by_id
+            or item.organization_id != command.source_organization_id
+            for item in version_tags
+        ):
+            raise ApplicationServiceError("stale_precondition", retry_same_identity=False)
+        tag_ids = tuple(
+            sorted(
+                {
+                    item.dietary_tag_id
+                    for item in version_tags
+                    if item.ingredient_version_id == version.id
+                }
             )
-            if version.default_store_section_id is not None
-            else None
         )
+        unit_ids = {item.canonical_unit_id for item in versions}
+        source_units = {
+            item.id: item
+            for item in (
+                await session.execute(select(UnitDefinition).where(UnitDefinition.id.in_(unit_ids)))
+            ).scalars()
+        }
+        section_ids = {
+            item.default_store_section_id for item in versions if item.default_store_section_id
+        }
+        source_sections = {
+            item.id: item
+            for item in (
+                await session.execute(
+                    select(StoreSection).where(
+                        StoreSection.id.in_(section_ids),
+                        StoreSection.organization_id == command.source_organization_id,
+                    )
+                )
+            ).scalars()
+        }
         source_tags = tuple(
             (
                 await session.execute(
                     select(DietaryTag).where(
-                        DietaryTag.id.in_(tag_ids),
+                        DietaryTag.id.in_({item.dietary_tag_id for item in version_tags}),
                         DietaryTag.organization_id == command.source_organization_id,
                     )
                 )
             ).scalars()
         )
         if (
-            source_unit is None
-            or (
-                source_unit.retired_at is not None
-                or (
-                    source_unit.organization_id is not None
-                    and source_unit.organization_id != command.source_organization_id
-                )
+            len(source_units) != len(unit_ids)
+            or any(
+                item.organization_id is not None
+                and item.organization_id != command.source_organization_id
+                for item in source_units.values()
             )
-            or (version.default_store_section_id is not None and source_section is None)
+            or len(source_sections) != len(section_ids)
         ):
             raise ApplicationServiceError("stale_precondition", retry_same_identity=False)
-        if len(source_tags) != len(tag_ids):
+        if len(source_tags) != len({item.dietary_tag_id for item in version_tags}):
             raise ApplicationServiceError("stale_precondition", retry_same_identity=False)
 
         requirements: list[IngredientCopyMappingRequirement] = []
-        destination_unit = await session.scalar(
-            select(UnitDefinition).where(
-                UnitDefinition.id == source_unit.id,
-                UnitDefinition.organization_id.is_(None),
-                UnitDefinition.retired_at.is_(None),
-            )
-        )
-        if source_unit.organization_id is not None or destination_unit is None:
-            requirements.append(IngredientCopyMappingRequirement("canonical_unit", source_unit.id))
-        destination_section = None
-        if source_section is not None:
-            destination_section = await session.scalar(
-                select(StoreSection).where(
-                    StoreSection.organization_id == command.destination_organization_id,
-                    StoreSection.id == source_section.id,
-                    StoreSection.retired_at.is_(None),
+        destination_units = {
+            item.id: item
+            for item in (
+                await session.execute(
+                    select(UnitDefinition).where(
+                        UnitDefinition.id.in_(unit_ids),
+                        UnitDefinition.organization_id.is_(None),
+                        UnitDefinition.retired_at.is_(None),
+                    )
                 )
-            )
-            if destination_section is None:
+            ).scalars()
+        }
+        for unit in sorted(source_units.values(), key=lambda item: item.id):
+            if unit.organization_id is not None or unit.id not in destination_units:
+                requirements.append(IngredientCopyMappingRequirement("canonical_unit", unit.id))
+        destination_sections = {
+            item.id: item
+            for item in (
+                await session.execute(
+                    select(StoreSection).where(
+                        StoreSection.organization_id == command.destination_organization_id,
+                        StoreSection.id.in_(section_ids),
+                        StoreSection.retired_at.is_(None),
+                    )
+                )
+            ).scalars()
+        }
+        for section in sorted(source_sections.values(), key=lambda item: item.id):
+            if section.id not in destination_sections:
                 requirements.append(
-                    IngredientCopyMappingRequirement("default_store_section", source_section.id)
+                    IngredientCopyMappingRequirement("default_store_section", section.id)
                 )
         destination_seed_keys = {
             key
@@ -175,16 +232,59 @@ async def preview_ingredient_copy(
                 )
 
         fingerprint_value = {
-            "source": [str(source.id), str(version.id), source.retired_at, version.name],
-            "version": [
-                str(version.canonical_unit_id),
-                str(version.default_store_section_id) if version.default_store_section_id else None,
-                str(version.mass_per_canonical_quantity),
-                [str(tag_id) for tag_id in tag_ids],
+            "source": [str(source.id), source.retired_at],
+            "versions": [
+                [
+                    str(item.id),
+                    str(item.based_on_version_id) if item.based_on_version_id else None,
+                    item.name,
+                    str(item.canonical_unit_id),
+                    str(item.default_store_section_id) if item.default_store_section_id else None,
+                    str(item.mass_per_canonical_quantity),
+                    sorted(
+                        str(tag.dietary_tag_id)
+                        for tag in version_tags
+                        if tag.ingredient_version_id == item.id
+                    ),
+                ]
+                for item in sorted(versions, key=lambda item: item.id)
+            ],
+            "source_dependencies": [
+                [
+                    str(item.id),
+                    item.organization_id,
+                    item.retired_at,
+                    getattr(item, "seed_key", None),
+                    getattr(item, "code", None),
+                    getattr(item, "normalized_name", None),
+                ]
+                for item in sorted(source_units.values(), key=lambda item: item.id)
+            ]
+            + [
+                [
+                    str(item.id),
+                    item.organization_id,
+                    item.retired_at,
+                    getattr(item, "seed_key", None),
+                    getattr(item, "code", None),
+                    getattr(item, "normalized_name", None),
+                ]
+                for item in sorted(source_sections.values(), key=lambda item: item.id)
+            ]
+            + [
+                [
+                    str(item.id),
+                    item.organization_id,
+                    item.retired_at,
+                    getattr(item, "seed_key", None),
+                    getattr(item, "code", None),
+                    getattr(item, "normalized_name", None),
+                ]
+                for item in sorted(source_tags, key=lambda item: item.id)
             ],
             "destination": [
-                str(destination_unit.id) if destination_unit else None,
-                str(destination_section.id) if destination_section else None,
+                sorted(str(item.id) for item in destination_units.values()),
+                sorted(str(item.id) for item in destination_sections.values()),
                 sorted(destination_seed_keys),
             ],
             "requirements": [

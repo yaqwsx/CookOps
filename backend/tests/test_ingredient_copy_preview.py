@@ -207,6 +207,168 @@ def test_allowed_preview_is_scoped_and_does_not_mutate(copy_database):
         assert connection.execute(select(OrganizationChange)).first() is None
 
 
+def test_preview_includes_retired_historical_dependencies(copy_database):
+    db = copy_database
+    historical_version, historical_unit, historical_section, historical_tag = (
+        uuid4() for _ in range(4)
+    )
+    now = datetime.now(UTC)
+    with db.engine.begin() as connection:
+        connection.execute(
+            insert(UnitDefinition).values(
+                id=historical_unit,
+                organization_id=db.source,
+                code="custom.spoon",
+                custom_name="Spoon",
+                normalized_custom_name="spoon",
+                dimension="custom",
+                rounds_up_to_whole_unit=False,
+                allows_ingredient_quantity=True,
+                allows_recipe_scaling=False,
+                created_by_user_id=db.actor,
+                retired_at=now,
+                retired_by_user_id=db.actor,
+            )
+        )
+        connection.execute(
+            insert(StoreSection).values(
+                id=historical_section,
+                organization_id=db.source,
+                name="Pantry",
+                normalized_name="pantry",
+                position_key="b",
+                created_by_user_id=db.actor,
+                retired_at=now,
+                retired_by_user_id=db.actor,
+            )
+        )
+        connection.execute(
+            insert(DietaryTag).values(
+                id=historical_tag,
+                organization_id=db.source,
+                name="Seasonal",
+                normalized_name="seasonal",
+                created_by_user_id=db.actor,
+                retired_at=now,
+                retired_by_user_id=db.actor,
+            )
+        )
+        connection.execute(
+            insert(IngredientVersion).values(
+                id=historical_version,
+                organization_id=db.source,
+                ingredient_id=db.ingredient,
+                name="Carrot (historical)",
+                normalized_name="carrot (historical)",
+                canonical_unit_id=historical_unit,
+                mass_per_canonical_quantity=1,
+                default_store_section_id=historical_section,
+                published_by_user_id=db.actor,
+            )
+        )
+        connection.execute(
+            IngredientVersion.__table__.update()
+            .where(IngredientVersion.id == db.version)
+            .values(based_on_version_id=historical_version)
+        )
+        connection.execute(
+            insert(IngredientVersionDietaryTag).values(
+                ingredient_version_id=historical_version,
+                dietary_tag_id=historical_tag,
+                organization_id=db.source,
+            )
+        )
+
+    first = asyncio.run(
+        preview_ingredient_copy(
+            db.sessions,
+            context(db),
+            PreviewIngredientCopyCommand(db.source, db.destination, db.ingredient),
+        )
+    )
+    requirements = {(item.kind, item.source_id) for item in first.mapping_requirements}
+    assert ("canonical_unit", historical_unit) in requirements
+    assert ("default_store_section", historical_section) in requirements
+    assert ("dietary_tag", historical_tag) in requirements
+
+    with db.engine.begin() as connection:
+        connection.execute(
+            DietaryTag.__table__.update()
+            .where(DietaryTag.id == historical_tag)
+            .values(seed_key="vegetarian")
+        )
+        connection.execute(
+            insert(DietaryTag).values(
+                id=uuid4(),
+                organization_id=db.destination,
+                seed_key="vegetarian",
+                created_by_user_id=db.actor,
+            )
+        )
+    second = asyncio.run(
+        preview_ingredient_copy(
+            db.sessions,
+            context(db),
+            PreviewIngredientCopyCommand(db.source, db.destination, db.ingredient),
+        )
+    )
+    assert second.precondition_fingerprint != first.precondition_fingerprint
+    assert ("dietary_tag", historical_tag) not in {
+        (item.kind, item.source_id) for item in second.mapping_requirements
+    }
+
+
+def test_missing_current_version_is_stale_broken_graph(copy_database):
+    db = copy_database
+    with db.engine.begin() as connection:
+        connection.execute(
+            Ingredient.__table__.update()
+            .where(Ingredient.id == db.ingredient)
+            .values(current_version_id=uuid4())
+        )
+    with pytest.raises(ApplicationServiceError, match="stale_precondition"):
+        asyncio.run(
+            preview_ingredient_copy(
+                db.sessions,
+                context(db),
+                PreviewIngredientCopyCommand(db.source, db.destination, db.ingredient),
+            )
+        )
+
+
+def test_cyclic_based_on_graph_is_stale(copy_database):
+    db = copy_database
+    cycle_version = uuid4()
+    with db.engine.begin() as connection:
+        connection.execute(
+            insert(IngredientVersion).values(
+                id=cycle_version,
+                organization_id=db.source,
+                ingredient_id=db.ingredient,
+                based_on_version_id=db.version,
+                name="Carrot cycle",
+                normalized_name="carrot cycle",
+                canonical_unit_id=db.unit,
+                mass_per_canonical_quantity=1,
+                default_store_section_id=db.section,
+                published_by_user_id=db.actor,
+            )
+        )
+        connection.execute(
+            IngredientVersion.__table__.update()
+            .where(IngredientVersion.id == db.version)
+            .values(based_on_version_id=cycle_version)
+        )
+    with pytest.raises(ApplicationServiceError, match="stale_precondition"):
+        asyncio.run(
+            preview_ingredient_copy(
+                db.sessions,
+                context(db),
+                PreviewIngredientCopyCommand(db.source, db.destination, db.ingredient),
+            )
+        )
+
+
 def test_source_member_or_destination_member_is_denied(copy_database):
     db = copy_database
     with db.engine.begin() as connection:
