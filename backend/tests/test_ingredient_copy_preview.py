@@ -290,6 +290,15 @@ def test_preview_includes_retired_historical_dependencies(copy_database):
     assert ("canonical_unit", historical_unit) in requirements
     assert ("default_store_section", historical_section) in requirements
     assert ("dietary_tag", historical_tag) in requirements
+    repeated = asyncio.run(
+        preview_ingredient_copy(
+            db.sessions,
+            context(db),
+            PreviewIngredientCopyCommand(db.source, db.destination, db.ingredient),
+        )
+    )
+    assert repeated.precondition_fingerprint == first.precondition_fingerprint
+    assert repeated.mapping_requirements == first.mapping_requirements
 
     with db.engine.begin() as connection:
         connection.execute(
