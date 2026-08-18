@@ -145,7 +145,12 @@ function canonical(
     entityType: record.entity_kind,
     entityId: record.entity_id,
     recordSchemaVersion: record.payload.record_schema_version,
-    lifecycle: fields.retired_at || fields.archived_at ? "retired" : "active",
+    lifecycle:
+      fields.lifecycle === "tombstone"
+        ? "tombstone"
+        : fields.retired_at || fields.archived_at
+          ? "retired"
+          : "active",
     fields,
     fieldClocks: object(fields.field_clocks) ? fields.field_clocks : {},
     immutable: fields.immutable === true,

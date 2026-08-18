@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { localDb, readVisibleCanonicalRecord } from "./local-db";
+import { readVisibleRecords } from "./visible-records";
 import { bootstrapOrganization, pullOrganization } from "./sync-bootstrap";
 
 const userId = "user-a";
@@ -1146,6 +1147,39 @@ describe("bootstrapOrganization", () => {
       lifecycle: "retired",
       fields: { lifecycle: "archived" },
     });
+  });
+
+  it("keeps a canonical tombstone authoritative over a stale pending overlay", async () => {
+    const eventId = "3d8b2b21-c378-4574-9e46-9338c81305f0";
+    await localDb.outbox.add({
+      id: "stale-create",
+      userId,
+      organizationId,
+      commandType: "event.create",
+      payload: { event_id: eventId, name: "Stale event" },
+      actionAt: "2026-08-07T10:00:00.000Z",
+      createdAt: "2026-08-07T10:00:00.000Z",
+      state: "pending",
+    });
+    await bootstrapOrganization(userId, organizationId, {
+      fetch: vi.fn<typeof fetch>(async () =>
+        response([
+          {
+            ...record(eventId),
+            payload: {
+              record_schema_version: 1,
+              record: { id: eventId, lifecycle: "tombstone" },
+            },
+          },
+        ]),
+      ),
+    });
+    await expect(
+      localDb.canonicalRecords.get([userId, organizationId, "event", eventId]),
+    ).resolves.toMatchObject({ lifecycle: "tombstone" });
+    await expect(
+      readVisibleRecords(userId, organizationId, "event"),
+    ).resolves.toEqual([]);
   });
 
   it("retains override clocks when bootstrapping a catalog-update feed record", async () => {

@@ -44,7 +44,11 @@ export async function readVisibleRecords(
     const explicitLifecycleRestore =
       (entityType === "receipt" || entityType === "ad_hoc_shopping_item" || entityType === "event_day" || entityType === "event_meal_role" || entityType === "recipe" || entityType === "ingredient") &&
       isExplicitLifecycleRestore(overlay);
-    if (canonical?.lifecycle !== "retired" || explicitLifecycleRestore)
+    if (
+      !canonical ||
+      canonical.lifecycle === "active" ||
+      (canonical.lifecycle === "retired" && explicitLifecycleRestore)
+    )
       result.set(overlay.entityId, overlay);
   }
   return [...result.values()].filter(
