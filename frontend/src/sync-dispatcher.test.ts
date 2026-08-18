@@ -22,11 +22,12 @@ async function addCommand(
   id: string,
   createdAt: string,
   payload: Record<string, unknown> = {},
+  commandOrganizationId = organizationId,
 ) {
   await localDb.outbox.add({
     id,
     userId,
-    organizationId,
+    organizationId: commandOrganizationId,
     commandType: "event.create",
     payload,
     actionAt: createdAt,
@@ -152,6 +153,43 @@ describe("dispatchOutbox", () => {
       changeCursorHint: "change-cursor",
       lastSuccessfulServerContact: "2026-08-07T12:00:00.000Z",
     });
+  });
+
+  it("isolates an organization's outbox commands", async () => {
+    await addCommand("organization-a-command", "2026-08-07T10:00:00.000Z");
+    await addCommand(
+      "organization-b-command",
+      "2026-08-07T10:01:00.000Z",
+      {},
+      "organization-b",
+    );
+    const originalB = await localDb.outbox.get("organization-b-command");
+    expect(originalB).toBeDefined();
+    const send = vi.fn<typeof fetch>(async (_input, init) => {
+      const commands = JSON.parse(String(init?.body)).commands;
+      return response(
+        commands.map((command: { mutation_id: string; command_kind: string }) => ({
+          mutation_id: command.mutation_id,
+          command_kind: command.command_kind,
+          status: "accepted",
+          error: null,
+        })),
+      );
+    });
+
+    await dispatchOutbox(organizationId, {
+      userId,
+      clientInstallationId: installationId,
+      fetch: send,
+    });
+
+    expect(JSON.parse(String(send.mock.calls[0]?.[1]?.body))).toMatchObject({
+      organization_id: organizationId,
+      commands: [expect.objectContaining({ mutation_id: "organization-a-command" })],
+    });
+    expect(JSON.parse(String(send.mock.calls[0]?.[1]?.body)).commands).toHaveLength(1);
+    await expect(localDb.outbox.get("organization-a-command")).resolves.toBeUndefined();
+    await expect(localDb.outbox.get("organization-b-command")).resolves.toEqual(originalB);
   });
 
   it("keeps a rejected intent as recoverable work while accepting later commands", async () => {
