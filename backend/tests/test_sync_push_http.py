@@ -3078,25 +3078,30 @@ def test_push_applies_idempotent_receipt_metadata_commands(
 
 
 @pytest.mark.parametrize(
-    ("offset_minutes", "status_code", "has_warning"),
+    ("offset", "status_code", "has_warning"),
     [
-        (0, 200, False),
-        (6, 200, True),
+        (timedelta(0), 200, False),
+        (timedelta(minutes=5), 200, False),
+        (timedelta(minutes=-5), 200, False),
+        (timedelta(minutes=5, microseconds=1), 200, True),
+        (timedelta(minutes=-5, microseconds=-1), 200, True),
         (None, 422, False),
     ],
 )
 def test_push_clock_and_timestamp_boundaries_are_safe(
-    sync_database: SyncDatabase, offset_minutes: int | None, status_code: int, has_warning: bool
+    sync_database: SyncDatabase, offset: timedelta | None, status_code: int, has_warning: bool
 ) -> None:
     installation_id = _installation(sync_database)
     body = _body(sync_database, installation_id, [])
+    server_now = datetime(2026, 8, 18, 12, 0, tzinfo=UTC)
     body["request_sent_at"] = (
-        (datetime.now(UTC) + timedelta(minutes=offset_minutes)).isoformat()
-        if offset_minutes is not None
+        (server_now + offset).isoformat()
+        if offset is not None
         else "2026-08-10T12:00:00"
     )
     with TestClient(create_app(_settings()), base_url="https://testserver") as client:
         _sign_in(client, "dummy-member")
+        client.app.state.synchronization.commands._clock = lambda: server_now
         response = client.post("/api/v1/sync/push", json=body)
     assert response.status_code == status_code
     if status_code == 200:
