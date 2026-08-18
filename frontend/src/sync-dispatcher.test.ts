@@ -392,7 +392,7 @@ describe("dispatchOutbox", () => {
       title: "Retry this command",
       count: 2,
     });
-    const send = vi.fn<typeof fetch>(async (_input, init) => {
+    const send = vi.fn<typeof fetch>(async (_input, _init) => {
       if (send.mock.calls.length === 1) return new Response(null, { status: 503 });
       return response([
         {

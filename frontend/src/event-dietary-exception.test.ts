@@ -224,13 +224,15 @@ describe("event dietary exception lifecycle", () => {
     expect((await localDb.optimisticOverlays.get([userId, organizationId, "event_dietary_exception", exceptionId]))?.lifecycle).toBe("active");
     await expect(replayEventDietaryExceptionLifecycle(userId, organizationId, { ...command, id: "00000000-0000-4000-8000-000000000008", actionAt: "2026-02-31T12:00:00Z" })).rejects.toThrow("clock");
     const overlay = await localDb.optimisticOverlays.get([userId, organizationId, "event_dietary_exception", exceptionId]);
-    await localDb.optimisticOverlays.put({ ...overlay!, fieldClocks: { ...overlay!.fieldClocks, lifecycle: { mutationId: "not-a-uuid", actionAt: command.actionAt } } });
+    if (!overlay) throw new Error("Expected the dietary exception overlay");
+    await localDb.optimisticOverlays.put({ ...overlay, fieldClocks: { ...overlay.fieldClocks, lifecycle: { mutationId: "not-a-uuid", actionAt: command.actionAt } } });
     await expect(replayEventDietaryExceptionLifecycle(userId, organizationId, { ...command, id: "00000000-0000-4000-8000-000000000009", actionAt: "2026-08-07T13:00:00Z" })).rejects.toThrow("clock");
   });
   it("uses the current overlay lifecycle clock and restores a pending create", async () => {
     const exceptionId = "00000000-0000-4000-8000-000000000004";
     const current = await localDb.canonicalRecords.get([userId, organizationId, "event_dietary_exception", exceptionId]);
-    await localDb.optimisticOverlays.put({ ...current!, lifecycle: "retired", fieldClocks: { lifecycle: { mutationId: "00000000-0000-4000-8000-000000000099", actionAt: "2026-08-07T14:00:00.000000Z" } } });
+    if (!current) throw new Error("Expected the canonical dietary exception record");
+    await localDb.optimisticOverlays.put({ ...current, lifecycle: "retired", fieldClocks: { lifecycle: { mutationId: "00000000-0000-4000-8000-000000000099", actionAt: "2026-08-07T14:00:00.000000Z" } } });
     await replayEventDietaryExceptionLifecycle(userId, organizationId, { id: "ffffffff-ffff-4fff-8fff-ffffffffffff", userId, organizationId, commandType: "event_dietary_exception.lifecycle", payload: { exception_id: exceptionId, event_id: eventId, operation: "restore" }, actionAt: "2026-08-07T13:00:00Z", createdAt: "2026-08-07T13:00:00Z", state: "pending" });
     expect((await localDb.optimisticOverlays.get([userId, organizationId, "event_dietary_exception", exceptionId]))?.lifecycle).toBe("retired");
     await localDb.canonicalRecords.delete([userId, organizationId, "event_dietary_exception", exceptionId]);

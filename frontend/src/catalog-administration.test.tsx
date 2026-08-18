@@ -60,11 +60,16 @@ it("creates, edits/reorders, retires, and restores a meal-role preset", async ()
   expect(sections).toHaveLength(1);
   expect(screen.getByText("Morning snack")).toBeVisible();
   const nameInputs = screen.getAllByLabelText("Name");
-  await user.type(nameInputs[4]!, "Breakfast");
-  await user.click(screen.getAllByRole("button", { name: "Add" })[4]!);
+  const nameInput = nameInputs[4];
+  if (!nameInput) throw new Error("Expected the custom meal-role name input");
+  await user.type(nameInput, "Breakfast");
+  const addButton = screen.getAllByRole("button", { name: "Add" })[4];
+  if (!addButton) throw new Error("Expected the custom meal-role add button");
+  await user.click(addButton);
   expect(queueCatalogConfiguration).toHaveBeenCalledWith("user", "organization", "organization_meal_role_preset", "create", { name: "Breakfast", position_key: "z" });
 
-  const customPreset = screen.getByText("Breakfast").closest("li")!;
+  const customPreset = screen.getByText("Breakfast").closest("li");
+  if (!customPreset) throw new Error("Expected the created meal-role preset");
   await user.click(within(customPreset).getByText("Edit"));
   const editInput = within(customPreset).getByRole("textbox", { name: "Name" });
   await user.clear(editInput);
