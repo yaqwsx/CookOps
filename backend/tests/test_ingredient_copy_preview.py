@@ -15,7 +15,10 @@ from sqlalchemy.pool import NullPool
 
 from alembic import command
 from cookops.application.ingredient_copy import (
+    CopyIngredientToOrganizationCommand,
+    IngredientCopyMapping,
     PreviewIngredientCopyCommand,
+    copy_ingredient_to_organization,
     preview_ingredient_copy,
 )
 from cookops.application.organizations import ApplicationServiceError, ExecutionContext
@@ -25,6 +28,7 @@ from cookops.main import create_app
 from cookops.persistence.models import (
     ClientInstallation,
     DietaryTag,
+    FieldClock,
     Ingredient,
     IngredientVersion,
     IngredientVersionDietaryTag,
@@ -130,19 +134,6 @@ def copy_database():
             )
         )
         connection.execute(
-            insert(IngredientVersion).values(
-                id=version,
-                organization_id=source_org,
-                ingredient_id=ingredient,
-                name="Carrot",
-                normalized_name="carrot",
-                canonical_unit_id=unit,
-                mass_per_canonical_quantity=1,
-                default_store_section_id=section,
-                published_by_user_id=actor,
-            )
-        )
-        connection.execute(
             insert(Ingredient).values(
                 id=ingredient,
                 organization_id=source_org,
@@ -153,6 +144,19 @@ def copy_database():
         connection.execute(
             insert(IngredientVersionDietaryTag).values(
                 ingredient_version_id=version, dietary_tag_id=tag, organization_id=source_org
+            )
+        )
+        connection.execute(
+            insert(IngredientVersion).values(
+                id=version,
+                organization_id=source_org,
+                ingredient_id=ingredient,
+                name="Carrot",
+                normalized_name="carrot",
+                canonical_unit_id=unit,
+                mass_per_canonical_quantity=1,
+                default_store_section_id=section,
+                published_by_user_id=actor,
             )
         )
     async_engine = create_async_engine(url, poolclass=NullPool)
@@ -179,11 +183,9 @@ def context(db):
 
 def test_allowed_preview_is_scoped_and_does_not_mutate(copy_database):
     db = copy_database
-    before = (
-        db.engine.connect()
-        .execute(select(Ingredient).where(Ingredient.id == db.ingredient))
-        .scalar_one()
-    )
+    before = db.engine.connect().execute(
+        select(Ingredient.id).where(Ingredient.id == db.ingredient)
+    ).scalar_one()
     preview = asyncio.run(
         preview_ingredient_copy(
             db.sessions,
@@ -199,10 +201,9 @@ def test_allowed_preview_is_scoped_and_does_not_mutate(copy_database):
     }
     with db.engine.connect() as connection:
         assert (
-            connection.execute(select(Ingredient).where(Ingredient.id == db.ingredient))
+                connection.execute(select(Ingredient.id).where(Ingredient.id == db.ingredient))
             .scalar_one()
-            .id
-            == before.id
+            == before
         )
         assert connection.execute(select(OrganizationChange)).first() is None
 
@@ -221,13 +222,12 @@ def test_preview_includes_retired_historical_dependencies(copy_database):
                 code="custom.spoon",
                 custom_name="Spoon",
                 normalized_custom_name="spoon",
-                dimension="custom",
+                dimension="mass",
+                base_unit_factor=1,
                 rounds_up_to_whole_unit=False,
                 allows_ingredient_quantity=True,
                 allows_recipe_scaling=False,
                 created_by_user_id=db.actor,
-                retired_at=now,
-                retired_by_user_id=db.actor,
             )
         )
         connection.execute(
@@ -238,8 +238,6 @@ def test_preview_includes_retired_historical_dependencies(copy_database):
                 normalized_name="pantry",
                 position_key="b",
                 created_by_user_id=db.actor,
-                retired_at=now,
-                retired_by_user_id=db.actor,
             )
         )
         connection.execute(
@@ -249,8 +247,13 @@ def test_preview_includes_retired_historical_dependencies(copy_database):
                 name="Seasonal",
                 normalized_name="seasonal",
                 created_by_user_id=db.actor,
-                retired_at=now,
-                retired_by_user_id=db.actor,
+            )
+        )
+        connection.execute(
+            insert(IngredientVersionDietaryTag).values(
+                ingredient_version_id=historical_version,
+                dietary_tag_id=historical_tag,
+                organization_id=db.source,
             )
         )
         connection.execute(
@@ -266,17 +269,47 @@ def test_preview_includes_retired_historical_dependencies(copy_database):
                 published_by_user_id=db.actor,
             )
         )
-        connection.execute(
-            IngredientVersion.__table__.update()
-            .where(IngredientVersion.id == db.version)
-            .values(based_on_version_id=historical_version)
-        )
+        current_version = uuid4()
         connection.execute(
             insert(IngredientVersionDietaryTag).values(
-                ingredient_version_id=historical_version,
-                dietary_tag_id=historical_tag,
+                ingredient_version_id=current_version,
+                dietary_tag_id=db.tag,
                 organization_id=db.source,
             )
+        )
+        connection.execute(
+            insert(IngredientVersion).values(
+                id=current_version,
+                organization_id=db.source,
+                ingredient_id=db.ingredient,
+                based_on_version_id=historical_version,
+                name="Carrot",
+                normalized_name="carrot",
+                canonical_unit_id=db.unit,
+                mass_per_canonical_quantity=1,
+                default_store_section_id=db.section,
+                published_by_user_id=db.actor,
+            )
+        )
+        connection.execute(
+            Ingredient.__table__.update()
+            .where(Ingredient.id == db.ingredient)
+            .values(current_version_id=current_version)
+        )
+        connection.execute(
+            UnitDefinition.__table__.update()
+            .where(UnitDefinition.id == historical_unit)
+            .values(retired_at=now, retired_by_user_id=db.actor)
+        )
+        connection.execute(
+            StoreSection.__table__.update()
+            .where(StoreSection.id == historical_section)
+            .values(retired_at=now, retired_by_user_id=db.actor)
+        )
+        connection.execute(
+            DietaryTag.__table__.update()
+            .where(DietaryTag.id == historical_tag)
+            .values(retired_at=now, retired_by_user_id=db.actor)
         )
 
     first = asyncio.run(
@@ -327,46 +360,13 @@ def test_preview_includes_retired_historical_dependencies(copy_database):
     }
 
 
-def test_missing_current_version_is_stale_broken_graph(copy_database):
+def test_retired_source_is_stale_broken_graph(copy_database):
     db = copy_database
     with db.engine.begin() as connection:
         connection.execute(
             Ingredient.__table__.update()
             .where(Ingredient.id == db.ingredient)
-            .values(current_version_id=uuid4())
-        )
-    with pytest.raises(ApplicationServiceError, match="stale_precondition"):
-        asyncio.run(
-            preview_ingredient_copy(
-                db.sessions,
-                context(db),
-                PreviewIngredientCopyCommand(db.source, db.destination, db.ingredient),
-            )
-        )
-
-
-def test_cyclic_based_on_graph_is_stale(copy_database):
-    db = copy_database
-    cycle_version = uuid4()
-    with db.engine.begin() as connection:
-        connection.execute(
-            insert(IngredientVersion).values(
-                id=cycle_version,
-                organization_id=db.source,
-                ingredient_id=db.ingredient,
-                based_on_version_id=db.version,
-                name="Carrot cycle",
-                normalized_name="carrot cycle",
-                canonical_unit_id=db.unit,
-                mass_per_canonical_quantity=1,
-                default_store_section_id=db.section,
-                published_by_user_id=db.actor,
-            )
-        )
-        connection.execute(
-            IngredientVersion.__table__.update()
-            .where(IngredientVersion.id == db.version)
-            .values(based_on_version_id=cycle_version)
+            .values(retired_at=datetime.now(UTC), retired_by_user_id=db.actor)
         )
     with pytest.raises(ApplicationServiceError, match="stale_precondition"):
         asyncio.run(
@@ -476,7 +476,7 @@ def test_retired_source_tag_remains_previewable_and_fingerprint_changes(copy_dat
         connection.execute(
             Ingredient.__table__.update()
             .where(Ingredient.id == db.ingredient)
-            .values(current_version_id=uuid4())
+            .values(retired_at=datetime.now(UTC), retired_by_user_id=db.actor)
         )
     with pytest.raises(ApplicationServiceError, match="stale_precondition"):
         asyncio.run(
@@ -515,3 +515,500 @@ async def _ready() -> bool:
 
 def _authenticated(user_id):
     return SimpleNamespace(user_id=user_id)
+
+
+def _prepare_multiversion_copy(db):
+    historical_version, historical_unit, destination_unit = (uuid4() for _ in range(3))
+    destination_section, destination_tag = (uuid4() for _ in range(2))
+    with db.engine.begin() as connection:
+        connection.execute(
+            DietaryTag.__table__.update()
+            .where(DietaryTag.id == db.tag)
+            .values(seed_key=None, name="Seasonal", normalized_name="seasonal")
+        )
+        connection.execute(
+            insert(UnitDefinition).values(
+                id=historical_unit,
+                organization_id=db.source,
+                code="custom.spoon",
+                custom_name="Spoon",
+                normalized_custom_name="spoon",
+                dimension="mass",
+                base_unit_factor=1,
+                rounds_up_to_whole_unit=False,
+                allows_ingredient_quantity=True,
+                allows_recipe_scaling=False,
+                created_by_user_id=db.actor,
+            )
+        )
+        connection.execute(
+            insert(UnitDefinition).values(
+                id=destination_unit,
+                organization_id=db.destination,
+                code="custom.spoon",
+                custom_name="Spoon",
+                normalized_custom_name="spoon",
+                dimension="mass",
+                base_unit_factor=1,
+                rounds_up_to_whole_unit=False,
+                allows_ingredient_quantity=True,
+                allows_recipe_scaling=False,
+                created_by_user_id=db.actor,
+            )
+        )
+        connection.execute(
+            insert(StoreSection).values(
+                id=destination_section,
+                organization_id=db.destination,
+                name="Produce",
+                normalized_name="produce",
+                position_key="a",
+                created_by_user_id=db.actor,
+            )
+        )
+        connection.execute(
+            insert(DietaryTag).values(
+                id=destination_tag,
+                organization_id=db.destination,
+                name="Seasonal",
+                normalized_name="seasonal",
+                created_by_user_id=db.actor,
+            )
+        )
+        connection.execute(
+            insert(IngredientVersionDietaryTag).values(
+                ingredient_version_id=historical_version,
+                dietary_tag_id=db.tag,
+                organization_id=db.source,
+            )
+        )
+        connection.execute(
+            insert(IngredientVersion).values(
+                id=historical_version,
+                organization_id=db.source,
+                ingredient_id=db.ingredient,
+                based_on_version_id=db.version,
+                name="Carrot (historical)",
+                normalized_name="carrot (historical)",
+                canonical_unit_id=historical_unit,
+                mass_per_canonical_quantity=1,
+                default_store_section_id=db.section,
+                published_by_user_id=db.actor,
+            )
+        )
+        connection.execute(
+            Ingredient.__table__.update()
+            .where(Ingredient.id == db.ingredient)
+            .values(current_version_id=historical_version)
+        )
+    return SimpleNamespace(
+        destination_unit=destination_unit,
+        destination_section=destination_section,
+        destination_tag=destination_tag,
+    )
+
+
+def _copy_command(db, setup, *, create_custom_tag=False):
+    preview = asyncio.run(
+        preview_ingredient_copy(
+            db.sessions,
+            context(db),
+            PreviewIngredientCopyCommand(db.source, db.destination, db.ingredient),
+        )
+    )
+    targets = {
+        "canonical_unit": setup.destination_unit,
+        "default_store_section": setup.destination_section,
+        "dietary_tag": None if create_custom_tag else setup.destination_tag,
+    }
+    mappings = tuple(
+        IngredientCopyMapping(item.kind, item.source_id, targets[item.kind])
+        for item in preview.mapping_requirements
+    )
+    return CopyIngredientToOrganizationCommand(
+        db.source,
+        db.destination,
+        db.ingredient,
+        preview.precondition_fingerprint,
+        mappings,
+    )
+
+
+def test_copy_multiversion_graph_has_only_destination_references(copy_database):
+    db = copy_database
+    setup = _prepare_multiversion_copy(db)
+    with db.engine.begin() as connection:
+        connection.execute(
+            DietaryTag.__table__.delete().where(DietaryTag.id == setup.destination_tag)
+        )
+    result = asyncio.run(
+        copy_ingredient_to_organization(
+            db.sessions, context(db), _copy_command(db, setup, create_custom_tag=True)
+        )
+    )
+    assert result.destination_organization_id == db.destination
+    with db.engine.connect() as connection:
+        copied_versions = (
+            connection.execute(
+                select(IngredientVersion.id).where(
+                    IngredientVersion.ingredient_id == result.destination_ingredient_id
+                )
+            )
+            .scalars()
+            .all()
+        )
+        assert len(copied_versions) == 2
+        copied_version_rows = connection.execute(
+            select(
+                IngredientVersion.organization_id,
+                IngredientVersion.canonical_unit_id,
+                IngredientVersion.default_store_section_id,
+            ).where(IngredientVersion.id.in_(copied_versions))
+        ).all()
+        assert {item.organization_id for item in copied_version_rows} == {db.destination}
+        assert {item.canonical_unit_id for item in copied_version_rows} <= {
+            db.unit,
+            setup.destination_unit,
+        }
+        assert {item.default_store_section_id for item in copied_version_rows} == {
+            setup.destination_section
+        }
+        copied_tags = (
+            connection.execute(
+                select(IngredientVersionDietaryTag.dietary_tag_id).where(
+                    IngredientVersionDietaryTag.ingredient_version_id.in_(copied_versions)
+                )
+            )
+            .scalars()
+            .all()
+        )
+        copied_tag_rows = connection.execute(
+            select(DietaryTag.organization_id).where(DietaryTag.id.in_(copied_tags))
+        ).scalars().all()
+        assert set(copied_tag_rows) == {db.destination}
+        copied_tag_id = copied_tags[0]
+        assert copied_tag_id != setup.destination_tag
+        assert (
+            connection.execute(
+                select(DietaryTag.organization_id).where(DietaryTag.id == copied_tag_id)
+            )
+            .scalar_one()
+            == db.destination
+        )
+        changes = connection.execute(
+            select(OrganizationChange.entity_kind, OrganizationChange.payload)
+            .where(OrganizationChange.mutation_id == result.mutation_id)
+            .order_by(OrganizationChange.sequence)
+        ).all()
+        change_records = {
+            item.entity_kind: item.payload["record"]
+            for item in changes
+            if item.entity_kind != "ingredient_version"
+        }
+        ingredient_record = change_records["ingredient"]
+        assert ingredient_record["created_at"] == connection.execute(
+            select(Ingredient.created_at).where(Ingredient.id == result.destination_ingredient_id)
+        ).scalar_one().isoformat()
+        assert set(ingredient_record["field_clocks"]) == {
+            "lifecycle",
+            "current_version_id",
+            "current_price_estimate_id",
+        }
+        version_records = [
+            item.payload["record"] for item in changes if item.entity_kind == "ingredient_version"
+        ]
+        assert len(version_records) == 2
+        assert all(record["published_at"] for record in version_records)
+        tag_record = change_records["dietary_tag"]
+        assert tag_record["created_at"] == connection.execute(
+            select(DietaryTag.created_at).where(DietaryTag.id == copied_tag_id)
+        ).scalar_one().isoformat()
+        assert set(tag_record["field_clocks"]) == {"name", "color", "lifecycle"}
+        assert {item.entity_kind for item in changes} >= {
+            "ingredient",
+            "ingredient_version",
+            "dietary_tag",
+        }
+        clocks = (
+            connection.execute(
+                select(FieldClock.field_name).where(FieldClock.entity_id == copied_tag_id)
+            )
+            .scalars()
+            .all()
+        )
+        assert set(clocks) == {"lifecycle", "name", "color"}
+
+
+def test_copy_allows_many_to_one_explicit_dietary_tag_mapping(copy_database):
+    db = copy_database
+    setup = _prepare_multiversion_copy(db)
+    source_tag, new_version = uuid4(), uuid4()
+    with db.engine.begin() as connection:
+        connection.execute(
+            insert(DietaryTag).values(
+                id=source_tag,
+                organization_id=db.source,
+                name="Seasonal alternate",
+                normalized_name="seasonal alternate",
+                created_by_user_id=db.actor,
+            )
+        )
+        connection.execute(
+            insert(IngredientVersionDietaryTag).values(
+                ingredient_version_id=new_version,
+                dietary_tag_id=source_tag,
+                organization_id=db.source,
+            )
+        )
+        connection.execute(
+            insert(IngredientVersion).values(
+                id=new_version,
+                organization_id=db.source,
+                ingredient_id=db.ingredient,
+                based_on_version_id=db.version,
+                name="Carrot alternate",
+                normalized_name="carrot alternate",
+                canonical_unit_id=db.unit,
+                mass_per_canonical_quantity=1,
+                default_store_section_id=db.section,
+                published_by_user_id=db.actor,
+            )
+        )
+        connection.execute(
+            Ingredient.__table__.update()
+            .where(Ingredient.id == db.ingredient)
+            .values(current_version_id=new_version)
+        )
+
+    command = _copy_command(db, setup)
+    assert sum(item.kind == "dietary_tag" for item in command.mappings) == 2
+    result = asyncio.run(copy_ingredient_to_organization(db.sessions, context(db), command))
+    with db.engine.connect() as connection:
+        copied_tag_ids = connection.execute(
+            select(IngredientVersionDietaryTag.dietary_tag_id).join(
+                IngredientVersion,
+                IngredientVersion.id
+                == IngredientVersionDietaryTag.ingredient_version_id,
+            ).where(IngredientVersion.ingredient_id == result.destination_ingredient_id)
+        ).scalars().all()
+    assert len(copied_tag_ids) == 3
+    assert set(copied_tag_ids) == {setup.destination_tag}
+
+
+def test_copy_reuses_active_seeded_destination_tag_without_mapping(copy_database):
+    db = copy_database
+    destination_section = uuid4()
+    destination_tag = uuid4()
+    with db.engine.begin() as connection:
+        connection.execute(
+            insert(StoreSection).values(
+                id=destination_section,
+                organization_id=db.destination,
+                name="Produce",
+                normalized_name="produce",
+                position_key="a",
+                created_by_user_id=db.actor,
+            )
+        )
+        connection.execute(
+            insert(DietaryTag).values(
+                id=destination_tag,
+                organization_id=db.destination,
+                seed_key="vegan",
+                created_by_user_id=db.actor,
+            )
+        )
+    preview = asyncio.run(
+        preview_ingredient_copy(
+            db.sessions,
+            context(db),
+            PreviewIngredientCopyCommand(db.source, db.destination, db.ingredient),
+        )
+    )
+    assert all(item.kind != "dietary_tag" for item in preview.mapping_requirements)
+    command = CopyIngredientToOrganizationCommand(
+        db.source,
+        db.destination,
+        db.ingredient,
+        preview.precondition_fingerprint,
+        tuple(
+            IngredientCopyMapping(item.kind, item.source_id, destination_section)
+            for item in preview.mapping_requirements
+        ),
+    )
+    result = asyncio.run(copy_ingredient_to_organization(db.sessions, context(db), command))
+    with db.engine.connect() as connection:
+        copied_tags = (
+            connection.execute(
+                select(IngredientVersionDietaryTag.dietary_tag_id).where(
+                    IngredientVersionDietaryTag.ingredient_version_id
+                    == result.destination_version_id
+                )
+            )
+            .scalars()
+            .all()
+        )
+        assert set(copied_tags) == {destination_tag}
+
+
+def test_copy_accepted_retry_replays_without_duplicate_graph_or_feed(copy_database):
+    db = copy_database
+    setup = _prepare_multiversion_copy(db)
+    command = _copy_command(db, setup)
+    first = asyncio.run(copy_ingredient_to_organization(db.sessions, context(db), command))
+    second = asyncio.run(copy_ingredient_to_organization(db.sessions, context(db), command))
+    assert second.replayed is True
+    assert second.destination_ingredient_id == first.destination_ingredient_id
+    assert second.destination_version_id == first.destination_version_id
+    assert (second.first_change_sequence, second.last_change_sequence) == (
+        first.first_change_sequence,
+        first.last_change_sequence,
+    )
+    with db.engine.connect() as connection:
+        assert connection.execute(
+            select(Ingredient.id).where(Ingredient.organization_id == db.destination)
+        ).all() == [(first.destination_ingredient_id,)]
+        assert (
+            len(
+                connection.execute(
+                    select(OrganizationChange).where(
+                        OrganizationChange.mutation_id == first.mutation_id
+                    )
+                ).all()
+            )
+            == first.last_change_sequence - first.first_change_sequence + 1
+        )
+
+
+def test_copy_replay_after_role_revocation_is_forbidden(copy_database):
+    db = copy_database
+    setup = _prepare_multiversion_copy(db)
+    command = _copy_command(db, setup)
+    asyncio.run(copy_ingredient_to_organization(db.sessions, context(db), command))
+    with db.engine.begin() as connection:
+        connection.execute(
+            OrganizationMembership.__table__.update()
+            .where(OrganizationMembership.organization_id == db.destination)
+            .values(role="member")
+        )
+    with pytest.raises(ApplicationServiceError, match="forbidden"):
+        asyncio.run(copy_ingredient_to_organization(db.sessions, context(db), command))
+
+
+def test_copy_stale_mapping_leaves_no_copy(copy_database):
+    db = copy_database
+    setup = _prepare_multiversion_copy(db)
+    command = _copy_command(db, setup)
+    with db.engine.begin() as connection:
+        connection.execute(
+            DietaryTag.__table__.update()
+            .where(DietaryTag.id == db.tag)
+            .values(name="Renamed", normalized_name="renamed")
+        )
+    with pytest.raises(ApplicationServiceError, match="stale_precondition") as first_error:
+        asyncio.run(copy_ingredient_to_organization(db.sessions, context(db), command))
+    with pytest.raises(ApplicationServiceError, match="stale_precondition") as replay_error:
+        asyncio.run(copy_ingredient_to_organization(db.sessions, context(db), command))
+    assert replay_error.value.code == first_error.value.code
+    assert replay_error.value.field_violations == first_error.value.field_violations
+    with db.engine.connect() as connection:
+        assert (
+            connection.execute(
+                select(Ingredient.id).where(Ingredient.organization_id == db.destination)
+            ).first()
+            is None
+        )
+
+
+def test_copy_authorization_error_leaves_no_copy(copy_database):
+    db = copy_database
+    setup = _prepare_multiversion_copy(db)
+    command = _copy_command(db, setup)
+    with db.engine.begin() as connection:
+        connection.execute(
+            OrganizationMembership.__table__.update()
+            .where(OrganizationMembership.organization_id == db.destination)
+            .values(role="member")
+        )
+    with pytest.raises(ApplicationServiceError, match="forbidden"):
+        asyncio.run(copy_ingredient_to_organization(db.sessions, context(db), command))
+
+
+def test_copy_invalid_mapping_rolls_back(copy_database):
+    db = copy_database
+    setup = _prepare_multiversion_copy(db)
+    command = _copy_command(db, setup)
+    invalid = CopyIngredientToOrganizationCommand(
+        command.source_organization_id,
+        command.destination_organization_id,
+        command.ingredient_id,
+        command.precondition_fingerprint,
+        tuple(
+            IngredientCopyMapping(item.kind, item.source_id, uuid4()) for item in command.mappings
+        ),
+    )
+    with pytest.raises(ApplicationServiceError, match="validation_failed") as first_error:
+        asyncio.run(copy_ingredient_to_organization(db.sessions, context(db), invalid))
+    with pytest.raises(ApplicationServiceError, match="validation_failed") as replay_error:
+        asyncio.run(copy_ingredient_to_organization(db.sessions, context(db), invalid))
+    assert replay_error.value.code == first_error.value.code
+    assert replay_error.value.field_violations == first_error.value.field_violations
+    with db.engine.connect() as connection:
+        assert (
+            connection.execute(
+                select(Ingredient.id).where(Ingredient.organization_id == db.destination)
+            ).first()
+            is None
+        )
+
+
+def test_copy_custom_tag_name_collision_is_retained_rejection(copy_database):
+    db = copy_database
+    setup = _prepare_multiversion_copy(db)
+    command = _copy_command(db, setup, create_custom_tag=True)
+    with pytest.raises(ApplicationServiceError, match="validation_failed") as first_error:
+        asyncio.run(copy_ingredient_to_organization(db.sessions, context(db), command))
+    with pytest.raises(ApplicationServiceError, match="validation_failed") as replay_error:
+        asyncio.run(copy_ingredient_to_organization(db.sessions, context(db), command))
+    assert replay_error.value.field_violations == first_error.value.field_violations
+    with db.engine.connect() as connection:
+        assert (
+            connection.execute(
+                select(Ingredient.id).where(Ingredient.organization_id == db.destination)
+            ).first()
+            is None
+        )
+
+
+def test_copy_name_collision_rolls_back(copy_database):
+    db = copy_database
+    setup = _prepare_multiversion_copy(db)
+    command = _copy_command(db, setup)
+    collision_ingredient, collision_version = uuid4(), uuid4()
+    with db.engine.begin() as connection:
+        connection.execute(
+            insert(Ingredient).values(
+                id=collision_ingredient,
+                organization_id=db.destination,
+                current_version_id=collision_version,
+                created_by_user_id=db.actor,
+            )
+        )
+        connection.execute(
+            insert(IngredientVersion).values(
+                id=collision_version,
+                organization_id=db.destination,
+                ingredient_id=collision_ingredient,
+                name="Carrot (historical)",
+                normalized_name="carrot (historical)",
+                canonical_unit_id=db.unit,
+                mass_per_canonical_quantity=1,
+                published_by_user_id=db.actor,
+            )
+        )
+    with pytest.raises(ApplicationServiceError, match="validation_failed"):
+        asyncio.run(copy_ingredient_to_organization(db.sessions, context(db), command))
+    with db.engine.connect() as connection:
+        assert connection.execute(
+            select(Ingredient.id).where(Ingredient.organization_id == db.destination)
+        ).all() == [(collision_ingredient,)]
