@@ -33,6 +33,9 @@ import {
 } from "./ad-hoc-shopping-item";
 import { replayShoppingListRename } from "./shopping-list";
 import { replayEventDietaryExceptionCreate, replayEventDietaryExceptionLifecycle, replayEventDietaryExceptionUpdate } from "./event-dietary-exception";
+import { UpgradeRequiredError, isUpgradeRequiredError } from "./sync-errors";
+
+export { UpgradeRequiredError } from "./sync-errors";
 
 const supportedEntityKinds = new Set([
   "organization",
@@ -107,12 +110,19 @@ function parseBootstrap(
 ): BootstrapWireResponse {
   if (
     !object(value) ||
-    value.sync_schema_version !== 1 ||
+    (typeof value.sync_schema_version !== "number" ||
+      value.sync_schema_version !== 1) ||
     typeof value.server_time !== "string" ||
     typeof value.cursor !== "string" ||
     value.cursor.length === 0 ||
     !Array.isArray(value.records)
   ) {
+    if (
+      object(value) &&
+      typeof value.sync_schema_version === "number" &&
+      value.sync_schema_version !== 1
+    )
+      throw new UpgradeRequiredError("sync_schema_version", value.sync_schema_version);
     throw new Error("Invalid bootstrap response.");
   }
   for (const record of value.records) {
@@ -127,6 +137,19 @@ function parseBootstrap(
       record.payload.record_schema_version !== 1 ||
       !object(record.payload.record)
     ) {
+      if (
+        object(record) &&
+        typeof record.entity_kind === "string" &&
+        !supportedEntityKinds.has(record.entity_kind)
+      )
+        throw new UpgradeRequiredError("entity_kind", record.entity_kind);
+      if (
+        object(record) &&
+        object(record.payload) &&
+        typeof record.payload.record_schema_version === "number" &&
+        record.payload.record_schema_version !== 1
+      )
+        throw new UpgradeRequiredError("record_schema_version", record.payload.record_schema_version);
       throw new Error("Invalid bootstrap response.");
     }
   }
@@ -524,11 +547,19 @@ function parsePull(value: unknown, organizationId: string): PullWireResponse {
   if (
     !object(value) ||
     (value.status !== "ok" && value.status !== "bootstrap_required") ||
-    value.sync_schema_version !== 1 ||
+    (typeof value.sync_schema_version !== "number" ||
+      value.sync_schema_version !== 1) ||
     typeof value.server_time !== "string" ||
     !Array.isArray(value.transaction_groups)
-  )
+  ) {
+    if (
+      object(value) &&
+      typeof value.sync_schema_version === "number" &&
+      value.sync_schema_version !== 1
+    )
+      throw new UpgradeRequiredError("sync_schema_version", value.sync_schema_version);
     throw new Error("Invalid pull response.");
+  }
   if (value.status === "ok" && typeof value.next_cursor !== "string") {
     throw new Error("Invalid pull response.");
   }
@@ -546,8 +577,20 @@ function parsePull(value: unknown, organizationId: string): PullWireResponse {
         !object(record.payload) ||
         record.payload.record_schema_version !== 1 ||
         !object(record.payload.record)
-      )
+      ) {
+        if (
+          typeof record.entity_kind === "string" &&
+          !supportedEntityKinds.has(record.entity_kind)
+        )
+          throw new UpgradeRequiredError("entity_kind", record.entity_kind);
+        if (
+          object(record.payload) &&
+          typeof record.payload.record_schema_version === "number" &&
+          record.payload.record_schema_version !== 1
+        )
+          throw new UpgradeRequiredError("record_schema_version", record.payload.record_schema_version);
         throw new Error("Invalid pull response.");
+      }
     }
   }
   return value as PullWireResponse;
@@ -568,7 +611,20 @@ export async function bootstrapOrganization(
     body: JSON.stringify({ organization_id: organizationId }),
   });
   if (!response.ok) throw new SyncRequestError(response.status);
-  const body = parseBootstrap(await response.json(), organizationId);
+  let body: BootstrapWireResponse;
+  try {
+    body = parseBootstrap(await response.json(), organizationId);
+  } catch (error) {
+    if (isUpgradeRequiredError(error)) {
+      await localDb.syncMetadata.put({
+        ...(await localDb.syncMetadata.get([userId, organizationId])),
+        userId,
+        organizationId,
+        activity: "upgradeRequired",
+      });
+    }
+    throw error;
+  }
   const attemptId = crypto.randomUUID();
   const staged: BootstrapStagingRecord[] = body.records.map((record) => ({
     ...canonical(userId, record, body.server_time),
@@ -644,7 +700,20 @@ export async function pullOrganization(
     }),
   });
   if (!response.ok) throw new SyncRequestError(response.status);
-  const body = parsePull(await response.json(), organizationId);
+  let body: PullWireResponse;
+  try {
+    body = parsePull(await response.json(), organizationId);
+  } catch (error) {
+    if (isUpgradeRequiredError(error)) {
+      await localDb.syncMetadata.put({
+        ...metadata,
+        userId,
+        organizationId,
+        activity: "upgradeRequired",
+      });
+    }
+    throw error;
+  }
   if (body.status === "bootstrap_required") {
     await bootstrapOrganization(userId, organizationId, { fetch: send });
     return true;

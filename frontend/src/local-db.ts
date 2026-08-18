@@ -6,7 +6,8 @@ export type SynchronizationActivity =
   | "caughtUp"
   | "syncing"
   | "retrying"
-  | "blocked";
+  | "blocked"
+  | "upgradeRequired";
 
 export interface CachedOrganization {
   id: string;
@@ -269,6 +270,7 @@ export interface SynchronizationSummary {
 function chooseActivity(
   activities: SynchronizationActivity[],
 ): SynchronizationActivity {
+  if (activities.includes("upgradeRequired")) return "upgradeRequired";
   if (activities.includes("blocked")) return "blocked";
   if (activities.includes("retrying")) return "retrying";
   if (activities.includes("syncing")) return "syncing";

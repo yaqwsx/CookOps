@@ -5,6 +5,7 @@ import { localDb } from "./local-db";
 import { dispatchOutbox } from "./sync-dispatcher";
 import { pullOrganization } from "./sync-bootstrap";
 import { dispatchReceiptUploads } from "./receipt-media";
+import { isUpgradeRequiredError } from "./sync-errors";
 
 export const SYNC_RETRY_DELAY_MS = 5_000;
 const syncLockName = "cookops-outbox-sync";
@@ -90,10 +91,25 @@ export function useOutboxSynchronization(userId: string) {
         for (const organizationId of organizationIds) {
           if (!active.current || currentGeneration !== generation.current)
             return;
-          await pullOrganization(userId, organizationId);
+          if (
+            (await localDb.syncMetadata.get([userId, organizationId]))
+              ?.activity === "upgradeRequired"
+          )
+            continue;
+          try {
+            await pullOrganization(userId, organizationId);
+          } catch (error) {
+            if (isUpgradeRequiredError(error)) continue;
+            throw error;
+          }
           if (!active.current || currentGeneration !== generation.current)
             return;
-          await dispatchOutbox(organizationId, { userId });
+          try {
+            await dispatchOutbox(organizationId, { userId });
+          } catch (error) {
+            if (isUpgradeRequiredError(error)) continue;
+            throw error;
+          }
           if (!active.current || currentGeneration !== generation.current)
             return;
           await dispatchReceiptUploads(userId, organizationId);

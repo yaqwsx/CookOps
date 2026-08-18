@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { appendOutboxCommand, localDb } from "./local-db";
 import { dispatchOutbox } from "./sync-dispatcher";
+import { UpgradeRequiredError } from "./sync-errors";
 
 const organizationId = "organization-a";
 const installationId = "installation-a";
@@ -286,6 +287,26 @@ describe("dispatchOutbox", () => {
       localDb.syncMetadata.get([userId, organizationId]),
     ).resolves.toMatchObject({
       activity: "retrying",
+    });
+  });
+
+  it("retains pending work when the server requires a sync upgrade", async () => {
+    await addCommand("future-schema", "2026-08-07T10:00:00.000Z");
+    await expect(
+      dispatchOutbox(organizationId, {
+        userId,
+        clientInstallationId: installationId,
+        fetch: vi.fn<typeof fetch>(async () =>
+          new Response(JSON.stringify({ sync_schema_version: 2 }), { status: 200 }),
+        ),
+      }),
+    ).rejects.toBeInstanceOf(UpgradeRequiredError);
+    await expect(localDb.outbox.get("future-schema")).resolves.toMatchObject({
+      state: "pending",
+      payload: {},
+    });
+    await expect(localDb.syncMetadata.get([userId, organizationId])).resolves.toMatchObject({
+      activity: "upgradeRequired",
     });
   });
 

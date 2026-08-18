@@ -76,6 +76,9 @@ export function SynchronizationStatus({
   } else if (!online) {
     message = t("synchronization.offline");
     tone = "offline";
+  } else if (summary?.activity === "upgradeRequired") {
+    message = t("synchronization.upgradeRequired");
+    tone = "failed";
   } else if (failedCount > 0 || summary?.activity === "blocked") {
     message = t("synchronization.failed", { count: failedCount });
     tone = "failed";

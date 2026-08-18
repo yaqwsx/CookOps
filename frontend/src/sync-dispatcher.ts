@@ -5,6 +5,7 @@ import {
   type OrganizationSyncMetadata,
   type OutboxCommand,
 } from "./local-db";
+import { UpgradeRequiredError, isUpgradeRequiredError } from "./sync-errors";
 
 export const MAX_COMMANDS_PER_PUSH = 100;
 export const MAX_PUSH_BYTES = 1024 * 1024;
@@ -130,12 +131,18 @@ function parsePushResponse(
     throw new Error("Invalid sync response.");
   const response = value as Partial<PushResponse>;
   if (
-    response.sync_schema_version !== 1 ||
+    (typeof response.sync_schema_version !== "number" ||
+      response.sync_schema_version !== 1) ||
     typeof response.server_time !== "string" ||
     typeof response.change_cursor !== "string" ||
     !Array.isArray(response.outcomes) ||
     response.outcomes.length !== commands.length
   ) {
+    if (
+      typeof response.sync_schema_version === "number" &&
+      response.sync_schema_version !== 1
+    )
+      throw new UpgradeRequiredError("sync_schema_version", response.sync_schema_version);
     throw new Error("Invalid sync response.");
   }
   for (const [index, outcome] of response.outcomes.entries()) {
@@ -287,6 +294,10 @@ export async function dispatchOutbox(
       activity: failed ? "blocked" : "caughtUp",
     });
   } catch (error) {
+    if (isUpgradeRequiredError(error)) {
+      await updateMetadata(userId, organizationId, { activity: "upgradeRequired" });
+      throw error;
+    }
     await updateMetadata(userId, organizationId, { activity: "retrying" });
     throw error;
   }

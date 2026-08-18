@@ -43,6 +43,19 @@ function response(records: object[], cursor = "new-cursor") {
   );
 }
 
+function pullResponse(records: object[], nextCursor = "next-cursor") {
+  return new Response(
+    JSON.stringify({
+      status: "ok",
+      sync_schema_version: 1,
+      server_time: "2026-08-07T12:00:00.000Z",
+      next_cursor: nextCursor,
+      transaction_groups: [{ records }],
+    }),
+    { status: 200, headers: { "content-type": "application/json" } },
+  );
+}
+
 function record(entityId: string, organization = organizationId) {
   return {
     organization_id: organization,
@@ -1253,5 +1266,78 @@ describe("bootstrapOrganization", () => {
         scale_mode: { winning_mutation_id: "catalog" },
       },
     });
+  });
+
+  it("marks upgrade-required bootstrap responses without replacing local state", async () => {
+    const existing = {
+      userId,
+      organizationId,
+      entityType: "event",
+      entityId: "existing-event",
+      recordSchemaVersion: 1,
+      lifecycle: "active" as const,
+      fields: { id: "existing-event", name: "Local" },
+      fieldClocks: {},
+      immutable: false,
+      updatedAt: "2026-08-07T10:00:00.000Z",
+    };
+    await localDb.canonicalRecords.put(existing);
+    await localDb.outbox.add({
+      id: "pending-upgrade",
+      userId,
+      organizationId,
+      commandType: "event.create",
+      payload: {},
+      actionAt: "2026-08-07T10:00:00.000Z",
+      createdAt: "2026-08-07T10:00:00.000Z",
+      state: "pending",
+    });
+    await localDb.syncMetadata.put({
+      userId,
+      organizationId,
+      cursor: "old-cursor",
+      activity: "caughtUp",
+    });
+    const unknownEntity = vi.fn<typeof fetch>(async () =>
+      response([{ ...record("unknown"), entity_kind: "future_entity" }]),
+    );
+    await expect(bootstrapOrganization(userId, organizationId, { fetch: unknownEntity }))
+      .rejects.toMatchObject({ name: "UpgradeRequiredError", reason: "entity_kind" });
+    await expect(localDb.canonicalRecords.get([userId, organizationId, "event", "existing-event"])).resolves.toEqual(existing);
+    await expect(localDb.outbox.get("pending-upgrade")).resolves.toMatchObject({ state: "pending" });
+    await expect(localDb.syncMetadata.get([userId, organizationId])).resolves.toMatchObject({ cursor: "old-cursor", activity: "upgradeRequired" });
+
+    const futureSchema = vi.fn<typeof fetch>(async () =>
+      new Response(JSON.stringify({ sync_schema_version: 2 }), { status: 200 }),
+    );
+    await expect(bootstrapOrganization(userId, organizationId, { fetch: futureSchema }))
+      .rejects.toMatchObject({ name: "UpgradeRequiredError", reason: "sync_schema_version" });
+    await expect(localDb.canonicalRecords.get([userId, organizationId, "event", "existing-event"])).resolves.toEqual(existing);
+    await expect(localDb.outbox.get("pending-upgrade")).resolves.toMatchObject({ state: "pending" });
+  });
+
+  it("does not advance pull state for an unsupported record schema", async () => {
+    const existing = {
+      userId,
+      organizationId,
+      entityType: "event",
+      entityId: "existing-event",
+      recordSchemaVersion: 1,
+      lifecycle: "active" as const,
+      fields: { id: "existing-event", name: "Local" },
+      fieldClocks: {},
+      immutable: false,
+      updatedAt: "2026-08-07T10:00:00.000Z",
+    };
+    await localDb.canonicalRecords.put(existing);
+    await localDb.syncMetadata.put({ userId, organizationId, cursor: "old-cursor", activity: "caughtUp" });
+    const unsupported = {
+      ...record("future-record"),
+      payload: { record_schema_version: 2, record: { id: "future-record" } },
+    };
+    await expect(pullOrganization(userId, organizationId, { fetch: vi.fn<typeof fetch>(async () => pullResponse([unsupported])) }))
+      .rejects.toMatchObject({ name: "UpgradeRequiredError", reason: "record_schema_version" });
+    await expect(localDb.canonicalRecords.get([userId, organizationId, "event", "existing-event"])).resolves.toEqual(existing);
+    await expect(localDb.syncMetadata.get([userId, organizationId])).resolves.toMatchObject({ cursor: "old-cursor", activity: "upgradeRequired" });
   });
 });

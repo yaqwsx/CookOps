@@ -2,6 +2,7 @@ import { render, waitFor } from "@testing-library/react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { localDb } from "./local-db";
+import { UpgradeRequiredError } from "./sync-errors";
 import {
   SYNC_RETRY_DELAY_MS,
   useOutboxSynchronization,
@@ -365,5 +366,18 @@ describe("authenticated outbox synchronization lifecycle", () => {
     );
     unmount();
     expect(clearTimeoutMock).toHaveBeenCalled();
+  });
+
+  it("does not retry an upgrade-required organization while continuing with others", async () => {
+    await addPendingCommand("organization-a");
+    await addPendingCommand("organization-b");
+    pullOrganization
+      .mockRejectedValueOnce(new UpgradeRequiredError("entity_kind", "future_entity"))
+      .mockResolvedValue(false);
+    render(<Lifecycle userId="user-a" />);
+    await waitFor(() =>
+      expect(dispatchOutbox).toHaveBeenCalledWith("organization-b", { userId: "user-a" }),
+    );
+    expect(dispatchOutbox).not.toHaveBeenCalledWith("organization-a", { userId: "user-a" });
   });
 });
