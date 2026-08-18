@@ -724,6 +724,46 @@ describe("bootstrapOrganization", () => {
     ).resolves.toMatchObject({ fields: { base_expected_attendance: 9 } });
   });
 
+  it("converges duplicate change pulls without duplicating canonical records or losing outbox work", async () => {
+    await localDb.syncMetadata.add({
+      userId,
+      organizationId,
+      cursor: "old-cursor",
+      activity: "caughtUp",
+    });
+    const command = {
+      id: "pending-command",
+      userId,
+      organizationId,
+      commandType: "event.update_base_attendance" as const,
+      payload: { event_id: "event", base_expected_attendance: 9 },
+      actionAt: "2026-08-07T11:00:00.000Z",
+      createdAt: "2026-08-07T11:00:00.000Z",
+      state: "pending" as const,
+    };
+    await localDb.outbox.add(command);
+    const send = vi.fn<typeof fetch>(async () =>
+      pullResponse([{ ...record("event"), sequence: 1 }], "new-cursor"),
+    );
+
+    await pullOrganization(userId, organizationId, { fetch: send });
+    await pullOrganization(userId, organizationId, { fetch: send });
+
+    const records = (await localDb.canonicalRecords.toArray()).filter(
+      (entry) =>
+        entry.userId === userId &&
+        entry.organizationId === organizationId &&
+        entry.entityType === "event" &&
+        entry.entityId === "event",
+    );
+    expect(records).toHaveLength(1);
+    await expect(localDb.syncMetadata.get([userId, organizationId])).resolves.toMatchObject({
+      cursor: "new-cursor",
+      activity: "caughtUp",
+    });
+    await expect(localDb.outbox.get(command.id)).resolves.toEqual(command);
+  });
+
   it("does not replay attendance over a canonical archived event", async () => {
     await localDb.outbox.add({
       id: "attendance",

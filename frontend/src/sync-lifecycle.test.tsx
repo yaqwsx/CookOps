@@ -112,6 +112,13 @@ describe("authenticated outbox synchronization lifecycle", () => {
         cursor: "v1.cursor",
       }),
     );
+    socket.message(
+      JSON.stringify({
+        type: "change_available",
+        organization_id: "organization-a",
+        cursor: "v1.cursor",
+      }),
+    );
     await waitFor(() => expect(pullOrganization).toHaveBeenCalled());
     pullOrganization.mockClear();
     socket.message(
