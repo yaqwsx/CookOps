@@ -8,8 +8,20 @@ WORKDIR /app
 
 COPY pyproject.toml uv.lock ./
 RUN apt-get update \
-    && apt-get install --no-install-recommends --yes postgresql-client \
+    && apt-get install --no-install-recommends --yes ca-certificates curl \
+    && install -d /usr/share/postgresql-common/pgdg \
+    && curl --fail --silent --show-error --location \
+        --output /usr/share/postgresql-common/pgdg/apt.postgresql.org.asc \
+        https://www.postgresql.org/media/keys/ACCC4CF8.asc \
+    && printf '%s\n' \
+        'deb [signed-by=/usr/share/postgresql-common/pgdg/apt.postgresql.org.asc] https://apt.postgresql.org/pub/repos/apt bookworm-pgdg main' \
+        > /etc/apt/sources.list.d/pgdg.list \
+    && apt-get update \
+    && apt-get install --no-install-recommends --yes postgresql-client-18 \
+    && apt-get purge --auto-remove --yes curl \
     && rm -rf /var/lib/apt/lists/* \
+        /etc/apt/sources.list.d/pgdg.list \
+        /usr/share/postgresql-common/pgdg/apt.postgresql.org.asc \
     && pip install --no-cache-dir uv==0.9.28 \
     && uv sync --locked --no-dev --no-install-project
 COPY alembic alembic

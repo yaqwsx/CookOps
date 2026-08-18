@@ -7,6 +7,8 @@ docker build --quiet --tag cookops-web-image-test "$root/frontend" >/dev/null
 docker build --quiet --tag cookops-oauth-image-test "$root/oauth-server" >/dev/null
 docker run --rm --entrypoint=nginx cookops-web-image-test -t
 docker run --rm --entrypoint=node cookops-oauth-image-test --version | grep -q '^v22\.'
+docker run --rm --entrypoint=pg_dump cookops-api-image-test --version | grep -Eq '^pg_dump \(PostgreSQL\) 18\.'
+docker run --rm --entrypoint=pg_restore cookops-api-image-test --version | grep -Eq '^pg_restore \(PostgreSQL\) 18\.'
 
 docker compose --env-file "$root/deploy/.env.example" -f "$root/deploy/compose.yaml" config >/dev/null
 for service in backup restore; do
