@@ -169,8 +169,12 @@ function ShoppingDetail({
   refreshPending: boolean;
 }) {
   const { t } = useTranslation();
+  const [hideCompleted, setHideCompleted] = useState(false);
+  const visibleRows = hideCompleted
+    ? shoppingList.rows.filter((row) => !row.fulfilled && !row.notRequired)
+    : shoppingList.rows;
   const sections = new Map<string, ShoppingListProjection["rows"]>();
-  for (const row of shoppingList.rows) {
+  for (const row of visibleRows) {
     const section = row.sectionName ?? t("shopping.noSection");
     sections.set(section, [...(sections.get(section) ?? []), row]);
   }
@@ -207,6 +211,16 @@ function ShoppingDetail({
         />
       ) : null}
       {shoppingList.rows.length ? (
+        <label>
+          <input
+            checked={hideCompleted}
+            onChange={(event) => setHideCompleted(event.currentTarget.checked)}
+            type="checkbox"
+          />
+          {t("shopping.hideCompleted")}
+        </label>
+      ) : null}
+      {visibleRows.length ? (
         [...sections].map(([section, rows]) => (
           <section className="shopping-section" key={section}>
             <h4>{section}</h4>
@@ -226,7 +240,7 @@ function ShoppingDetail({
           </section>
         ))
       ) : (
-        <p>{t("shopping.noRows")}</p>
+        <p>{shoppingList.rows.length ? t("shopping.noFilteredRows") : t("shopping.noRows")}</p>
       )}
       {shoppingList.adHocItems.length ? (
         <section

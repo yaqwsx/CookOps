@@ -246,6 +246,92 @@ describe("EventShopping", () => {
     );
   });
 
+  it("filters completed and unnecessary aggregate rows without empty sections", async () => {
+    await i18n.changeLanguage(defaultLocale);
+    readEventPlanner.mockResolvedValue({ name: "Letní vaření", lifecycle: "active", scheduled: [] });
+    readShoppingLists.mockResolvedValue([]);
+    readShoppingList.mockResolvedValue({
+      id: "9d8b2b21-c378-4574-9e46-9338c81305ef",
+      name: "Sobota",
+      sourceCount: 1,
+      createdAt: "2026-08-07T12:00:00Z",
+      currentGenerationRevisionId: "0e8b2b21-c378-4574-9e46-9338c81305ef",
+      sourceRecipeIds: [ids.scheduled],
+      rows: [
+        { id: "completed", ingredientName: "Nakoupená rajčata", sectionName: "Zelenina", availableSupply: "0", manualPurchaseTarget: null, target: "1", remaining: "0", unit: "kg", fulfilled: true, notRequired: false, contributions: [] },
+        { id: "unneeded", ingredientName: "Voda", sectionName: "Nápoje", availableSupply: "1", manualPurchaseTarget: null, target: "0", remaining: "0", unit: "l", fulfilled: false, notRequired: true, contributions: [] },
+        { id: "open", ingredientName: "Cibule", sectionName: "Zelenina", availableSupply: "0", manualPurchaseTarget: null, target: "2", remaining: "2", unit: "kg", fulfilled: false, notRequired: false, contributions: [] },
+      ],
+      adHocItems: [],
+      quantityUnits: [],
+      storeSections: [],
+    });
+    pullOrganization.mockResolvedValue(false);
+    const user = userEvent.setup();
+    render(
+      <EventShopping
+        eventId={ids.event}
+        onBack={vi.fn()}
+        onOpenList={vi.fn()}
+        onOpenPlanner={vi.fn()}
+        onUnauthenticated={vi.fn()}
+        organizationId={ids.organization}
+        shoppingListId="9d8b2b21-c378-4574-9e46-9338c81305ef"
+        userId={ids.user}
+      />,
+    );
+
+    await screen.findByText("Nakoupená rajčata");
+    await user.click(screen.getByLabelText("Skrýt nakoupené a nepotřebné položky"));
+    expect(screen.queryByText("Nakoupená rajčata")).not.toBeInTheDocument();
+    expect(screen.queryByText("Voda")).not.toBeInTheDocument();
+    expect(screen.getByText("Cibule")).toBeVisible();
+    expect(screen.getAllByRole("heading", { level: 4 })).toHaveLength(1);
+    expect(screen.getByRole("heading", { level: 4, name: "Zelenina" })).toBeVisible();
+    await user.click(screen.getByLabelText("Skrýt nakoupené a nepotřebné položky"));
+    expect(screen.getByText("Nakoupená rajčata")).toBeVisible();
+    expect(screen.getByText("Voda")).toBeVisible();
+  });
+
+  it("shows a neutral message when the filter hides every aggregate row", async () => {
+    await i18n.changeLanguage(defaultLocale);
+    readEventPlanner.mockResolvedValue({ name: "Letní vaření", lifecycle: "active", scheduled: [] });
+    readShoppingLists.mockResolvedValue([]);
+    readShoppingList.mockResolvedValue({
+      id: "9d8b2b21-c378-4574-9e46-9338c81305ef",
+      name: "Sobota",
+      sourceCount: 1,
+      createdAt: "2026-08-07T12:00:00Z",
+      currentGenerationRevisionId: "0e8b2b21-c378-4574-9e46-9338c81305ef",
+      sourceRecipeIds: [ids.scheduled],
+      rows: [
+        { id: "completed-only", ingredientName: "Rajčata", sectionName: "Zelenina", availableSupply: "0", manualPurchaseTarget: null, target: "1", remaining: "0", unit: "kg", fulfilled: true, notRequired: false, contributions: [] },
+        { id: "unneeded-only", ingredientName: "Voda", sectionName: "Nápoje", availableSupply: "1", manualPurchaseTarget: null, target: "0", remaining: "0", unit: "l", fulfilled: false, notRequired: true, contributions: [] },
+      ],
+      adHocItems: [],
+      quantityUnits: [],
+      storeSections: [],
+    });
+    pullOrganization.mockResolvedValue(false);
+    const user = userEvent.setup();
+    render(
+      <EventShopping
+        eventId={ids.event}
+        onBack={vi.fn()}
+        onOpenList={vi.fn()}
+        onOpenPlanner={vi.fn()}
+        onUnauthenticated={vi.fn()}
+        organizationId={ids.organization}
+        shoppingListId="9d8b2b21-c378-4574-9e46-9338c81305ef"
+        userId={ids.user}
+      />,
+    );
+
+    await user.click(await screen.findByLabelText("Skrýt nakoupené a nepotřebné položky"));
+    expect(screen.getByText("Všechny položky odpovídají aktivnímu filtru.")).toBeVisible();
+    expect(screen.queryAllByRole("heading", { level: 4 })).toHaveLength(0);
+  });
+
   it("creates a distinct accessible ad-hoc item through the typed outbox", async () => {
     await i18n.changeLanguage(defaultLocale);
     readEventPlanner.mockResolvedValue({
