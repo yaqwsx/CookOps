@@ -1,4 +1,4 @@
-import { useEffect, useState, type FormEvent } from "react";
+import { useCallback, useEffect, useState, type FormEvent } from "react";
 import { useTranslation } from "react-i18next";
 
 import { changeSystemOrganizationLifecycle, createSystemOrganization, editSystemOrganization, getSystemOrganizations, SystemOrganizationRequestError, type SystemOrganization } from "./api/system-organizations";
@@ -32,7 +32,7 @@ export function SystemOrganizationCreate({
   const [selectedOrganizationId, setSelectedOrganizationId] = useState<string | null>(null);
   const selectedOrganization = organizations.find(({ id }) => id === selectedOrganizationId);
 
-  async function refresh() {
+  const refresh = useCallback(async () => {
     try {
       const next = await getSystemOrganizations();
       setOrganizations(next);
@@ -40,9 +40,9 @@ export function SystemOrganizationCreate({
       setListError(false);
     }
     catch { setListError(true); }
-  }
+  }, []);
 
-  useEffect(() => { void refresh(); }, [userId]);
+  useEffect(() => { void refresh(); }, [refresh]);
 
   async function submit(event: FormEvent) {
     event.preventDefault();
@@ -119,7 +119,7 @@ export function SystemOrganizationCreate({
       setEditingId(null);
       await refresh();
       onCreated();
-    } catch (caught) {
+    } catch {
       setEditError(t("systemOrganizations.editError"));
     } finally {
       setPendingEdit(false);
