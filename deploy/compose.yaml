@@ -102,10 +102,13 @@ services:
       - /bin/sh
       - -c
       - >-
-        exec python /operator-scripts/restore_archive.py
+        python /operator-scripts/restore_archive.py
         "/var/lib/cookops/backups/$${COOKOPS_BACKUP_ARCHIVE}"
         --database-name "$${PGDATABASE}"
         --clean-database
+        --media-root "/var/lib/cookops/restore/$${COOKOPS_RESTORE_MEDIA_SUBDIR}" &&
+        exec python /operator-scripts/verify_media_references.py
+        --database-name "$${PGDATABASE}"
         --media-root "/var/lib/cookops/restore/$${COOKOPS_RESTORE_MEDIA_SUBDIR}"
     volumes:
       - ../scripts:/operator-scripts:ro

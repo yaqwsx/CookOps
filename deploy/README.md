@@ -43,6 +43,8 @@ docker compose --profile operations --env-file deploy/.env -f deploy/compose.yam
 The restore command deliberately does not pass `--allow-nonempty`; it refuses
 to replace existing media unless an operator explicitly authorizes that action.
 It does pass `--clean-database`, so it replaces database objects in the selected
-database. Stop the API before restoring, and complete the compatibility and
-database/media-reference checks before switching application storage to the new
-media directory. Neither service publishes a port or exposes a web/API/MCP route.
+database, then verifies every READY receipt attachment's object size, SHA-256,
+thumbnail, and safe media path before reporting success. Stop the API before
+restoring and complete compatibility migrations before switching application
+storage to the new media directory. Neither service publishes a port or exposes
+a web/API/MCP route.
