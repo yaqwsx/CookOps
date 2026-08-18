@@ -12,7 +12,7 @@ describe("editSystemOrganization", () => {
       retired_at: null,
       retired_by_user_id: null,
     };
-    const fetchMock = vi.fn(async () => new Response(JSON.stringify(response), { status: 200 }));
+    const fetchMock = vi.fn<typeof fetch>(async (_input, _init) => new Response(JSON.stringify(response), { status: 200 }));
     vi.stubGlobal("fetch", fetchMock);
     vi.stubGlobal("crypto", { randomUUID: () => "mutation-id" });
 
@@ -27,7 +27,10 @@ describe("editSystemOrganization", () => {
       method: "PATCH",
       credentials: "same-origin",
     }));
-    expect(JSON.parse(fetchMock.mock.calls[0][1].body)).toMatchObject({
+    const body = fetchMock.mock.calls[0][1]?.body;
+    expect(typeof body).toBe("string");
+    if (typeof body !== "string") throw new Error("Expected a JSON request body");
+    expect(JSON.parse(body)).toMatchObject({
       mutation_id: "mutation-id",
       name: "Edited kitchen",
       default_currency: "EUR",
