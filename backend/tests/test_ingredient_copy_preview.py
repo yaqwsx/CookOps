@@ -1,0 +1,346 @@
+"""Focused guarded ingredient-copy preview checks."""
+
+import asyncio
+import os
+from datetime import UTC, datetime
+from types import SimpleNamespace
+from uuid import uuid4
+
+import pytest
+from alembic.config import Config
+from fastapi.testclient import TestClient
+from sqlalchemy import create_engine, insert, select
+from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
+from sqlalchemy.pool import NullPool
+
+from alembic import command
+from cookops.application.ingredient_copy import (
+    PreviewIngredientCopyCommand,
+    preview_ingredient_copy,
+)
+from cookops.application.organizations import ApplicationServiceError, ExecutionContext
+from cookops.config import Settings
+from cookops.http_ingredient_copy import IngredientCopyHttpServices
+from cookops.main import create_app
+from cookops.persistence.models import (
+    ClientInstallation,
+    DietaryTag,
+    Ingredient,
+    IngredientVersion,
+    IngredientVersionDietaryTag,
+    Organization,
+    OrganizationChange,
+    OrganizationMembership,
+    StoreSection,
+    SystemRoleAssignment,
+    UnitDefinition,
+    User,
+)
+
+pytestmark = pytest.mark.skipif(
+    "TEST_DATABASE_URL" not in os.environ, reason="TEST_DATABASE_URL is not set"
+)
+
+
+@pytest.fixture
+def copy_database():
+    url = os.environ["TEST_DATABASE_URL"]
+    configuration = Config("alembic.ini")
+    configuration.set_main_option("sqlalchemy.url", url)
+    command.downgrade(configuration, "base")
+    command.upgrade(configuration, "head")
+    engine = create_engine(url)
+    actor, installation = uuid4(), uuid4()
+    source_org, destination_org = uuid4(), uuid4()
+    ingredient, version, section, tag = (uuid4() for _ in range(4))
+    now = datetime.now(UTC)
+    with engine.begin() as connection:
+        connection.execute(
+            insert(User).values(
+                id=actor,
+                display_name="Copy actor",
+                verified_email="copy@example.test",
+                normalized_email="copy@example.test",
+            )
+        )
+        connection.execute(
+            insert(ClientInstallation).values(
+                id=installation, user_id=actor, installation_kind="browser"
+            )
+        )
+        connection.execute(
+            insert(Organization),
+            [
+                {
+                    "id": source_org,
+                    "name": "Source",
+                    "default_currency": "CZK",
+                    "created_by_user_id": actor,
+                },
+                {
+                    "id": destination_org,
+                    "name": "Destination",
+                    "default_currency": "CZK",
+                    "created_by_user_id": actor,
+                },
+            ],
+        )
+        connection.execute(
+            insert(OrganizationMembership),
+            [
+                {
+                    "organization_id": source_org,
+                    "user_id": actor,
+                    "invited_email": "copy@example.test",
+                    "role": "member",
+                    "state": "active",
+                    "invited_by_user_id": actor,
+                    "claimed_at": now,
+                },
+                {
+                    "organization_id": destination_org,
+                    "user_id": actor,
+                    "invited_email": "copy@example.test",
+                    "role": "organization_admin",
+                    "state": "active",
+                    "invited_by_user_id": actor,
+                    "claimed_at": now,
+                },
+            ],
+        )
+        unit = connection.scalar(
+            select(UnitDefinition.id).where(
+                UnitDefinition.organization_id.is_(None), UnitDefinition.code == "g"
+            )
+        )
+        assert unit is not None
+        connection.execute(
+            insert(StoreSection).values(
+                id=section,
+                organization_id=source_org,
+                name="Produce",
+                normalized_name="produce",
+                position_key="a",
+                created_by_user_id=actor,
+            )
+        )
+        connection.execute(
+            insert(DietaryTag).values(
+                id=tag, organization_id=source_org, seed_key="vegan", created_by_user_id=actor
+            )
+        )
+        connection.execute(
+            insert(IngredientVersion).values(
+                id=version,
+                organization_id=source_org,
+                ingredient_id=ingredient,
+                name="Carrot",
+                normalized_name="carrot",
+                canonical_unit_id=unit,
+                mass_per_canonical_quantity=1,
+                default_store_section_id=section,
+                published_by_user_id=actor,
+            )
+        )
+        connection.execute(
+            insert(Ingredient).values(
+                id=ingredient,
+                organization_id=source_org,
+                current_version_id=version,
+                created_by_user_id=actor,
+            )
+        )
+        connection.execute(
+            insert(IngredientVersionDietaryTag).values(
+                ingredient_version_id=version, dietary_tag_id=tag, organization_id=source_org
+            )
+        )
+    async_engine = create_async_engine(url, poolclass=NullPool)
+    value = SimpleNamespace(
+        sessions=async_sessionmaker(async_engine, expire_on_commit=False),
+        actor=actor,
+        installation=installation,
+        source=source_org,
+        destination=destination_org,
+        ingredient=ingredient,
+        version=version,
+        section=section,
+        tag=tag,
+        unit=unit,
+        engine=engine,
+    )
+    yield value
+    async_engine.sync_engine.dispose()
+
+
+def context(db):
+    return ExecutionContext(db.actor, db.installation)
+
+
+def test_allowed_preview_is_scoped_and_does_not_mutate(copy_database):
+    db = copy_database
+    before = (
+        db.engine.connect()
+        .execute(select(Ingredient).where(Ingredient.id == db.ingredient))
+        .scalar_one()
+    )
+    preview = asyncio.run(
+        preview_ingredient_copy(
+            db.sessions,
+            context(db),
+            PreviewIngredientCopyCommand(db.source, db.destination, db.ingredient),
+        )
+    )
+    assert preview.source_version_id == db.version
+    assert preview.canonical_unit_id == db.unit
+    assert {item.kind for item in preview.mapping_requirements} == {
+        "default_store_section",
+        "dietary_tag",
+    }
+    with db.engine.connect() as connection:
+        assert (
+            connection.execute(select(Ingredient).where(Ingredient.id == db.ingredient))
+            .scalar_one()
+            .id
+            == before.id
+        )
+        assert connection.execute(select(OrganizationChange)).first() is None
+
+
+def test_source_member_or_destination_member_is_denied(copy_database):
+    db = copy_database
+    with db.engine.begin() as connection:
+        connection.execute(
+            OrganizationMembership.__table__.update()
+            .where(OrganizationMembership.organization_id == db.destination)
+            .values(role="member")
+        )
+    with pytest.raises(ApplicationServiceError) as error:
+        asyncio.run(
+            preview_ingredient_copy(
+                db.sessions,
+                context(db),
+                PreviewIngredientCopyCommand(db.source, db.destination, db.ingredient),
+            )
+        )
+    assert error.value.code == "forbidden"
+
+
+def test_system_admin_can_preview_without_memberships(copy_database):
+    db = copy_database
+    with db.engine.begin() as connection:
+        connection.execute(
+            OrganizationMembership.__table__.delete().where(
+                OrganizationMembership.user_id == db.actor
+            )
+        )
+        connection.execute(
+            insert(SystemRoleAssignment).values(
+                id=uuid4(),
+                user_id=db.actor,
+                invited_email="copy@example.test",
+                role="system_admin",
+                granted_by_user_id=db.actor,
+                claimed_at=datetime.now(UTC),
+            )
+        )
+    preview = asyncio.run(
+        preview_ingredient_copy(
+            db.sessions,
+            context(db),
+            PreviewIngredientCopyCommand(db.source, db.destination, db.ingredient),
+        )
+    )
+    assert preview.source_ingredient_id == db.ingredient
+
+
+def test_retired_source_tag_remains_previewable_and_fingerprint_changes(copy_database):
+    db = copy_database
+    with db.engine.begin() as connection:
+        connection.execute(
+            DietaryTag.__table__.update()
+            .where(DietaryTag.id == db.tag)
+            .values(retired_at=datetime.now(UTC), retired_by_user_id=db.actor)
+        )
+    first = asyncio.run(
+        preview_ingredient_copy(
+            db.sessions,
+            context(db),
+            PreviewIngredientCopyCommand(db.source, db.destination, db.ingredient),
+        )
+    )
+    assert any(item.kind == "dietary_tag" for item in first.mapping_requirements)
+    with db.engine.begin() as connection:
+        connection.execute(
+            DietaryTag.__table__.update()
+            .where(DietaryTag.id == db.tag)
+            .values(seed_key="vegetarian")
+        )
+    changed_tag = asyncio.run(
+        preview_ingredient_copy(
+            db.sessions,
+            context(db),
+            PreviewIngredientCopyCommand(db.source, db.destination, db.ingredient),
+        )
+    )
+    assert changed_tag.precondition_fingerprint != first.precondition_fingerprint
+    with db.engine.begin() as connection:
+        connection.execute(
+            insert(DietaryTag).values(
+                id=uuid4(),
+                organization_id=db.destination,
+                seed_key="vegan",
+                created_by_user_id=db.actor,
+            )
+        )
+    second = asyncio.run(
+        preview_ingredient_copy(
+            db.sessions,
+            context(db),
+            PreviewIngredientCopyCommand(db.source, db.destination, db.ingredient),
+        )
+    )
+    assert second.precondition_fingerprint != first.precondition_fingerprint
+    with db.engine.begin() as connection:
+        connection.execute(
+            Ingredient.__table__.update()
+            .where(Ingredient.id == db.ingredient)
+            .values(current_version_id=uuid4())
+        )
+    with pytest.raises(ApplicationServiceError, match="stale_precondition"):
+        asyncio.run(
+            preview_ingredient_copy(
+                db.sessions,
+                context(db),
+                PreviewIngredientCopyCommand(db.source, db.destination, db.ingredient),
+            )
+        )
+
+
+def test_authenticated_http_preview_route(copy_database):
+    db = copy_database
+    settings = Settings(browser_session_cookie_name="cookops_session")
+    app = create_app(settings, readiness_probe=lambda: _ready())
+
+    async def authenticate(_: str):
+        return _authenticated(db.actor)
+
+    app.state.ingredient_copy = IngredientCopyHttpServices(
+        browser_sessions=SimpleNamespace(authenticate=authenticate),
+        session_factory=db.sessions,
+    )
+    with TestClient(app) as client:
+        response = client.get(
+            f"/api/v1/organizations/{db.destination}/ingredient-copy-preview/{db.source}/{db.ingredient}",
+            cookies={"cookops_session": "session"},
+        )
+    assert response.status_code == 200
+    assert response.json()["source_version_id"] == str(db.version)
+
+
+async def _ready() -> bool:
+    return True
+
+
+def _authenticated(user_id):
+    return SimpleNamespace(user_id=user_id)
