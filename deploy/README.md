@@ -53,3 +53,10 @@ provider's migration workflow is separate from this command. Run that workflow
 after the restore and before resuming traffic. Complete the full restore
 sequence before switching application storage to the new media directory.
 Neither service publishes a port or exposes a web/API/MCP route.
+
+After restore, run the OAuth provider migration explicitly before resuming traffic:
+
+```sh
+docker compose --env-file deploy/.env -f deploy/compose.yaml \
+  run --rm oauth-migrate
+```
