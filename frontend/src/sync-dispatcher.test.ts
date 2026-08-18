@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { appendOutboxCommand, localDb } from "./local-db";
-import { dispatchOutbox } from "./sync-dispatcher";
+import { dispatchOutbox, MAX_PUSH_BYTES } from "./sync-dispatcher";
 import { UpgradeRequiredError } from "./sync-errors";
 
 const organizationId = "organization-a";
@@ -48,6 +48,16 @@ function response(outcomes: object[]) {
     }),
     { status: 200, headers: { "content-type": "application/json" } },
   );
+}
+
+function requestBody(call: [RequestInfo | URL, RequestInit | undefined]) {
+  return JSON.parse(String(call[1]?.body)) as {
+    commands: Record<string, unknown>[];
+  };
+}
+
+function wireBytes(body: unknown) {
+  return new TextEncoder().encode(JSON.stringify(body)).byteLength;
 }
 
 describe("dispatchOutbox", () => {
@@ -266,6 +276,73 @@ describe("dispatchOutbox", () => {
     ]);
   });
 
+  it("splits when the next command would add bytes above the exact wire boundary", async () => {
+    const requestSentAt = "2026-08-07T11:00:00.000Z";
+    const fixedBody = (note: string) => ({
+      organization_id: organizationId,
+      client_installation_id: installationId,
+      request_sent_at: requestSentAt,
+      sync_schema_version: 1,
+      commands: [
+        {
+          mutation_id: "boundary",
+          command_kind: "event.create",
+          command_schema_version: 1,
+          client_wall_time: "2026-08-07T10:00:00.000Z",
+          payload: { note },
+        },
+      ],
+    });
+    const exactNote = "x".repeat(
+      MAX_PUSH_BYTES - wireBytes(fixedBody("")),
+    );
+    await addCommand("boundary", "2026-08-07T10:00:00.000Z", {
+      note: exactNote,
+    });
+    await addCommand("after-boundary", "2026-08-07T10:01:00.000Z", {
+      note: "one byte above",
+    });
+    const send = vi.fn<typeof fetch>(async (_input, init) => {
+      const { commands } = JSON.parse(String(init?.body)) as {
+        commands: { mutation_id: string; command_kind: string }[];
+      };
+      return response(
+        commands.map((command) => ({
+          ...command,
+          status: "accepted",
+          error: null,
+        })),
+      );
+    });
+
+    await dispatchOutbox(organizationId, {
+      userId,
+      clientInstallationId: installationId,
+      fetch: send,
+      now: () => new Date(requestSentAt),
+    });
+
+    expect(send).toHaveBeenCalledTimes(2);
+    const first = requestBody(send.mock.calls[0] as [RequestInfo | URL, RequestInit]);
+    const second = requestBody(send.mock.calls[1] as [RequestInfo | URL, RequestInit]);
+    expect(wireBytes(first)).toBe(MAX_PUSH_BYTES);
+    expect(wireBytes(second)).toBeLessThanOrEqual(MAX_PUSH_BYTES);
+    expect(first.commands).toEqual([
+      expect.objectContaining({
+        mutation_id: "boundary",
+        client_wall_time: "2026-08-07T10:00:00.000Z",
+        payload: { note: exactNote },
+      }),
+    ]);
+    expect(second.commands).toEqual([
+      expect.objectContaining({
+        mutation_id: "after-boundary",
+        client_wall_time: "2026-08-07T10:01:00.000Z",
+        payload: { note: "one byte above" },
+      }),
+    ]);
+  });
+
   it("retains every pending command when transport outcomes are unknown", async () => {
     await addCommand("pending", "2026-08-07T10:00:00.000Z");
     const send = vi.fn<typeof fetch>(
@@ -387,9 +464,9 @@ describe("dispatchOutbox", () => {
 
   it("does not bypass the decoded payload limit for one oversized command", async () => {
     await addCommand("too-large", "2026-08-07T10:00:00.000Z", {
-      note: "x".repeat(1024 * 1024),
+      note: "😀".repeat(263_000),
     });
-    const send = vi.fn();
+    const send = vi.fn<typeof fetch>();
 
     await dispatchOutbox(organizationId, {
       userId,
@@ -401,6 +478,7 @@ describe("dispatchOutbox", () => {
     await expect(localDb.outbox.get("too-large")).resolves.toMatchObject({
       state: "failed",
       failureReason: "command_too_large",
+      payload: { note: "😀".repeat(263_000) },
     });
   });
 });
