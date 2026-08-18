@@ -55,4 +55,21 @@ describe("readIngredientCatalog current prices", () => {
     const result = await readIngredientCatalog(userId, organizationId);
     expect(result.ingredients[0]?.currentPrice).toEqual({ amount: "2", quantity: "1", unitId, currency: "EUR" });
   });
+
+  it("keeps an active source ingredient whose current unit is retired", async () => {
+    readVisibleRecords.mockImplementation(async (_user: string, _org: string, type: string, includeRetired = false) => {
+      if (type === "ingredient")
+        return [record("ingredient", ingredientId, { id: ingredientId, organization_id: organizationId, current_version_id: versionId })];
+      if (type === "ingredient_version")
+        return [record("ingredient_version", versionId, { id: versionId, organization_id: organizationId, ingredient_id: ingredientId, name: "Flour", canonical_unit_id: unitId, mass_per_canonical_quantity: "1" })];
+      if (type === "unit_definition")
+        return includeRetired
+          ? [{ ...record("unit_definition", unitId, { id: unitId, organization_id: null, code: "old-g", dimension: "mass", base_unit_factor: "1", allows_ingredient_quantity: true }), lifecycle: "retired" as const }]
+          : [];
+      return [];
+    });
+    const result = await readIngredientCatalog(userId, organizationId, true);
+    expect(result.units).toEqual([]);
+    expect(result.ingredients).toEqual([expect.objectContaining({ id: ingredientId, canonicalUnitName: "old-g" })]);
+  });
 });

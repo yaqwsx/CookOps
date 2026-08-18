@@ -47,12 +47,12 @@ export async function readIngredientCatalog(
   const [roots, versions, records, tags, prices, organizations] = await Promise.all([
     readVisibleRecords(userId, organizationId, "ingredient", includeRetired),
     readVisibleRecords(userId, organizationId, "ingredient_version"),
-    readVisibleRecords(userId, organizationId, "unit_definition"),
+    readVisibleRecords(userId, organizationId, "unit_definition", includeRetired),
     readVisibleRecords(userId, organizationId, "dietary_tag", true),
     readVisibleRecords(userId, organizationId, "ingredient_price_estimate"),
     readVisibleRecords(userId, organizationId, "organization"),
   ]);
-  const units = records
+  const allUnits = records
     .filter((record) => {
       const owner = record.fields.organization_id;
       return (
@@ -79,7 +79,10 @@ export async function readIngredientCatalog(
       (left, right) =>
         left.name.localeCompare(right.name) || left.id.localeCompare(right.id),
     );
-  const unitNames = new Map(units.map((unit) => [unit.id, unit.name]));
+  const unitNames = new Map(allUnits.map((unit) => [unit.id, unit.name]));
+  const units = allUnits.filter((unit) =>
+    records.find((record) => record.entityId === unit.id)?.lifecycle === "active",
+  );
   const versionById = new Map(
     versions
       .filter(

@@ -16,6 +16,7 @@ import { queueIngredientPricePublish, type IngredientPricePublishInput } from ".
 import { queueIngredientVersionPublish, type IngredientVersionPublishInput } from "./ingredient-version-publish";
 import { pullOrganization, SyncRequestError } from "./sync-bootstrap";
 import { matchesIngredient, normalizeIngredientSearch, rankIngredients } from "./ingredient-fuzzy";
+import { IngredientCopyPanel } from "./ingredient-copy-panel";
 
 type CatalogState =
   | { status: "loading" }
@@ -387,6 +388,7 @@ export function IngredientCatalog({
             userId={userId}
             discardToken={discardToken}
             onDirtyChange={onDirtyChange}
+            onUnauthenticated={onUnauthenticated}
           />
         )}
       </div>
@@ -484,6 +486,7 @@ function IngredientDetail({
   userId,
   discardToken,
   onDirtyChange,
+  onUnauthenticated,
 }: {
   catalog: IngredientCatalogProjection;
   ingredient: IngredientCatalogProjection["ingredients"][number];
@@ -491,6 +494,7 @@ function IngredientDetail({
   userId: string;
   discardToken?: number;
   onDirtyChange?: (dirty: boolean) => void;
+  onUnauthenticated: () => void;
 }) {
   const { t } = useTranslation();
   const [dirtyEditors, setDirtyEditors] = useState<Set<string>>(() => new Set());
@@ -545,6 +549,16 @@ function IngredientDetail({
         discardToken={discardToken}
         onDirtyChange={reportPriceDirty}
       />
+      {ingredient.retired ? (
+        <p>{t("ingredientsCatalog.copyRetired")}</p>
+      ) : (
+        <IngredientCopyPanel
+          ingredient={ingredient}
+          onUnauthenticated={onUnauthenticated}
+          organizationId={organizationId}
+          userId={userId}
+        />
+      )}
     </article>
   );
 }

@@ -147,6 +147,44 @@ button:disabled {
   opacity: 0.65;
 }
 
+.ingredient-copy {
+  display: grid;
+  gap: 0.75rem;
+  margin-top: 1.25rem;
+  padding: 1rem;
+  border: 1px solid #cfc3b3;
+  border-radius: 0.75rem;
+  background: #fffdf9;
+}
+
+.ingredient-copy label,
+.ingredient-copy fieldset {
+  display: grid;
+  gap: 0.4rem;
+}
+
+.ingredient-copy select {
+  width: min(100%, 32rem);
+  min-height: 2.5rem;
+  padding: 0.4rem 0.6rem;
+  border: 1px solid #9d9283;
+  border-radius: 0.5rem;
+  color: inherit;
+  background: white;
+  font: inherit;
+}
+
+.ingredient-copy fieldset {
+  margin: 0;
+  padding: 0.75rem;
+  border: 1px solid #ddd2c2;
+}
+
+.ingredient-copy__preview {
+  display: grid;
+  gap: 0.75rem;
+}
+
 .locale-picker select,
 .organization-picker select {
   min-height: 2.5rem;
