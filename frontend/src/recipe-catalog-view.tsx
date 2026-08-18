@@ -22,6 +22,7 @@ import { queueCatalogConfiguration } from "./catalog-configuration";
 import { pullOrganization, SyncRequestError } from "./sync-bootstrap";
 import { defaultMassForUnit, queueIngredientCreateWithVersion, type IngredientCreateInput } from "./ingredient-create";
 import { rankIngredients } from "./ingredient-fuzzy";
+import { RecipeCopyPanel } from "./recipe-copy-panel";
 
 type CatalogState =
   | { status: "loading" }
@@ -1009,6 +1010,12 @@ export function RecipeCatalog({
                 recipe={recipe}
                 userId={userId}
               />
+              {!recipe.retired ? <RecipeCopyPanel
+                organizationId={organizationId}
+                onUnauthenticated={onUnauthenticated}
+                recipe={recipe}
+                userId={userId}
+              /> : null}
             </li>
           ))}
         </ul>

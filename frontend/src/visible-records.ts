@@ -55,3 +55,16 @@ export async function readVisibleRecords(
     (record) => includeRetired || record.lifecycle === "active",
   );
 }
+
+export async function readCanonicalRecords(
+  userId: string,
+  organizationId: string,
+  entityType: string,
+  includeRetired = false,
+): Promise<CanonicalRecord[]> {
+  const records = await localDb.canonicalRecords
+    .where("[userId+organizationId+entityType]")
+    .equals([userId, organizationId, entityType])
+    .toArray();
+  return records.filter((record) => includeRetired || record.lifecycle === "active");
+}

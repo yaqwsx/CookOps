@@ -4,7 +4,7 @@ import {
   type CatalogIngredient,
   type IngredientUnit,
 } from "./ingredient-catalog";
-import { readVisibleRecords } from "./visible-records";
+import { readCanonicalRecords, readVisibleRecords } from "./visible-records";
 import { add, decimal, divide, money, multiply, zeroFraction, type Fraction } from "./event-cost-projections";
 
 export type CatalogRecipe = {
@@ -36,12 +36,13 @@ export type CatalogRecipe = {
 export type RecipeVersionHistoryEntry = { id: string; publishedAt?: string; publishedByUserId?: string; name?: string };
 type ValidCatalogRecipeCandidate = CatalogRecipe & { versionId: string };
 
-export type RecipeScalingUnit = { id: string; name: string };
+export type RecipeScalingUnit = { id: string; name: string; dimension?: string; baseUnitFactor?: string };
 export type RecipeCatalogProjection = {
   recipes: CatalogRecipe[];
   scalingUnits: RecipeScalingUnit[];
   ingredients: CatalogIngredient[];
   units: IngredientUnit[];
+  sourceUnits?: IngredientUnit[];
   tags: { id: string; name: string; retired?: boolean }[];
   costs: Record<string, RecipeCostProjection>;
 };
@@ -196,9 +197,11 @@ export async function readRecipeCatalog(
   userId: string,
   organizationId: string,
   includeRetired = false,
+  includeOptimisticOverlays = true,
 ): Promise<RecipeCatalogProjection> {
   if (!uuid.test(userId) || !uuid.test(organizationId))
     return { recipes: [], scalingUnits: [], ingredients: [], units: [], tags: [], costs: {} };
+  const read = includeOptimisticOverlays ? readVisibleRecords : readCanonicalRecords;
   const [
     recipeRecords,
     versionRecords,
@@ -210,15 +213,15 @@ export async function readRecipeCatalog(
     ingredientRootRecords,
     ingredientVersionRecords,
   ] = await Promise.all([
-    readVisibleRecords(userId, organizationId, "recipe", includeRetired),
-    readVisibleRecords(userId, organizationId, "recipe_version"),
-    readVisibleRecords(userId, organizationId, "unit_definition"),
-    readVisibleRecords(userId, organizationId, "recipe_tag", true),
-    readIngredientCatalog(userId, organizationId, true),
-    readVisibleRecords(userId, organizationId, "recipe_ingredient_line"),
-    readVisibleRecords(userId, organizationId, "recipe_version_tag"),
-    readVisibleRecords(userId, organizationId, "ingredient", true),
-    readVisibleRecords(userId, organizationId, "ingredient_version"),
+    read(userId, organizationId, "recipe", includeRetired),
+    read(userId, organizationId, "recipe_version"),
+    read(userId, organizationId, "unit_definition", includeRetired),
+    read(userId, organizationId, "recipe_tag", true),
+    readIngredientCatalog(userId, organizationId, true, includeOptimisticOverlays),
+    read(userId, organizationId, "recipe_ingredient_line"),
+    read(userId, organizationId, "recipe_version_tag"),
+    read(userId, organizationId, "ingredient", true),
+    read(userId, organizationId, "ingredient_version"),
   ]);
   const retiredIngredientIds = new Set(
     ingredientRootRecords
@@ -397,7 +400,9 @@ export async function readRecipeCatalog(
     })
     .map((record) => ({
       id: record.entityId,
-      name: text(record, "custom_name") ?? text(record, "code"),
+      name: text(record, "custom_name") ?? text(record, "code") ?? "",
+      ...(text(record, "dimension") ? { dimension: text(record, "dimension") } : {}),
+      ...(text(record, "base_unit_factor") ? { baseUnitFactor: text(record, "base_unit_factor") } : {}),
     }))
     .filter((unit): unit is RecipeScalingUnit => Boolean(unit.name))
     .sort(
@@ -457,11 +462,12 @@ export async function readRecipeCatalog(
       const ingredientId = text(record, "ingredient_id") ?? "";
       const root = ingredientRoots.get(ingredientId);
       const currentIngredient = ingredientCatalog.ingredients.find((item) => item.id === ingredientId);
+      const sourceUnitName = (ingredientCatalog.sourceUnits ?? ingredientCatalog.units).find((unit) => unit.id === text(record, "canonical_unit_id"))?.name;
       return {
         id: ingredientId,
         versionId: record.entityId,
         name: text(record, "name") ?? "",
-        canonicalUnitName: text(record, "canonical_unit_id") ?? "",
+        canonicalUnitName: sourceUnitName ?? text(record, "canonical_unit_id") ?? "",
         canonicalUnitId: text(record, "canonical_unit_id") ?? "",
         massPerCanonicalQuantity:
           text(record, "mass_per_canonical_quantity") ?? "",
@@ -480,6 +486,7 @@ export async function readRecipeCatalog(
     scalingUnits,
     ingredients,
     units: ingredientCatalog.units,
+    ...(includeRetired && ingredientCatalog.sourceUnits ? { sourceUnits: ingredientCatalog.sourceUnits } : {}),
     tags,
     costs,
   };

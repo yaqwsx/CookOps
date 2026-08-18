@@ -70,6 +70,7 @@ describe("readIngredientCatalog current prices", () => {
     });
     const result = await readIngredientCatalog(userId, organizationId, true);
     expect(result.units).toEqual([]);
+    expect(result.sourceUnits).toEqual([expect.objectContaining({ id: unitId, name: "old-g" })]);
     expect(result.ingredients).toEqual([expect.objectContaining({ id: ingredientId, canonicalUnitName: "old-g" })]);
   });
 });

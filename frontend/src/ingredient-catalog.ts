@@ -1,5 +1,5 @@
 import type { CanonicalRecord } from "./local-db";
-import { readVisibleRecords } from "./visible-records";
+import { readCanonicalRecords, readVisibleRecords } from "./visible-records";
 
 export type CatalogIngredient = {
   id: string;
@@ -24,6 +24,8 @@ export type IngredientUnit = {
 export type IngredientCatalogProjection = {
   ingredients: CatalogIngredient[];
   units: IngredientUnit[];
+  /** Retired source dependencies for guarded copy projections; editor callers use units. */
+  sourceUnits?: IngredientUnit[];
   dietaryTags: { id: string; name: string }[];
   organizationDefaultCurrency: string;
 };
@@ -41,16 +43,18 @@ export async function readIngredientCatalog(
   userId: string,
   organizationId: string,
   includeRetired = false,
+  includeOptimisticOverlays = true,
 ): Promise<IngredientCatalogProjection> {
   if (!uuid.test(userId) || !uuid.test(organizationId))
     return { ingredients: [], units: [], dietaryTags: [], organizationDefaultCurrency: "" };
+  const read = includeOptimisticOverlays ? readVisibleRecords : readCanonicalRecords;
   const [roots, versions, records, tags, prices, organizations] = await Promise.all([
-    readVisibleRecords(userId, organizationId, "ingredient", includeRetired),
-    readVisibleRecords(userId, organizationId, "ingredient_version"),
-    readVisibleRecords(userId, organizationId, "unit_definition", includeRetired),
-    readVisibleRecords(userId, organizationId, "dietary_tag", true),
-    readVisibleRecords(userId, organizationId, "ingredient_price_estimate"),
-    readVisibleRecords(userId, organizationId, "organization"),
+    read(userId, organizationId, "ingredient", includeRetired),
+    read(userId, organizationId, "ingredient_version"),
+    read(userId, organizationId, "unit_definition", includeRetired),
+    read(userId, organizationId, "dietary_tag", true),
+    read(userId, organizationId, "ingredient_price_estimate"),
+    read(userId, organizationId, "organization"),
   ]);
   const allUnits = records
     .filter((record) => {
@@ -176,5 +180,5 @@ export async function readIngredientCatalog(
     .map((record) => ({ id: record.entityId, name: text(record, "name") }))
     .filter((tag): tag is { id: string; name: string } => Boolean(tag.name));
   const organizationDefaultCurrency = text(organizations.find((record) => record.entityId === organizationId) ?? { fields: {} } as CanonicalRecord, "default_currency") ?? "";
-  return { ingredients, units, dietaryTags, organizationDefaultCurrency };
+  return { ingredients, units, ...(includeRetired ? { sourceUnits: allUnits } : {}), dietaryTags, organizationDefaultCurrency };
 }

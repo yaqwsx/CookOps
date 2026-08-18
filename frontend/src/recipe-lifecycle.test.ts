@@ -203,6 +203,20 @@ describe("offline recipe lifecycle", () => {
     });
   });
 
+  it("keeps retired referenced names in the normal projection without source units", async () => {
+    await addIngredient(true);
+    await localDb.canonicalRecords.update(
+      [userId, organizationId, "unit_definition", unitId],
+      { lifecycle: "retired" },
+    );
+
+    const catalog = await readRecipeCatalog(userId, organizationId);
+    expect(catalog).not.toHaveProperty("sourceUnits");
+    expect(catalog.ingredients).toEqual([
+      expect.objectContaining({ name: "Carrot", canonicalUnitName: "g" }),
+    ]);
+  });
+
   it("warns for an old immutable version retained by a retired ingredient", async () => {
     await addIngredient(true);
     await localDb.canonicalRecords.update(
@@ -271,7 +285,9 @@ describe("offline recipe lifecycle", () => {
       recipeId,
       operation: "retire",
     });
-    await expect(readRecipeCatalog(userId, organizationId)).resolves.toMatchObject({ recipes: [] });
+    const normalCatalog = await readRecipeCatalog(userId, organizationId);
+    expect(normalCatalog).toMatchObject({ recipes: [] });
+    expect(normalCatalog).not.toHaveProperty("sourceUnits");
     await expect(readRecipeCatalog(userId, organizationId, true)).resolves.toMatchObject({
       recipes: [expect.objectContaining({ id: recipeId, retired: true })],
     });
