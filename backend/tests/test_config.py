@@ -21,6 +21,7 @@ def test_environment_allows_google_auth_in_production(monkeypatch: pytest.Monkey
         "COOKOPS_BROWSER_SESSION_HMAC_KEY",
         "MDEyMzQ1Njc4OWFiY2RlZjAxMjM0NTY3ODlhYmNkZWY",
     )
+    monkeypatch.setenv("COOKOPS_BROWSER_ORIGIN", "https://cookops.example")
     monkeypatch.setenv(
         "COOKOPS_OAUTH_INTERACTION_DETAILS_API_CREDENTIAL_BASE64URL",
         "MDEyMzQ1Njc4OWFiY2RlZjAxMjM0NTY3ODlhYmNkZWU",
@@ -46,6 +47,7 @@ def test_production_rejects_missing_or_malformed_browser_session_key(
     monkeypatch.setenv("COOKOPS_ENVIRONMENT", "production")
     monkeypatch.setenv("COOKOPS_HUMAN_AUTH_PROVIDER", "google")
     monkeypatch.setenv("COOKOPS_GOOGLE_CLIENT_ID", "test-client.apps.googleusercontent.com")
+    monkeypatch.setenv("COOKOPS_BROWSER_ORIGIN", "https://cookops.example")
     if value is None:
         monkeypatch.delenv("COOKOPS_BROWSER_SESSION_HMAC_KEY", raising=False)
     else:
@@ -63,6 +65,7 @@ def test_production_accepts_exactly_the_key_parsed_by_session_service(
     monkeypatch.setenv("COOKOPS_HUMAN_AUTH_PROVIDER", "google")
     monkeypatch.setenv("COOKOPS_GOOGLE_CLIENT_ID", "test-client.apps.googleusercontent.com")
     monkeypatch.setenv("COOKOPS_BROWSER_SESSION_HMAC_KEY", key)
+    monkeypatch.setenv("COOKOPS_BROWSER_ORIGIN", "https://cookops.example")
     monkeypatch.setenv(
         "COOKOPS_OAUTH_INTERACTION_DETAILS_API_CREDENTIAL_BASE64URL",
         "MDEyMzQ1Njc4OWFiY2RlZjAxMjM0NTY3ODlhYmNkZWU",
@@ -90,6 +93,69 @@ def test_production_rejects_an_insecure_browser_session_cookie(
 
     with pytest.raises(ValidationError, match="browser session cookie must be secure"):
         Settings()
+
+
+def production_settings(**overrides: str | None) -> Settings:
+    values: dict[str, str | None] = {
+        "environment": "production",
+        "human_auth_provider": "google",
+        "google_client_id": "test-client.apps.googleusercontent.com",
+        "browser_session_hmac_key": "MDEyMzQ1Njc4OWFiY2RlZjAxMjM0NTY3ODlhYmNkZWY",
+        "oauth_interaction_details_api_credential_base64url": (
+            "MDEyMzQ1Njc4OWFiY2RlZjAxMjM0NTY3ODlhYmNkZWU"
+        ),
+        "oauth_interaction_approval_api_credential_base64url": (
+            "MDEyMzQ1Njc4OWFiY2RlZjAxMjM0NTY3ODlhYmNkZWY"
+        ),
+        "oauth_interaction_origin": "https://cookops.example",
+        "browser_origin": "https://cookops.example",
+    }
+    values.update(overrides)
+    return Settings(**values)
+
+
+def test_production_requires_browser_origin() -> None:
+    with pytest.raises(ValidationError, match="browser origin must be configured"):
+        production_settings(browser_origin=None)
+
+
+@pytest.mark.parametrize(
+    "browser_origin",
+    [
+        "http://cookops.example",
+        "https://cookops.example/path",
+        "https://user:pass@cookops.example",
+        "https://cookops.example?query=value",
+        "https://cookops.example?",
+        "https://cookops.example#fragment",
+        "https://cookops.example#",
+        "https://cookops.example:invalid",
+        "https://cookops.example with-space",
+    ],
+)
+def test_browser_origin_requires_credential_free_https_origin(browser_origin: str) -> None:
+    with pytest.raises(ValidationError, match="browser origin"):
+        production_settings(browser_origin=browser_origin, oauth_interaction_origin=browser_origin)
+
+
+def test_valid_browser_origin_succeeds() -> None:
+    settings = production_settings(
+        browser_origin="https://cookops.example:8443",
+        oauth_interaction_origin="https://cookops.example:8443",
+    )
+
+    assert settings.browser_origin == "https://cookops.example:8443"
+
+
+def test_oauth_interaction_origin_must_match_browser_origin() -> None:
+    with pytest.raises(ValidationError, match="must match browser origin"):
+        production_settings(oauth_interaction_origin="https://other.example")
+
+
+def test_matching_oauth_interaction_origin_succeeds() -> None:
+    settings = production_settings()
+
+    assert settings.oauth_interaction_origin == settings.browser_origin
 
 
 def test_development_has_a_deterministic_nonproduction_session_key() -> None:

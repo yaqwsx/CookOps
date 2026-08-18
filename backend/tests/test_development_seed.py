@@ -273,6 +273,10 @@ def test_provisioning_refuses_production_before_acquiring_a_database_session() -
         google_client_id="test-client.apps.googleusercontent.com",
         database_url=PostgresDsn(os.environ["TEST_DATABASE_URL"]),
         browser_session_hmac_key=KEY,
+        browser_origin="https://testserver",
+        oauth_interaction_details_api_credential_base64url=KEY[:-1] + "U",
+        oauth_interaction_approval_api_credential_base64url=KEY,
+        oauth_interaction_origin="https://testserver",
     )
 
     def unexpected_session_factory() -> AsyncSession:

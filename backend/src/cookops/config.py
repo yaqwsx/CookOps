@@ -9,6 +9,29 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 _DEVELOPMENT_BROWSER_SESSION_HMAC_KEY = "MDEyMzQ1Njc4OWFiY2RlZjAxMjM0NTY3ODlhYmNkZWY"
 
 
+def _validate_https_origin(value: str, setting_name: str) -> None:
+    try:
+        origin = urlsplit(value)
+        port = origin.port
+    except ValueError as error:
+        raise ValueError(f"{setting_name} must be a credential-free HTTPS origin") from error
+    if (
+        any(character.isspace() for character in value)
+        or "?" in value
+        or "#" in value
+        or origin.scheme != "https"
+        or not origin.hostname
+        or origin.username
+        or origin.password
+        or origin.path
+        or origin.query
+        or origin.fragment
+        or port is None
+        and origin.netloc.endswith(":")
+    ):
+        raise ValueError(f"{setting_name} must be a credential-free HTTPS origin")
+
+
 class Environment(StrEnum):
     DEVELOPMENT = "development"
     TEST = "test"
@@ -35,6 +58,7 @@ class Settings(BaseSettings):
     browser_session_cookie_secure: bool = True
     browser_session_cookie_samesite: Literal["lax", "strict"] = "lax"
     browser_session_lifetime_seconds: int = 7 * 24 * 60 * 60
+    browser_origin: str | None = None
     receipt_media_root: Path = Path("/var/lib/cookops/receipts")
     oauth_issuer: str | None = None
     mcp_resource: str | None = None
@@ -82,6 +106,10 @@ class Settings(BaseSettings):
             raise ValueError("browser session HMAC key must be configured in production")
         if self.environment is Environment.PRODUCTION and not self.browser_session_cookie_secure:
             raise ValueError("browser session cookie must be secure in production")
+        if self.environment is Environment.PRODUCTION and self.browser_origin is None:
+            raise ValueError("browser origin must be configured in production")
+        if self.browser_origin is not None:
+            _validate_https_origin(self.browser_origin, "browser origin")
 
         oauth_values = (
             self.oauth_issuer,
@@ -114,17 +142,12 @@ class Settings(BaseSettings):
         ):
             raise ValueError("OAuth interaction configuration must be set in production")
         if self.oauth_interaction_origin is not None:
-            origin = urlsplit(self.oauth_interaction_origin)
+            _validate_https_origin(self.oauth_interaction_origin, "OAuth interaction origin")
             if (
-                origin.scheme != "https"
-                or not origin.hostname
-                or origin.username
-                or origin.password
-                or origin.path
-                or origin.query
-                or origin.fragment
+                self.browser_origin is not None
+                and self.oauth_interaction_origin != self.browser_origin
             ):
-                raise ValueError("OAuth interaction origin must be a credential-free HTTPS origin")
+                raise ValueError("OAuth interaction origin must match browser origin")
         private_base = urlsplit(self.oauth_interaction_private_base_url)
         expected_private = "http://oauth-server:3000/oauth/private/interactions"
         if (

@@ -34,7 +34,7 @@ jwks=$(node -e 'const c=require("node:crypto"); const pair=c.generateKeyPairSync
     printf '%s\n' 'COOKOPS_GOOGLE_CLIENT_ID=not-used-by-dummy-smoke'
     printf 'COOKOPS_BROWSER_SESSION_HMAC_KEY=%s\n' "$(secret)"
     printf '%s\n' 'COOKOPS_TRUSTED_PROXY_IPS=127.0.0.1'
-    printf 'OAUTH_ISSUER=%s/oauth\nMCP_RESOURCE=%s/mcp\nOAUTH_INTERACTION_URL=%s/auth/mcp-interactions\nCOOKOPS_PUBLIC_ORIGIN=%s\n' "$origin" "$origin" "$origin" "$origin"
+    printf 'OAUTH_ISSUER=%s/oauth\nMCP_RESOURCE=%s/mcp\nOAUTH_INTERACTION_URL=%s/auth/mcp-interactions\nCOOKOPS_BROWSER_ORIGIN=%s\nCOOKOPS_PUBLIC_ORIGIN=%s\n' "$origin" "$origin" "$origin" "$origin" "$origin"
     printf '%s\n' 'OAUTH_COOKIE_KEYS=smoke-cookie-key-one-at-least-thirty-two,smoke-cookie-key-two-at-least-thirty-two'
     printf '%s\n' 'OAUTH_RESOURCE_SERVER_SECRET=smoke-resource-server-secret-at-least-32'
     printf 'OAUTH_JWKS=%s\n' "$jwks"
