@@ -626,6 +626,7 @@ function ShoppingRowControls({
   );
   const [sectionId, setSectionId] = useState(row.storeSectionOverrideId ?? "");
   const [note, setNote] = useState(row.note ?? "");
+  const fulfilmentInput = useRef<HTMLInputElement>(null);
   useEffect(
     () => setAvailableSupply(row.availableSupply),
     [row.availableSupply],
@@ -636,6 +637,9 @@ function ShoppingRowControls({
   );
   useEffect(() => setSectionId(row.storeSectionOverrideId ?? ""), [row.storeSectionOverrideId]);
   useEffect(() => setNote(row.note ?? ""), [row.note]);
+  useEffect(() => {
+    if (fulfilmentInput.current) fulfilmentInput.current.indeterminate = row.partial;
+  }, [row.partial]);
   const input = { shoppingListId, shoppingIngredientRowId: row.id };
   async function run(work: () => Promise<void>) {
     try {
@@ -773,6 +777,7 @@ function ShoppingRowControls({
           ) : null}
           <label className="shopping-row-controls__fulfilled">
             <input
+              aria-checked={row.partial ? "mixed" : undefined}
               checked={row.fulfilled}
               disabled={row.notRequired}
               onChange={(event) =>
@@ -783,6 +788,7 @@ function ShoppingRowControls({
                   }),
                 )
               }
+              ref={fulfilmentInput}
               type="checkbox"
             />
             {row.notRequired

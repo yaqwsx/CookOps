@@ -24,6 +24,7 @@ export type ShoppingRow = {
   remaining: string;
   unit: string;
   fulfilled: boolean;
+  partial: boolean;
   notRequired: boolean;
   contributions: ShoppingContribution[];
 };
@@ -639,6 +640,8 @@ export async function readShoppingList(
           remaining: print(remaining),
           unit,
           fulfilled: target.value > 0n && remaining.value === 0n,
+          partial:
+            target.value > 0n && remaining.value > 0n && credit.value > 0n,
           notRequired: target.value === 0n,
           contributions: rowContributions.map((contribution) => {
             const snapshot = validSnapshots.find((item) =>

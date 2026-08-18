@@ -921,6 +921,7 @@ describe("offline shopping-list creation", () => {
             availableSupply: "2",
             target: "8",
             remaining: "1",
+            partial: true,
             unit: "kg",
           }),
         ],

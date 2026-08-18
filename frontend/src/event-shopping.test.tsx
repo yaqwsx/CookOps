@@ -143,6 +143,7 @@ describe("EventShopping", () => {
           remaining: "2",
           unit: "kg",
           fulfilled: false,
+          partial: true,
           notRequired: false,
           contributions: [
               {
@@ -182,7 +183,10 @@ describe("EventShopping", () => {
         userId={ids.user}
       />,
     );
-    await user.click(await screen.findByLabelText("Nakoupeno"));
+    const fulfilmentCheckbox = await screen.findByLabelText("Nakoupeno");
+    expect(fulfilmentCheckbox).toHaveProperty("indeterminate", true);
+    expect(fulfilmentCheckbox).toHaveAttribute("aria-checked", "mixed");
+    await user.click(fulfilmentCheckbox);
     expect(queueShoppingRowFulfilment).toHaveBeenCalledWith(
       ids.user,
       ids.organization,
