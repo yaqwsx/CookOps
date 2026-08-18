@@ -1119,6 +1119,12 @@ describe("offline shopping-list creation", () => {
       actionAt: "2026-08-07T12:00:00.000001Z",
     });
     await expect(localDb.optimisticOverlays.count()).resolves.toBe(0);
+    await replayShoppingOperation(ids.user, ids.organization, {
+      ...queued[0],
+      id: "not-a-uuid",
+      actionAt: "not-a-timestamp",
+    });
+    await expect(localDb.optimisticOverlays.count()).resolves.toBe(0);
     const event = await localDb.canonicalRecords.get([ids.user, ids.organization, "event", ids.event]);
     const list = await localDb.canonicalRecords.get([ids.user, ids.organization, "shopping_list", ids.list]);
     if (!event || !list) throw new Error("missing shopping scope");

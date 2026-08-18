@@ -461,10 +461,16 @@ export async function replayShoppingOperation(
   organizationId: string,
   command: OutboxCommand,
 ): Promise<void> {
+  if (
+    !uuid.test(command.id) ||
+    typeof command.actionAt !== "string" ||
+    timestampMicros(command.actionAt) === undefined
+  )
+    return;
   const payload = command.payload;
   const listId = payload.shopping_list_id;
   const rowId = payload.shopping_ingredient_row_id;
-  if (typeof listId !== "string") return;
+  if (typeof listId !== "string" || !uuid.test(listId)) return;
   if (
     command.commandType === "shopping_list.set_contribution_fulfilment" &&
     typeof payload.shopping_contribution_id === "string" &&
@@ -499,7 +505,7 @@ export async function replayShoppingOperation(
     );
     return;
   }
-  if (typeof rowId !== "string") return;
+  if (typeof rowId !== "string" || !uuid.test(rowId)) return;
   const input = { shoppingListId: listId, shoppingIngredientRowId: rowId };
   const sectionOverride =
     command.commandType === "shopping_list.set_store_section_override" &&
