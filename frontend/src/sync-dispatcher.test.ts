@@ -251,6 +251,50 @@ describe("dispatchOutbox", () => {
     });
   });
 
+  it("retries a 503 with the unchanged command and clears it after acceptance", async () => {
+    await addCommand("retry-me", "2026-08-07T10:00:00.000Z", {
+      title: "Retry this command",
+      count: 2,
+    });
+    const send = vi.fn<typeof fetch>(async (_input, init) => {
+      if (send.mock.calls.length === 1) return new Response(null, { status: 503 });
+      return response([
+        {
+          mutation_id: "retry-me",
+          command_kind: "event.create",
+          status: "accepted",
+          error: null,
+        },
+      ]);
+    });
+    const options = {
+      userId,
+      clientInstallationId: installationId,
+      fetch: send,
+    };
+
+    await expect(dispatchOutbox(organizationId, options)).rejects.toThrow(
+      "Sync push failed.",
+    );
+    await dispatchOutbox(organizationId, options);
+
+    expect(send).toHaveBeenCalledTimes(2);
+    const requests = send.mock.calls.map((call) =>
+      JSON.parse(String(call[1]?.body)).commands,
+    );
+    expect(requests[0]).toEqual(requests[1]);
+    expect(requests[1]).toEqual([
+      {
+        mutation_id: "retry-me",
+        command_kind: "event.create",
+        command_schema_version: 1,
+        client_wall_time: "2026-08-07T10:00:00.000Z",
+        payload: { title: "Retry this command", count: 2 },
+      },
+    ]);
+    await expect(localDb.outbox.count()).resolves.toBe(0);
+  });
+
   it("keeps work pending when a response does not preserve command order", async () => {
     await addCommand("first", "2026-08-07T10:00:00.000Z");
     await addCommand("later", "2026-08-07T10:01:00.000Z");
