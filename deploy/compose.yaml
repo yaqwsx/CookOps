@@ -107,6 +107,7 @@ services:
         --database-name "$${PGDATABASE}"
         --clean-database
         --media-root "/var/lib/cookops/restore/$${COOKOPS_RESTORE_MEDIA_SUBDIR}" &&
+        PGPASSWORD="$${COOKOPS_API_DB_PASSWORD}" COOKOPS_DATABASE_URL="postgresql+psycopg://cookops_api@postgres:5432/$${PGDATABASE}" alembic upgrade head &&
         exec python /operator-scripts/verify_media_references.py
         --database-name "$${PGDATABASE}"
         --media-root "/var/lib/cookops/restore/$${COOKOPS_RESTORE_MEDIA_SUBDIR}"
@@ -120,6 +121,7 @@ services:
       PGUSER: ${POSTGRES_USER:?set POSTGRES_USER}
       PGPASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD}
       PGDATABASE: ${POSTGRES_DB:?set POSTGRES_DB}
+      COOKOPS_API_DB_PASSWORD: ${COOKOPS_API_DB_PASSWORD:?set COOKOPS_API_DB_PASSWORD}
       COOKOPS_BACKUP_ARCHIVE: ${COOKOPS_BACKUP_ARCHIVE:?set COOKOPS_BACKUP_ARCHIVE}
       COOKOPS_RESTORE_MEDIA_SUBDIR: ${COOKOPS_RESTORE_MEDIA_SUBDIR:?set COOKOPS_RESTORE_MEDIA_SUBDIR}
     logging: *logging

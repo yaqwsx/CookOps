@@ -43,8 +43,13 @@ docker compose --profile operations --env-file deploy/.env -f deploy/compose.yam
 The restore command deliberately does not pass `--allow-nonempty`; it refuses
 to replace existing media unless an operator explicitly authorizes that action.
 It does pass `--clean-database`, so it replaces database objects in the selected
-database, then verifies every READY receipt attachment's object size, SHA-256,
-thumbnail, and safe media path before reporting success. Stop the API before
-restoring and complete compatibility migrations before switching application
-storage to the new media directory. Neither service publishes a port or exposes
-a web/API/MCP route.
+database. Before starting a full `pg_restore --clean`, stop the API, the OAuth
+provider, and every other writer to the database. The one-off restore then runs
+the existing API Alembic migrations as `cookops_api` against the restored public
+schema, and finally verifies every READY receipt attachment's object size,
+SHA-256, thumbnail, and safe media path before reporting success. The full
+`pg_restore` includes the `oauth` schema and its provider data; only the OAuth
+provider's migration workflow is separate from this command. Run that workflow
+after the restore and before resuming traffic. Complete the full restore
+sequence before switching application storage to the new media directory.
+Neither service publishes a port or exposes a web/API/MCP route.

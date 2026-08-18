@@ -214,3 +214,10 @@ def test_database_url_rejects_non_postgresql_scheme(monkeypatch: pytest.MonkeyPa
 
     with pytest.raises(ValidationError):
         Settings()
+
+
+def test_passwordless_database_url_is_accepted(monkeypatch: pytest.MonkeyPatch) -> None:
+    database_url = "postgresql+psycopg://cookops_api@postgres:5432/cookops"
+    monkeypatch.setenv("COOKOPS_DATABASE_URL", database_url)
+
+    assert str(Settings().database_url) == database_url
