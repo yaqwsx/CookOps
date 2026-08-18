@@ -15,6 +15,7 @@ import { queueIngredientLifecycle } from "./ingredient-lifecycle";
 import { queueIngredientPricePublish, type IngredientPricePublishInput } from "./ingredient-price-publish";
 import { queueIngredientVersionPublish, type IngredientVersionPublishInput } from "./ingredient-version-publish";
 import { pullOrganization, SyncRequestError } from "./sync-bootstrap";
+import { matchesIngredient, normalizeIngredientSearch, rankIngredients } from "./ingredient-fuzzy";
 
 type CatalogState =
   | { status: "loading" }
@@ -292,6 +293,7 @@ export function IngredientCatalog({
   const { t } = useTranslation();
   const [state, setState] = useState<CatalogState>({ status: "loading" });
   const [showRetired, setShowRetired] = useState(false);
+  const [query, setQuery] = useState("");
   useEffect(() => {
     const subscription = liveQuery(() =>
       readIngredientCatalog(userId, organizationId, true),
@@ -337,6 +339,10 @@ export function IngredientCatalog({
   const ingredients = state.catalog.ingredients.filter(
     (ingredient) => showRetired || !ingredient.retired,
   );
+  const normalizedQuery = normalizeIngredientSearch(query);
+  const filteredIngredients = normalizedQuery
+    ? rankIngredients(ingredients, query, showRetired).filter((ingredient) => matchesIngredient(ingredient.name, query))
+    : ingredients;
   if (selectedIngredientId === "__invalid__")
     return (
       <div className="ingredient-catalog">
@@ -407,11 +413,30 @@ export function IngredientCatalog({
         />
         {t("ingredientsCatalog.showRetired")}
       </label>
-      {!ingredients.length ? (
-        <p role="status">{t("ingredientsCatalog.empty")}</p>
+      <label>
+        {t("ingredientsCatalog.search")}
+        <input
+          aria-label={t("ingredientsCatalog.search")}
+          onChange={(event) => setQuery(event.target.value)}
+          placeholder={t("ingredientsCatalog.searchPlaceholder")}
+          type="search"
+          value={query}
+        />
+      </label>
+      {query ? (
+        <button onClick={() => setQuery("")} type="button">
+          {t("ingredientsCatalog.clearSearch")}
+        </button>
+      ) : null}
+      {!filteredIngredients.length ? (
+        <p role="status">
+          {ingredients.length
+            ? t("ingredientsCatalog.searchEmpty")
+            : t("ingredientsCatalog.empty")}
+        </p>
       ) : (
         <ul className="ingredient-list">
-          {ingredients.map((ingredient) => (
+          {filteredIngredients.map((ingredient) => (
             <li key={ingredient.id}>
               <h3>
                 {onOpenIngredient ? (

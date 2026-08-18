@@ -28,7 +28,7 @@ function editDistance(left: string, right: string): number {
   return previous[right.length];
 }
 
-function validCandidate(value: unknown): value is CatalogIngredient {
+function validCandidate(value: unknown, includeRetired = false): value is CatalogIngredient {
   if (!value || typeof value !== "object") return false;
   const candidate = value as CatalogIngredient & Record<string, unknown>;
   if (
@@ -37,10 +37,10 @@ function validCandidate(value: unknown): value is CatalogIngredient {
     typeof candidate.name !== "string" ||
     candidate.name.length > maxSearchLength ||
     candidate.name.includes("\u0000") ||
-    candidate.retired === true ||
+    (!includeRetired && candidate.retired === true) ||
     candidate.historical === true
   ) return false;
-  if ("lifecycle" in candidate && candidate.lifecycle !== "active") return false;
+  if ("lifecycle" in candidate && candidate.lifecycle !== "active" && !(includeRetired && candidate.lifecycle === "retired")) return false;
   for (let index = 0; index < candidate.name.length; index += 1) {
     const code = candidate.name.charCodeAt(index);
     if (code >= 0xd800 && code <= 0xdbff) {
@@ -69,15 +69,20 @@ function score(name: string, query: string): number {
   return nearest <= Math.max(1, Math.floor(query.length / 4)) ? 40 + nearest : 100;
 }
 
+export function matchesIngredient(name: string, query: string): boolean {
+  return score(normalizeIngredientSearch(name), normalizeIngredientSearch(query)) < 100;
+}
+
 /** Rank only active current ingredient versions; callers may keep a historic selection separately. */
 export function rankIngredients(
   ingredients: CatalogIngredient[],
   query: string,
+  includeRetired = false,
 ): CatalogIngredient[] {
   const normalizedQuery = normalizeIngredientSearch(query);
   const unique = new Map<string, CatalogIngredient>();
   for (const ingredient of ingredients) {
-    if (!validCandidate(ingredient)) continue;
+    if (!validCandidate(ingredient, includeRetired)) continue;
     const current = unique.get(ingredient.id);
     if (!current || ingredient.versionId.localeCompare(current.versionId) < 0) unique.set(ingredient.id, ingredient);
   }

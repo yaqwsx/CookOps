@@ -85,4 +85,27 @@ describe("IngredientCatalog detail", () => {
     fireEvent.change(screen.getByRole("textbox", { name: "Amount" }), { target: { value: "3" } });
     await waitFor(() => expect(onDirtyChange).toHaveBeenLastCalledWith(true));
   });
+
+  it("fuzzy-filters active ingredients and gates retired results", async () => {
+    readCatalog.mockResolvedValue({
+      ...catalog,
+      ingredients: [
+        catalog.ingredients[0],
+        { ...catalog.ingredients[0], id: "8ce17d2f-8365-4b1f-a80b-34d10425d51c", versionId: "9ce17d2f-8365-4b1f-a80b-34d10425d51c", name: "Sugar" },
+        { ...catalog.ingredients[0], id: "ace17d2f-8365-4b1f-a80b-34d10425d51c", versionId: "bce17d2f-8365-4b1f-a80b-34d10425d51c", name: "Archived salt", retired: true },
+      ],
+    });
+    render(<IngredientCatalog organizationId={organizationId} userId={userId} onUnauthenticated={vi.fn()} />);
+    await screen.findByRole("heading", { name: "Flour" });
+    const search = screen.getByRole("searchbox", { name: "Search ingredients" });
+    fireEvent.change(search, { target: { value: "sugr" } });
+    expect(screen.getByText("Sugar")).toBeInTheDocument();
+    expect(screen.queryByText("Flour")).not.toBeInTheDocument();
+    fireEvent.change(search, { target: { value: "sallt" } });
+    expect(screen.queryByText("Archived salt")).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("checkbox", { name: "Show retired ingredients" }));
+    expect(screen.getByText("Archived salt")).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Clear search" }));
+    expect(screen.getByText("Flour")).toBeInTheDocument();
+  });
 });
