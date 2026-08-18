@@ -1,9 +1,10 @@
-import { createEvent, fireEvent, render, screen, within } from "@testing-library/react";
+import { createEvent, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { EventPlanner } from "./event-planner";
 import i18n, { defaultLocale } from "./i18n";
+import { localDb } from "./local-db";
 
 const {
   readEventPlanner,
@@ -19,6 +20,7 @@ const {
   queueEventMealRoleName,
   pullOrganization,
   ensureArchivedEventCached,
+  readEventCosts,
 } = vi.hoisted(() => ({
   readEventPlanner: vi.fn(),
   queueRecipeSchedule: vi.fn(),
@@ -33,8 +35,10 @@ const {
   queueEventMealRoleName: vi.fn(),
   pullOrganization: vi.fn(),
   ensureArchivedEventCached: vi.fn(),
+  readEventCosts: vi.fn(),
 }));
 vi.mock("./planner-projections", () => ({ readEventPlanner }));
+vi.mock("./event-cost-projections", () => ({ readEventCosts }));
 vi.mock("./scheduled-recipe", () => ({
   queueRecipeSchedule,
   queueScheduledRecipeContext,
@@ -65,7 +69,32 @@ const emptyPlannerCollections = {
 };
 
 describe("EventPlanner", () => {
-  afterEach(() => vi.clearAllMocks());
+  afterEach(async () => {
+    vi.clearAllMocks();
+    await localDb.outbox.clear();
+  });
+
+  it("shows the existing cost summary and only this event's pending changes", async () => {
+    await i18n.changeLanguage(defaultLocale);
+    readEventPlanner.mockResolvedValue({
+      name: "Letní vaření", startDate: "2026-08-10", endDate: "2026-08-10", attendance: 12, lifecycle: "active",
+      days: [], roles: [], recipes: [], scheduled: [], ...emptyPlannerCollections,
+    });
+    readEventCosts.mockResolvedValue({ currency: "CZK", budget: "1000", total: "700", expectedShopping: "500", actual: "300", remaining: "700", missingIngredients: [], scheduled: new Map() });
+    pullOrganization.mockResolvedValue(false);
+    const userId = "a6a58bd6-214e-49af-8fae-e5f974bf8e08";
+    render(<EventPlanner eventId={ids.event} onUnauthenticated={vi.fn()} organizationId={ids.organization} userId={userId} />);
+    expect((await screen.findAllByText("Rozpočet"))[0]).toBeVisible();
+    expect(screen.getAllByText("1000 CZK").length).toBeGreaterThanOrEqual(1);
+    expect(screen.getAllByText("700 CZK").length).toBeGreaterThanOrEqual(1);
+    await localDb.outbox.bulkAdd([
+      { id: "matching", userId, organizationId: ids.organization, commandType: "event.update", payload: { event_id: ids.event }, actionAt: "2026-08-10T00:00:00Z", createdAt: "2026-08-10T00:00:00Z", state: "pending" },
+      { id: "matching-failed", userId, organizationId: ids.organization, commandType: "event.update", payload: { event_id: ids.event }, actionAt: "2026-08-10T00:00:00Z", createdAt: "2026-08-10T00:00:00Z", state: "failed" },
+      { id: "other-event", userId, organizationId: ids.organization, commandType: "event.update", payload: { event_id: ids.recipe }, actionAt: "2026-08-10T00:00:00Z", createdAt: "2026-08-10T00:00:00Z", state: "pending" },
+      { id: "other-org", userId, organizationId: ids.recipe, commandType: "event.update", payload: { event_id: ids.event }, actionAt: "2026-08-10T00:00:00Z", createdAt: "2026-08-10T00:00:00Z", state: "pending" },
+    ]);
+    await waitFor(() => expect(screen.getByText("1 neúspěšných změn")).toBeVisible());
+  });
 
   function dataTransfer() {
     const values = new Map<string, string>();

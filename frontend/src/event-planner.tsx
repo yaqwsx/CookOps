@@ -28,6 +28,7 @@ import { queueEventMealRoleCreate, queueEventMealRoleLifecycle, queueEventMealRo
 import { pullOrganization, SyncRequestError } from "./sync-bootstrap";
 import { dietaryTagSeedKeys, ensureArchivedEventCached } from "./archive-cache";
 import { mealRoleLabels } from "./meal-role-labels";
+import { localDb } from "./local-db";
 
 const plannerDragMime = "application/x-cookops-planner";
 type PlannerDragPayload = { kind: "recipe" | "scheduled"; id: string };
@@ -57,7 +58,7 @@ function readPlannerDrag(event: React.DragEvent): PlannerDragPayload | undefined
 
 type PlannerState = "loading" | "ready" | "offline" | "error";
 
-function EventSummary({ planner }: { planner: EventPlannerProjection }) {
+function EventSummary({ planner, costs, pendingSync }: { planner: EventPlannerProjection; costs?: EventCostsProjection; pendingSync: { pending: number; failed: number } }) {
   const { t } = useTranslation();
   return (
     <header className="event-workspace__summary">
@@ -78,6 +79,16 @@ function EventSummary({ planner }: { planner: EventPlannerProjection }) {
         <div>
           <dt>{t("planner.lifecycle")}</dt>
           <dd>{t(`eventsOverview.lifecycle.${planner.lifecycle}`)}</dd>
+        </div>
+        {costs ? <>
+          <div><dt>{t("costs.budget")}</dt><dd>{t("costs.amount", { amount: costs.budget, currency: costs.currency })}</dd></div>
+          <div><dt>{t("costs.scheduled")}</dt><dd>{t("costs.amount", { amount: costs.total, currency: costs.currency })}</dd></div>
+          <div><dt>{t("costs.actual")}</dt><dd>{t("costs.amount", { amount: costs.actual, currency: costs.currency })}</dd></div>
+          <div><dt>{t("costs.remaining")}</dt><dd>{t("costs.amount", { amount: costs.remaining, currency: costs.currency })}</dd></div>
+        </> : null}
+        <div>
+          <dt>{t("planner.pendingSync")}</dt>
+          <dd>{pendingSync.failed ? t("planner.pendingSyncFailed", { count: pendingSync.failed }) : t("planner.pendingSyncCount", { count: pendingSync.pending })}</dd>
         </div>
       </dl>
     </header>
@@ -802,6 +813,7 @@ export function EventPlanner({
   const [planner, setPlanner] = useState<EventPlannerProjection>();
   const identity = `${userId}:${organizationId}:${eventId}`;
   const [recipeCosts, setRecipeCosts] = useState<{ identity: string; costs?: EventCostsProjection }>();
+  const [pendingSync, setPendingSync] = useState({ pending: 0, failed: 0 });
   const [recipeCostsError, setRecipeCostsError] = useState({ identity, error: false });
   const [dropTarget, setDropTarget] = useState<string>();
   const generation = useRef(0);
@@ -831,6 +843,15 @@ export function EventPlanner({
     setRecipeCosts(undefined);
     setRecipeCostsError({ identity: effectIdentity, error: false });
     const costSubscription = liveQuery(() => readEventCosts(userId, organizationId, eventId)).subscribe({ next: (next) => active && setRecipeCosts({ identity: effectIdentity, costs: next }), error: () => active && setRecipeCostsError({ identity: effectIdentity, error: true }) });
+    const pendingSubscription = liveQuery(async () => {
+      const commands = await localDb.outbox.where("organizationId").equals(organizationId).toArray();
+      return commands.reduce((result, command) => {
+        if (command.userId !== userId || command.payload.event_id !== eventId) return result;
+        if (command.state === "pending") result.pending += 1;
+        else result.failed += 1;
+        return result;
+      }, { pending: 0, failed: 0 });
+    }).subscribe({ next: (next) => active && setPendingSync(next) });
     const offline = () => setState("offline");
     window.addEventListener("online", synchronize);
     window.addEventListener("offline", offline);
@@ -840,6 +861,7 @@ export function EventPlanner({
       generation.current += 1;
       subscription.unsubscribe();
       costSubscription.unsubscribe();
+      pendingSubscription.unsubscribe();
       window.removeEventListener("online", synchronize);
       window.removeEventListener("offline", offline);
     };
@@ -902,7 +924,7 @@ export function EventPlanner({
   }
   return (
     <section className="event-workspace" aria-labelledby="planner-heading">
-      <EventSummary planner={planner} />
+      <EventSummary planner={planner} costs={recipeCosts?.identity === identity ? recipeCosts.costs : undefined} pendingSync={pendingSync} />
       {planner.lifecycle === "archived" ? (
         <p className="planner-archived" role="status">
           {t("planner.archived")}
