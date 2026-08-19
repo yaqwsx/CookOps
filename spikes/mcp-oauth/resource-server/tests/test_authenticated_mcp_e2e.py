@@ -278,7 +278,9 @@ async def scenario(database_url: str) -> None:
                         },
                     )
                     assert token_response.status_code == 200
-                    access_token = token_response.json()["access_token"]
+                    tokens = token_response.json()
+                    access_token = tokens["access_token"]
+                    refresh_token = tokens["refresh_token"]
                     assert "." not in access_token
                     wrong_host = await client.post(
                         resource,
@@ -319,19 +321,72 @@ async def scenario(database_url: str) -> None:
                     "subject": subject,
                 }
 
-                async with httpx.AsyncClient() as revoke_client:
-                    revoked = await revoke_client.post(
+                async with httpx.AsyncClient() as refresh_client:
+                    rotated_response = await refresh_client.post(
+                        f"{issuer}/token",
+                        data={
+                            "client_id": "cookops-spike-client",
+                            "grant_type": "refresh_token",
+                            "refresh_token": refresh_token,
+                            "resource": resource,
+                        },
+                    )
+                    assert rotated_response.status_code == 200
+                    rotated_tokens = rotated_response.json()
+                    rotated_access_token = rotated_tokens["access_token"]
+                    assert rotated_access_token and rotated_tokens["refresh_token"]
+                    replayed_response = await refresh_client.post(
+                        f"{issuer}/token",
+                        data={
+                            "client_id": "cookops-spike-client",
+                            "grant_type": "refresh_token",
+                            "refresh_token": refresh_token,
+                            "resource": resource,
+                        },
+                    )
+                    assert replayed_response.status_code == 400
+                    assert replayed_response.json()["error"] == "invalid_grant"
+                    rejected_rotated_access = await refresh_client.post(
+                        resource,
+                        headers={"authorization": f"Bearer {rotated_access_token}"},
+                        json={},
+                    )
+                    assert rejected_rotated_access.status_code == 401
+                    fresh_code = await authorization_code(
+                        refresh_client, issuer, resource
+                    )
+                    fresh_token_response = await refresh_client.post(
+                        f"{issuer}/token",
+                        data={
+                            "client_id": "cookops-spike-client",
+                            "code": fresh_code,
+                            "code_verifier": CODE_VERIFIER,
+                            "grant_type": "authorization_code",
+                            "redirect_uri": f"{public_origin}/callback",
+                            "resource": resource,
+                        },
+                    )
+                    assert fresh_token_response.status_code == 200
+                    fresh_access_token = fresh_token_response.json()["access_token"]
+                    assert fresh_access_token and "." not in fresh_access_token
+                    fresh_valid = await refresh_client.post(
+                        resource,
+                        headers={"authorization": f"Bearer {fresh_access_token}"},
+                        json={},
+                    )
+                    assert fresh_valid.status_code == 200
+                    revoked = await refresh_client.post(
                         f"{issuer}/revoke",
                         data={
                             "client_id": "cookops-spike-client",
-                            "token": access_token,
+                            "token": fresh_access_token,
                             "token_type_hint": "access_token",
                         },
                     )
                     assert revoked.status_code == 200
-                    rejected_after_revoke = await revoke_client.post(
+                    rejected_after_revoke = await refresh_client.post(
                         resource,
-                        headers={"authorization": f"Bearer {access_token}"},
+                        headers={"authorization": f"Bearer {fresh_access_token}"},
                         json={},
                     )
                     assert rejected_after_revoke.status_code == 401
