@@ -152,6 +152,8 @@ async def resource_server(
             host="127.0.0.1",
             port=0,
             log_level="warning",
+            proxy_headers=True,
+            forwarded_allow_ips="127.0.0.1",
         )
     )
     task = asyncio.create_task(server.serve(sockets=[listener]))
@@ -191,7 +193,7 @@ async def authorization_code(
     for _redirect in range(10):
         response = await client.get(current, params=parameters)
         parameters = None
-        assert response.status_code in (302, 303)
+        assert response.status_code in (302, 303), response.text
         location = response.headers["location"]
         redirect = urljoin(current, location)
         parsed = urlsplit(redirect)

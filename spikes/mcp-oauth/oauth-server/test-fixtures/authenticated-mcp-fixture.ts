@@ -38,6 +38,11 @@ function port(name: string): number {
   return value;
 }
 
+function optionalPort(name: string, fallback: number): number {
+  const value = process.env[name];
+  return value === undefined ? fallback : port(name);
+}
+
 async function consentGrant(provider: Provider, interaction: Interaction) {
   const existing = interaction.grantId
     ? await provider.Grant.find(interaction.grantId)
@@ -94,6 +99,7 @@ function forward(
   response: ServerResponse,
   targetPort: number,
   forwardedHost?: string,
+  forwardedProto = "http",
 ): void {
   const forwarded = httpRequest(
     {
@@ -106,7 +112,7 @@ function forward(
             ...request.headers,
             host: forwardedHost,
             "x-forwarded-host": forwardedHost,
-            "x-forwarded-proto": "http",
+            "x-forwarded-proto": forwardedProto,
           }
         : request.headers,
     },
@@ -163,16 +169,34 @@ async function main(): Promise<void> {
             response.writeHead(503).end();
             return;
           }
-          forward(request, response, oauthPort, `127.0.0.1:${publicPort}`);
+          const publicUrl = new URL(publicOrigin);
+          forward(
+            request,
+            response,
+            oauthPort,
+            publicUrl.host,
+            publicUrl.protocol.slice(0, -1),
+          );
         } else {
-          forward(request, response, resourcePort);
+          const publicUrl = new URL(publicOrigin);
+          forward(
+            request,
+            response,
+            resourcePort,
+            publicUrl.host,
+            publicUrl.protocol.slice(0, -1),
+          );
         }
       } catch (error) {
         response.destroy(error as Error);
       }
     });
-    publicPort = await listen(publicProxy, 0);
-    publicOrigin = `http://127.0.0.1:${publicPort}`;
+    publicPort = await listen(
+      publicProxy,
+      optionalPort("OAUTH_E2E_PUBLIC_PORT", 0),
+    );
+    publicOrigin =
+      process.env.OAUTH_E2E_PUBLIC_ORIGIN ?? `http://127.0.0.1:${publicPort}`;
 
     const isolatedDatabaseUrl = new URL(databaseUrl);
     isolatedDatabaseUrl.searchParams.set("options", `-c search_path=${schema}`);
