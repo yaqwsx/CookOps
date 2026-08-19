@@ -16,9 +16,11 @@ import httpx
 import httpx2
 import pytest
 import uvicorn
-from cookops_mcp_oauth_spike import ResourceServerSettings, create_app
 from mcp.client.session import ClientSession
 from mcp.client.streamable_http import streamable_http_client
+from starlette.types import Receive, Scope, Send
+
+from cookops_mcp_oauth_spike import ResourceServerSettings, create_app
 
 CODE_VERIFIER = "cookops-authenticated-mcp-verifier-long-enough-for-pkce"
 RESOURCE_SERVER_CLIENT_ID = "cookops-resource-server"
@@ -145,9 +147,26 @@ async def resource_server(
         introspection_client_id=RESOURCE_SERVER_CLIENT_ID,
         introspection_client_secret=RESOURCE_SERVER_SECRET,
     )
+    other_settings = ResourceServerSettings(
+        resource_url=f"{resource_url.rsplit('/', 1)[0]}/other-mcp",
+        authorization_server_url=issuer,
+        introspection_url=f"http://127.0.0.1:{private_port}/oauth/introspect",
+        introspection_client_id=RESOURCE_SERVER_CLIENT_ID,
+        introspection_client_secret=RESOURCE_SERVER_SECRET,
+    )
+    primary_app = create_app(settings)
+    other_app = create_app(other_settings)
+
+    async def app(scope: Scope, receive: Receive, send: Send) -> None:
+        target = (
+            other_app
+            if scope["type"] == "http" and scope["path"].startswith("/other-mcp")
+            else primary_app
+        )
+        await target(scope, receive, send)
     server = uvicorn.Server(
         uvicorn.Config(
-            create_app(settings),
+            app,
             host="127.0.0.1",
             port=0,
             log_level="warning",
@@ -155,17 +174,18 @@ async def resource_server(
             forwarded_allow_ips="127.0.0.1",
         )
     )
-    task = asyncio.create_task(server.serve(sockets=[listener]))
-    try:
-        async with asyncio.timeout(10):
-            while not server.started:
-                if task.done():
-                    await task
-                await asyncio.sleep(0.01)
-        yield
-    finally:
-        server.should_exit = True
-        await asyncio.wait_for(task, 10)
+    async with other_app.router.lifespan_context(other_app):
+        task = asyncio.create_task(server.serve(sockets=[listener]))
+        try:
+            async with asyncio.timeout(10):
+                while not server.started:
+                    if task.done():
+                        await task
+                    await asyncio.sleep(0.01)
+            yield
+        finally:
+            server.should_exit = True
+            await asyncio.wait_for(task, 10)
 
 
 async def authorization_code(
@@ -384,6 +404,12 @@ async def scenario(database_url: str) -> None:
                         json={},
                     )
                     assert fresh_valid.status_code == 200
+                    mixed_up = await refresh_client.post(
+                        f"{public_origin}/other-mcp",
+                        headers={"authorization": f"Bearer {fresh_access_token}"},
+                        json={},
+                    )
+                    assert mixed_up.status_code == 401
                     revoked = await refresh_client.post(
                         f"{issuer}/revoke",
                         data={
