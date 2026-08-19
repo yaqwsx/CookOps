@@ -7,6 +7,7 @@ import {
   createGoogleSession,
   type DevelopmentIdentity,
   getCurrentIdentity,
+  setCurrentIdentityLocale,
   getDevelopmentIdentities,
   logout,
 } from "./api/auth";
@@ -24,6 +25,7 @@ import { EventShopping } from "./event-shopping";
 import { EventOverview } from "./events-overview";
 import { loadGoogleIdentityServices } from "./google-identity-services";
 import type { SupportedLocale } from "./i18n";
+import appI18n from "./i18n";
 import { IngredientCatalog } from "./ingredient-catalog-view";
 import { OrganizationMemberships } from "./organization-membership";
 import { RecipeCatalog } from "./recipe-catalog-view";
@@ -76,8 +78,24 @@ type OrganizationState =
   | { status: "error" }
   | { status: "ready"; organizations: AvailableOrganization[] };
 
-function LocalePicker() {
+function applyIdentityLocale(
+  i18n: {
+    resolvedLanguage?: string;
+    changeLanguage: (locale: string) => Promise<unknown>;
+  },
+  identity: CurrentIdentity,
+) {
+  const next = identity.preferred_locale === "en" ? "en" : "cs";
+  return (i18n.resolvedLanguage ?? "cs") === next
+    ? Promise.resolve()
+    : i18n.changeLanguage(next);
+}
+
+function LocalePicker({ persist }: { persist: boolean }) {
   const { i18n, t } = useTranslation();
+  const [error, setError] = useState(false);
+  const mounted = useRef(true);
+  useEffect(() => () => { mounted.current = false; }, []);
   const locale = (i18n.resolvedLanguage ?? "cs") as SupportedLocale;
 
   return (
@@ -85,11 +103,19 @@ function LocalePicker() {
       <span>{t("shell.language")}</span>
       <select
         value={locale}
-        onChange={(event) => void i18n.changeLanguage(event.target.value)}
+        onChange={(event) => {
+          const selected = event.target.value as SupportedLocale;
+          setError(false);
+          void i18n.changeLanguage(selected);
+          if (persist) void setCurrentIdentityLocale(selected).catch(() => {
+            if (mounted.current) setError(true);
+          });
+        }}
       >
         <option value="cs">Čeština</option>
         <option value="en">English</option>
       </select>
+      {error ? <span role="alert">{t("shell.localeError")}</span> : null}
     </label>
   );
 }
@@ -156,7 +182,7 @@ function DevelopmentLogin({
           </div>
         )}
         <div className="login-locale-picker">
-          <LocalePicker />
+          <LocalePicker persist={false} />
         </div>
       </section>
     </main>
@@ -187,7 +213,7 @@ function GoogleLogin({
           onSignIn={onSignIn}
         />
         <div className="login-locale-picker">
-          <LocalePicker />
+          <LocalePicker persist={false} />
         </div>
       </section>
     </main>
@@ -309,7 +335,7 @@ function AuthenticationStatus({
           </button>
         ) : null}
         <div className="login-locale-picker">
-          <LocalePicker />
+          <LocalePicker persist={false} />
         </div>
       </section>
     </main>
@@ -597,7 +623,7 @@ function AuthenticatedShell({
             </label>
           ) : null}
           <SynchronizationStatus userId={identity.id} />
-          <LocalePicker />
+          <LocalePicker persist />
           <div className="user-menu">
             <span className="identity-name">{identity.display_name}</span>
             <button onClick={() => void signOut()} type="button">
@@ -797,7 +823,11 @@ export function App() {
     void getCurrentIdentity()
       .then(async (identity) => {
         if (identity) {
-          if (active) setAuthentication({ status: "authenticated", identity });
+          if (active) {
+            await applyIdentityLocale(appI18n, identity);
+            if (!active) return;
+            setAuthentication({ status: "authenticated", identity });
+          }
           return;
         }
         const provider = runtimeAuthentication();
@@ -861,6 +891,7 @@ export function App() {
           await createDevelopmentSession(subject);
           const identity = await getCurrentIdentity();
           if (!identity) throw new Error("session was not established");
+          await applyIdentityLocale(i18n, identity);
           setAuthentication({ status: "authenticated", identity });
         }}
       />
@@ -874,6 +905,7 @@ export function App() {
           await createGoogleSession(idToken);
           const identity = await getCurrentIdentity();
           if (!identity) throw new Error("session was not established");
+          await applyIdentityLocale(i18n, identity);
           setAuthentication({ status: "authenticated", identity });
         }}
       />

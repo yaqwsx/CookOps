@@ -2,6 +2,7 @@ export type CurrentIdentity = {
   id: string;
   display_name: string;
   verified_email: string;
+  preferred_locale: "cs" | "en";
 };
 
 export type DevelopmentIdentity = {
@@ -28,6 +29,17 @@ export async function getCurrentIdentity(): Promise<CurrentIdentity | null> {
   return (await requireSuccess(response).then((result) =>
     result.json(),
   )) as CurrentIdentity;
+}
+
+export async function setCurrentIdentityLocale(
+  preferred_locale: "cs" | "en",
+): Promise<CurrentIdentity> {
+  const response = await requireSuccess(await request("/auth/session/locale", {
+    method: "PATCH",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ preferred_locale }),
+  }));
+  return (await response.json()) as CurrentIdentity;
 }
 
 export async function getDevelopmentIdentities(): Promise<

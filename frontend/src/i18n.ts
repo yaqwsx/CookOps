@@ -27,6 +27,7 @@ const resources = {
         userMenu: "Uživatelská nabídka",
         logout: "Odhlásit se",
         logoutError: "Odhlášení se nepodařilo. Zkuste to znovu.",
+        localeError: "Jazyk se nepodařilo uložit. Zkuste to znovu.",
       },
       systemOrganizations: {
         navigation: "Správa organizací",
@@ -652,6 +653,7 @@ const resources = {
         userMenu: "User menu",
         logout: "Log out",
         logoutError: "Log out failed. Please try again.",
+        localeError: "The language could not be saved. Please try again.",
       },
       systemOrganizations: {
         navigation: "Organization administration",

@@ -178,6 +178,31 @@ def service(database: AuthenticationDatabase) -> HumanAuthenticationService:
     )
 
 
+def test_locale_update_requires_current_access_and_persists(
+    authentication_database: AuthenticationDatabase,
+) -> None:
+    user_id = authentication_database.users["google_member"]
+    auth = service(authentication_database)
+    updated = asyncio.run(auth.set_current_identity_locale(user_id, "en"))
+    assert updated is not None and updated.preferred_locale == "en"
+    with authentication_database.sync_engine.begin() as connection:
+        assert connection.scalar(select(User.preferred_locale).where(User.id == user_id)) == "en"
+        connection.execute(
+            update(OrganizationMembership)
+            .where(OrganizationMembership.user_id == user_id)
+            .values(
+                state="removed",
+                removed_at=NOW,
+                removed_by_user_id=authentication_database.users["actor"],
+            )
+        )
+    assert asyncio.run(auth.set_current_identity_locale(user_id, "cs")) is None
+    with authentication_database.sync_engine.connect() as connection:
+        assert connection.scalar(select(User.preferred_locale).where(User.id == user_id)) == "en"
+    with pytest.raises(ValueError):
+        asyncio.run(auth.set_current_identity_locale(user_id, "de"))  # type: ignore[arg-type]
+
+
 @pytest.mark.parametrize(
     ("provider", "subject", "email", "user_name"),
     [

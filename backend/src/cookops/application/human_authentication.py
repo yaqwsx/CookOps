@@ -24,6 +24,7 @@ from cookops.persistence.models import (
 )
 
 IdentityProvider = Literal["google", "dummy"]
+SupportedLocale = Literal["cs", "en"]
 
 
 class HumanAuthenticationDenied(PermissionError):
@@ -91,6 +92,7 @@ class CurrentHumanIdentity:
     user_id: UUID
     display_name: str
     verified_email: str
+    preferred_locale: SupportedLocale = "cs"
 
 
 @dataclass(frozen=True, slots=True)
@@ -254,6 +256,27 @@ class HumanAuthenticationService:
                 user_id=user.id,
                 display_name=user.display_name,
                 verified_email=user.verified_email,
+                preferred_locale="en" if user.preferred_locale == "en" else "cs",
+            )
+
+    async def set_current_identity_locale(
+        self, user_id: UUID, preferred_locale: SupportedLocale
+    ) -> CurrentHumanIdentity | None:
+        if preferred_locale not in ("cs", "en"):
+            raise ValueError("unsupported locale")
+        async with self._session_factory() as session, session.begin():
+            user = await session.scalar(
+                select(User)
+                .where(User.id == user_id, User.disabled_at.is_(None))
+                .with_for_update(of=User)
+            )
+            if user is None or not await self._has_current_access(
+                session, user.id, user.normalized_email
+            ):
+                return None
+            user.preferred_locale = preferred_locale
+            return CurrentHumanIdentity(
+                user.id, user.display_name, user.verified_email, preferred_locale
             )
 
     async def available_organizations(

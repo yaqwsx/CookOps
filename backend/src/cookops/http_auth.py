@@ -80,6 +80,13 @@ class CurrentIdentityResponse(BaseModel):
     id: UUID
     display_name: str
     verified_email: str
+    preferred_locale: Literal["cs", "en"]
+
+
+class SetLocaleRequest(BaseModel):
+    model_config = ConfigDict(extra="forbid", strict=True)
+
+    preferred_locale: Literal["cs", "en"]
 
 
 class AvailableOrganizationResponse(BaseModel):
@@ -328,6 +335,33 @@ def create_auth_router(settings: Settings) -> APIRouter:
             id=identity.user_id,
             display_name=identity.display_name,
             verified_email=identity.verified_email,
+            preferred_locale=identity.preferred_locale,
+        )
+
+    @router.patch("/session/locale", response_model=CurrentIdentityResponse)
+    async def set_locale(body: SetLocaleRequest, request: Request) -> CurrentIdentityResponse:
+        if (
+            settings.browser_origin is None
+            or request.headers.get("origin") != settings.browser_origin
+        ):
+            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="origin rejected")
+        services = _services(request)
+        secret = request.cookies.get(settings.browser_session_cookie_name)
+        if secret is None:
+            raise _unauthenticated()
+        session = await services.browser_sessions.authenticate(secret)
+        if session is None:
+            raise _unauthenticated()
+        identity = await services.human_authentication.set_current_identity_locale(
+            session.user_id, body.preferred_locale
+        )
+        if identity is None:
+            raise _unauthenticated()
+        return CurrentIdentityResponse(
+            id=identity.user_id,
+            display_name=identity.display_name,
+            verified_email=identity.verified_email,
+            preferred_locale=identity.preferred_locale,
         )
 
     @router.post("/session/logout", status_code=status.HTTP_204_NO_CONTENT)

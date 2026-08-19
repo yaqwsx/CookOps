@@ -105,6 +105,7 @@ const alice = {
   id: "a6a58bd6-214e-49af-8fae-e5f974bf8e08",
   display_name: "Alice Member",
   verified_email: "alice@example.test",
+  preferred_locale: "cs" as const,
 };
 const organizations = {
   organizations: [
@@ -127,18 +128,21 @@ function response(body: object | null, status = 200) {
 
 function mockAnonymousDevelopmentSession({
   logoutFails = false,
+  localePersistFails = false,
+  preferredLocale = "cs" as "cs" | "en",
+  initiallySignedIn = false,
   organizationList = organizations,
   organizationUnauthorized = false,
 } = {}) {
   window.COOKOPS_RUNTIME_CONFIG = { authentication: { provider: "dummy" } };
-  let signedIn = false;
+  let signedIn = initiallySignedIn;
   let accessRevoked = false;
   const fetchMock = vi.fn(
     async (input: RequestInfo | URL, init?: RequestInit) => {
       const path = String(input);
       if (path === "/auth/session") {
         return signedIn && !accessRevoked
-          ? response(alice)
+          ? response({ ...alice, preferred_locale: preferredLocale })
           : response({ detail: "not authenticated" }, 401);
       }
       if (path === "/api/v1/organizations") {
@@ -163,6 +167,11 @@ function mockAnonymousDevelopmentSession({
         if (logoutFails) return response({ detail: "unavailable" }, 503);
         signedIn = false;
         return response(null, 204);
+      }
+      if (path === "/auth/session/locale" && init?.method === "PATCH") {
+        if (localePersistFails) return response({ detail: "unavailable" }, 503);
+        const body = JSON.parse(init.body as string) as { preferred_locale: "cs" | "en" };
+        return response({ ...alice, preferred_locale: body.preferred_locale });
       }
       throw new Error(`Unexpected request: ${path}`);
     },
@@ -210,7 +219,7 @@ describe("development authentication", () => {
 
   it("starts in Czech and presents only named development identities", async () => {
     const user = userEvent.setup();
-    mockAnonymousDevelopmentSession();
+    const fetchMock = mockAnonymousDevelopmentSession();
     render(<App />);
 
     expect(
@@ -236,6 +245,7 @@ describe("development authentication", () => {
     expect(screen.getByRole("combobox", { name: "Language" })).toHaveValue(
       "en",
     );
+    expect(fetchMock.mock.calls.some(([path]) => path === "/auth/session/locale")).toBe(false);
   });
 
   it("renders a localized recoverable error when the session check cannot start", async () => {
@@ -363,6 +373,56 @@ describe("development authentication", () => {
         `/organizations/${primaryOrganization.id}/events`,
       );
     });
+  });
+
+  it("applies the server locale after signing in from the Czech login UI", async () => {
+    const user = userEvent.setup();
+    mockAnonymousDevelopmentSession({ preferredLocale: "en" });
+    render(<App />);
+
+    expect(await screen.findByRole("heading", { name: "Vývojové přihlášení" })).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Přihlásit se jako Alice Member" }));
+
+    expect(await screen.findByText("Alice Member")).toBeInTheDocument();
+    expect(await screen.findByRole("button", { name: "Log out" })).toBeInTheDocument();
+    expect(screen.getByRole("combobox", { name: "Language" })).toHaveValue("en");
+    await waitFor(() => {
+      expect(window.location.pathname).toBe(`/organizations/${primaryOrganization.id}/events`);
+    });
+  });
+
+  it("persists authenticated locale changes and shows failures", async () => {
+    const user = userEvent.setup();
+    const fetchMock = mockAnonymousDevelopmentSession({ localePersistFails: true });
+    render(<App />);
+    await user.click(await screen.findByRole("button", { name: "Přihlásit se jako Alice Member" }));
+    const picker = await screen.findByRole("combobox", { name: "Jazyk" });
+    await user.selectOptions(picker, "en");
+    expect(picker).toHaveValue("en");
+    const localeRequest = fetchMock.mock.calls.find(
+      ([path]) => path === "/auth/session/locale",
+    );
+    expect(fetchMock).toHaveBeenCalledWith(
+      "/auth/session/locale",
+      expect.objectContaining({
+        method: "PATCH",
+        body: JSON.stringify({ preferred_locale: "en" }),
+        headers: expect.objectContaining({ "content-type": "application/json" }),
+      }),
+    );
+    expect(
+      Object.keys(
+        (localeRequest?.[1]?.headers ?? {}) as Record<string, unknown>,
+      ).some((key) => key.toLowerCase() === "origin"),
+    ).toBe(false);
+    expect(await screen.findByText("The language could not be saved. Please try again.")).toBeInTheDocument();
+  });
+
+  it("applies the persisted locale on session boot and does not persist login selection", async () => {
+    const fetchMock = mockAnonymousDevelopmentSession({ preferredLocale: "en", initiallySignedIn: true });
+    render(<App />);
+    expect(await screen.findByRole("combobox", { name: "Language" })).toHaveValue("en");
+    expect(fetchMock.mock.calls.some(([path]) => path === "/auth/session/locale")).toBe(false);
   });
 
   it("switches organizations through the existing events route", async () => {
