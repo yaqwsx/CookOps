@@ -16,10 +16,9 @@ import httpx
 import httpx2
 import pytest
 import uvicorn
+from cookops_mcp_oauth_spike import ResourceServerSettings, create_app
 from mcp.client.session import ClientSession
 from mcp.client.streamable_http import streamable_http_client
-
-from cookops_mcp_oauth_spike import ResourceServerSettings, create_app
 
 CODE_VERIFIER = "cookops-authenticated-mcp-verifier-long-enough-for-pkce"
 RESOURCE_SERVER_CLIENT_ID = "cookops-resource-server"
@@ -319,6 +318,24 @@ async def scenario(database_url: str) -> None:
                     "resource": resource,
                     "subject": subject,
                 }
+
+                async with httpx.AsyncClient() as revoke_client:
+                    revoked = await revoke_client.post(
+                        f"{issuer}/revoke",
+                        data={
+                            "client_id": "cookops-spike-client",
+                            "token": access_token,
+                            "token_type_hint": "access_token",
+                        },
+                    )
+                    assert revoked.status_code == 200
+                    rejected_after_revoke = await revoke_client.post(
+                        resource,
+                        headers={"authorization": f"Bearer {access_token}"},
+                        json={},
+                    )
+                    assert rejected_after_revoke.status_code == 401
+
                 await assert_official_node_sdk_client(configuration)
 
 
