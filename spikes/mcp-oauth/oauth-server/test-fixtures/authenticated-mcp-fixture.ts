@@ -209,6 +209,7 @@ async function main(): Promise<void> {
       redirectUri: `${publicOrigin}/callback`,
       cookieKeys: ["a".repeat(32), "b".repeat(32)],
       resourceServerSecret: RESOURCE_SERVER_SECRET,
+      accessTokenTtlSeconds: 1,
       jwks: {
         keys: [
           { ...privateJwk, alg: "RS256", kid: "authenticated-mcp", use: "sig" },

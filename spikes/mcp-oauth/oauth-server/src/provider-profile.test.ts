@@ -365,6 +365,9 @@ test("rejects unsafe profile endpoints and weak secrets", () => {
   assert.throws(() => createProvider({ ...valid, cookieKeys: ["short"] }), /cookieKeys/);
   assert.throws(() => createProvider({ ...valid, resourceServerSecret: "short" }), /resourceServerSecret/);
   assert.throws(() => createProvider({ ...valid, jwks: { keys: [] } }), /jwks/);
+  assert.throws(() => createProvider({ ...valid, accessTokenTtlSeconds: 0 }), /accessTokenTtlSeconds/);
+  assert.throws(() => createProvider({ ...valid, accessTokenTtlSeconds: 86_401 }), /accessTokenTtlSeconds/);
+  assert.throws(() => createProvider({ ...valid, accessTokenTtlSeconds: 1.5 }), /accessTokenTtlSeconds/);
 });
 
 test("selects and validates the listening port", () => {

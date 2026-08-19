@@ -31,6 +31,7 @@ export interface OAuthRuntimeConfiguration {
   interactionApprovalSecret: Uint8Array;
   host: string;
   port: number;
+  accessTokenTtlSeconds?: number;
 }
 
 interface OAuthRuntime {
@@ -138,6 +139,9 @@ async function createOAuthRuntime(
       redirectUri: configuration.redirectUri,
       cookieKeys: configuration.cookieKeys,
       resourceServerSecret: configuration.resourceServerSecret,
+      ...(configuration.accessTokenTtlSeconds === undefined
+        ? {}
+        : { accessTokenTtlSeconds: configuration.accessTokenTtlSeconds }),
       jwks: configuration.jwks,
       adapter: createPostgresAdapter(pool, {
         secret: configuration.adapterSecret,

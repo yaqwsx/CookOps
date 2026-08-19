@@ -18,6 +18,8 @@ export interface ProviderProfile {
   resourceServerSecret: string;
   jwks: NonNullable<Configuration["jwks"]>;
   adapter: AdapterFactory;
+  /** Test-only override; production defaults to 15 minutes. */
+  accessTokenTtlSeconds?: number;
   /** Test-only seam for deterministic CIMD boundary checks. */
   fetch?: typeof fetch;
 }
@@ -52,6 +54,10 @@ export function createProvider(profile: ProviderProfile): Provider {
   }
   if (!Array.isArray(profile.jwks?.keys) || profile.jwks.keys.length === 0) {
     throw new TypeError("jwks must contain at least one private signing key");
+  }
+  const accessTokenTtlSeconds = profile.accessTokenTtlSeconds ?? 15 * 60;
+  if (!Number.isInteger(accessTokenTtlSeconds) || accessTokenTtlSeconds < 1 || accessTokenTtlSeconds > 24 * 60 * 60) {
+    throw new TypeError("accessTokenTtlSeconds must be an integer between 1 and 86400");
   }
 
   const configuration: Configuration = {
@@ -111,7 +117,7 @@ export function createProvider(profile: ProviderProfile): Provider {
             scope: MCP_SCOPE,
             audience: resource,
             accessTokenFormat: "opaque",
-            accessTokenTTL: 15 * 60,
+            accessTokenTTL: accessTokenTtlSeconds,
           };
         },
       },
@@ -142,7 +148,7 @@ export function createProvider(profile: ProviderProfile): Provider {
     },
     scopes: [MCP_SCOPE],
     ttl: {
-      AccessToken: 15 * 60,
+      AccessToken: accessTokenTtlSeconds,
       Grant: 14 * 24 * 60 * 60,
       Interaction: 5 * 60,
       RefreshToken: 14 * 24 * 60 * 60,

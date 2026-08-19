@@ -321,6 +321,15 @@ async def scenario(database_url: str) -> None:
                     "subject": subject,
                 }
 
+                await asyncio.sleep(1.2)
+                async with httpx.AsyncClient() as expiry_client:
+                    expired = await expiry_client.post(
+                        resource,
+                        headers={"authorization": f"Bearer {access_token}"},
+                        json={},
+                    )
+                assert expired.status_code == 401
+
                 async with httpx.AsyncClient() as refresh_client:
                     rotated_response = await refresh_client.post(
                         f"{issuer}/token",
