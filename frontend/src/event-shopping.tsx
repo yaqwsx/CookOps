@@ -255,6 +255,7 @@ function ShoppingDetail({
                   <label className="shopping-row-controls__fulfilled">
                     <input
                       checked={item.fulfilled}
+                      aria-checked={item.partial ? "mixed" : undefined}
                       onChange={(event) =>
                         void queueAdHocShoppingItemFulfilment(userId, organizationId, {
                           shoppingListId: shoppingList.id,
@@ -262,6 +263,9 @@ function ShoppingDetail({
                           fulfilled: event.currentTarget.checked,
                         })
                       }
+                      ref={(element) => {
+                        if (element) element.indeterminate = item.partial;
+                      }}
                       type="checkbox"
                     />
                     {t("shopping.fulfilled")}

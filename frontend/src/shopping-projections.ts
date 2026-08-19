@@ -57,6 +57,7 @@ export type AdHocShoppingItem = {
   sectionName: string | null;
   note: string | null;
   fulfilled: boolean;
+  partial: boolean;
   retired: boolean;
 };
 
@@ -88,6 +89,15 @@ export function decimal(value: unknown): Decimal | undefined {
 
 function atScale(value: Decimal, scale: number): bigint {
   return value.value * 10n ** BigInt(scale - value.scale);
+}
+
+function compare(left: Decimal, right: Decimal): number {
+  const scale = Math.max(left.scale, right.scale);
+  return atScale(left, scale) < atScale(right, scale)
+    ? -1
+    : atScale(left, scale) > atScale(right, scale)
+      ? 1
+      : 0;
 }
 
 function fraction(value: Decimal): Fraction {
@@ -539,6 +549,7 @@ export async function readShoppingList(
         const unitId = value(item, "unit_id");
         const unit = unitId ? unitNames.get(unitId) : undefined;
         if (!name || !target || !unit) return [];
+        const credit = decimal(item.fields.fulfilment_credit) ?? add([]);
         return [
           {
             id: item.entityId,
@@ -551,8 +562,12 @@ export async function readShoppingList(
               sectionNames.get(value(item, "store_section_id") ?? "") ?? null,
             note: value(item, "note") ?? null,
             fulfilled:
-              (decimal(item.fields.fulfilment_credit)?.value ?? 0n) >=
-              target.value,
+              target.value > 0n &&
+              compare(credit, target) >= 0,
+            partial:
+              target.value > 0n &&
+              compare(credit, add([])) > 0 &&
+              compare(credit, target) < 0,
             retired: item.lifecycle === "retired",
           },
         ];
@@ -640,10 +655,12 @@ export async function readShoppingList(
           target: print(target),
           remaining: print(remaining),
           unit,
-          fulfilled: target.value > 0n && remaining.value === 0n,
+          fulfilled: compare(target, add([])) > 0 && compare(remaining, add([])) === 0,
           partial:
-            target.value > 0n && remaining.value > 0n && credit.value > 0n,
-          notRequired: target.value === 0n,
+            compare(target, add([])) > 0 &&
+            compare(remaining, add([])) > 0 &&
+            compare(credit, add([])) > 0,
+          notRequired: compare(target, add([])) === 0,
           contributions: rowContributions.map((contribution) => {
             const snapshot = validSnapshots.find((item) =>
               validSnapshot(
@@ -677,16 +694,13 @@ export async function readShoppingList(
               requiredQuantity: print(amount ?? add([])),
               fulfilled:
                 amount !== undefined &&
-                amount.value > 0n &&
-                (decimal(contribution.fields.fulfilment_credit)?.value ?? 0n) >=
-                  amount.value,
+                compare(amount, add([])) > 0 &&
+                compare(decimal(contribution.fields.fulfilment_credit) ?? add([]), amount) >= 0,
               partial:
                 amount !== undefined &&
-                amount.value > 0n &&
-                (decimal(contribution.fields.fulfilment_credit)?.value ?? 0n) >
-                  0n &&
-                (decimal(contribution.fields.fulfilment_credit)?.value ?? 0n) <
-                  amount.value,
+                compare(amount, add([])) > 0 &&
+                compare(decimal(contribution.fields.fulfilment_credit) ?? add([]), add([])) > 0 &&
+                compare(decimal(contribution.fields.fulfilment_credit) ?? add([]), amount) < 0,
               retired:
                 contribution.lifecycle === "retired" ||
                 snapshot?.fields.active_in_revision !== true,

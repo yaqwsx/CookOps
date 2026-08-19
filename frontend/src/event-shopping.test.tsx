@@ -185,7 +185,7 @@ describe("EventShopping", () => {
       />,
     );
     const fulfilmentCheckbox = await screen.findByLabelText("Nakoupeno");
-    expect(fulfilmentCheckbox).toHaveProperty("indeterminate", true);
+    await waitFor(() => expect(fulfilmentCheckbox).toHaveProperty("indeterminate", true));
     expect(fulfilmentCheckbox).toHaveAttribute("aria-checked", "mixed");
     await user.click(fulfilmentCheckbox);
     expect(queueShoppingRowFulfilment).toHaveBeenCalledWith(
@@ -195,7 +195,7 @@ describe("EventShopping", () => {
     );
     await user.click(screen.getByText("Příspěvky receptů"));
     const contributionCheckbox = screen.getByLabelText("Chili · 2 kg");
-    expect(contributionCheckbox).toHaveProperty("indeterminate", true);
+    await waitFor(() => expect(contributionCheckbox).toHaveProperty("indeterminate", true));
     expect(contributionCheckbox).toHaveAttribute("aria-checked", "mixed");
     await user.click(contributionCheckbox);
     expect(queueShoppingContributionFulfilment).toHaveBeenCalledWith(
@@ -409,13 +409,16 @@ describe("EventShopping", () => {
       createdAt: "2026-08-07T12:00:00Z",
       currentGenerationRevisionId: "0e8b2b21-c378-4574-9e46-9338c81305ef",
       sourceRecipeIds: [], rows: [],
-      adHocItems: [{ id: "2e8b2b21-c378-4574-9e46-9338c81305ef", name: "Citrony", target: "3", unit: "kg", sectionName: null, note: null, fulfilled: false }],
+      adHocItems: [{ id: "2e8b2b21-c378-4574-9e46-9338c81305ef", name: "Citrony", target: "3", unit: "kg", sectionName: null, note: null, fulfilled: false, partial: true }],
       quantityUnits: [], storeSections: [],
     });
     pullOrganization.mockResolvedValue(false);
     const user = userEvent.setup();
     render(<EventShopping eventId={ids.event} onBack={vi.fn()} onOpenList={vi.fn()} onOpenPlanner={vi.fn()} onUnauthenticated={vi.fn()} organizationId={ids.organization} shoppingListId="9d8b2b21-c378-4574-9e46-9338c81305ef" userId={ids.user} />);
-    await user.click(await screen.findByLabelText("Nakoupeno"));
+    const checkbox = await screen.findByLabelText("Nakoupeno");
+    await waitFor(() => expect(checkbox).toHaveProperty("indeterminate", true));
+    expect(checkbox).toHaveAttribute("aria-checked", "mixed");
+    await user.click(checkbox);
     expect(queueAdHocShoppingItemFulfilment).toHaveBeenCalledWith(ids.user, ids.organization, {
       shoppingListId: "9d8b2b21-c378-4574-9e46-9338c81305ef",
       adHocShoppingItemId: "2e8b2b21-c378-4574-9e46-9338c81305ef",

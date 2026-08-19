@@ -637,9 +637,55 @@ describe("offline shopping-list creation", () => {
       adHocShoppingItemId: itemId,
       fulfilled: true,
     });
+    const baseFields = {
+      id: itemId,
+      organization_id: ids.organization,
+      event_id: ids.event,
+      shopping_list_id: ids.list,
+      name: "Lemons",
+      target_amount: "3.5",
+      fulfilment_credit: "0",
+      unit_id: ids.unit,
+      store_section_id: ids.section,
+    };
+    await localDb.optimisticOverlays.update(
+      [ids.user, ids.organization, "ad_hoc_shopping_item", itemId],
+      { fields: { ...baseFields } },
+    );
     await expect(
       readShoppingList(ids.user, ids.organization, ids.event, ids.list),
-    ).resolves.toMatchObject({ adHocItems: [{ fulfilled: true }] });
+    ).resolves.toMatchObject({ adHocItems: [{ fulfilled: false, partial: false }] });
+    await localDb.optimisticOverlays.update(
+      [ids.user, ids.organization, "ad_hoc_shopping_item", itemId],
+      { fields: { ...baseFields, fulfilment_credit: "1" } },
+    );
+    await expect(
+      readShoppingList(ids.user, ids.organization, ids.event, ids.list),
+    ).resolves.toMatchObject({ adHocItems: [{ fulfilled: false, partial: true }] });
+    await localDb.optimisticOverlays.update(
+      [ids.user, ids.organization, "ad_hoc_shopping_item", itemId],
+      { fields: { ...baseFields, target_amount: "3.50", fulfilment_credit: "3.5" } },
+    );
+    await expect(
+      readShoppingList(ids.user, ids.organization, ids.event, ids.list),
+    ).resolves.toMatchObject({ adHocItems: [{ fulfilled: true, partial: false }] });
+    await localDb.optimisticOverlays.update(
+      [ids.user, ids.organization, "ad_hoc_shopping_item", itemId],
+      { fields: { ...baseFields, target_amount: "0.5", fulfilment_credit: "0.25" } },
+    );
+    await expect(
+      readShoppingList(ids.user, ids.organization, ids.event, ids.list),
+    ).resolves.toMatchObject({ adHocItems: [{ fulfilled: false, partial: true }] });
+    await localDb.optimisticOverlays.update(
+      [ids.user, ids.organization, "ad_hoc_shopping_item", itemId],
+      { fields: { ...baseFields, target_amount: "0", fulfilment_credit: "1" } },
+    );
+    await expect(
+      readShoppingList(ids.user, ids.organization, ids.event, ids.list),
+    ).resolves.toMatchObject({ adHocItems: [{ fulfilled: false, partial: false }] });
+    await expect(
+      readShoppingList(ids.user, ids.organization, ids.event, ids.list),
+    ).resolves.toMatchObject({ adHocItems: [{ fulfilled: false }] });
     await expect(localDb.outbox.toArray()).resolves.toContainEqual(
       expect.objectContaining({
         commandType: "shopping_list.set_ad_hoc_item_fulfilment",
