@@ -14,10 +14,16 @@ from pydantic import PostgresDsn
 from sqlalchemy import Engine, create_engine, insert, select, update
 
 from alembic import command as alembic_command
+from cookops.application.google_identities import GoogleIdentityProvider
 from cookops.application.human_authentication import HumanAuthenticationDenied
+from cookops.application.oauth_interactions import (
+    OAuthInteractionApprovalService,
+    OAuthInteractionDetails,
+)
 from cookops.config import Environment, HumanAuthProvider, Settings
 from cookops.http_auth import BrowserAuthenticationServices, create_auth_router
-from cookops.main import create_app
+from cookops.http_oauth_interactions import OAuthInteractionHttpServices
+from cookops.main import create_app, create_browser_authentication_services
 from cookops.persistence.models import (
     BrowserSession,
     ExternalIdentity,
@@ -98,6 +104,13 @@ def dummy_auth_database() -> Iterator[DummyAuthDatabase]:
                     "user_id": authorized_user_id,
                     "provider": "dummy",
                     "provider_subject": "dummy-alice",
+                    "verified_email": "alice@example.test",
+                    "normalized_verified_email": "alice@example.test",
+                },
+                {
+                    "user_id": authorized_user_id,
+                    "provider": "google",
+                    "provider_subject": "google-alice",
                     "verified_email": "alice@example.test",
                     "normalized_verified_email": "alice@example.test",
                 },
@@ -349,3 +362,107 @@ def test_production_google_route_rejects_plain_http_before_token_verification() 
     assert response.status_code == 400
     assert response.json() == {"detail": "secure transport required"}
     google_provider.complete_id_token.assert_not_called()
+
+
+@pytest.mark.parametrize("provider", [HumanAuthProvider.DUMMY, HumanAuthProvider.GOOGLE])
+def test_identity_http_sessions_reach_cookie_bound_interaction_bridge(
+    dummy_auth_database: DummyAuthDatabase, provider: HumanAuthProvider
+) -> None:
+    app_settings = settings().model_copy(
+        update={
+            "environment": (
+                Environment.PRODUCTION
+                if provider is HumanAuthProvider.GOOGLE
+                else Environment.TEST
+            ),
+            "human_auth_provider": provider,
+            "google_client_id": "test-client.apps.googleusercontent.com",
+            "browser_origin": "https://testserver",
+            "oauth_interaction_origin": "https://testserver",
+            "oauth_interaction_details_api_credential_base64url": KEY,
+            "oauth_interaction_approval_api_credential_base64url": KEY,
+        }
+    )
+
+    def authentication_factory(
+        configured: Settings, session_factory: object
+    ) -> BrowserAuthenticationServices:
+        services = create_browser_authentication_services(configured, session_factory)
+        if provider is HumanAuthProvider.GOOGLE:
+            services = BrowserAuthenticationServices(
+                browser_sessions=services.browser_sessions,
+                human_authentication=services.human_authentication,
+                dummy_identities=None,
+                google_identities=GoogleIdentityProvider(
+                    services.human_authentication,
+                    configured.google_client_id or "",
+                    token_verifier=lambda raw, audience: {
+                        "iss": "https://accounts.google.com",
+                        "aud": audience,
+                        "email_verified": True,
+                        "sub": "google-alice",
+                        "email": "alice@example.test",
+                    }
+                    if raw == "opaque-google-token"
+                    else {},
+                ),
+            )
+        return services
+
+    private_client = AsyncMock()
+    private_client.interaction_details.return_value = OAuthInteractionDetails(
+        interaction_uid="N9E_oxk7dD9t7rR10dj-3",
+        client_name="Trusted agent",
+        resource="https://cookops.example/mcp",
+        scopes=("cookops:mcp",),
+    )
+    private_client.record_approval.return_value = True
+    app = create_app(app_settings, browser_authentication_factory=authentication_factory)
+    with TestClient(app, base_url="https://testserver") as client:
+        endpoint, payload = (
+            ("/auth/dummy/session", {"subject": "dummy-alice"})
+            if provider is HumanAuthProvider.DUMMY
+            else ("/auth/google/session", {"id_token": "opaque-google-token"})
+        )
+        created = client.post(endpoint, json=payload)
+        assert created.status_code == 204
+        cookie = created.headers["set-cookie"]
+        assert "HttpOnly" in cookie and "Secure" in cookie
+
+        app.state.oauth_interactions = OAuthInteractionHttpServices(
+            OAuthInteractionApprovalService(
+                app.state.browser_authentication.browser_sessions,
+                app.state.browser_authentication.human_authentication,
+                private_client,
+            )
+        )
+        uid = "N9E_oxk7dD9t7rR10dj-3"
+        assert client.get(f"/auth/mcp-interactions/{uid}").status_code == 200
+        assert (
+            client.post(
+                f"/auth/mcp-interactions/{uid}",
+                json={"decision": "approve"},
+                headers={"origin": "https://testserver"},
+            ).status_code
+            == 204
+        )
+        call = private_client.record_approval.await_args.kwargs
+        assert set(call) == {"interaction_uid", "subject", "decision"}
+        assert call == {
+            "interaction_uid": uid,
+            "subject": dummy_auth_database.authorized_user_id,
+            "decision": "approve",
+        }
+
+        private_client.reset_mock()
+        client.cookies.clear()
+        assert client.get(f"/auth/mcp-interactions/{uid}").status_code == 401
+        assert (
+            client.post(
+                f"/auth/mcp-interactions/{uid}",
+                json={"decision": "approve"},
+                headers={"origin": "https://testserver"},
+            ).status_code
+            == 401
+        )
+        private_client.record_approval.assert_not_awaited()
