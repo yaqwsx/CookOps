@@ -34,6 +34,7 @@ export type ShoppingContribution = {
   generated: string;
   requiredQuantity: string;
   fulfilled: boolean;
+  partial: boolean;
   retired: boolean;
   source: string | null;
   recipeDescription: string | null;
@@ -675,8 +676,17 @@ export async function readShoppingList(
               generated: print(amount ?? add([])),
               requiredQuantity: print(amount ?? add([])),
               fulfilled:
+                amount !== undefined &&
+                amount.value > 0n &&
+                (decimal(contribution.fields.fulfilment_credit)?.value ?? 0n) >=
+                  amount.value,
+              partial:
+                amount !== undefined &&
+                amount.value > 0n &&
                 (decimal(contribution.fields.fulfilment_credit)?.value ?? 0n) >
-                0n,
+                  0n &&
+                (decimal(contribution.fields.fulfilment_credit)?.value ?? 0n) <
+                  amount.value,
               retired:
                 contribution.lifecycle === "retired" ||
                 snapshot?.fields.active_in_revision !== true,

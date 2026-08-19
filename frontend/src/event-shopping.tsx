@@ -834,6 +834,7 @@ function ShoppingRowControls({
                     <label>
                       <input
                         aria-label={label}
+                        aria-checked={contribution.partial ? "mixed" : undefined}
                         checked={contribution.fulfilled}
                         onChange={(event) =>
                           void run(() =>
@@ -848,6 +849,9 @@ function ShoppingRowControls({
                             ),
                           )
                         }
+                        ref={(element) => {
+                          if (element) element.indeterminate = contribution.partial;
+                        }}
                         type="checkbox"
                       />
                       {label}

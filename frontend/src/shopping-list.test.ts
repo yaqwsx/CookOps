@@ -336,6 +336,8 @@ describe("offline shopping-list creation", () => {
           contributions: [
             expect.objectContaining({
               requiredQuantity: "2",
+              fulfilled: false,
+              partial: false,
               source: "Chili",
               recipeDescription: "Smoky tomato stew",
               day: "2026-08-10",
@@ -356,6 +358,56 @@ describe("offline shopping-list creation", () => {
       "shopping_contribution",
       ids.contribution,
     ];
+    const seededContribution = await localDb.canonicalRecords.get(contributionKey);
+    if (!seededContribution) throw new Error("seeded contribution missing");
+    await localDb.canonicalRecords.update(
+      contributionKey,
+      { fields: { ...seededContribution.fields, fulfilment_credit: "1" } },
+    );
+    await expect(
+      readShoppingList(ids.user, ids.organization, ids.event, ids.list),
+    ).resolves.toMatchObject({
+      rows: [{ contributions: [{ fulfilled: false, partial: true }] }],
+    });
+    const zeroSnapshot = await localDb.canonicalRecords.get([
+      ids.user,
+      ids.organization,
+      "shopping_contribution_snapshot",
+      ids.snapshot,
+    ]);
+    if (!zeroSnapshot) throw new Error("seeded snapshot missing");
+    await localDb.canonicalRecords.update(
+      [
+        ids.user,
+        ids.organization,
+        "shopping_contribution_snapshot",
+        ids.snapshot,
+      ],
+      { fields: { ...zeroSnapshot.fields, generated_quantity: "0" } },
+    );
+    await expect(
+      readShoppingList(ids.user, ids.organization, ids.event, ids.list),
+    ).resolves.toMatchObject({
+      rows: [{ contributions: [{ fulfilled: false, partial: false }] }],
+    });
+    await localDb.canonicalRecords.update(
+      [
+        ids.user,
+        ids.organization,
+        "shopping_contribution_snapshot",
+        ids.snapshot,
+      ],
+      { fields: zeroSnapshot.fields },
+    );
+    await localDb.canonicalRecords.update(
+      contributionKey,
+      { fields: { ...seededContribution.fields, fulfilment_credit: "2" } },
+    );
+    await expect(
+      readShoppingList(ids.user, ids.organization, ids.event, ids.list),
+    ).resolves.toMatchObject({
+      rows: [{ contributions: [{ fulfilled: true, partial: false }] }],
+    });
     const contribution = await localDb.canonicalRecords.get(contributionKey);
     if (!contribution) throw new Error("test contribution missing");
     await localDb.canonicalRecords.update(contributionKey, {

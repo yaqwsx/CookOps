@@ -151,6 +151,7 @@ describe("EventShopping", () => {
                 generated: "2",
                 requiredQuantity: "2",
                 fulfilled: false,
+                partial: true,
                 retired: false,
                 source: "Chili",
                 recipeDescription: "Smoky tomato stew",
@@ -193,7 +194,10 @@ describe("EventShopping", () => {
       expect.objectContaining({ fulfilled: true }),
     );
     await user.click(screen.getByText("Příspěvky receptů"));
-    await user.click(screen.getByLabelText("Chili · 2 kg"));
+    const contributionCheckbox = screen.getByLabelText("Chili · 2 kg");
+    expect(contributionCheckbox).toHaveProperty("indeterminate", true);
+    expect(contributionCheckbox).toHaveAttribute("aria-checked", "mixed");
+    await user.click(contributionCheckbox);
     expect(queueShoppingContributionFulfilment).toHaveBeenCalledWith(
       ids.user,
       ids.organization,
