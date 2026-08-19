@@ -1,5 +1,6 @@
 import { appendOutboxCommand, localDb, type CanonicalRecord } from "./local-db";
 import { recipeVersionTagId } from "./recipe-publish";
+import { readEventPlanner } from "./planner-projections";
 
 const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const decimal = /^(?:0|[1-9]\d*)(?:\.\d+)?$/;
@@ -17,6 +18,11 @@ export type RecipeCreateValidationError =
   | "scalingUnit"
   | "baseScalingAmount"
   | "tags";
+
+export async function assertPlannerTarget(userId: string, organizationId: string, eventId: string, eventDayId: string, eventMealRoleId: string): Promise<void> {
+  const planner = await readEventPlanner(userId, organizationId, eventId);
+  if (planner?.lifecycle !== "active" || !planner.days.some((day) => day.id === eventDayId) || !planner.roles.some((role) => role.id === eventMealRoleId)) throw new Error("selection");
+}
 
 export function validateRecipeCreate(
   input: RecipeCreateInput,

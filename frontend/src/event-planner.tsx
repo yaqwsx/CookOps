@@ -29,6 +29,8 @@ import { pullOrganization, SyncRequestError } from "./sync-bootstrap";
 import { dietaryTagSeedKeys, ensureArchivedEventCached } from "./archive-cache";
 import { mealRoleLabels } from "./meal-role-labels";
 import { localDb } from "./local-db";
+import { readRecipeCatalog, type RecipeCatalogProjection } from "./recipe-catalog";
+import { assertPlannerTarget, queueRecipeCreate, type RecipeCreateInput } from "./recipe-create";
 
 const plannerDragMime = "application/x-cookops-planner";
 type PlannerDragPayload = { kind: "recipe" | "scheduled"; id: string };
@@ -352,6 +354,7 @@ function AddRecipe({
   const [recipeId, setRecipeId] = useState("");
   const [error, setError] = useState<string>();
   const [saved, setSaved] = useState(false);
+  const [creating, setCreating] = useState(false);
   const inFlight = useRef(false);
 
   useEffect(() => {
@@ -394,9 +397,10 @@ function AddRecipe({
   }
 
   if (planner.lifecycle !== "active") return null;
-  if (!planner.days.length || !planner.roles.length || !planner.recipes.length)
+  if (!planner.days.length || !planner.roles.length)
     return <p role="status">{t("planner.noAddOptions")}</p>;
   return (
+    <>
     <form className="planner-add" onSubmit={(event) => void submit(event)}>
       <h3>{t("planner.addHeading")}</h3>
       <label>
@@ -425,7 +429,7 @@ function AddRecipe({
           ))}
         </select>
       </label>
-      <label>
+      {planner.recipes.length ? <label>
         {t("planner.recipe")}
         <select
           onChange={(event) => setRecipeId(event.target.value)}
@@ -437,8 +441,9 @@ function AddRecipe({
             </option>
           ))}
         </select>
-      </label>
-      <button type="submit">{t("planner.add")}</button>
+      </label> : null}
+      {planner.recipes.length ? <button type="submit">{t("planner.add")}</button> : null}
+      <button type="button" onClick={() => setCreating((value) => !value)}>{t("planner.createRecipe")}</button>
       {error ? <p role="alert">{t(`planner.errors.${error}`)}</p> : null}
       {saved ? <p role="status">{t("planner.saved")}</p> : null}
       <p>{t("planner.dragInstructions")}</p>
@@ -454,6 +459,62 @@ function AddRecipe({
           </li>
         ))}
       </ul>
+    </form>
+    {creating ? <PlannerRecipeCreateForm eventId={eventId} eventDayId={dayId} eventMealRoleId={roleId} organizationId={organizationId} userId={userId} /> : null}
+    </>
+  );
+}
+
+function PlannerRecipeCreateForm({ eventId, eventDayId, eventMealRoleId, organizationId, userId }: { eventId: string; eventDayId: string; eventMealRoleId: string; organizationId: string; userId: string }) {
+  const { t } = useTranslation();
+  const [catalog, setCatalog] = useState<RecipeCatalogProjection>();
+  const [input, setInput] = useState<RecipeCreateInput>({ name: "", description: "", scalingUnitId: "", baseScalingAmount: "1" });
+  const [error, setError] = useState<string>();
+  const [saved, setSaved] = useState(false);
+  const [createdRecipeId, setCreatedRecipeId] = useState<string>();
+  const [isSubmitting, setIsSubmitting] = useState(false);
+  const submitting = useRef(false);
+  useEffect(() => { void readRecipeCatalog(userId, organizationId).then(setCatalog).catch(() => setCatalog(undefined)); }, [organizationId, userId]);
+  useEffect(() => { const id = catalog?.scalingUnits[0]?.id; if (id && !catalog?.scalingUnits.some((unit) => unit.id === input.scalingUnitId)) setInput((current) => ({ ...current, scalingUnitId: id })); }, [catalog, input.scalingUnitId]);
+  function change(field: keyof RecipeCreateInput, value: string) { setInput((current) => ({ ...current, [field]: value })); setError(undefined); setSaved(false); }
+  async function schedule(recipeId: string) {
+    await queueRecipeSchedule(userId, organizationId, { eventId, eventDayId, eventMealRoleId, recipeId });
+    setCreatedRecipeId(undefined);
+    setSaved(true);
+    setError(undefined);
+  }
+  async function submit(event: React.FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (submitting.current || createdRecipeId) return;
+    submitting.current = true;
+    setIsSubmitting(true);
+    try {
+      await assertPlannerTarget(userId, organizationId, eventId, eventDayId, eventMealRoleId);
+      const recipeId = await queueRecipeCreate(userId, organizationId, input);
+      setCreatedRecipeId(recipeId);
+      await schedule(recipeId);
+    } catch (reason) {
+      setSaved(false);
+      setError(reason instanceof Error ? reason.message : "unavailable");
+    } finally {
+      submitting.current = false;
+      setIsSubmitting(false);
+    }
+  }
+  function changeAndReset(field: keyof RecipeCreateInput, value: string) {
+    change(field, value);
+    if (createdRecipeId) setCreatedRecipeId(undefined);
+  }
+  return (
+    <form className="recipe-create planner-recipe-create" onSubmit={(event) => void submit(event)}>
+      <h4>{t("planner.createRecipeHeading")}</h4>
+      <label>{t("recipesCatalog.name")}<input maxLength={200} required value={input.name} onChange={(event) => changeAndReset("name", event.target.value)} /></label>
+      <label>{t("recipesCatalog.scalingUnit")}<select required disabled={!catalog?.scalingUnits.length} value={input.scalingUnitId} onChange={(event) => changeAndReset("scalingUnitId", event.target.value)}>{catalog?.scalingUnits.map((unit) => <option key={unit.id} value={unit.id}>{unit.name}</option>)}</select></label>
+      <label>{t("recipesCatalog.baseScalingAmount")}<input required inputMode="decimal" pattern="(?:0|[1-9][0-9]*)(?:\.[0-9]+)?" value={input.baseScalingAmount} onChange={(event) => changeAndReset("baseScalingAmount", event.target.value)} /></label>
+      <label>{t("recipesCatalog.description")}<textarea value={input.description} onChange={(event) => changeAndReset("description", event.target.value)} /></label>
+      {error ? <p role="alert">{t(`recipesCatalog.errors.${error}`, { defaultValue: t("planner.errors.unavailable") })}</p> : null}
+      {saved ? <p role="status">{t("planner.createdAndScheduled")}</p> : null}
+      {createdRecipeId ? <button disabled={isSubmitting} type="button" onClick={() => { if (isSubmitting) return; setIsSubmitting(true); void schedule(createdRecipeId).catch((reason) => setError(reason instanceof Error ? reason.message : "unavailable")).finally(() => setIsSubmitting(false)); }}>{t("planner.retrySchedule")}</button> : <button disabled={!catalog?.scalingUnits.length || isSubmitting} type="submit">{t("planner.createAndSchedule")}</button>}
     </form>
   );
 }
