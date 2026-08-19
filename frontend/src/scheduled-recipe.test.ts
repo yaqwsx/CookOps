@@ -19,6 +19,7 @@ const ids = {
   recipe: "6d8b2b21-c378-4574-9e46-9338c81305ef",
   version: "7d8b2b21-c378-4574-9e46-9338c81305ef",
   scheduled: "8d8b2b21-c378-4574-9e46-9338c81305ef",
+  unit: "bd8b2b21-c378-4574-9e46-9338c81305ef",
 };
 
 async function seed() {
@@ -72,13 +73,35 @@ async function seed() {
       ...base,
       entityType: "recipe",
       entityId: ids.recipe,
-      fields: { id: ids.recipe, current_version_id: ids.version },
+      fields: { id: ids.recipe, organization_id: ids.organization, current_version_id: ids.version },
     },
     {
       ...base,
       entityType: "recipe_version",
       entityId: ids.version,
-      fields: { id: ids.version, recipe_id: ids.recipe, name: "Chili" },
+      immutable: true,
+      fields: {
+        id: ids.version,
+        organization_id: ids.organization,
+        recipe_id: ids.recipe,
+        name: "Chili",
+        scaling_unit_id: ids.unit,
+        base_scaling_amount: "1",
+      },
+    },
+    {
+      ...base,
+      entityType: "unit_definition",
+      entityId: ids.unit,
+      immutable: true,
+      fields: {
+        id: ids.unit,
+        organization_id: ids.organization,
+        code: "portion",
+        custom_name: "portion",
+        allows_recipe_scaling: true,
+        allows_ingredient_quantity: true,
+      },
     },
   ]);
 }
@@ -313,11 +336,14 @@ describe("offline recipe scheduling", () => {
         ...base,
         entityType: "ingredient_version",
         entityId: ingredientVersionId,
+        immutable: true,
         fields: {
           id: ingredientVersionId,
           organization_id: ids.organization,
           ingredient_id: ingredientId,
           name: "Paprika",
+          canonical_unit_id: ids.unit,
+          mass_per_canonical_quantity: "1",
         },
       },
     ]);
