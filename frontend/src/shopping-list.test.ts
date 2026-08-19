@@ -1017,6 +1017,7 @@ describe("offline shopping-list creation", () => {
             ingredientName: "Tomatoes",
             sectionName: "Cold storage",
             availableSupply: "2",
+            generatedRequirement: "10",
             target: "8",
             remaining: "1",
             partial: true,

@@ -822,6 +822,23 @@ function ShoppingRowControls({
       {row.contributions.length ? (
         <details className="shopping-contributions">
           <summary>{t("shopping.contributions")}</summary>
+          <dl>
+            <div>
+              <dt>{t("shopping.generatedRequirement")}</dt>
+              <dd>
+                {t("shopping.quantity", {
+                  amount: row.generatedRequirement,
+                  unit: row.unit,
+                })}
+              </dd>
+            </div>
+            <div>
+              <dt>{t("shopping.purchaseTarget")}</dt>
+              <dd>
+                {t("shopping.quantity", { amount: row.target, unit: row.unit })}
+              </dd>
+            </div>
+          </dl>
           <ul>
             {row.contributions.map((contribution) => {
               const requiredQuantity = contribution.requiredQuantity ?? contribution.generated;

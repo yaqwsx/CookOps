@@ -20,6 +20,7 @@ export type ShoppingRow = {
   sectionName: string | null;
   availableSupply: string;
   manualPurchaseTarget: string | null;
+  generatedRequirement: string;
   target: string;
   remaining: string;
   unit: string;
@@ -652,6 +653,7 @@ export async function readShoppingList(
             null,
           availableSupply: print(available ?? add([])),
           manualPurchaseTarget: manual ? print(manual) : null,
+          generatedRequirement: print(generated),
           target: print(target),
           remaining: print(remaining),
           unit,

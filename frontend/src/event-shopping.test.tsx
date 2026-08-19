@@ -139,7 +139,8 @@ describe("EventShopping", () => {
           sectionName: null,
           availableSupply: "0",
           manualPurchaseTarget: null,
-          target: "2",
+          generatedRequirement: "4",
+          target: "3",
           remaining: "2",
           unit: "kg",
           fulfilled: false,
@@ -194,6 +195,9 @@ describe("EventShopping", () => {
       expect.objectContaining({ fulfilled: true }),
     );
     await user.click(screen.getByText("Příspěvky receptů"));
+    expect(screen.getAllByText("Vygenerovaná potřeba")).toHaveLength(2);
+    expect(screen.getAllByText("4 kg")).toHaveLength(1);
+    expect(screen.getAllByText("3 kg")).toHaveLength(3);
     const contributionCheckbox = screen.getByLabelText("Chili · 2 kg");
     await waitFor(() => expect(contributionCheckbox).toHaveProperty("indeterminate", true));
     expect(contributionCheckbox).toHaveAttribute("aria-checked", "mixed");
@@ -206,8 +210,8 @@ describe("EventShopping", () => {
         shoppingContributionId: "2e8b2b21-c378-4574-9e46-9338c81305ef",
       }),
     );
-    expect(screen.getByText("Vygenerovaná potřeba")).toBeVisible();
-    expect(screen.getAllByText("Plánovaný nákup")).toHaveLength(2);
+    expect(screen.getAllByText("Vygenerovaná potřeba")).toHaveLength(2);
+    expect(screen.getAllByText("Plánovaný nákup")).toHaveLength(3);
     expect(screen.getByText("Smoky tomato stew")).toBeVisible();
     expect(screen.getByText("2026-08-10")).toBeVisible();
     expect(screen.getByText("6.00 EUR")).toBeVisible();
