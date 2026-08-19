@@ -9,7 +9,8 @@ const { readCatalog, pullOrganization } = vi.hoisted(() => ({
   pullOrganization: vi.fn(async () => false),
 }));
 
-vi.mock("dexie", () => ({
+vi.mock("dexie", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("dexie")>()),
   liveQuery: (query: () => Promise<unknown>) => ({
     subscribe(observer: { next: (value: unknown) => void; error: (error: unknown) => void }) {
       void query().then(observer.next, observer.error);
