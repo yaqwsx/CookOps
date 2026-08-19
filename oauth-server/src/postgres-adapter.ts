@@ -40,6 +40,18 @@ export interface PgPool extends PgQueryable {
   connect(): Promise<PgClient>;
 }
 
+export interface AuthorizedGrant {
+  handle: string;
+  clientId: string;
+  issuedAt?: number;
+  expiresAt?: number;
+}
+
+export interface PostgresAdapterFactory extends AdapterFactory {
+  listAuthorizedGrants(subject: string): Promise<AuthorizedGrant[]>;
+  revokeGrant(subject: string, handle: string): Promise<boolean>;
+}
+
 export interface PostgresAdapterOptions {
   /** A deployment secret containing at least 256 bits (32 bytes). */
   secret: Uint8Array;
@@ -71,6 +83,9 @@ interface DeletedCountRow extends QueryResultRow {
 function optionalString(value: unknown): string | null {
   return typeof value === "string" ? value : null;
 }
+
+const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+const HANDLE = /^[0-9a-f]{64}$/;
 
 function validateOptions(
   options: PostgresAdapterOptions,
@@ -422,34 +437,74 @@ class PostgresAdapter implements Adapter {
   }
 
   async revokeByGrantId(grantId: string): Promise<void> {
-    const grantLookup = this.#digest("grant", "", grantId);
+    await this.#revokeGrant(this.#digest("grant", "", grantId));
+  }
+
+  async listAuthorizedGrants(subject: string): Promise<AuthorizedGrant[]> {
+    if (!UUID.test(subject)) return [];
+    // ponytail: O(n) grant scan; add an indexed encrypted-subject lookup if scale requires it.
+    const result = await this.#database.query<PayloadRow>(
+      `SELECT id, payload FROM ${TABLE_NAME}
+       WHERE model = 'Grant' AND (expires_at IS NULL OR expires_at > CURRENT_TIMESTAMP)`,
+    );
+    const grants: AuthorizedGrant[] = [];
+    for (const row of result.rows) {
+      try {
+        const payload = decryptPayload(this.#payloadKey, "Grant", row.id, row.payload);
+        if (payload.accountId !== subject || typeof payload.jti !== "string" || typeof payload.clientId !== "string" || payload.clientId.length === 0 || typeof payload.exp !== "number" || !Number.isFinite(payload.exp) || payload.exp <= Date.now() / 1000) continue;
+        const grant: AuthorizedGrant = { handle: this.#digest("grant", "", payload.jti), clientId: payload.clientId };
+        if (typeof payload.iat === "number") grant.issuedAt = payload.iat;
+        grant.expiresAt = payload.exp;
+        grants.push(grant);
+      } catch { /* malformed legacy rows are not authorized grants */ }
+    }
+    return grants;
+  }
+
+  async revokeGrant(subject: string, handle: string): Promise<boolean> {
+    if (!UUID.test(subject) || !HANDLE.test(handle)) return false;
     const client = await this.#database.connect();
     try {
       await client.query("BEGIN");
       await client.query(
         "SELECT pg_advisory_xact_lock(hashtextextended($1, 0))",
-        [grantLookup],
+        [handle],
       );
-      await client.query(
-        `
-          /* oidc:revoke-grant */
-          INSERT INTO oidc_provider_revoked_grants (grant_id)
-          VALUES ($1)
-          ON CONFLICT (grant_id) DO NOTHING
-        `,
-        [grantLookup],
-      );
-      await client.query(
-        `DELETE FROM ${TABLE_NAME} WHERE grant_id = $1`,
-        [grantLookup],
-      );
+      const rows = await client.query<PayloadRow>(`SELECT id, payload FROM ${TABLE_NAME} WHERE model = 'Grant' AND (expires_at IS NULL OR expires_at > CURRENT_TIMESTAMP)`);
+      // ponytail: O(n) grant scan; add an indexed encrypted-subject lookup if scale requires it.
+      let grantId: string | undefined;
+      for (const row of rows.rows) {
+        try {
+          const payload = decryptPayload(this.#payloadKey, "Grant", row.id, row.payload);
+          if (payload.accountId === subject && typeof payload.jti === "string" && typeof payload.exp === "number" && Number.isFinite(payload.exp) && payload.exp > Date.now() / 1000 && this.#digest("grant", "", payload.jti) === handle) { grantId = row.id; break; }
+        } catch { /* ignore malformed rows */ }
+      }
+      if (!grantId) { await client.query("ROLLBACK"); return false; }
+      await client.query("INSERT INTO oidc_provider_revoked_grants (grant_id) VALUES ($1) ON CONFLICT (grant_id) DO NOTHING", [handle]);
+      await client.query(`DELETE FROM ${TABLE_NAME} WHERE grant_id = $1`, [handle]);
+      await client.query(`DELETE FROM ${TABLE_NAME} WHERE model = 'Grant' AND id = $1`, [grantId]);
       await client.query("COMMIT");
+      return true;
     } catch (error) {
       await client.query("ROLLBACK").catch(() => undefined);
       throw error;
     } finally {
       client.release();
     }
+  }
+
+  async #revokeGrant(grantLookup: string): Promise<void> {
+    const client = await this.#database.connect();
+    try {
+      await client.query("BEGIN");
+      await client.query("SELECT pg_advisory_xact_lock(hashtextextended($1, 0))", [grantLookup]);
+      await client.query("INSERT INTO oidc_provider_revoked_grants (grant_id) VALUES ($1) ON CONFLICT (grant_id) DO NOTHING", [grantLookup]);
+      await client.query(`DELETE FROM ${TABLE_NAME} WHERE grant_id = $1`, [grantLookup]);
+      await client.query("COMMIT");
+    } catch (error) {
+      await client.query("ROLLBACK").catch(() => undefined);
+      throw error;
+    } finally { client.release(); }
   }
 
   async #findBy(
@@ -520,8 +575,10 @@ class PostgresAdapter implements Adapter {
 export function createPostgresAdapter(
   database: PgPool,
   options: PostgresAdapterOptions,
-): AdapterFactory {
+): PostgresAdapterFactory {
   const validated = validateOptions(options);
-  return (model: string): Adapter =>
-    new PostgresAdapter(model, database, validated);
+  const factory = ((model: string): Adapter => new PostgresAdapter(model, database, validated)) as PostgresAdapterFactory;
+  factory.listAuthorizedGrants = (subject) => new PostgresAdapter("Grant", database, validated).listAuthorizedGrants(subject);
+  factory.revokeGrant = (subject, handle) => new PostgresAdapter("Grant", database, validated).revokeGrant(subject, handle);
+  return factory;
 }
