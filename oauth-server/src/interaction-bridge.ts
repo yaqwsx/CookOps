@@ -8,8 +8,11 @@ import {
   interactionBinding,
   privateCredentialMatches,
 } from "./interaction-approvals.js";
+import type { AuthorizedGrant, GrantManagementAdapter } from "./postgres-adapter.js";
 
 const MAX_BODY_BYTES = 1_024;
+const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+const HANDLE = /^[0-9a-f]{64}$/;
 
 export interface PrivateInteractionDetails {
   interactionUid: string;
@@ -22,6 +25,20 @@ export interface PrivateInteractionDetails {
 
 function send(response: ServerResponse, status: number): void {
   response.writeHead(status).end();
+}
+
+function grantsAdapter(provider: Provider): GrantManagementAdapter {
+  const adapter = (provider as unknown as { Grant?: { adapter?: unknown } }).Grant?.adapter;
+  if (!adapter || typeof adapter !== "object" || !("listAuthorizedGrants" in adapter) || !("revokeGrant" in adapter)) throw new TypeError("grant management is unavailable");
+  return adapter as GrantManagementAdapter;
+}
+
+function subject(value: unknown): string | undefined {
+  return typeof value === "string" && UUID.test(value) ? value : undefined;
+}
+
+function grantJson(grant: AuthorizedGrant): object {
+  return { handle: grant.handle, clientId: grant.clientId, ...(grant.issuedAt === undefined ? {} : { issuedAt: grant.issuedAt }), ...(grant.expiresAt === undefined ? {} : { expiresAt: grant.expiresAt }) };
 }
 
 async function body(request: IncomingMessage): Promise<InteractionApprovalRequest | undefined> {
@@ -102,9 +119,31 @@ export async function handleInteractionBridgeRequest(
   basePath: string,
   request: IncomingMessage,
   response: ServerResponse,
+  grantsCredential?: Uint8Array,
 ): Promise<boolean> {
   const url = new URL(request.url ?? "/", "http://localhost");
   const privatePath = `${basePath}/private/interactions/approval`;
+  const grantsPath = `${basePath}/private/grants`;
+  const grantMatch = new RegExp(`^${basePath.replace(/[.*+?^${}()|[\\]\\]/g, "\\$&")}/private/grants/([0-9a-f]{64})$`).exec(url.pathname);
+  if (url.pathname === grantsPath || grantMatch) {
+    if (!grantsCredential || !privateCredentialMatches(grantsCredential, request.headers.authorization)) { send(response, 401); return true; }
+    try {
+      const adapter = grantsAdapter(provider);
+      const parsed = request.method === "GET" ? undefined : await bodyObject(request);
+      const requestedSubject = request.method === "GET"
+        ? (url.searchParams.size === 1 && url.searchParams.has("subject") ? subject(url.searchParams.get("subject")) : undefined)
+        : subject(parsed?.subject);
+      if (!requestedSubject || (grantMatch && (request.method !== "DELETE" || !HANDLE.test(grantMatch[1] ?? ""))) || (!grantMatch && request.method !== "GET")) { send(response, 400); return true; }
+      if (grantMatch) {
+        const revoked = await adapter.revokeGrant(requestedSubject, grantMatch[1]!);
+        send(response, revoked ? 204 : 404);
+      } else {
+        const grants = await adapter.listAuthorizedGrants(requestedSubject);
+        response.writeHead(200, { "content-type": "application/json", "cache-control": "no-store" }).end(JSON.stringify(grants.map(grantJson)));
+      }
+    } catch { send(response, 400); }
+    return true;
+  }
   const details = new RegExp(`^${basePath.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}/private/interactions/([A-Za-z0-9_-]{16,255})$`);
   const detailsMatch = details.exec(url.pathname);
   if (detailsMatch) {
@@ -202,4 +241,11 @@ export async function handleInteractionBridgeRequest(
     send(response, 400);
   }
   return true;
+}
+
+async function bodyObject(request: IncomingMessage): Promise<Record<string, unknown> | undefined> {
+  if (request.headers["content-type"]?.split(";", 1)[0] !== "application/json") return undefined;
+  let size = 0; const chunks: Buffer[] = [];
+  for await (const chunk of request) { const bytes = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk); size += bytes.length; if (size > MAX_BODY_BYTES) return undefined; chunks.push(bytes); }
+  try { const parsed: unknown = JSON.parse(Buffer.concat(chunks).toString("utf8")); return typeof parsed === "object" && parsed !== null && !Array.isArray(parsed) && Object.keys(parsed).length === 1 ? parsed as Record<string, unknown> : undefined; } catch { return undefined; }
 }

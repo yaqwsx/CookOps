@@ -9,6 +9,13 @@ export type DevelopmentIdentity = {
   subject: string;
   display_name: string;
 };
+export type AuthorizedGrant = { handle: string; clientId: string; issuedAt?: number; expiresAt?: number };
+
+export class AuthenticationRequestError extends Error {
+  constructor(readonly status: number) {
+    super("Authentication request failed.");
+  }
+}
 
 async function request(path: string, init?: RequestInit): Promise<Response> {
   return fetch(path, { credentials: "same-origin", ...init });
@@ -16,7 +23,7 @@ async function request(path: string, init?: RequestInit): Promise<Response> {
 
 async function requireSuccess(response: Response): Promise<Response> {
   if (!response.ok) {
-    throw new Error("Authentication request failed.");
+    throw new AuthenticationRequestError(response.status);
   }
   return response;
 }
@@ -78,4 +85,13 @@ export async function logout(): Promise<void> {
   await requireSuccess(
     await request("/auth/session/logout", { method: "POST" }),
   );
+}
+
+export async function getAuthorizedGrants(): Promise<AuthorizedGrant[]> {
+  const response = await requireSuccess(await request("/auth/mcp-grants"));
+  return (await response.json()) as AuthorizedGrant[];
+}
+
+export async function revokeAuthorizedGrant(handle: string): Promise<void> {
+  await requireSuccess(await request(`/auth/mcp-grants/${handle}`, { method: "DELETE" }));
 }

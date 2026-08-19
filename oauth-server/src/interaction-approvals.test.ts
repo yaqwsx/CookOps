@@ -18,6 +18,7 @@ import { handleInteractionBridgeRequest } from "./interaction-bridge.js";
 const APPROVAL_SECRET = Buffer.alloc(32, 0x7a);
 const API_CREDENTIAL = Buffer.alloc(32, 0x6b);
 const DETAILS_CREDENTIAL = Buffer.alloc(32, 0x6c);
+const GRANTS_CREDENTIAL = Buffer.alloc(32, 0x6d);
 const databaseUrl = process.env.TEST_DATABASE_URL;
 
 function interaction(overrides: Partial<Interaction> = {}): Interaction {
@@ -46,6 +47,105 @@ test("private approval credential is exact, constant-time, and separate from the
     false,
   );
   assert.equal(privateCredentialMatches(API_CREDENTIAL, undefined), false);
+});
+
+test("private grant management requires its credential, subject, and exact safe protocol", async () => {
+  const handle = "a".repeat(64);
+  const calls: Array<{ subject: string; handle?: string }> = [];
+  const grants = [{ handle, clientId: "trusted-client", issuedAt: 1_700_000_000 }];
+  const fakeProvider = {
+    Grant: {
+      adapter: {
+        listAuthorizedGrants: async (requestedSubject: string) => {
+          calls.push({ subject: requestedSubject });
+          return grants;
+        },
+        revokeGrant: async (requestedSubject: string, requestedHandle: string) => {
+          calls.push({ subject: requestedSubject, handle: requestedHandle });
+          return requestedHandle === handle;
+        },
+      },
+    },
+  };
+  const server = createServer((request, response) => {
+    void handleInteractionBridgeRequest(
+      fakeProvider as never,
+      {} as never,
+      API_CREDENTIAL,
+      DETAILS_CREDENTIAL,
+      "/oauth",
+      request,
+      response,
+      GRANTS_CREDENTIAL,
+    ).then((handled) => {
+      if (!handled) response.writeHead(404).end();
+    });
+  });
+  const subject = "018f7cc9-4a90-7fa0-b7e4-77f6c42d5731";
+    const authorization = `Bearer ${GRANTS_CREDENTIAL.toString("base64url")}`;
+    const approvalAuthorization = `Bearer ${API_CREDENTIAL.toString("base64url")}`;
+  try {
+    server.listen(0, "127.0.0.1");
+    await once(server, "listening");
+    const address = server.address();
+    assert(address && typeof address !== "string");
+    const endpoint = `http://127.0.0.1:${address.port}/oauth/private/grants`;
+    const json = (value: unknown) => ({
+      method: "DELETE",
+      headers: { authorization, "content-type": "application/json" },
+      body: JSON.stringify(value),
+    });
+    assert.equal((await fetch(endpoint)).status, 401);
+    assert.equal((await fetch(`${endpoint}?subject=${subject}`, { headers: { authorization: approvalAuthorization } })).status, 401);
+    assert.equal((await fetch(`${endpoint}?subject=${subject}&extra=true`, { headers: { authorization } })).status, 400);
+    assert.equal((await fetch(`${endpoint}?subject=not-a-uuid`, { headers: { authorization } })).status, 400);
+    const listed = await fetch(`${endpoint}?subject=${subject}`, { headers: { authorization } });
+    assert.equal(listed.status, 200);
+    assert.deepEqual(await listed.json(), [{ handle, clientId: "trusted-client", issuedAt: 1_700_000_000 }]);
+    assert.equal((await fetch(`${endpoint}/${handle}`, { ...json({ subject }), method: "DELETE" })).status, 204);
+    assert.equal((await fetch(`${endpoint}/${"b".repeat(64)}`, { ...json({ subject }), method: "DELETE" })).status, 404);
+    assert.equal((await fetch(endpoint, { method: "POST", headers: { authorization, "content-type": "application/json" }, body: JSON.stringify({ subject }) })).status, 400);
+    assert.deepEqual(calls, [
+      { subject },
+      { subject, handle },
+      { subject, handle: "b".repeat(64) },
+    ]);
+  } finally {
+    await server[Symbol.asyncDispose]();
+  }
+});
+
+test("private grant management fails closed when its adapter is unavailable", async () => {
+  const server = createServer((request, response) => {
+    void handleInteractionBridgeRequest(
+      {} as never,
+      {} as never,
+      API_CREDENTIAL,
+      DETAILS_CREDENTIAL,
+      "/oauth",
+      request,
+      response,
+      API_CREDENTIAL,
+    ).then((handled) => {
+      if (!handled) response.writeHead(404).end();
+    });
+  });
+  try {
+    server.listen(0, "127.0.0.1");
+    await once(server, "listening");
+    const address = server.address();
+    assert(address && typeof address !== "string");
+    const response = await fetch(`http://127.0.0.1:${address.port}/oauth/private/grants?subject=018f7cc9-4a90-7fa0-b7e4-77f6c42d5731`, {
+      headers: {
+        authorization: `Bearer ${API_CREDENTIAL.toString("base64url")}`,
+        "content-type": "application/json",
+      },
+      method: "GET",
+    });
+    assert.equal(response.status, 400);
+  } finally {
+    await server[Symbol.asyncDispose]();
+  }
 });
 
 test(

@@ -8,12 +8,17 @@ browser session, so this service applies the normal current-membership gate to
 either provider without interpreting a provider credential.
 """
 
+from __future__ import annotations
+
 from dataclasses import dataclass
-from typing import Literal, Protocol
+from typing import TYPE_CHECKING, Literal, Protocol
 from uuid import UUID
 
 from cookops.application.browser_sessions import BrowserSessionService
 from cookops.application.human_authentication import HumanAuthenticationService
+
+if TYPE_CHECKING:
+    from cookops.oauth_interaction_client import AuthorizedGrant
 
 InteractionDecision = Literal["approve", "deny"]
 
@@ -36,6 +41,10 @@ class PrivateInteractionApprovalClient(Protocol):
     async def interaction_details(
         self, *, interaction_uid: str
     ) -> OAuthInteractionDetails | None: ...
+
+    async def grants(self, *, subject: UUID) -> list[AuthorizedGrant]: ...
+
+    async def revoke_grant(self, *, subject: UUID, handle: str) -> bool: ...
 
 
 @dataclass(frozen=True, slots=True)
@@ -80,3 +89,21 @@ class OAuthInteractionApprovalService:
             subject=identity.user_id,
             decision=decision,
         )
+
+    async def grants(self, *, browser_session_secret: str) -> list[AuthorizedGrant] | None:
+        session = await self.browser_sessions.authenticate(browser_session_secret)
+        if session is None:
+            return None
+        identity = await self.human_authentication.current_identity(session.user_id)
+        if identity is None:
+            return None
+        return await self.private_client.grants(subject=identity.user_id)
+
+    async def revoke_grant(self, *, browser_session_secret: str, handle: str) -> bool | None:
+        session = await self.browser_sessions.authenticate(browser_session_secret)
+        if session is None:
+            return None
+        identity = await self.human_authentication.current_identity(session.user_id)
+        if identity is None:
+            return None
+        return await self.private_client.revoke_grant(subject=identity.user_id, handle=handle)

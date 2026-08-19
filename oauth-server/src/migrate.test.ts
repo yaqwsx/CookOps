@@ -26,7 +26,8 @@ test("versioned migration prepares the provider schema before the server starts"
       OAUTH_ADAPTER_SECRET_BASE64URL: secret,
       OAUTH_INTERACTION_APPROVAL_SECRET_BASE64URL: secret,
       OAUTH_APPROVAL_API_CREDENTIAL_BASE64URL: secret,
-      OAUTH_INTERACTION_DETAILS_API_CREDENTIAL_BASE64URL: randomBytes(32).toString("base64url"),
+  OAUTH_INTERACTION_DETAILS_API_CREDENTIAL_BASE64URL: randomBytes(32).toString("base64url"),
+  OAUTH_GRANTS_API_CREDENTIAL_BASE64URL: randomBytes(32).toString("base64url"),
     },
     encoding: "utf8",
   });

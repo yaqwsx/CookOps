@@ -29,6 +29,7 @@ const resources = {
         logoutError: "Odhlášení se nepodařilo. Zkuste to znovu.",
         localeError: "Jazyk se nepodařilo uložit. Zkuste to znovu.",
       },
+      mcpGrants: { navigation: "Připojení MCP", heading: "Připojení MCP", empty: "Nemáte žádné aktivní připojení.", revoke: "Odvolat", confirm: "Opravdu chcete toto připojení odvolat?", error: "Připojení se nepodařilo načíst." },
       systemOrganizations: {
         navigation: "Správa organizací",
         heading: "Nová organizace",
@@ -655,6 +656,7 @@ const resources = {
         logoutError: "Log out failed. Please try again.",
         localeError: "The language could not be saved. Please try again.",
       },
+      mcpGrants: { navigation: "MCP connections", heading: "MCP connections", empty: "You have no active connections.", revoke: "Revoke", confirm: "Revoke this connection?", error: "Unable to load connections." },
       systemOrganizations: {
         navigation: "Organization administration",
         heading: "New organization",

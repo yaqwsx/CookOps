@@ -7,6 +7,7 @@ from cookops.application.oauth_interactions import OAuthInteractionDetails
 from cookops.config import Environment, HumanAuthProvider, Settings
 from cookops.http_oauth_interactions import (
     OAuthInteractionHttpServices,
+    create_oauth_grants_router,
     create_oauth_interaction_router,
 )
 
@@ -22,6 +23,7 @@ def _settings() -> Settings:
         oauth_interaction_details_api_credential_base64url=DETAILS_KEY,
         oauth_interaction_approval_api_credential_base64url=KEY,
         oauth_interaction_origin="https://testserver",
+        browser_origin="https://testserver",
     )
 
 
@@ -29,6 +31,7 @@ def _client(approvals: AsyncMock) -> TestClient:
     app = FastAPI()
     app.state.oauth_interactions = OAuthInteractionHttpServices(approvals)
     app.include_router(create_oauth_interaction_router(_settings()))
+    app.include_router(create_oauth_grants_router(_settings()))
     client = TestClient(app, base_url="https://testserver")
     client.cookies.set("cookops_session", "opaque")
     return client
@@ -81,3 +84,29 @@ def test_consent_post_requires_origin_session_and_records_decision() -> None:
     approvals.submit.assert_awaited_once_with(
         browser_session_secret="opaque", interaction_uid=UID, decision="deny"
     )
+
+
+def test_grants_require_session_and_exact_browser_origin() -> None:
+    approvals = AsyncMock()
+    approvals.grants.return_value = []
+    approvals.revoke_grant.return_value = True
+    client = _client(approvals)
+
+    client.cookies.clear()
+    assert client.get("/auth/mcp-grants").status_code == 401
+    client.cookies.set("cookops_session", "opaque")
+    handle = "a" * 64
+    assert client.delete(f"/auth/mcp-grants/{handle}").status_code == 403
+    assert (
+        client.delete(
+            f"/auth/mcp-grants/{handle}", headers={"origin": "https://attacker.example"}
+        ).status_code
+        == 403
+    )
+    assert (
+        client.delete(
+            f"/auth/mcp-grants/{handle}", headers={"origin": "https://testserver"}
+        ).status_code
+        == 204
+    )
+    approvals.revoke_grant.assert_awaited_once_with(browser_session_secret="opaque", handle=handle)

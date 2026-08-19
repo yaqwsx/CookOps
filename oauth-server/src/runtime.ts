@@ -26,6 +26,7 @@ export interface OAuthRuntimeConfiguration {
   interactionApprovalSecret: Uint8Array;
   approvalApiCredential: Uint8Array;
   interactionDetailsApiCredential: Uint8Array;
+  grantsApiCredential: Uint8Array;
   host: string;
   port: number;
 }
@@ -88,6 +89,10 @@ export function decodeInteractionDetailsApiCredential(encoded: string): Uint8Arr
       "OAUTH_INTERACTION_DETAILS_API_CREDENTIAL_BASE64URL must canonically encode at least 32 bytes",
     );
   }
+}
+
+export function decodeGrantsApiCredential(encoded: string): Uint8Array {
+  try { return decodeAdapterSecret(encoded); } catch { throw new TypeError("OAUTH_GRANTS_API_CREDENTIAL_BASE64URL must canonically encode at least 32 bytes"); }
 }
 
 function databaseUrl(value: string): string {
@@ -196,9 +201,11 @@ export function runtimeConfigurationFromEnvironment(
   const interactionDetailsApiCredential = decodeInteractionDetailsApiCredential(
     required(environment, "OAUTH_INTERACTION_DETAILS_API_CREDENTIAL_BASE64URL"),
   );
+  const grantsApiCredential = decodeGrantsApiCredential(required(environment, "OAUTH_GRANTS_API_CREDENTIAL_BASE64URL"));
   if (Buffer.compare(approvalApiCredential, interactionDetailsApiCredential) === 0) {
     throw new TypeError("OAuth private API credentials must be distinct");
   }
+  if ([approvalApiCredential, interactionDetailsApiCredential].some((key) => Buffer.compare(key, grantsApiCredential) === 0)) throw new TypeError("OAuth private API credentials must be distinct");
   return {
     issuer,
     resource,
@@ -215,6 +222,7 @@ export function runtimeConfigurationFromEnvironment(
     ),
     approvalApiCredential,
     interactionDetailsApiCredential,
+    grantsApiCredential,
     host: bindHost(environment.OAUTH_BIND_HOST ?? "0.0.0.0"),
     port: serverPort(issuer, environment.PORT),
   };
@@ -296,6 +304,7 @@ export async function startOAuthServer(
       basePath,
       request,
       response,
+      configuration.grantsApiCredential,
     )
       .then((handled) => {
         if (!handled) providerHandler(request, response);

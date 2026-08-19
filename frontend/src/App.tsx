@@ -33,6 +33,7 @@ import { runtimeAuthentication } from "./runtime-config";
 import { useOutboxSynchronization } from "./sync-lifecycle";
 import { SynchronizationStatus } from "./synchronization-status";
 import { SystemOrganizationCreate } from "./system-organization-create";
+import { McpGrantsPage } from "./mcp-grants-page";
 import { getSystemAdministrationAccess } from "./api/system-organizations";
 import "./app.css";
 
@@ -52,6 +53,7 @@ const ingredientRoutePrefixPath =
   /^\/organizations\/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\/ingredients(?:\/|$)/i;
 const settingsPath = /^\/organizations\/[0-9a-f-]{36}\/settings$/i;
 const systemOrganizationsPath = /^\/system\/organizations$/i;
+const mcpGrantsPath = /^\/auth\/mcp-grants$/i;
 
 function eventOverviewPathFor(organizationId: string) {
   return `/organizations/${organizationId}/events`;
@@ -635,6 +637,7 @@ function AuthenticatedShell({
             {systemAdmin ? (
               <a href="/system/organizations">{t("systemOrganizations.navigation")}</a>
             ) : null}
+            <a href="/auth/mcp-grants">{t("mcpGrants.navigation")}</a>
           </div>
         </div>
       </header>
@@ -675,7 +678,8 @@ function AuthenticatedShell({
           )
         ) : null}
 
-        <div className="section-grid" hidden={systemOrganizationsOpen}>
+        {mcpGrantsPath.test(pathname) ? <McpGrantsPage onUnauthenticated={onUnauthenticated} /> : null}
+        <div className="section-grid" hidden={systemOrganizationsOpen || mcpGrantsPath.test(pathname)}>
           {sections.map((section) => (
             <section id={section} className="section-card" key={section}>
               <h2 id={section === "events" ? "events-heading" : undefined}>

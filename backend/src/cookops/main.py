@@ -31,6 +31,7 @@ from cookops.http_media import MediaHttpServices, create_media_router
 from cookops.http_memberships import MembershipHttpServices, create_memberships_router
 from cookops.http_oauth_interactions import (
     OAuthInteractionHttpServices,
+    create_oauth_grants_router,
     create_oauth_interaction_router,
 )
 from cookops.http_recipe_copy import RecipeCopyHttpServices, create_recipe_copy_router
@@ -164,6 +165,8 @@ def create_app(
                         app_settings.oauth_interaction_details_api_credential_base64url,
                         f"{app_settings.oauth_interaction_private_base_url}/approval",
                         app_settings.oauth_interaction_approval_api_credential_base64url or "",
+                        app_settings.oauth_grants_private_url,
+                        app_settings.oauth_grants_api_credential_base64url or "",
                     ),
                 )
             )
@@ -215,6 +218,7 @@ def create_app(
     application.include_router(health_router)
     application.include_router(create_auth_router(app_settings))
     application.include_router(create_oauth_interaction_router(app_settings))
+    application.include_router(create_oauth_grants_router(app_settings))
     application.include_router(create_organization_access_router(app_settings))
     application.include_router(create_organization_administration_router(app_settings))
     application.include_router(create_events_router(app_settings))

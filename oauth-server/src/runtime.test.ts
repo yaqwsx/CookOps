@@ -16,6 +16,7 @@ const environment: NodeJS.ProcessEnv = {
   OAUTH_INTERACTION_APPROVAL_SECRET_BASE64URL: secret,
   OAUTH_APPROVAL_API_CREDENTIAL_BASE64URL: secret,
   OAUTH_INTERACTION_DETAILS_API_CREDENTIAL_BASE64URL: Buffer.alloc(32, 8).toString("base64url"),
+  OAUTH_GRANTS_API_CREDENTIAL_BASE64URL: Buffer.alloc(32, 9).toString("base64url"),
 };
 
 test("production configuration accepts a private-container binding and public URLs", () => {
@@ -42,5 +43,14 @@ test("production configuration rejects mixed origins, plaintext URLs, and non-co
   assert.throws(
     () => runtimeConfigurationFromEnvironment({ ...environment, OAUTH_BIND_HOST: "127.0.0.1" }),
     /all-interface container address/,
+  );
+});
+
+test("production configuration requires a dedicated grants credential", () => {
+  const { OAUTH_GRANTS_API_CREDENTIAL_BASE64URL: _, ...missing } = environment;
+  assert.throws(() => runtimeConfigurationFromEnvironment(missing), /GRANTS_API_CREDENTIAL/);
+  assert.throws(
+    () => runtimeConfigurationFromEnvironment({ ...environment, OAUTH_GRANTS_API_CREDENTIAL_BASE64URL: environment.OAUTH_APPROVAL_API_CREDENTIAL_BASE64URL }),
+    /credentials must be distinct/,
   );
 });

@@ -47,10 +47,12 @@ export interface AuthorizedGrant {
   expiresAt?: number;
 }
 
-export interface PostgresAdapterFactory extends AdapterFactory {
+export interface GrantManagementAdapter {
   listAuthorizedGrants(subject: string): Promise<AuthorizedGrant[]>;
   revokeGrant(subject: string, handle: string): Promise<boolean>;
 }
+
+export interface PostgresAdapterFactory extends AdapterFactory, GrantManagementAdapter {}
 
 export interface PostgresAdapterOptions {
   /** A deployment secret containing at least 256 bits (32 bytes). */

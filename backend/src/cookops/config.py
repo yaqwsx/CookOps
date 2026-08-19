@@ -68,6 +68,8 @@ class Settings(BaseSettings):
     oauth_interaction_approval_api_credential_base64url: str | None = None
     oauth_interaction_origin: str | None = None
     oauth_interaction_private_base_url: str = "http://oauth-server:3000/oauth/private/interactions"
+    oauth_grants_private_url: str = "http://oauth-server:3000/oauth/private/grants"
+    oauth_grants_api_credential_base64url: str | None = None
 
     @property
     def resolved_browser_session_hmac_key(self) -> str:
@@ -176,6 +178,29 @@ class Settings(BaseSettings):
                 == self.oauth_interaction_approval_api_credential_base64url
             ):
                 raise ValueError("OAuth interaction credentials must be distinct")
+        if (
+            self.environment is Environment.PRODUCTION
+            and self.oauth_grants_api_credential_base64url is None
+        ):
+            raise ValueError("OAuth grants configuration must be set in production")
+        grants_url = urlsplit(self.oauth_grants_private_url)
+        if (
+            not grants_url.scheme
+            or not grants_url.hostname
+            or grants_url.query
+            or grants_url.fragment
+        ):
+            raise ValueError("OAuth grants private API URL is invalid")
+        if self.environment is Environment.PRODUCTION and self.oauth_grants_private_url != "http://oauth-server:3000/oauth/private/grants":
+            raise ValueError("OAuth grants private API must use the Compose oauth-server authority")
+        if self.oauth_grants_api_credential_base64url is not None:
+            from cookops.application.browser_sessions import decode_browser_session_hmac_key
+            decode_browser_session_hmac_key(self.oauth_grants_api_credential_base64url)
+            if self.oauth_grants_api_credential_base64url in {
+                self.oauth_interaction_details_api_credential_base64url,
+                self.oauth_interaction_approval_api_credential_base64url,
+            }:
+                raise ValueError("OAuth private API credentials must be distinct")
         if not self.browser_session_cookie_name or self.browser_session_cookie_name.strip() != (
             self.browser_session_cookie_name
         ):

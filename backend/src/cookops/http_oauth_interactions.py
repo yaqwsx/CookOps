@@ -26,6 +26,13 @@ class ApprovalRequest(BaseModel):
     decision: Literal["approve", "deny"]
 
 
+class GrantResponse(BaseModel):
+    handle: str
+    clientId: str
+    issuedAt: float | None = None
+    expiresAt: float | None = None
+
+
 def _services(request: Request) -> OAuthInteractionHttpServices:
     services = getattr(request.app.state, "oauth_interactions", None)
     if not isinstance(services, OAuthInteractionHttpServices):
@@ -94,6 +101,55 @@ def create_oauth_interaction_router(settings: Settings) -> APIRouter:
             raise HTTPException(status_code=503, detail="OAuth is unavailable") from error
         if not recorded:
             raise HTTPException(status_code=403, detail="forbidden")
+        return Response(status_code=204)
+
+    return router
+
+
+def create_oauth_grants_router(settings: Settings) -> APIRouter:
+    router = APIRouter(prefix="/auth/mcp-grants", tags=["authentication"])
+
+    def secret(request: Request) -> str:
+        value = request.cookies.get(settings.browser_session_cookie_name)
+        if value is None:
+            raise HTTPException(status_code=401, detail="not authenticated")
+        return value
+
+    @router.get("", response_model=list[GrantResponse], response_model_exclude_none=True)
+    async def list_grants(request: Request) -> list[GrantResponse]:
+        try:
+            grants = await _services(request).approvals.grants(
+                browser_session_secret=secret(request)
+            )
+        except OAuthInteractionUnavailable as error:
+            raise HTTPException(status_code=503, detail="OAuth is unavailable") from error
+        if grants is None:
+            raise HTTPException(status_code=401, detail="not authenticated")
+        return [
+            GrantResponse(
+                handle=g.handle, clientId=g.client_id, issuedAt=g.issued_at, expiresAt=g.expires_at
+            )
+            for g in grants
+        ]
+
+    @router.delete("/{handle}", status_code=204)
+    async def revoke_grant(handle: str, request: Request) -> Response:
+        if (
+            not re.fullmatch(r"[0-9a-f]{64}", handle)
+            or settings.browser_origin is None
+            or request.headers.get("origin") != settings.browser_origin
+        ):
+            raise HTTPException(status_code=403, detail="forbidden")
+        try:
+            result = await _services(request).approvals.revoke_grant(
+                browser_session_secret=secret(request), handle=handle
+            )
+        except OAuthInteractionUnavailable as error:
+            raise HTTPException(status_code=503, detail="OAuth is unavailable") from error
+        if result is None:
+            raise HTTPException(status_code=401, detail="not authenticated")
+        if not result:
+            raise HTTPException(status_code=404, detail="not found")
         return Response(status_code=204)
 
     return router
