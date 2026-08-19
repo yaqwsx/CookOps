@@ -36,6 +36,17 @@ const plannerDragMime = "application/x-cookops-planner";
 type PlannerDragPayload = { kind: "recipe" | "scheduled"; id: string };
 const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
+function formattedDate(value: string, locale: string): string {
+  const date = new Date(`${value}T00:00:00Z`);
+  if (Number.isNaN(date.valueOf())) return value;
+  return new Intl.DateTimeFormat(locale, {
+    day: "numeric",
+    month: "long",
+    year: "numeric",
+    timeZone: "UTC",
+  }).format(date);
+}
+
 function roleName(role: EventPlannerProjection["roles"][number], language: string) {
   return mealRoleLabels[role.name]?.[language.startsWith("en") ? "en" : "cs"] ?? role.name;
 }
@@ -61,15 +72,16 @@ function readPlannerDrag(event: React.DragEvent): PlannerDragPayload | undefined
 type PlannerState = "loading" | "ready" | "offline" | "error";
 
 function EventSummary({ planner, costs, pendingSync }: { planner: EventPlannerProjection; costs?: EventCostsProjection; pendingSync: { pending: number; failed: number } }) {
-  const { t } = useTranslation();
+  const { i18n, t } = useTranslation();
+  const locale = i18n.resolvedLanguage ?? "cs";
   return (
     <header className="event-workspace__summary">
       <div>
         <h2>{planner.name}</h2>
         <p>
           {t("planner.dateRange", {
-            start: planner.startDate,
-            end: planner.endDate,
+            start: formattedDate(planner.startDate, locale),
+            end: formattedDate(planner.endDate, locale),
           })}
         </p>
       </div>
@@ -244,12 +256,12 @@ function DayLifecycle({ day, eventId, organizationId, userId }: { day: EventPlan
 }
 
 function RestoreDay({ planner, eventId, organizationId, userId }: { planner: EventPlannerProjection; eventId: string; organizationId: string; userId: string }) {
-  const { t } = useTranslation();
+  const { i18n, t } = useTranslation();
   const [dayId, setDayId] = useState(planner.retiredDays[0]?.id ?? "");
   const [error, setError] = useState(false);
   useEffect(() => setDayId((current) => planner.retiredDays.some((day) => day.id === current) ? current : (planner.retiredDays[0]?.id ?? "")), [planner.retiredDays]);
   if (planner.lifecycle !== "active" || !dayId) return null;
-  return <form onSubmit={(event) => { event.preventDefault(); void queueEventDayLifecycle(userId, organizationId, { eventDayId: dayId, eventId, operation: "restore" }).then(() => setError(false)).catch(() => setError(true)); }}><label>{t("planner.day")}<select value={dayId} onChange={(event) => setDayId(event.target.value)}>{planner.retiredDays.map((day) => <option key={day.id} value={day.id}>{day.date}</option>)}</select></label><button type="submit">{t("planner.restoreDay")}</button>{error ? <p role="alert">{t("planner.errors.unavailable")}</p> : null}</form>;
+  return <form onSubmit={(event) => { event.preventDefault(); void queueEventDayLifecycle(userId, organizationId, { eventDayId: dayId, eventId, operation: "restore" }).then(() => setError(false)).catch(() => setError(true)); }}><label>{t("planner.day")}<select value={dayId} onChange={(event) => setDayId(event.target.value)}>{planner.retiredDays.map((day) => <option key={day.id} value={day.id}>{formattedDate(day.date, i18n.resolvedLanguage ?? "cs")}</option>)}</select></label><button type="submit">{t("planner.restoreDay")}</button>{error ? <p role="alert">{t("planner.errors.unavailable")}</p> : null}</form>;
 }
 
 function DayNote({ day, eventId, organizationId, userId }: { day: EventPlannerProjection["days"][number]; eventId: string; organizationId: string; userId: string }) {
@@ -411,7 +423,7 @@ function AddRecipe({
         >
           {planner.days.map((day) => (
             <option key={day.id} value={day.id}>
-              {day.date}
+              {formattedDate(day.date, i18n.resolvedLanguage ?? "cs")}
             </option>
           ))}
         </select>
@@ -573,7 +585,7 @@ function MoveRecipe({
           >
             {planner.days.map((day) => (
               <option key={day.id} value={day.id}>
-                {day.date}
+                {formattedDate(day.date, i18n.resolvedLanguage ?? "cs")}
               </option>
             ))}
           </select>
@@ -1037,7 +1049,7 @@ export function EventPlanner({
             key={day.id}
             aria-labelledby={`day-${day.id}`}
           >
-            <h3 id={`day-${day.id}`}>{day.date}</h3>
+            <h3 id={`day-${day.id}`}>{formattedDate(day.date, i18n.resolvedLanguage ?? "cs")}</h3>
             {day.note ? <p>{day.note}</p> : null}
             {planner.lifecycle === "active" ? <DayVisibility day={day} eventId={eventId} organizationId={organizationId} userId={userId} /> : null}
             {planner.lifecycle === "active" ? <DayLifecycle day={day} eventId={eventId} organizationId={organizationId} userId={userId} /> : null}
@@ -1148,7 +1160,7 @@ export function EventPlanner({
           </section>
         ))}
       </div>
-      {planner.lifecycle === "active" && planner.hiddenDays.length ? <details><summary>{t("planner.hiddenDays")}</summary><ul>{planner.hiddenDays.map((day) => <li key={day.id}>{day.date} <DayVisibility day={day} eventId={eventId} organizationId={organizationId} userId={userId} /></li>)}</ul></details> : null}
+      {planner.lifecycle === "active" && planner.hiddenDays.length ? <details><summary>{t("planner.hiddenDays")}</summary><ul>{planner.hiddenDays.map((day) => <li key={day.id}>{formattedDate(day.date, i18n.resolvedLanguage ?? "cs")} <DayVisibility day={day} eventId={eventId} organizationId={organizationId} userId={userId} /></li>)}</ul></details> : null}
       {state === "error" ? (
         <div role="alert">
           <p>{t("planner.error")}</p>

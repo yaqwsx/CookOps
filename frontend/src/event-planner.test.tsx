@@ -96,6 +96,42 @@ describe("EventPlanner", () => {
     await waitFor(() => expect(screen.getByText("1 neúspěšných změn")).toBeVisible());
   });
 
+  it.each([
+    ["cs", "10. srpna 2026", "11. srpna 2026", "10. srpna 2026 až 11. srpna 2026"],
+    ["en", "August 10, 2026", "August 11, 2026", "August 10, 2026 to August 11, 2026"],
+  ] as const)("localizes planner dates in %s", async (locale, firstDate, secondDate, range) => {
+    await i18n.changeLanguage(locale);
+    readEventPlanner.mockResolvedValue({
+      name: "Summer cooking",
+      startDate: "2026-08-10",
+      endDate: "2026-08-11",
+      attendance: 12,
+      lifecycle: "active",
+      days: [{ id: ids.day, date: "2026-08-10", note: null }],
+      hiddenDays: [{ id: "8d8b2b21-c378-4574-9e46-9338c81305ef", date: "2026-08-11", visible: false }],
+      retiredDays: [{ id: "9d8b2b21-c378-4574-9e46-9338c81305ef", date: "2026-08-11", visible: false }],
+      retiredRoles: [],
+      roles: [{ id: ids.role, name: "Dinner", position: "a", retired: false, custom: false }],
+      recipes: [{ id: ids.recipe, name: "Soup", versionId: "7d8b2b21-c378-4574-9e46-9338c81305ef" }],
+      scheduled: [{ id: "ad8b2b21-c378-4574-9e46-9338c81305ef", recipeId: ids.recipe, name: "Soup", dinerCount: 12, dayId: ids.day, roleId: ids.role, position: "a", retired: false, detailLines: [], preparedWeight: null, perDinerWeight: null, hasLocalOverrides: false, lines: [], localAddedIngredients: [], dietaryWarnings: [], catalogUpdateAvailable: false, catalogUpdateChanges: { added: 0, removed: 0, changed: 0 }, catalogScaleImpact: { reset: false } }],
+      ingredients: [],
+    });
+    pullOrganization.mockResolvedValue(false);
+    render(<EventPlanner eventId={ids.event} onUnauthenticated={vi.fn()} organizationId={ids.organization} userId="a6a58bd6-214e-49af-8fae-e5f974bf8e08" />);
+    expect(await screen.findByText(range)).toBeVisible();
+    expect(screen.getByRole("heading", { level: 3, name: firstDate })).toBeVisible();
+    const firstDateOptions = screen.getAllByRole("option", { name: firstDate });
+    expect(firstDateOptions.some((option) => option.getAttribute("value") === ids.day)).toBe(true);
+    expect(screen.getByRole("option", { name: secondDate }).getAttribute("value")).toBe(
+      "9d8b2b21-c378-4574-9e46-9338c81305ef",
+    );
+    const hiddenDays = screen.getByText(locale === "cs" ? "Skryté dny" : "Hidden days");
+    await userEvent.setup().click(hiddenDays);
+    const hiddenListItem = hiddenDays.closest("details")?.querySelector("li");
+    expect(hiddenListItem).not.toBeNull();
+    expect(hiddenListItem).toHaveTextContent(secondDate);
+  });
+
   function dataTransfer() {
     const values = new Map<string, string>();
     return {
