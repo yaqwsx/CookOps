@@ -1,8 +1,24 @@
-import { expect, test } from "@playwright/test";
+import { expect, test, type Page } from "@playwright/test";
 
 const organizationId = "5ce17d2f-8365-4b1f-a80b-34d10425d51c";
 const eventId = "3d8b2b21-c378-4574-9e46-9338c81305ef";
 const userId = "a6a58bd6-214e-49af-8fae-e5f974bf8e08";
+
+const readOutbox = (page: Page) =>
+  page.evaluate(() =>
+    new Promise<unknown>((resolve, reject) => {
+      const request = indexedDB.open("cookops");
+      request.onerror = () => reject(request.error);
+      request.onsuccess = () => {
+        const get = request.result
+          .transaction("outbox")
+          .objectStore("outbox")
+          .getAll();
+        get.onerror = () => reject(get.error);
+        get.onsuccess = () => resolve(get.result);
+      };
+    }),
+  );
 
 test("an administrator explicitly confirms a guarded online event archive", async ({
   page,
@@ -254,18 +270,7 @@ test("reactivates an archived event only after the server confirms it", async ({
   await card.getByRole("button", { name: "Potvrdit obnovení" }).click();
   await pushSeen;
 
-  const pending = await page.evaluate(async () => {
-    const request = indexedDB.open("cookops");
-    return await new Promise<unknown>((resolve, reject) => {
-      request.onerror = () => reject(request.error);
-      request.onsuccess = () => {
-        const transaction = request.result.transaction("outbox");
-        const getAll = transaction.objectStore("outbox").getAll();
-        getAll.onerror = () => reject(getAll.error);
-        getAll.onsuccess = () => resolve(getAll.result);
-      };
-    });
-  });
+  const pending = await readOutbox(page);
   const pendingCommands = (pending as Array<Record<string, unknown>>).filter(
     (command) =>
       command.commandType === "event.lifecycle" &&
@@ -343,20 +348,7 @@ test("reactivates an archived event only after the server confirms it", async ({
   const activePullAt = requestTrace.indexOf("pull:active");
   expect(acceptedAt).toBeGreaterThanOrEqual(0);
   expect(activePullAt).toBeGreaterThan(acceptedAt);
-  const remaining = await page.evaluate(async () => {
-    const request = indexedDB.open("cookops");
-    return await new Promise<unknown>((resolve, reject) => {
-      request.onerror = () => reject(request.error);
-      request.onsuccess = () => {
-        const getAll = request.result
-          .transaction("outbox")
-          .objectStore("outbox")
-          .getAll();
-        getAll.onerror = () => reject(getAll.error);
-        getAll.onsuccess = () => resolve(getAll.result);
-      };
-    });
-  });
+  const remaining = await readOutbox(page);
   expect(
     (remaining as Array<Record<string, unknown>>).filter(
       (command) => command.id === pendingCommandId,
@@ -369,4 +361,394 @@ test("reactivates an archived event only after the server confirms it", async ({
       ),
     )
     .toBe(true);
+});
+
+test("duplicates an archived event only after accepted snapshot-guarded sync", async ({
+  page,
+}) => {
+  await page.addInitScript(() => {
+    window.COOKOPS_RUNTIME_CONFIG = { authentication: { provider: "dummy" } };
+  });
+  await page.route("**/auth/**", async (route) => {
+    if (new URL(route.request().url()).pathname !== "/auth/session")
+      return route.fulfill({ status: 404 });
+    await route.fulfill({
+      contentType: "application/json",
+      body: JSON.stringify({
+        id: userId,
+        display_name: "Alice Admin",
+        verified_email: "alice@example.test",
+        preferred_locale: "cs",
+      }),
+    });
+  });
+  await page.route("**/api/v1/organizations", (route) =>
+    route.fulfill({
+      contentType: "application/json",
+      body: JSON.stringify({
+        organizations: [{ id: organizationId, name: "Kitchen" }],
+      }),
+    }),
+  );
+  const snapshotId = "9f8d7c6b-5a4e-4321-9abc-def012345678";
+  const archived = {
+    id: eventId,
+    organization_id: organizationId,
+    name: "Letní vaření",
+    start_date: "2026-08-10",
+    end_date: "2026-08-10",
+    base_expected_attendance: 24,
+    budget_amount: "0",
+    currency: "CZK",
+    lifecycle: "archived",
+    archived_at: "2026-08-09T12:00:00.000Z",
+    current_archive_snapshot_id: snapshotId,
+  };
+  const record = (entityId: string, kind: string, value: object) => ({
+    organization_id: organizationId,
+    entity_id: entityId,
+    entity_kind: kind,
+    operation: "upsert",
+    payload: { record_schema_version: 1, record: value },
+  });
+  let targetId = "";
+  let pushMutationId = "";
+  let accepted = false;
+  let copiedPull = false;
+  let releasePush!: () => void;
+  let resolvePushSeen!: () => void;
+  const pushSeen = new Promise<void>((resolve) => {
+    resolvePushSeen = resolve;
+  });
+  await page.route("**/api/v1/sync/bootstrap", (route) =>
+    route.fulfill({
+      contentType: "application/json",
+      body: JSON.stringify({
+        sync_schema_version: 1,
+        server_time: "2026-08-10T12:00:00.000Z",
+        cursor: "opaque-cursor",
+        records: [
+          record(organizationId, "organization", {
+            id: organizationId,
+            default_currency: "CZK",
+          }),
+          record(organizationId, "organization_capabilities", {
+            id: organizationId,
+            actor_user_id: userId,
+            can_manage_organization: true,
+            organization_id: organizationId,
+            role: "organization_admin",
+          }),
+          record(eventId, "event", archived),
+        ],
+      }),
+    }),
+  );
+  await page.route("**/api/v1/sync/push", async (route) => {
+    const command = (
+      route.request().postDataJSON() as {
+        commands: Array<{
+          mutation_id: string;
+          payload: Record<string, string>;
+        }>;
+      }
+    ).commands[0];
+    pushMutationId = command.mutation_id;
+    expect(command.command_kind).toBe("event.duplicate");
+    targetId = command.payload.event_id;
+    resolvePushSeen();
+    await new Promise<void>((resolve) => {
+      releasePush = resolve;
+    });
+    await route.fulfill({
+      contentType: "application/json",
+      body: JSON.stringify({
+        sync_schema_version: 1,
+        server_time: "2026-08-10T12:00:01.000Z",
+        change_cursor: "duplicate-cursor",
+        clock_skew_warning: null,
+        outcomes: [
+          {
+            mutation_id: command.mutation_id,
+            command_kind: "event.duplicate",
+            status: accepted ? "accepted" : "rejected",
+            replayed: false,
+            first_change_sequence: 1,
+            last_change_sequence: 2,
+            error: null,
+          },
+        ],
+      }),
+    });
+  });
+  await page.route("**/api/v1/sync/pull", (route) =>
+    route
+      .fulfill({
+        contentType: "application/json",
+        body: JSON.stringify({
+          sync_schema_version: 1,
+          server_time: "2026-08-10T12:00:02.000Z",
+          status: "ok",
+          next_cursor: "duplicate-cursor",
+          oldest_available_at: null,
+          transaction_groups:
+            accepted && !copiedPull
+              ? [
+                  {
+                    mutation_id: pushMutationId,
+                    first_sequence: 1,
+                    last_sequence: 2,
+                    records: [
+                      { ...record(targetId, "event", {
+                        ...archived,
+                        id: targetId,
+                        name: "Nové menu",
+                        lifecycle: "active",
+                        archived_at: null,
+                        current_archive_snapshot_id: null,
+                      }), sequence: 1 },
+                      { ...record("7b6a5c4d-3e2f-4109-8abc-def012345678", "event_day", {
+                        id: "7b6a5c4d-3e2f-4109-8abc-def012345678",
+                        organization_id: organizationId,
+                        event_id: targetId,
+                        calendar_date: "2026-08-10",
+                        is_visible: true,
+                      }), sequence: 2 },
+                    ],
+                  },
+                ]
+              : [],
+        }),
+      })
+      .then(() => {
+        if (accepted) copiedPull = true;
+      }),
+  );
+  await page.goto(`/organizations/${organizationId}/events`);
+  const source = page.getByRole("article");
+  await expect(page.getByRole("button", { name: "Duplikovat plán" })).toBeVisible();
+  await expect(source.getByText("Archivovaná", { exact: true })).toBeVisible();
+  await page.getByLabel("Název nové akce").fill("Nové menu");
+  await page.getByRole("button", { name: "Duplikovat plán" }).click();
+  await pushSeen;
+  const pending = await readOutbox(page);
+  const commands = (pending as Array<Record<string, unknown>>).filter(
+    (c) => c.commandType === "event.duplicate",
+  );
+  expect(commands).toHaveLength(1);
+  expect(commands[0].payload).toEqual({
+    event_id: expect.stringMatching(/^[0-9a-f-]{36}$/),
+    source_event_id: eventId,
+    source_archive_snapshot_id: snapshotId,
+    name: "Nové menu",
+  });
+  expect(source.getByText("Archivovaná", { exact: true })).toBeVisible();
+  expect(page.getByText("Nové menu", { exact: true })).toHaveCount(0);
+  accepted = true;
+  releasePush();
+  await expect(page.getByText("Nové menu", { exact: true })).toBeVisible();
+  expect(targetId).toMatch(/^[0-9a-f-]{36}$/);
+  const canonicalRecords = await page.evaluate(
+    () =>
+      new Promise<
+        Array<{
+          entityId?: string;
+          entityType?: string;
+          fields?: Record<string, unknown>;
+        }>
+      >((resolve, reject) => {
+        const request = indexedDB.open("cookops");
+        request.onerror = () => reject(request.error);
+        request.onsuccess = () => {
+          const get = request.result
+            .transaction("canonicalRecords")
+            .objectStore("canonicalRecords")
+            .getAll();
+          get.onerror = () => reject(get.error);
+          get.onsuccess = () => resolve(get.result as Array<{
+            entityId?: string;
+            entityType?: string;
+            fields?: Record<string, unknown>;
+          }>);
+        };
+      }),
+  );
+  expect(canonicalRecords).toContainEqual(expect.objectContaining({
+    entityId: targetId,
+    entityType: "event",
+    fields: expect.objectContaining({ name: "Nové menu", lifecycle: "active" }),
+  }));
+  expect(canonicalRecords).toContainEqual(expect.objectContaining({
+    entityType: "event_day",
+    fields: expect.objectContaining({ event_id: targetId }),
+  }));
+  const remaining = await readOutbox(page);
+  expect(
+    (remaining as Array<Record<string, unknown>>).filter(
+      (c) => c.commandType === "event.duplicate",
+    ),
+  ).toHaveLength(0);
+  await expect
+    .poll(() =>
+      page.evaluate(
+        () => document.documentElement.scrollWidth <= window.innerWidth,
+      ),
+    )
+    .toBe(true);
+});
+
+test("keeps a stale archived-event duplicate rejected", async ({ page }) => {
+  await page.addInitScript(() => {
+    window.COOKOPS_RUNTIME_CONFIG = { authentication: { provider: "dummy" } };
+  });
+  await page.route("**/auth/**", async (route) => {
+    if (new URL(route.request().url()).pathname !== "/auth/session")
+      return route.fulfill({ status: 404 });
+    await route.fulfill({
+      contentType: "application/json",
+      body: JSON.stringify({
+        id: userId,
+        display_name: "Alice Admin",
+        verified_email: "alice@example.test",
+        preferred_locale: "cs",
+      }),
+    });
+  });
+  const snapshotId = "8e7d6c5b-4a3f-4210-9abc-def012345678";
+  await page.route("**/api/v1/organizations", (route) =>
+    route.fulfill({
+      contentType: "application/json",
+      body: JSON.stringify({
+        organizations: [{ id: organizationId, name: "Kitchen" }],
+      }),
+    }),
+  );
+  const archived = {
+    id: eventId,
+    organization_id: organizationId,
+    name: "Letní vaření",
+    start_date: "2026-08-10",
+    end_date: "2026-08-10",
+    base_expected_attendance: 24,
+    budget_amount: "0",
+    currency: "CZK",
+    lifecycle: "archived",
+    archived_at: "2026-08-09T12:00:00.000Z",
+    current_archive_snapshot_id: snapshotId,
+  };
+  const rec = (kind: string, id: string, value: object) => ({
+    organization_id: organizationId,
+    entity_id: id,
+    entity_kind: kind,
+    operation: "upsert",
+    payload: { record_schema_version: 1, record: value },
+  });
+  await page.route("**/api/v1/sync/bootstrap", (route) =>
+    route.fulfill({
+      contentType: "application/json",
+      body: JSON.stringify({
+        sync_schema_version: 1,
+        server_time: "2026-08-10T12:00:00.000Z",
+        cursor: "c",
+        records: [
+          rec("organization", organizationId, {
+            id: organizationId,
+            default_currency: "CZK",
+          }),
+          rec("organization_capabilities", organizationId, {
+            id: organizationId,
+            actor_user_id: userId,
+            can_manage_organization: true,
+            lifecycle: "active",
+          }),
+          rec("event", eventId, archived),
+        ],
+      }),
+    }),
+  );
+  await page.route("**/api/v1/sync/pull", (route) =>
+    route.fulfill({
+      contentType: "application/json",
+      body: JSON.stringify({
+        sync_schema_version: 1,
+        server_time: "2026-08-10T12:00:01.000Z",
+        status: "ok",
+        next_cursor: "c",
+        transaction_groups: [],
+        oldest_available_at: null,
+      }),
+    }),
+  );
+  let seen!: () => void;
+  const pushSeen = new Promise<void>((resolve) => {
+    seen = resolve;
+  });
+  await page.route("**/api/v1/sync/push", async (route) => {
+    const command = (
+      route.request().postDataJSON() as {
+        commands: Array<{ mutation_id: string }>;
+      }
+    ).commands[0];
+    const mutationId = command.mutation_id;
+    seen();
+    await route.fulfill({
+      contentType: "application/json",
+      body: JSON.stringify({
+        sync_schema_version: 1,
+        server_time: "2026-08-10T12:00:02.000Z",
+        change_cursor: "stale-cursor",
+        clock_skew_warning: null,
+        outcomes: [
+          {
+            mutation_id: mutationId,
+            command_kind: "event.duplicate",
+            status: "rejected",
+            replayed: false,
+            first_change_sequence: null,
+            last_change_sequence: null,
+            error: {
+              code: "stale_precondition",
+              field_violations: [],
+              retry_same_identity: false,
+            },
+          },
+        ],
+      }),
+    });
+  });
+  await page.goto(`/organizations/${organizationId}/events`);
+  const source = page.getByRole("article");
+  await page.getByLabel("Název nové akce").fill("Stale kopie");
+  await page.getByRole("button", { name: "Duplikovat plán" }).click();
+  await pushSeen;
+  await expect(source.getByText("Archivovaná", { exact: true })).toBeVisible();
+  await expect(page.getByText("Stale kopie", { exact: true })).toHaveCount(0);
+  const outbox = await readOutbox(page);
+  expect(
+    (outbox as Array<Record<string, unknown>>).some(
+      (c) =>
+        c.commandType === "event.duplicate" &&
+        c.state === "failed" &&
+        c.failureReason === "stale_precondition",
+    ),
+  ).toBe(true);
+  const staleCanonical = await page.evaluate(
+    async ({ userId, organizationId, eventId }) => {
+      const request = indexedDB.open("cookops");
+      return await new Promise<unknown>((resolve, reject) => {
+        request.onerror = () => reject(request.error);
+        request.onsuccess = () => {
+          const get = request.result.transaction("canonicalRecords").objectStore("canonicalRecords").get([userId, organizationId, "event", eventId]);
+          get.onerror = () => reject(get.error);
+          get.onsuccess = () => resolve(get.result);
+        };
+      });
+    },
+    { userId, organizationId, eventId },
+  );
+  expect(staleCanonical).toMatchObject({
+    entityId: eventId,
+    fields: archived,
+  });
+  await expect.poll(() => page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
 });
