@@ -64,7 +64,7 @@ describe("catalog configuration outbox", () => {
       expect(command.payload).not.toHaveProperty("custom_name", undefined);
     }
     await replayCatalogConfiguration(userId, organizationId, {
-      id: "ace17d2f-8365-4b1f-a80b-34d10425d51c", actionAt: "2026-08-18T00:00:01.000000001Z",
+      id: "ace17d2f-8365-4b1f-a80b-34d10425d51c", actionAt: "2026-08-20T00:00:01.000000001Z",
       payload: { entity_id: id, entity_kind: "organization_meal_role_preset", operation: "update", built_in_translation_key: "meal_role.breakfast", position_key: "c" },
     });
     await expect(localDb.optimisticOverlays.get([userId, organizationId, "organization_meal_role_preset", id])).resolves.toMatchObject({
