@@ -608,6 +608,14 @@ const resources = {
         upgradeRequired: "Je nutná aktualizace aplikace. Lokální změny zůstanou zachovány.",
         failed: "Změny vyžadují pozornost: {{count}}",
         storageUnavailable: "Místní úložiště synchronizace není k dispozici.",
+        storagePersistence: {
+          unavailable:
+            "Trvalé úložiště není podporováno. Nezesynchronizované změny a fotografie mohou být z prohlížeče odstraněny.",
+          denied:
+            "Trvalé úložiště nebylo povoleno. Nezesynchronizované změny a fotografie mohou být z prohlížeče odstraněny.",
+          checkFailed:
+            "Trvalé úložiště se nepodařilo ověřit. Nezesynchronizované změny a fotografie mohou být z prohlížeče odstraněny.",
+        },
         pendingUploads: "Čeká nahrání fotografií: {{count}}",
         clockSkew: "Čas zařízení se liší od serveru.",
       },
@@ -1248,6 +1256,14 @@ const resources = {
         upgradeRequired: "An app update is required. Your local changes will be preserved.",
         failed: "Changes need attention: {{count}}",
         storageUnavailable: "Local synchronization storage is unavailable.",
+        storagePersistence: {
+          unavailable:
+            "Persistent storage is unavailable. Unsynchronized changes and photos may be evicted by the browser.",
+          denied:
+            "Persistent storage was not granted. Unsynchronized changes and photos may be evicted by the browser.",
+          checkFailed:
+            "Persistent storage could not be checked. Unsynchronized changes and photos may be evicted by the browser.",
+        },
         pendingUploads: "Pending photo uploads: {{count}}",
         clockSkew: "Your device time differs from the server.",
       },

@@ -3,9 +3,35 @@ import { useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
 
 import {
-  type SynchronizationSummary,
   readSynchronizationSummary,
+  type SynchronizationSummary,
 } from "./local-db";
+
+type StoragePersistenceState = "unavailable" | "denied" | "checkFailed";
+
+let storagePersistenceCheck:
+  | Promise<StoragePersistenceState | null>
+  | undefined;
+
+function checkPersistentStorage() {
+  if (!storagePersistenceCheck) {
+    storagePersistenceCheck = (async () => {
+      try {
+        const storage = navigator.storage;
+        if (!storage) return "unavailable";
+        if (await storage.persisted()) return null;
+        return (await storage.persist()) ? null : "denied";
+      } catch {
+        return "checkFailed";
+      }
+    })();
+  }
+  return storagePersistenceCheck;
+}
+
+export function resetPersistentStorageCheckForTests() {
+  storagePersistenceCheck = undefined;
+}
 
 function browserIsOnline() {
   return typeof navigator === "undefined" || navigator.onLine;
@@ -50,6 +76,16 @@ function useSynchronizationSummary(organizationId?: string, userId?: string) {
   return { storageUnavailable, summary };
 }
 
+function useStoragePersistenceWarning() {
+  const [warning, setWarning] = useState<StoragePersistenceState | null>(null);
+
+  useEffect(() => {
+    void checkPersistentStorage().then(setWarning);
+  }, []);
+
+  return warning;
+}
+
 export function SynchronizationStatus({
   organizationId,
   userId,
@@ -63,6 +99,7 @@ export function SynchronizationStatus({
     organizationId,
     userId,
   );
+  const storagePersistenceWarning = useStoragePersistenceWarning();
   const pendingCount =
     (summary?.pendingCommands ?? 0) + (summary?.pendingUploads ?? 0);
   const failedCount =
@@ -111,6 +148,15 @@ export function SynchronizationStatus({
       {summary?.clockSkewWarning ? (
         <span className="synchronization-status__detail">
           {t("synchronization.clockSkew")}
+        </span>
+      ) : null}
+      {storagePersistenceWarning ? (
+        <span
+          className="synchronization-status__detail"
+          data-testid="storage-persistence-warning"
+          role="alert"
+        >
+          {t(`synchronization.storagePersistence.${storagePersistenceWarning}`)}
         </span>
       ) : null}
     </aside>

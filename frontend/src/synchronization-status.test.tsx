@@ -1,9 +1,12 @@
 import { render, screen, waitFor } from "@testing-library/react";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import i18n, { defaultLocale } from "./i18n";
 import { localDb } from "./local-db";
-import { SynchronizationStatus } from "./synchronization-status";
+import {
+  resetPersistentStorageCheckForTests,
+  SynchronizationStatus,
+} from "./synchronization-status";
 
 async function clearLocalDatabase() {
   await localDb.transaction(
@@ -29,16 +32,40 @@ function setOnline(value: boolean) {
   window.dispatchEvent(new Event(value ? "online" : "offline"));
 }
 
+type StorageStub = Pick<StorageManager, "persisted" | "persist">;
+const originalStorageDescriptor = Object.getOwnPropertyDescriptor(
+  navigator,
+  "storage",
+);
+
+function setStorage(storage: StorageStub | undefined) {
+  Object.defineProperty(navigator, "storage", {
+    configurable: true,
+    value: storage,
+  });
+}
+
+function restoreStorage() {
+  Reflect.deleteProperty(navigator, "storage");
+  if (originalStorageDescriptor) {
+    Object.defineProperty(navigator, "storage", originalStorageDescriptor);
+  }
+}
+
 describe("SynchronizationStatus", () => {
   beforeEach(async () => {
     await i18n.changeLanguage(defaultLocale);
     setOnline(true);
     await clearLocalDatabase();
+    resetPersistentStorageCheckForTests();
+    restoreStorage();
   });
 
   afterEach(async () => {
     setOnline(true);
     await clearLocalDatabase();
+    resetPersistentStorageCheckForTests();
+    restoreStorage();
   });
 
   it("shows the Czech caught-up state and updates to pending work", async () => {
@@ -85,5 +112,53 @@ describe("SynchronizationStatus", () => {
     await waitFor(() => {
       expect(screen.getByRole("status")).toHaveTextContent("Bez připojení");
     });
+  });
+
+  it.each([
+    ["unavailable", undefined, "Trvalé úložiště není podporováno."],
+    [
+      "denied",
+      {
+        persisted: async (): Promise<boolean> => false,
+        persist: async (): Promise<boolean> => false,
+      },
+      "Trvalé úložiště nebylo povoleno.",
+    ],
+    [
+      "check failure",
+      {
+        persisted: async (): Promise<boolean> => {
+          throw new Error("storage check failed");
+        },
+        persist: async (): Promise<boolean> => false,
+      },
+      "Trvalé úložiště se nepodařilo ověřit.",
+    ],
+  ] as const)(
+    "warns when storage persistence is %s",
+    async (_, storage, message) => {
+      setStorage(storage);
+      render(<SynchronizationStatus organizationId="organization-a" />);
+
+      expect(
+        await screen.findByTestId("storage-persistence-warning"),
+      ).toHaveTextContent(message);
+    },
+  );
+
+  it("does not warn when storage is already persisted or becomes persisted", async () => {
+    const persist = vi.fn(async (): Promise<boolean> => true);
+    setStorage({ persisted: async (): Promise<boolean> => false, persist });
+    render(<SynchronizationStatus organizationId="organization-a" />);
+    await waitFor(() => expect(persist).toHaveBeenCalledTimes(1));
+    expect(screen.queryByTestId("storage-persistence-warning")).toBeNull();
+
+    resetPersistentStorageCheckForTests();
+    setStorage({ persisted: async (): Promise<boolean> => true, persist });
+    render(<SynchronizationStatus organizationId="organization-a" />);
+    await waitFor(() =>
+      expect(screen.queryByTestId("storage-persistence-warning")).toBeNull(),
+    );
+    expect(persist).toHaveBeenCalledTimes(1);
   });
 });
