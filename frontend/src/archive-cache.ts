@@ -1,5 +1,6 @@
 import { type ArchiveRecord, type CanonicalRecord, localDb } from "./local-db";
 import { readVisibleRecords } from "./visible-records";
+import { SyncRequestError } from "./sync-bootstrap";
 
 const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const MAX_ARCHIVE_BYTES = 8 * 1024 * 1024;
@@ -546,6 +547,7 @@ export async function ensureArchivedEventCached(
     `/api/v1/organizations/${encodeURIComponent(organizationId)}/events/${encodeURIComponent(eventId)}/archive/${encodeURIComponent(snapshotId)}`,
     { credentials: "same-origin", cache: "no-store" },
   );
+  if (response.status === 401) throw new SyncRequestError(401);
   if (!response.ok)
     throw new Error(`Archive request failed: ${response.status}`);
   const body = await response.text();

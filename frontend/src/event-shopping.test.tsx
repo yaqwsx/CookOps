@@ -4,6 +4,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { EventShopping } from "./event-shopping";
 import i18n, { defaultLocale } from "./i18n";
+import { SyncRequestError } from "./sync-bootstrap";
 
 const {
   readEventPlanner,
@@ -19,6 +20,7 @@ const {
   queueAdHocShoppingItemFulfilment,
   queueAdHocShoppingItemLifecycle,
   queueAdHocShoppingItemUpdate,
+  ensureArchivedEventCached,
   pullOrganization,
 } = vi.hoisted(() => ({
   readEventPlanner: vi.fn(),
@@ -34,6 +36,7 @@ const {
   queueAdHocShoppingItemFulfilment: vi.fn(),
   queueAdHocShoppingItemLifecycle: vi.fn(),
   queueAdHocShoppingItemUpdate: vi.fn(),
+  ensureArchivedEventCached: vi.fn(),
   pullOrganization: vi.fn(),
 }));
 vi.mock("./planner-projections", () => ({ readEventPlanner }));
@@ -60,8 +63,11 @@ vi.mock("./ad-hoc-shopping-item", () => ({
 }));
 vi.mock("./sync-bootstrap", () => ({
   pullOrganization,
-  SyncRequestError: class SyncRequestError extends Error {},
+  SyncRequestError: class SyncRequestError extends Error {
+    constructor(readonly status: number) { super("Sync request failed."); }
+  },
 }));
+vi.mock("./archive-cache", () => ({ ensureArchivedEventCached }));
 
 const ids = {
   user: "a6a58bd6-214e-49af-8fae-e5f974bf8e08",
@@ -72,6 +78,45 @@ const ids = {
 
 describe("EventShopping", () => {
   afterEach(() => vi.clearAllMocks());
+
+  it("caches the archived event after organization pull completes", async () => {
+    await i18n.changeLanguage(defaultLocale);
+    readEventPlanner.mockResolvedValue({ name: "Letní vaření", lifecycle: "archived", currentArchiveSnapshotId: ids.event, scheduled: [] });
+    readShoppingLists.mockResolvedValue([]);
+    let resolvePull!: (value: boolean) => void;
+    pullOrganization.mockReturnValue(new Promise<boolean>((resolve) => { resolvePull = resolve; }));
+
+    render(
+      <EventShopping
+        eventId={ids.event}
+        onBack={vi.fn()}
+        onOpenList={vi.fn()}
+        onOpenPlanner={vi.fn()}
+        onUnauthenticated={vi.fn()}
+        organizationId={ids.organization}
+        userId={ids.user}
+      />,
+    );
+
+    await waitFor(() => expect(pullOrganization).toHaveBeenCalled());
+    expect(ensureArchivedEventCached).not.toHaveBeenCalled();
+    resolvePull(false);
+    await waitFor(() =>
+      expect(ensureArchivedEventCached).toHaveBeenCalledWith(ids.user, ids.organization, ids.event),
+    );
+  });
+
+  it("routes archive authentication failures to the unauthenticated handler", async () => {
+    await i18n.changeLanguage(defaultLocale);
+    readEventPlanner.mockResolvedValue({ name: "Letní vaření", lifecycle: "active", scheduled: [] });
+    readShoppingLists.mockResolvedValue([]);
+    pullOrganization.mockResolvedValue(false);
+    ensureArchivedEventCached.mockRejectedValue(new SyncRequestError(401));
+    const onUnauthenticated = vi.fn();
+    render(<EventShopping eventId={ids.event} onBack={vi.fn()} onOpenList={vi.fn()} onOpenPlanner={vi.fn()} onUnauthenticated={onUnauthenticated} organizationId={ids.organization} userId={ids.user} />);
+    await waitFor(() => expect(onUnauthenticated).toHaveBeenCalledOnce());
+    expect(screen.queryByText("Nákupy se nepodařilo načíst.")).not.toBeInTheDocument();
+  });
 
   it("uses labelled source checkboxes and the existing typed outbox command", async () => {
     await i18n.changeLanguage(defaultLocale);

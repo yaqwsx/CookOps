@@ -33,6 +33,7 @@ import {
   type ShoppingListSummary,
 } from "./shopping-projections";
 import { pullOrganization, SyncRequestError } from "./sync-bootstrap";
+import { ensureArchivedEventCached } from "./archive-cache";
 import { SynchronizationStatus } from "./synchronization-status";
 
 type ShoppingState = "loading" | "ready" | "offline" | "error";
@@ -999,13 +1000,14 @@ export function EventShopping({
     if (!navigator.onLine) return setState("offline");
     try {
       await pullOrganization(userId, organizationId);
+      await ensureArchivedEventCached(userId, organizationId, eventId);
       if (current === generation.current) setState("ready");
     } catch (error) {
       if (error instanceof SyncRequestError && error.status === 401)
         return onUnauthenticated();
       if (current === generation.current) setState("error");
     }
-  }, [onUnauthenticated, organizationId, userId]);
+  }, [eventId, onUnauthenticated, organizationId, userId]);
   useEffect(() => {
     let active = true;
     generation.current += 1;

@@ -3,6 +3,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { ensureArchivedEventCached } from "./archive-cache";
 import { localDb } from "./local-db";
 import { readEventPlanner } from "./planner-projections";
+import { SyncRequestError } from "./sync-bootstrap";
 
 const userId = "11111111-1111-4111-8111-111111111111";
 const organizationId = "22222222-2222-4222-8222-222222222222";
@@ -291,6 +292,14 @@ describe("archived event cache", () => {
         scheduledId,
       ]),
     ).resolves.toMatchObject({ fields: payload.resolved_dietary_warnings[0] });
+  });
+
+  it("surfaces archive authentication failures without caching records", async () => {
+    const fetcher = vi.fn().mockResolvedValue(new Response(null, { status: 401 }));
+    await expect(
+      ensureArchivedEventCached(userId, organizationId, eventId, fetcher),
+    ).rejects.toSatisfy((error) => error instanceof SyncRequestError && error.status === 401);
+    await expect(localDb.archiveRecords.toArray()).resolves.toHaveLength(0);
   });
 
   it("maps cached snake-case warnings into the archived planner projection", async () => {
