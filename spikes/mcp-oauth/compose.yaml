@@ -22,5 +22,9 @@ services:
     environment:
       TEST_DATABASE_URL: postgresql://cookops_oauth_test:cookops_oauth_test@postgres:5432/cookops_oauth_test
 
+  conformance:
+    image: node:22-bookworm-slim@sha256:d649c27dae7ba0137b3cef5dd75baa422c08dc3d9e3fc0c23dfb172dc3cc6436
+    entrypoint: ["npx", "--yes", "@modelcontextprotocol/conformance@0.1.16", "server"]
+
 volumes:
   oauth-postgres-data:

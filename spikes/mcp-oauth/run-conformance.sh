@@ -6,12 +6,18 @@ if [[ $# -ne 1 ]]; then
   exit 64
 fi
 
-node_major=$(node -p 'Number(process.versions.node.split(".")[0])')
-if (( node_major < 22 )); then
-  printf 'MCP conformance 0.1.16 requires Node.js 22+ (found %s)\n' "$(node --version)" >&2
-  exit 69
+url=$1
+if ! node -e '
+  try {
+    const url = new URL(process.argv[1]);
+    if (url.protocol !== "https:" || !url.hostname || url.username || url.password ||
+        url.pathname !== "/mcp" || url.search || url.hash || /[\u0000-\u0020\u007f]/.test(process.argv[1])) throw Error();
+  } catch { process.exit(1); }
+' "$url"; then
+  printf 'expected one safe HTTPS URL with exact path /mcp\n' >&2
+  exit 64
 fi
 
 # Keep the official runner outside project dependencies: this spike is disposable.
-exec npx --yes @modelcontextprotocol/conformance@0.1.16 server \
-  --url "$1" --suite active
+exec docker compose -f "$(dirname "$0")/compose.yaml" run --rm conformance \
+  --url "$url" --suite active

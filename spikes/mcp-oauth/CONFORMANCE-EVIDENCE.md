@@ -11,6 +11,14 @@ The official package is reproducibly addressable as
 `conformance`; the server invocation used by this spike is preserved in
 [`run-conformance.sh`](./run-conformance.sh).
 
+The executable precondition is Docker Compose plus a reachable Docker daemon;
+the wrapper validates exactly one safe `https://.../mcp` URL, then runs the
+official command in the pinned Node 22 one-shot service:
+
+```bash
+./spikes/mcp-oauth/run-conformance.sh https://<disposable-origin>/mcp
+```
+
 Discovery commands and results on 2026-08-19:
 
 ```text
@@ -24,12 +32,10 @@ package/README.md documents: conformance server --url <url> --suite active
 The package was not added to either project manifest or lockfile. The runner
 requires an already-running MCP URL, so it cannot be truthfully run against
 this checkout: the production FastAPI application intentionally has no `/mcp`
-mount and the disposable Compose file provides only the OAuth test service.
+mount and the disposable Compose file provides no MCP endpoint.
 Running the command with a missing or invented URL would not be conformance
-evidence. The package also requires Node.js 22 or newer in practice: the
-published binary imports `fs.globSync`, while this checkout's local Node.js
-20.20.2 fails during module loading. The harness reports that prerequisite
-before invoking `npx`.
+evidence. The package requires Node.js 22 or newer in practice; Compose supplies
+that runtime. This wrapper does not provide the required live MCP endpoint.
 
 ## Existing evidence and remaining gap
 
