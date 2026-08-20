@@ -12,6 +12,7 @@ const {
   queueScheduledRecipeContext,
   queueScheduledRecipeMove,
   queueScheduledRecipeCatalogUpdate,
+  queueScheduledRecipeNote,
   queueAddedOverride,
   queueClearAddedOverride,
   queueClearReplacementOverride,
@@ -29,6 +30,7 @@ const {
   queueScheduledRecipeContext: vi.fn(),
   queueScheduledRecipeMove: vi.fn(),
   queueScheduledRecipeCatalogUpdate: vi.fn(),
+  queueScheduledRecipeNote: vi.fn(),
   queueAddedOverride: vi.fn(),
   queueClearAddedOverride: vi.fn(),
   queueClearReplacementOverride: vi.fn(),
@@ -48,6 +50,7 @@ vi.mock("./scheduled-recipe", () => ({
   queueScheduledRecipeContext,
   queueScheduledRecipeMove,
   queueScheduledRecipeCatalogUpdate,
+  queueScheduledRecipeNote,
 }));
 vi.mock("./scheduled-ingredient-override", () => ({ queueAddedOverride, queueClearAddedOverride, queueClearReplacementOverride }));
 vi.mock("./event-day", () => ({ queueEventDayCreate, queueEventDayNote, queueEventDayVisibility }));
@@ -76,6 +79,17 @@ describe("EventPlanner", () => {
   afterEach(async () => {
     vi.clearAllMocks();
     await localDb.outbox.clear();
+  });
+
+  it("edits active scheduled notes and hides controls for archived records", async () => {
+    readEventPlanner.mockResolvedValue({ name: "Event", startDate: "2026-08-10", endDate: "2026-08-10", attendance: 1, lifecycle: "active", days: [{ id: ids.day, date: "2026-08-10", note: null }], roles: [{ id: ids.role, name: "Dinner", position: "a", custom: false }], recipes: [], scheduled: [{ id: ids.recipe, recipeId: ids.recipe, name: "Soup", dinerCount: 1, dayId: ids.day, roleId: ids.role, position: "a", retired: false, note: "Old", detailLines: [], preparedWeight: null, perDinerWeight: null, hasLocalOverrides: false, lines: [], localAddedIngredients: [], dietaryWarnings: [], catalogUpdateAvailable: false, catalogUpdateChanges: { added: 0, removed: 0, changed: 0 }, catalogScaleImpact: { reset: false } }], ...emptyPlannerCollections });
+    pullOrganization.mockResolvedValue(false);
+    render(<EventPlanner eventId={ids.event} onUnauthenticated={vi.fn()} organizationId={ids.organization} userId={ids.organization} />);
+    const note = await screen.findByRole("textbox", { name: "Poznámka receptu" });
+    await userEvent.setup().clear(note);
+    await userEvent.setup().click(screen.getByRole("button", { name: "Uložit poznámku" }));
+    expect(queueScheduledRecipeNote).toHaveBeenCalledWith(ids.organization, ids.organization, expect.objectContaining({ note: null }));
+    readEventPlanner.mockResolvedValueOnce({ name: "Event", startDate: "2026-08-10", endDate: "2026-08-10", attendance: 1, lifecycle: "archived", days: [], roles: [], recipes: [], scheduled: [{ id: ids.recipe, recipeId: ids.recipe, name: "Soup", dinerCount: 1, dayId: ids.day, roleId: ids.role, position: "a", retired: true, note: "Old", detailLines: [], preparedWeight: null, perDinerWeight: null, hasLocalOverrides: false, lines: [], dietaryWarnings: [], catalogUpdateAvailable: false, catalogUpdateChanges: { added: 0, removed: 0, changed: 0 }, catalogScaleImpact: { reset: false } }], ...emptyPlannerCollections });
   });
 
   it("shows the existing cost summary and only this event's pending changes", async () => {

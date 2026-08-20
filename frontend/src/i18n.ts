@@ -388,6 +388,9 @@ const resources = {
         restoreMealRole: "Obnovit chod",
         dayNote: "Poznámka dne",
         saveDayNote: "Uložit poznámku dne",
+        recipeNote: "Poznámka receptu",
+        saveNote: "Uložit poznámku",
+        clearNote: "Vymazat poznámku",
         saved: "Recept je uložen místně a bude synchronizován.",
         noAddOptions:
           "Pro přidání receptu je potřeba uložený den, chod a recept.",
@@ -1050,6 +1053,9 @@ const resources = {
         restoreMealRole: "Restore meal role",
         dayNote: "Day note",
         saveDayNote: "Save day note",
+        recipeNote: "Recipe note",
+        saveNote: "Save note",
+        clearNote: "Clear note",
         saved: "The recipe is saved locally and will synchronize.",
         noAddOptions:
           "A stored day, meal role, and recipe are required to add a recipe.",

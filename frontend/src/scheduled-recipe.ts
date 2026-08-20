@@ -1,8 +1,40 @@
 import { appendOutboxCommand, localDb } from "./local-db";
 import { readEventPlanner } from "./planner-projections";
+import { timestampNanoseconds } from "./timestamp";
 
 const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const decimal = /^(?:0|[1-9][0-9]*)(?:\.[0-9]+)?$/;
+const normalizeNote = (value: string) => value.normalize("NFC").replace(/\r\n?/g, "\n");
+const validNote = (value: unknown): value is string | null => value === null || (typeof value === "string" && !value.includes("\0") && !/[\uD800-\uDFFF]/.test(value) && [...value].length <= 4000);
+
+export async function queueScheduledRecipeNote(userId: string, organizationId: string, input: { scheduledRecipeId: string; eventId: string; note: string | null }): Promise<void> {
+  const note = typeof input.note === "string" ? normalizeNote(input.note) : input.note;
+  if (![input.scheduledRecipeId, input.eventId].every((id) => uuid.test(id)) || !validNote(note)) throw new Error("selection");
+  const mutationId = crypto.randomUUID(); const actionAt = new Date().toISOString();
+  await localDb.transaction("rw", localDb.canonicalRecords, localDb.optimisticOverlays, localDb.outbox, async () => {
+    const canonicalEvent = await localDb.canonicalRecords.get([userId, organizationId, "event", input.eventId]);
+    const canonicalScheduled = await localDb.canonicalRecords.get([userId, organizationId, "scheduled_recipe", input.scheduledRecipeId]);
+    if (canonicalEvent?.lifecycle !== "active" || canonicalEvent.fields.lifecycle !== "active" || canonicalScheduled?.lifecycle !== "active") throw new Error("selection");
+    const event = (await localDb.optimisticOverlays.get([userId, organizationId, "event", input.eventId])) ?? canonicalEvent;
+    const scheduled = (await localDb.optimisticOverlays.get([userId, organizationId, "scheduled_recipe", input.scheduledRecipeId])) ?? canonicalScheduled;
+    if (event.fields.lifecycle !== "active" || scheduled.lifecycle !== "active" || scheduled.fields.event_id !== input.eventId) throw new Error("selection");
+    await localDb.optimisticOverlays.put({ ...scheduled, fields: { ...scheduled.fields, note }, fieldClocks: { ...scheduled.fieldClocks, note: { mutationId, actionAt } }, updatedAt: actionAt });
+    await appendOutboxCommand({ id: mutationId, userId, organizationId, commandType: "scheduled_recipe.note", payload: { scheduled_recipe_id: input.scheduledRecipeId, event_id: input.eventId, note }, actionAt, createdAt: actionAt, state: "pending" });
+  });
+}
+
+export async function replayScheduledRecipeNote(userId: string, organizationId: string, command: { id: string; actionAt: string; payload: Record<string, unknown> }): Promise<void> {
+  const p = command.payload;
+  if (!p || typeof p !== "object" || Array.isArray(p) || Object.keys(p).length !== 3 || typeof p.scheduled_recipe_id !== "string" || typeof p.event_id !== "string" || !uuid.test(command.id) || !uuid.test(p.scheduled_recipe_id) || !uuid.test(p.event_id) || timestampNanoseconds(command.actionAt) === undefined || !validNote(p.note) || (typeof p.note === "string" && normalizeNote(p.note) !== p.note)) return;
+  const canonicalEvent = await localDb.canonicalRecords.get([userId, organizationId, "event", p.event_id]);
+  const canonicalScheduled = await localDb.canonicalRecords.get([userId, organizationId, "scheduled_recipe", p.scheduled_recipe_id]);
+  if (canonicalEvent?.lifecycle === "retired" || canonicalScheduled?.lifecycle === "retired") return;
+  const event = (await localDb.optimisticOverlays.get([userId, organizationId, "event", p.event_id])) ?? canonicalEvent;
+  const scheduled = (await localDb.optimisticOverlays.get([userId, organizationId, "scheduled_recipe", p.scheduled_recipe_id])) ?? canonicalScheduled;
+  if (event?.lifecycle !== "active" || event.fields.lifecycle !== "active" || scheduled?.lifecycle !== "active" || scheduled.fields.lifecycle === "retired" || scheduled.fields.event_id !== p.event_id) return;
+  const clock = scheduled.fieldClocks.note; if (clock !== undefined) { if (!clock || typeof clock !== "object" || Array.isArray(clock)) return; const c = clock as Record<string, unknown>; const at = typeof c.actionAt === "string" ? c.actionAt : c.winning_client_wall_time; const id = typeof c.mutationId === "string" ? c.mutationId : c.winning_mutation_id; const incoming = timestampNanoseconds(command.actionAt), existing = typeof at === "string" ? timestampNanoseconds(at) : undefined; if (typeof id !== "string" || incoming === undefined || existing === undefined || incoming < existing || (incoming === existing && command.id <= id)) return; }
+  await localDb.optimisticOverlays.put({ ...scheduled, fields: { ...scheduled.fields, note: p.note }, fieldClocks: { ...scheduled.fieldClocks, note: { mutationId: command.id, actionAt: command.actionAt } }, updatedAt: command.actionAt });
+}
 
 export type ScheduleRecipeInput = {
   eventId: string;

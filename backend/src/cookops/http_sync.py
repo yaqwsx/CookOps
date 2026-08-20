@@ -67,6 +67,7 @@ from cookops.application.scheduled_recipe_catalog_update import UpdateScheduledR
 from cookops.application.scheduled_recipe_context import SetScheduledRecipeContextCommand
 from cookops.application.scheduled_recipe_lifecycle import SetScheduledRecipeLifecycleCommand
 from cookops.application.scheduled_recipe_moves import MoveScheduledRecipeCommand
+from cookops.application.scheduled_recipe_note import SetScheduledRecipeNoteCommand
 from cookops.application.scheduled_recipe_overrides import SetScheduledIngredientOverrideCommand
 from cookops.application.scheduled_recipes import ScheduleRecipeCommand
 from cookops.application.shopping_lists import (
@@ -313,6 +314,14 @@ class ScheduledRecipeContextPayload(BaseModel):
         if value is not None and not isinstance(value, str):
             raise ValueError("must be a decimal string or null")
         return value
+
+
+class ScheduledRecipeNotePayload(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    scheduled_recipe_id: UUID
+    event_id: UUID
+    note: str | None
+    logical_operation_id: UUID | None = None
 
 
 class ScheduledRecipeCatalogUpdatePayload(BaseModel):
@@ -1568,6 +1577,17 @@ def _push_command(command: PushCommandRequest, organization_id: UUID) -> SyncCom
                 consumption_percentage=payload.consumption_percentage,
                 operation=payload.operation,
                 selected_scale_amount=payload.selected_scale_amount,
+                client_wall_time=command.client_wall_time,
+                logical_operation_id=payload.logical_operation_id,
+            )
+        if command.command_kind == "scheduled_recipe.note":
+            payload = ScheduledRecipeNotePayload.model_validate(command.payload)
+            return SetScheduledRecipeNoteCommand(
+                mutation_id=command.mutation_id,
+                scheduled_recipe_id=payload.scheduled_recipe_id,
+                organization_id=organization_id,
+                event_id=payload.event_id,
+                note=payload.note,
                 client_wall_time=command.client_wall_time,
                 logical_operation_id=payload.logical_operation_id,
             )

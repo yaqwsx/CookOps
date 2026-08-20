@@ -20,6 +20,7 @@ export type PlannedRecipe = {
   selectedScaleAmount: string;
   position: string;
   retired: boolean;
+  note: string | null;
   catalogUpdateAvailable: boolean;
   catalogUpdateChanges: { added: number; removed: number; changed: number };
   catalogScaleImpact: { currentUnitId: string | undefined; targetUnitId: string | undefined; currentUnitName: string | undefined; targetUnitName: string | undefined; reset: boolean; targetBase: string | undefined; suggestedAmount: string | undefined };
@@ -634,6 +635,7 @@ export async function readEventPlanner(
       selectedScaleAmount: value(record, "selected_scale_amount"),
       position: value(record, "position_key"),
       retired: record.lifecycle === "retired",
+      note: typeof record.fields.note === "string" ? record.fields.note : null,
       });
     })
     .filter((item) =>

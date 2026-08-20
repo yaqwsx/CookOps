@@ -192,6 +192,11 @@ from cookops.application.scheduled_recipe_moves import (
     MoveScheduledRecipeResult,
     move_scheduled_recipe,
 )
+from cookops.application.scheduled_recipe_note import (
+    ScheduledRecipeNoteResult,
+    SetScheduledRecipeNoteCommand,
+    set_scheduled_recipe_note,
+)
 from cookops.application.scheduled_recipe_overrides import (
     ScheduledIngredientOverrideResult,
     SetScheduledIngredientOverrideCommand,
@@ -411,6 +416,7 @@ SyncCommand = (
     | MoveScheduledRecipeCommand
     | SetScheduledRecipeAttendanceCommand
     | SetScheduledRecipeContextCommand
+    | SetScheduledRecipeNoteCommand
     | UpdateScheduledRecipeCatalogCommand
     | SetScheduledRecipeLifecycleCommand
     | SetScheduledIngredientOverrideCommand
@@ -463,6 +469,7 @@ def _command_kind(
         | MoveScheduledRecipeCommand
         | SetScheduledRecipeAttendanceCommand
         | SetScheduledRecipeContextCommand
+        | SetScheduledRecipeNoteCommand
         | UpdateScheduledRecipeCatalogCommand
         | SetScheduledRecipeLifecycleCommand
         | SetScheduledIngredientOverrideCommand
@@ -542,6 +549,8 @@ def _command_kind(
         return "scheduled_recipe.attendance"
     if isinstance(command, SetScheduledRecipeContextCommand):
         return "scheduled_recipe.context"
+    if isinstance(command, SetScheduledRecipeNoteCommand):
+        return "scheduled_recipe.note"
     if isinstance(command, UpdateScheduledRecipeCatalogCommand):
         return "scheduled_recipe.catalog_update"
     if isinstance(command, SetScheduledRecipeLifecycleCommand):
@@ -900,6 +909,7 @@ class SynchronizationCommandService:
                 | MoveScheduledRecipeResult
                 | ScheduledRecipeAttendanceResult
                 | ScheduledRecipeContextResult
+                | ScheduledRecipeNoteResult
                 | UpdateScheduledRecipeCatalogResult
                 | ScheduledRecipeLifecycleResult
                 | ScheduledIngredientOverrideResult
@@ -977,6 +987,8 @@ class SynchronizationCommandService:
                 )
             elif isinstance(command, SetScheduledRecipeContextCommand):
                 result = await set_scheduled_recipe_context(self._session_factory, context, command)
+            elif isinstance(command, SetScheduledRecipeNoteCommand):
+                result = await set_scheduled_recipe_note(self._session_factory, context, command)
             elif isinstance(command, UpdateScheduledRecipeCatalogCommand):
                 result = await update_scheduled_recipe_catalog(  # noqa: E501
                     self._session_factory, context, command

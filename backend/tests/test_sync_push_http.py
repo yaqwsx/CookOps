@@ -758,6 +758,121 @@ def _scheduled_recipe_context_command(
     return command
 
 
+def _scheduled_recipe_note_command(
+    *, mutation_id: UUID, event_id: UUID, scheduled_recipe_id: UUID, note: object
+) -> dict[str, object]:
+    command = _command(
+        mutation_id=mutation_id,
+        event_id=event_id,
+        kind="scheduled_recipe.note",
+        scheduled_recipe_id=str(scheduled_recipe_id),
+        note=note,
+    )
+    cast(dict[str, object], command["payload"])["event_id"] = str(event_id)
+    return command
+
+
+def test_scheduled_recipe_note_push_replays_and_rejects_malformed_values(
+    sync_database: SyncDatabase,
+) -> None:
+    event_id, event_day_id, event_meal_role_id = uuid4(), uuid4(), uuid4()
+    recipe_id, recipe_version_id = uuid4(), uuid4()
+    scheduled_recipe_id = uuid4()
+    with sync_database.engine.begin() as connection:
+        actor_id = connection.scalar(
+            select(OrganizationMembership.user_id).where(
+                OrganizationMembership.organization_id == sync_database.organization_id
+            )
+        )
+        unit_id = connection.scalar(
+            select(UnitDefinition.id).where(
+                UnitDefinition.organization_id.is_(None), UnitDefinition.code == "person"
+            )
+        )
+        assert isinstance(actor_id, UUID) and isinstance(unit_id, UUID)
+        connection.execute(
+            insert(Event).values(
+                id=event_id,
+                organization_id=sync_database.organization_id,
+                name="Note event",
+                start_date=date(2026, 8, 20),
+                end_date=date(2026, 8, 20),
+                base_expected_attendance=1,
+                budget_amount=Decimal("0"),
+                currency="CZK",
+                created_by_user_id=actor_id,
+            )
+        )
+        connection.execute(
+            insert(EventDay).values(
+                id=event_day_id,
+                event_id=event_id,
+                calendar_date=date(2026, 8, 20),
+                is_visible=True,
+                provenance="range_generated",
+                created_by_user_id=actor_id,
+            )
+        )
+        connection.execute(
+            insert(EventMealRole).values(
+                id=event_meal_role_id,
+                event_id=event_id,
+                built_in_translation_key="meal_role.dinner",
+                position_key="a",
+                created_by_user_id=actor_id,
+            )
+        )
+        connection.execute(
+            insert(Recipe).values(
+                id=recipe_id,
+                organization_id=sync_database.organization_id,
+                current_version_id=recipe_version_id,
+                created_by_user_id=actor_id,
+            )
+        )
+        connection.execute(
+            insert(RecipeVersion).values(
+                id=recipe_version_id,
+                organization_id=sync_database.organization_id,
+                recipe_id=recipe_id,
+                name="Note recipe",
+                scaling_unit_id=unit_id,
+                base_scaling_amount=Decimal("1"),
+                round_suggestions_up=False,
+                published_by_user_id=actor_id,
+            )
+        )
+    installation_id = _installation(sync_database)
+    with TestClient(create_app(_settings()), base_url="https://testserver") as client:
+        _sign_in(client, "dummy-member")
+        schedule = _schedule_recipe_command(
+            mutation_id=uuid4(), scheduled_recipe_id=scheduled_recipe_id, event_id=event_id,
+            event_day_id=event_day_id, event_meal_role_id=event_meal_role_id,
+            recipe_id=recipe_id, recipe_version_id=recipe_version_id,
+        )
+        schedule_response = client.post(
+            "/api/v1/sync/push", json=_body(sync_database, installation_id, [schedule])
+        )
+        assert schedule_response.json()["outcomes"][0]["status"] == "accepted"
+        note = _scheduled_recipe_note_command(
+            mutation_id=uuid4(), event_id=event_id, scheduled_recipe_id=scheduled_recipe_id,
+            note="  Friday menu  ",
+        )
+        body = _body(sync_database, installation_id, [note])
+        outcome = client.post("/api/v1/sync/push", json=body).json()["outcomes"][0]
+        assert outcome["status"] == "accepted"
+        assert outcome["command_kind"] == "scheduled_recipe.note"
+        assert client.post("/api/v1/sync/push", json=body).json()["outcomes"][0]["replayed"]
+        for invalid_note in (123, "bad\x00note", "x" * 4001):
+            malformed = _scheduled_recipe_note_command(
+                mutation_id=uuid4(), event_id=event_id,
+                scheduled_recipe_id=scheduled_recipe_id, note=invalid_note,
+            )
+            assert client.post(
+                "/api/v1/sync/push", json=_body(sync_database, installation_id, [malformed])
+            ).json()["outcomes"][0]["status"] == "rejected"
+
+
 def _scheduled_ingredient_override_command(
     *,
     mutation_id: UUID,

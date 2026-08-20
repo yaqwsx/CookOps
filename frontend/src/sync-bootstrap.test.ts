@@ -991,6 +991,102 @@ describe("bootstrapOrganization", () => {
     ).resolves.toMatchObject({ fields: { diner_count: 20 } });
   });
 
+  it("rebuilds a pending scheduled recipe note after its pending schedule", async () => {
+    const ids = {
+      event: "3d8b2b21-c378-4574-9e46-9338c81305ef",
+      day: "4d8b2b21-c378-4574-9e46-9338c81305ef",
+      role: "5d8b2b21-c378-4574-9e46-9338c81305ef",
+      recipe: "6d8b2b21-c378-4574-9e46-9338c81305ef",
+      version: "7d8b2b21-c378-4574-9e46-9338c81305ef",
+      scheduled: "8d8b2b21-c378-4574-9e46-9338c81305ef",
+      malformed: "9d8b2b21-c378-4574-9e46-9338c81305ef",
+    };
+    await localDb.outbox.bulkAdd([
+      {
+        id: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+        userId,
+        organizationId,
+        commandType: "scheduled_recipe.schedule",
+        payload: {
+          scheduled_recipe_id: ids.scheduled,
+          event_id: ids.event,
+          event_day_id: ids.day,
+          event_meal_role_id: ids.role,
+          recipe_id: ids.recipe,
+          recipe_version_id: ids.version,
+        },
+        actionAt: "2026-08-07T11:00:00.000Z",
+        createdAt: "2026-08-07T11:00:00.000Z",
+        sequence: 1,
+        state: "pending",
+      },
+      {
+        id: "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb",
+        userId,
+        organizationId,
+        commandType: "scheduled_recipe.note",
+        payload: {
+          scheduled_recipe_id: ids.scheduled,
+          event_id: ids.event,
+          note: "Pending note",
+        },
+        actionAt: "2026-08-07T11:01:00.000Z",
+        createdAt: "2026-08-07T11:01:00.000Z",
+        sequence: 2,
+        state: "pending",
+      },
+      {
+        id: "cccccccc-cccc-4ccc-8ccc-cccccccccccc",
+        userId,
+        organizationId,
+        commandType: "scheduled_recipe.note",
+        payload: {
+          scheduled_recipe_id: ids.malformed,
+          event_id: ids.event,
+          note: "bad\0note",
+        },
+        actionAt: "2026-08-07T11:02:00.000Z",
+        createdAt: "2026-08-07T11:02:00.000Z",
+        sequence: 3,
+        state: "pending",
+      },
+    ]);
+    await bootstrapOrganization(userId, organizationId, {
+      fetch: vi.fn<typeof fetch>(async () =>
+        response([
+          {
+            ...organizationRecord(),
+            payload: {
+              ...organizationRecord().payload,
+              record: {
+                ...organizationRecord().payload.record,
+                base_expected_attendance: 2,
+                lifecycle: "active",
+              },
+            },
+          },
+          {
+            ...record(ids.event),
+            payload: {
+              record_schema_version: 1,
+              record: {
+                id: ids.event,
+                lifecycle: "active",
+                base_expected_attendance: 2,
+              },
+            },
+          },
+        ]),
+      ),
+    });
+    await expect(
+      localDb.optimisticOverlays.get([userId, organizationId, "scheduled_recipe", ids.scheduled]),
+    ).resolves.toMatchObject({ fields: { note: "Pending note" } });
+    await expect(
+      localDb.optimisticOverlays.get([userId, organizationId, "scheduled_recipe", ids.malformed]),
+    ).resolves.toBeUndefined();
+  });
+
   it("replays a pending scheduled-recipe move over canonical placement clocks", async () => {
     const ids = {
       event: "3d8b2b21-c378-4574-9e46-9338c81305ef",

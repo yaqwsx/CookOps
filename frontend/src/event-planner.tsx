@@ -18,6 +18,7 @@ import {
   queueScheduledRecipeLifecycle,
   queueScheduledRecipeMove,
   queueScheduledRecipeCatalogUpdate,
+  queueScheduledRecipeNote,
 } from "./scheduled-recipe";
 import {
   queueAddedOverride,
@@ -1061,6 +1062,8 @@ export function EventPlanner({
                           {item.name} ·{" "}
                           {t("planner.diners", { count: item.dinerCount })}
                           {item.retired ? ` · ${t("planner.retired")}` : null}
+                          {item.note ? <p className="planner-recipe-note">{item.note}</p> : null}
+                          {!item.retired && planner.lifecycle === "active" ? <ScheduledRecipeNoteControl item={item} eventId={eventId} organizationId={organizationId} userId={userId} /> : null}
                           {item.catalogUpdateAvailable ? (
                             <span role="status"> · {t("planner.catalogUpdateAvailable")}</span>
                           ) : null}
@@ -1156,4 +1159,10 @@ export function EventPlanner({
       ) : null}
     </section>
   );
+}
+
+function ScheduledRecipeNoteControl({ item, eventId, organizationId, userId }: { item: EventPlannerProjection["scheduled"][number]; eventId: string; organizationId: string; userId: string }) {
+  const { t } = useTranslation(); const [value, setValue] = useState(item.note ?? ""); const [error, setError] = useState(false); const [busy, setBusy] = useState(false);
+  async function save(note: string | null) { if (busy) return; setBusy(true); try { await queueScheduledRecipeNote(userId, organizationId, { scheduledRecipeId: item.id, eventId, note }); setValue(note ?? ""); setError(false); } catch { setError(true); } finally { setBusy(false); } }
+  return <form onSubmit={(event) => { event.preventDefault(); void save(value || null); }}><label>{t("planner.recipeNote")}<textarea aria-label={t("planner.recipeNote")} value={value} onChange={(event) => setValue(event.target.value)} maxLength={4000} /></label><button disabled={busy} type="submit">{t("planner.saveNote")}</button>{value ? <button disabled={busy} type="button" onClick={() => void save(null)}>{t("planner.clearNote")}</button> : null}{error ? <p role="alert">{t("planner.errors.unavailable")}</p> : null}</form>;
 }

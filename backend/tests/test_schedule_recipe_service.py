@@ -55,6 +55,10 @@ from cookops.application.scheduled_recipe_context import (
     SetScheduledRecipeContextCommand,
     set_scheduled_recipe_context,
 )
+from cookops.application.scheduled_recipe_note import (
+    SetScheduledRecipeNoteCommand,
+    set_scheduled_recipe_note,
+)
 from cookops.application.scheduled_recipe_lifecycle import (
     SetScheduledRecipeLifecycleCommand,
     set_scheduled_recipe_lifecycle,
@@ -1085,6 +1089,23 @@ def test_context_sets_manual_or_suggested_scale_with_lww_replay(
     assert payload["record"]["field_clocks"]["context"]["winning_mutation_id"] == str(
         suggestion.mutation_id
     )
+
+
+def test_note_is_canonicalized_cleared_and_lww_rejected(service_database: ServiceDatabase) -> None:
+    scheduled_recipe_id = schedule_then_override(service_database)
+    now = datetime.now(UTC)
+    command = SetScheduledRecipeNoteCommand(
+        mutation_id=uuid4(), scheduled_recipe_id=scheduled_recipe_id,
+        organization_id=service_database.organization_id, event_id=service_database.event_id,
+        note="Cafe\u0301\r\nsecond", client_wall_time=now,
+    )
+    result = asyncio.run(set_scheduled_recipe_note(service_database.sessions, context(service_database), command))
+    assert result.outcome == "accepted" and result.note == "Café\nsecond"
+    assert asyncio.run(set_scheduled_recipe_note(service_database.sessions, context(service_database), command)).replayed
+    clear = replace(command, mutation_id=uuid4(), note=None, client_wall_time=now + timedelta(seconds=1))
+    assert asyncio.run(set_scheduled_recipe_note(service_database.sessions, context(service_database), clear)).note is None
+    stale = replace(command, mutation_id=uuid4(), client_wall_time=now)
+    assert asyncio.run(set_scheduled_recipe_note(service_database.sessions, context(service_database), stale)).outcome == "partially_superseded"
 
 
 def test_member_sets_replaces_and_clears_pinned_recipe_ingredient(
