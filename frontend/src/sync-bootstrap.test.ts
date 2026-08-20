@@ -1033,6 +1033,19 @@ describe("bootstrapOrganization", () => {
     });
   });
 
+  it("does not create an overlay for a relative scheduled-recipe move", async () => {
+    const ids = { event: "3d8b2b21-c378-4574-9e46-9338c81305ef", day: "4d8b2b21-c378-4574-9e46-9338c81305ef", role: "5d8b2b21-c378-4574-9e46-9338c81305ef", scheduled: "8d8b2b21-c378-4574-9e46-9338c81305ef" };
+    for (const [entityType, entityId, fields] of [
+      ["event", ids.event, { id: ids.event, lifecycle: "active" }],
+      ["event_day", ids.day, { id: ids.day, event_id: ids.event, lifecycle: "active" }],
+      ["event_meal_role", ids.role, { id: ids.role, event_id: ids.event, lifecycle: "active" }],
+      ["scheduled_recipe", ids.scheduled, { id: ids.scheduled, event_id: ids.event, event_day_id: ids.day, event_meal_role_id: ids.role, position_key: "a" }],
+    ] as const) await localDb.canonicalRecords.put({ userId, organizationId, recordSchemaVersion: 1, entityType, entityId, fields, lifecycle: "active", fieldClocks: {}, immutable: false, updatedAt: "2026-08-07T12:00:00.000Z" });
+    await localDb.outbox.put({ id: "relative", userId, organizationId, commandType: "scheduled_recipe.move", payload: { scheduled_recipe_id: ids.scheduled, event_id: ids.event, event_day_id: ids.day, event_meal_role_id: ids.role, placement: "start" }, actionAt: "2026-08-07T12:01:00.000Z", createdAt: "2026-08-07T12:01:00.000Z", state: "pending" });
+    await bootstrapOrganization(userId, organizationId, { fetch: vi.fn<typeof fetch>(async () => response([])) });
+    await expect(localDb.optimisticOverlays.get([userId, organizationId, "scheduled_recipe", ids.scheduled])).resolves.toBeUndefined();
+  });
+
   it("does not replay a move whose bootstrap target is retired or from another event", async () => {
     const ids = {
       event: "3d8b2b21-c378-4574-9e46-9338c81305ef",

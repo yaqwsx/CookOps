@@ -491,7 +491,9 @@ def _move_scheduled_recipe_command(
     event_id: UUID,
     event_day_id: UUID,
     event_meal_role_id: UUID,
-    position_key: str = "z",
+    position_key: str | None = "z",
+    placement: str | None = None,
+    target_scheduled_recipe_id: UUID | None = None,
 ) -> dict[str, object]:
     command = _command(
         mutation_id=mutation_id,
@@ -500,10 +502,140 @@ def _move_scheduled_recipe_command(
         scheduled_recipe_id=str(scheduled_recipe_id),
         event_day_id=str(event_day_id),
         event_meal_role_id=str(event_meal_role_id),
-        position_key=position_key,
+        **({"position_key": position_key} if position_key is not None else {}),
+        **(
+            {"placement": placement, "target_scheduled_recipe_id": str(target_scheduled_recipe_id)}
+            if placement
+            else {}
+        ),
     )
     cast(dict[str, object], command["payload"])["event_id"] = str(event_id)
     return command
+
+
+def test_push_accepts_and_replays_relative_move_and_retains_invalid_targets(
+    sync_database: SyncDatabase,
+) -> None:
+    installation_id = _installation(sync_database)
+    event_id, event_day_id, event_meal_role_id = uuid4(), uuid4(), uuid4()
+    recipe_id, recipe_version_id, ingredient_id, ingredient_version_id = (uuid4() for _ in range(4))
+    with sync_database.engine.begin() as connection:
+        actor_id = connection.scalar(
+            select(OrganizationMembership.user_id).where(
+                OrganizationMembership.organization_id == sync_database.organization_id
+            )
+        )
+        unit_id = connection.scalar(
+            select(UnitDefinition.id).where(
+                UnitDefinition.organization_id.is_(None), UnitDefinition.code == "person"
+            )
+        )
+        ingredient_unit_id = connection.scalar(
+            select(UnitDefinition.id).where(
+                UnitDefinition.organization_id.is_(None), UnitDefinition.code == "g"
+            )
+        )
+        assert isinstance(actor_id, UUID) and isinstance(unit_id, UUID)
+        assert isinstance(ingredient_unit_id, UUID)
+        connection.execute(insert(Event).values(
+            id=event_id, organization_id=sync_database.organization_id, name="Move event",
+            start_date=date(2026, 8, 20), end_date=date(2026, 8, 20),
+            base_expected_attendance=1, budget_amount=Decimal("0"), currency="CZK",
+            created_by_user_id=actor_id,
+        ))
+        connection.execute(insert(EventDay).values(
+            id=event_day_id, event_id=event_id, calendar_date=date(2026, 8, 20),
+            is_visible=True, provenance="range_generated", created_by_user_id=actor_id,
+        ))
+        connection.execute(insert(EventMealRole).values(
+            id=event_meal_role_id, event_id=event_id,
+            built_in_translation_key="meal_role.dinner", position_key="a",
+            created_by_user_id=actor_id,
+        ))
+        connection.execute(insert(Recipe).values(
+            id=recipe_id, organization_id=sync_database.organization_id,
+            current_version_id=recipe_version_id, created_by_user_id=actor_id,
+        ))
+        connection.execute(insert(Ingredient).values(
+            id=ingredient_id, organization_id=sync_database.organization_id,
+            current_version_id=ingredient_version_id, created_by_user_id=actor_id,
+        ))
+        connection.execute(insert(IngredientVersion).values(
+            id=ingredient_version_id, organization_id=sync_database.organization_id,
+            ingredient_id=ingredient_id, name="Move ingredient", normalized_name="move ingredient",
+            canonical_unit_id=ingredient_unit_id, mass_per_canonical_quantity=Decimal("1"),
+            published_by_user_id=actor_id,
+        ))
+        connection.execute(insert(RecipeVersionIngredientLine).values(
+            id=uuid4(), organization_id=sync_database.organization_id, recipe_id=recipe_id,
+            recipe_version_id=recipe_version_id, line_key=uuid4(),
+            ingredient_version_id=ingredient_version_id, base_quantity=Decimal("1"),
+            position_key="a",
+        ))
+        connection.execute(insert(RecipeVersion).values(
+            id=recipe_version_id, organization_id=sync_database.organization_id,
+            recipe_id=recipe_id, name="Move recipe", scaling_unit_id=unit_id,
+            base_scaling_amount=Decimal("1"), round_suggestions_up=False,
+            published_by_user_id=actor_id,
+        ))
+    cards = [uuid4(), uuid4()]
+    with TestClient(create_app(_settings()), base_url="https://testserver") as client:
+        _sign_in(client, "dummy-member")
+        for card in cards:
+            command = _schedule_recipe_command(
+                mutation_id=uuid4(), scheduled_recipe_id=card, event_id=event_id,
+                event_day_id=event_day_id, event_meal_role_id=event_meal_role_id,
+                recipe_id=recipe_id, recipe_version_id=recipe_version_id,
+                position_key="a",
+            )
+            assert (
+                client.post(
+                    "/api/v1/sync/push",
+                    json=_body(sync_database, installation_id, [command]),
+                ).json()["outcomes"][0]["status"]
+                == "accepted"
+            )
+        move = _move_scheduled_recipe_command(
+            mutation_id=uuid4(), scheduled_recipe_id=cards[1], event_id=event_id,
+            event_day_id=event_day_id, event_meal_role_id=event_meal_role_id,
+            position_key=None, placement="before", target_scheduled_recipe_id=cards[0],
+        )
+        body = _body(sync_database, installation_id, [move])
+        outcome = client.post("/api/v1/sync/push", json=body).json()["outcomes"][0]
+        assert outcome["status"] == "accepted"
+        assert client.post("/api/v1/sync/push", json=body).json()["outcomes"][0]["replayed"]
+        mixed = {
+            **move,
+            "mutation_id": str(uuid4()),
+            "payload": {**move["payload"], "position_key": "z"},
+        }
+        assert (
+            client.post(
+                "/api/v1/sync/push",
+                json=_body(sync_database, installation_id, [mixed]),
+            ).json()["outcomes"][0]["status"]
+            == "rejected"
+        )
+        missing = {
+            **move,
+            "mutation_id": str(uuid4()),
+            "payload": {
+                **move["payload"],
+                "target_scheduled_recipe_id": str(uuid4()),
+            },
+        }
+        rejected = client.post(
+            "/api/v1/sync/push",
+            json=_body(sync_database, installation_id, [missing]),
+        ).json()["outcomes"][0]
+        assert rejected["status"] == "rejected"
+        assert (
+            client.post(
+                "/api/v1/sync/push",
+                json=_body(sync_database, installation_id, [missing]),
+            ).json()["outcomes"][0]["status"]
+            == "rejected"
+        )
 
 
 def _scheduled_recipe_attendance_command(

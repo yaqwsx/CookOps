@@ -278,7 +278,7 @@ describe("EventPlanner", () => {
     if (!source || !targets[1]) throw new Error("drag target missing");
     fireEvent.dragStart(source, { dataTransfer: transfer });
     fireEvent.drop(targets[1], { dataTransfer: transfer });
-    expect(queueScheduledRecipeMove).toHaveBeenCalledWith("a6a58bd6-214e-49af-8fae-e5f974bf8e08", ids.organization, { scheduledRecipeId: ids.recipe, eventId: ids.event, eventDayId: secondDay, eventMealRoleId: secondRole, positionKey: "a" });
+    expect(queueScheduledRecipeMove).toHaveBeenCalledWith("a6a58bd6-214e-49af-8fae-e5f974bf8e08", ids.organization, { scheduledRecipeId: ids.recipe, eventId: ids.event, eventDayId: secondDay, eventMealRoleId: secondRole, placement: "end" });
   });
 
   it("saves a day note through an accessible native textarea", async () => {
@@ -374,8 +374,7 @@ describe("EventPlanner", () => {
       />,
     );
     await user.click(await screen.findByText("Přesunout"));
-    await user.clear(screen.getByLabelText("Pořadí"));
-    await user.type(screen.getByLabelText("Pořadí"), "z9");
+    await user.selectOptions(screen.getByLabelText("Pořadí"), "start");
     await user.click(screen.getByRole("button", { name: "Přesunout sem" }));
     expect(queueScheduledRecipeMove).toHaveBeenCalledWith(
       "a6a58bd6-214e-49af-8fae-e5f974bf8e08",
@@ -385,7 +384,7 @@ describe("EventPlanner", () => {
         eventId: ids.event,
         eventDayId: ids.day,
         eventMealRoleId: ids.role,
-        positionKey: "z9",
+        placement: "start",
       },
     );
   });

@@ -475,14 +475,16 @@ async function replayOptimisticCommands(
       typeof command.payload.event_id === "string" &&
       typeof command.payload.event_day_id === "string" &&
       typeof command.payload.event_meal_role_id === "string" &&
-      typeof command.payload.position_key === "string" &&
+      ((typeof command.payload.position_key === "string" && command.payload.placement === undefined && command.payload.target_scheduled_recipe_id === undefined) ||
+        (command.payload.position_key === undefined && ["before", "after", "start", "end"].includes(String(command.payload.placement)) &&
+          ((command.payload.placement === "before" || command.payload.placement === "after") ? typeof command.payload.target_scheduled_recipe_id === "string" && uuid.test(command.payload.target_scheduled_recipe_id) && command.payload.target_scheduled_recipe_id !== command.payload.scheduled_recipe_id : command.payload.target_scheduled_recipe_id === undefined))) &&
       [
         command.payload.scheduled_recipe_id,
         command.payload.event_id,
         command.payload.event_day_id,
         command.payload.event_meal_role_id,
       ].every((id) => uuid.test(id)) &&
-      /^[0-9A-Za-z]{1,255}$/.test(command.payload.position_key)
+      (command.payload.position_key === undefined || /^[0-9A-Za-z]{1,255}$/.test(command.payload.position_key))
     ) {
       const canonicalEvent = await localDb.canonicalRecords.get([
         userId,
@@ -518,9 +520,10 @@ async function replayOptimisticCommands(
         role.fields.event_id !== command.payload.event_id
       )
         continue;
+      if (typeof command.payload.position_key !== "string") continue;
       await localDb.optimisticOverlays.put({
         ...scheduled,
-        fields: { ...scheduled.fields, ...command.payload },
+        fields: { ...scheduled.fields, event_day_id: command.payload.event_day_id, event_meal_role_id: command.payload.event_meal_role_id, ...(command.payload.position_key ? { position_key: command.payload.position_key } : {}) },
         fieldClocks: {
           ...scheduled.fieldClocks,
           placement: { mutationId: command.id, actionAt: command.actionAt },

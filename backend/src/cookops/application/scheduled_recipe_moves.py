@@ -3,7 +3,7 @@
 import hashlib
 import json
 import unicodedata
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import UTC, datetime, timedelta
 from typing import Literal
 from uuid import UUID
@@ -31,6 +31,24 @@ from cookops.persistence.models import (
 
 COMMAND_KIND = "scheduled_recipe.move"
 COMMAND_SCHEMA_VERSION = 1
+_ORDER_ALPHABET = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz"
+
+
+def _between(left: str, right: str) -> str | None:
+    """Return a C-collation alphanumeric key strictly between neighbours."""
+    prefix = ""
+    for index in range(255):
+        low = _ORDER_ALPHABET.index(left[index]) if index < len(left) else -1
+        high = (
+            _ORDER_ALPHABET.index(right[index])
+            if index < len(right)
+            else len(_ORDER_ALPHABET)
+        )
+        if high - low > 1:
+            candidate = prefix + _ORDER_ALPHABET[low + 1]
+            return candidate if left < candidate and (not right or candidate < right) else None
+        prefix += _ORDER_ALPHABET[low] if low >= 0 else _ORDER_ALPHABET[0]
+    return None
 
 
 @dataclass(frozen=True, slots=True)
@@ -41,8 +59,10 @@ class MoveScheduledRecipeCommand:
     event_id: UUID
     event_day_id: UUID
     event_meal_role_id: UUID
-    position_key: str
+    position_key: str | None
     client_wall_time: datetime
+    placement: Literal["before", "after", "start", "end"] | None = None
+    target_scheduled_recipe_id: UUID | None = None
     logical_operation_id: UUID | None = None
 
 
@@ -55,8 +75,8 @@ class MoveScheduledRecipeResult:
     event_day_id: UUID
     event_meal_role_id: UUID
     position_key: str
-    first_change_sequence: int
-    last_change_sequence: int
+    first_change_sequence: int | None
+    last_change_sequence: int | None
     replayed: bool
     outcome: Literal["accepted", "partially_superseded"] = "accepted"
 
@@ -69,7 +89,9 @@ class _PreparedCommand:
     event_id: UUID
     event_day_id: UUID
     event_meal_role_id: UUID
-    position_key: str
+    position_key: str | None
+    placement: Literal["before", "after", "start", "end"] | None
+    target_scheduled_recipe_id: UUID | None
     client_wall_time: datetime
     logical_operation_id: UUID | None
     violations: tuple[FieldViolation, ...]
@@ -110,6 +132,10 @@ def _request_hash(command: MoveScheduledRecipeCommand) -> bytes:
                 else None,
                 "organization_id": _raw_uuid(command.organization_id),
                 "position_key": _raw_position(command.position_key),
+                "placement": command.placement,
+                "target_scheduled_recipe_id": _raw_uuid(command.target_scheduled_recipe_id)
+                if command.target_scheduled_recipe_id is not None
+                else None,
                 "scheduled_recipe_id": _raw_uuid(command.scheduled_recipe_id),
             },
             ensure_ascii=False,
@@ -126,7 +152,7 @@ def _prepare(command: MoveScheduledRecipeCommand) -> _PreparedCommand:
         if isinstance(command.position_key, str)
         else ""
     )
-    if (
+    if command.placement is None and (
         not isinstance(command.position_key, str)
         or not position_key
         or len(position_key) > 255
@@ -134,6 +160,41 @@ def _prepare(command: MoveScheduledRecipeCommand) -> _PreparedCommand:
         or not position_key.isalnum()
     ):
         violations.append(FieldViolation("position_key", "must_be_ascii_alphanumeric_at_most_255"))
+    if command.placement is not None and command.placement not in (
+        "before",
+        "after",
+        "start",
+        "end",
+    ):
+        violations.append(FieldViolation("placement", "must_be_before_after_start_or_end"))
+    if command.placement is not None and command.position_key is not None:
+        violations.append(FieldViolation("position_key", "not_allowed_for_relative_placement"))
+    if command.placement is None and command.target_scheduled_recipe_id is not None:
+        violations.append(
+            FieldViolation("target_scheduled_recipe_id", "not_valid_for_raw_placement")
+        )
+    if command.placement in ("before", "after") and not isinstance(
+        command.target_scheduled_recipe_id, UUID
+    ):
+        violations.append(
+            FieldViolation("target_scheduled_recipe_id", "required_for_relative_placement")
+        )
+    if command.placement in ("start", "end") and command.target_scheduled_recipe_id is not None:
+        violations.append(
+            FieldViolation("target_scheduled_recipe_id", "not_valid_for_boundary_placement")
+        )
+    if command.target_scheduled_recipe_id is not None and not isinstance(
+        command.target_scheduled_recipe_id, UUID
+    ):
+        violations.append(FieldViolation("target_scheduled_recipe_id", "must_be_uuid"))
+    if (
+        command.placement in ("before", "after")
+        and isinstance(command.target_scheduled_recipe_id, UUID)
+        and command.target_scheduled_recipe_id == command.scheduled_recipe_id
+    ):
+        violations.append(
+            FieldViolation("target_scheduled_recipe_id", "must_not_match_scheduled_recipe")
+        )
     has_timezone = (
         isinstance(command.client_wall_time, datetime)
         and command.client_wall_time.tzinfo is not None
@@ -170,7 +231,11 @@ def _prepare(command: MoveScheduledRecipeCommand) -> _PreparedCommand:
         event_meal_role_id=command.event_meal_role_id
         if isinstance(command.event_meal_role_id, UUID)
         else UUID(int=0),
-        position_key=position_key,
+        position_key=position_key or None,
+        placement=command.placement,
+        target_scheduled_recipe_id=command.target_scheduled_recipe_id
+        if isinstance(command.target_scheduled_recipe_id, UUID)
+        else None,
         client_wall_time=command.client_wall_time.astimezone(UTC)
         if has_timezone
         else datetime(1970, 1, 1, tzinfo=UTC),
@@ -207,8 +272,8 @@ def _record(scheduled: ScheduledRecipe, clock: FieldClock | None) -> dict[str, o
 def _result(
     prepared: _PreparedCommand,
     scheduled: ScheduledRecipe,
-    first: int,
-    last: int,
+    first: int | None,
+    last: int | None,
     replayed: bool,
     outcome: Literal["accepted", "partially_superseded"],
 ) -> MoveScheduledRecipeResult:
@@ -246,12 +311,9 @@ def _retained_result(mutation: Mutation) -> MoveScheduledRecipeResult:
     record = payload.get("scheduled_recipe")
     outcome = payload.get("outcome")
     first, last = mutation.first_change_sequence, mutation.last_change_sequence
-    if (
-        not isinstance(record, dict)
-        or outcome not in ("accepted", "partially_superseded")
-        or first is None
-        or last is None
-    ):
+    if not isinstance(record, dict) or outcome not in ("accepted", "partially_superseded"):
+        raise RuntimeError("Retained scheduled recipe move has an invalid outcome payload")
+    if (first is None) != (last is None):
         raise RuntimeError("Retained scheduled recipe move has an invalid outcome payload")
     try:
         return MoveScheduledRecipeResult(
@@ -428,6 +490,7 @@ async def move_scheduled_recipe(
                             )
                         )
                     else:
+                        rekeyed: list[ScheduledRecipe] = []
                         clock = await session.scalar(
                             select(FieldClock)
                             .where(
@@ -441,11 +504,99 @@ async def move_scheduled_recipe(
                         wins = clock is None or (
                             prepared.client_wall_time,
                             prepared.mutation_id,
-                        ) > (
-                            clock.winning_client_wall_time,
-                            clock.winning_mutation_id,
-                        )
-                        if wins:
+                        ) > (clock.winning_client_wall_time, clock.winning_mutation_id)
+                        stale_relative = prepared.placement is not None and not wins
+                        if stale_relative and prepared.placement in ("before", "after"):
+                            target = await session.scalar(
+                                select(ScheduledRecipe).where(
+                                    ScheduledRecipe.id == prepared.target_scheduled_recipe_id,
+                                    ScheduledRecipe.organization_id == prepared.organization_id,
+                                    ScheduledRecipe.event_id == prepared.event_id,
+                                    ScheduledRecipe.event_day_id == prepared.event_day_id,
+                                    ScheduledRecipe.event_meal_role_id
+                                    == prepared.event_meal_role_id,
+                                    ScheduledRecipe.retired_at.is_(None),
+                                )
+                            )
+                            if target is None:
+                                deferred = _validation(
+                                    FieldViolation(
+                                        "target_scheduled_recipe_id",
+                                        "must_be_active_in_target_scope",
+                                    )
+                                )
+                        if prepared.placement is not None and not stale_relative:
+                            await session.execute(
+                                text("SELECT pg_advisory_xact_lock(:key)"),
+                                {
+                                    "key": _advisory_lock_key(
+                                        "scheduled_recipe_order", scheduled.event_id
+                                    )
+                                },
+                            )
+                            rows = (
+                                await session.scalars(
+                                    select(ScheduledRecipe)
+                                    .where(
+                                        ScheduledRecipe.organization_id == prepared.organization_id,
+                                        ScheduledRecipe.event_id == prepared.event_id,
+                                        ScheduledRecipe.event_day_id == prepared.event_day_id,
+                                        ScheduledRecipe.event_meal_role_id
+                                        == prepared.event_meal_role_id,
+                                        ScheduledRecipe.retired_at.is_(None),
+                                    )
+                                    .order_by(ScheduledRecipe.position_key, ScheduledRecipe.id)
+                                    .with_for_update()
+                                )
+                            ).all()
+                            target = next(
+                                (
+                                    row
+                                    for row in rows
+                                    if row.id == prepared.target_scheduled_recipe_id
+                                ),
+                                None,
+                            )
+                            if prepared.placement in ("before", "after") and target is None:
+                                deferred = _validation(
+                                    FieldViolation(
+                                        "target_scheduled_recipe_id",
+                                        "must_be_active_in_target_scope",
+                                    )
+                                )
+                            else:
+                                if not wins:
+                                    prepared = replace(
+                                        prepared,
+                                        placement=None,
+                                        position_key=scheduled.position_key,
+                                    )
+                                ordered = [row for row in rows if row.id != scheduled.id]
+                                if prepared.placement == "start":
+                                    index = 0
+                                elif prepared.placement == "end":
+                                    index = len(ordered)
+                                else:
+                                    assert target is not None
+                                    index = ordered.index(target) + (prepared.placement == "after")
+                                left = ordered[index - 1].position_key if index else ""
+                                right = ordered[index].position_key if index < len(ordered) else ""
+                                candidate = _between(left, right)
+                                if candidate is None:
+                                    width = max(1, len(str(len(ordered))))
+                                    for row_index, row in enumerate(
+                                        ordered[:index] + [scheduled] + ordered[index:]
+                                    ):
+                                        new_key = str(row_index).zfill(width)
+                                        if row.position_key != new_key:
+                                            row.position_key = new_key
+                                            rekeyed.append(row)
+                                    candidate = scheduled.position_key
+                                else:
+                                    rekeyed = [scheduled]
+                                prepared = replace(prepared, position_key=candidate)
+                        if deferred is None and wins:
+                            assert prepared.position_key is not None
                             scheduled.event_day_id = prepared.event_day_id
                             scheduled.event_meal_role_id = prepared.event_meal_role_id
                             scheduled.position_key = prepared.position_key
@@ -465,37 +616,70 @@ async def move_scheduled_recipe(
                             outcome: Literal["accepted", "partially_superseded"] = "accepted"
                         else:
                             outcome = "partially_superseded"
-                        first, last = await _reserve_change_range(
-                            session, prepared.organization_id, prepared.mutation_id, 1
+                        changed = (
+                            []
+                            if stale_relative
+                            else
+                            rekeyed
+                            if prepared.placement is not None and deferred is None and rekeyed
+                            else [scheduled]
                         )
-                        result = _result(prepared, scheduled, first, last, False, outcome)
-                        session.add(
-                            OrganizationChange(
-                                organization_id=prepared.organization_id,
-                                sequence=first,
-                                mutation_id=prepared.mutation_id,
-                                entity_id=scheduled.id,
-                                entity_kind="scheduled_recipe",
-                                operation="upsert",
-                                payload={
-                                    "record_schema_version": 1,
-                                    "record": _record(scheduled, clock),
-                                },
+                        first = last = None
+                        if deferred is None and not stale_relative:
+                            first, last = await _reserve_change_range(
+                                session,
+                                prepared.organization_id,
+                                prepared.mutation_id,
+                                len(changed),
                             )
-                        )
-                        session.add(
-                            _mutation(
+                        if deferred is None:
+                            result = _result(prepared, scheduled, first, last, False, outcome)
+                        for sequence, changed_row in (
+                            enumerate(changed, first or 0)
+                            if deferred is None and not stale_relative
+                            else ()
+                        ):
+                            row_clock = (
+                                clock
+                                if changed_row.id == scheduled.id
+                                else await session.scalar(
+                                    select(FieldClock).where(
+                                        FieldClock.organization_id == prepared.organization_id,
+                                        FieldClock.entity_kind == "scheduled_recipe",
+                                        FieldClock.entity_id == changed_row.id,
+                                        FieldClock.field_name == "placement",
+                                    )
+                                )
+                            )
+                            session.add(
+                                OrganizationChange(
+                                    organization_id=prepared.organization_id,
+                                    sequence=sequence,
+                                    mutation_id=prepared.mutation_id,
+                                    entity_id=changed_row.id,
+                                    entity_kind="scheduled_recipe",
+                                    operation="upsert",
+                                    payload={
+                                        "record_schema_version": 1,
+                                        "record": _record(changed_row, row_clock),
+                                    },
+                                )
+                            )
+                        if deferred is None:
+                            assert result is not None
+                            session.add(
+                                _mutation(
                                 prepared,
                                 context,
                                 role,
                                 request_hash,
                                 outcome,
                                 _payload(result),
-                                first,
-                                last,
+                                None if stale_relative else first,
+                                None if stale_relative else last,
+                                )
                             )
-                        )
-        if deferred is not None:
+        if deferred is not None and retained is None:
             session.add(
                 _mutation(prepared, context, role, request_hash, "rejected", _error(deferred))
             )

@@ -498,7 +498,8 @@ function MoveRecipe({
   const { t, i18n } = useTranslation();
   const [dayId, setDayId] = useState(scheduled.dayId);
   const [roleId, setRoleId] = useState(scheduled.roleId);
-  const [positionKey, setPositionKey] = useState(scheduled.position);
+  const [placement, setPlacement] = useState<"start" | "end" | "before" | "after">("end");
+  const [targetId, setTargetId] = useState("");
   const [error, setError] = useState(false);
   const inFlight = useRef(false);
 
@@ -514,7 +515,8 @@ function MoveRecipe({
         eventId,
         eventDayId: dayId,
         eventMealRoleId: roleId,
-        positionKey,
+        placement,
+        ...(targetId ? { targetScheduledRecipeId: targetId } : {}),
       });
       setError(false);
     } catch {
@@ -554,16 +556,17 @@ function MoveRecipe({
             ))}
           </select>
         </label>
-        <label>
-          {t("planner.position")}
-          <input
-            maxLength={255}
-            onChange={(event) => setPositionKey(event.target.value)}
-            pattern="[0-9A-Za-z]+"
-            required
-            value={positionKey}
-          />
+        <label>{t("planner.position")}
+          <select value={placement} onChange={(event) => setPlacement(event.target.value as typeof placement)}>
+            <option value="start">{t("planner.moveToStart")}</option><option value="end">{t("planner.moveToEnd")}</option>
+            <option value="before">{t("planner.moveBefore")}</option><option value="after">{t("planner.moveAfter")}</option>
+          </select>
         </label>
+        {(placement === "before" || placement === "after") ? <label>{t("planner.target")}
+          <select required value={targetId} onChange={(event) => setTargetId(event.target.value)}><option value="">—</option>
+            {planner.scheduled.filter((item) => item.dayId === dayId && item.roleId === roleId && item.id !== scheduled.id && !item.retired).map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}
+          </select>
+        </label> : null}
         <button type="submit">{t("planner.moveTo")}</button>
         {error ? <p role="alert">{t("planner.errors.unavailable")}</p> : null}
       </form>
@@ -930,7 +933,7 @@ export function EventPlanner({
       if (payload.kind === "recipe") {
         await queueRecipeSchedule(userId, organizationId, { eventId, eventDayId: dayId, eventMealRoleId: roleId, recipeId: payload.id });
       } else {
-        await queueScheduledRecipeMove(userId, organizationId, { scheduledRecipeId: payload.id, eventId, eventDayId: dayId, eventMealRoleId: roleId, positionKey: "a" });
+        await queueScheduledRecipeMove(userId, organizationId, { scheduledRecipeId: payload.id, eventId, eventDayId: dayId, eventMealRoleId: roleId, placement: "end" });
       }
     } catch {
       // The existing planner remains authoritative when a drop races with a lifecycle change.

@@ -657,7 +657,24 @@ class MoveScheduledRecipePayload(BaseModel):
     event_id: UUID
     event_day_id: UUID
     event_meal_role_id: UUID
-    position_key: str
+    position_key: str | None = Field(
+        default=None, min_length=1, max_length=255, pattern=r"^[0-9A-Za-z]+$"
+    )
+    placement: Literal["before", "after", "start", "end"] | None = None
+    target_scheduled_recipe_id: UUID | None = None
+
+    @model_validator(mode="after")
+    def validate_placement_shape(self) -> "MoveScheduledRecipePayload":
+        relative = self.placement is not None
+        if relative == (self.position_key is not None):
+            raise ValueError("exactly one of position_key or placement is required")
+        if not relative and self.target_scheduled_recipe_id is not None:
+            raise ValueError("target_scheduled_recipe_id is not valid for raw placement")
+        if self.placement in ("before", "after") and self.target_scheduled_recipe_id is None:
+            raise ValueError("target_scheduled_recipe_id is required")
+        if self.placement in ("start", "end") and self.target_scheduled_recipe_id is not None:
+            raise ValueError("target_scheduled_recipe_id is not valid")
+        return self
     logical_operation_id: UUID | None = None
 
 
@@ -1358,6 +1375,8 @@ def _push_command(command: PushCommandRequest, organization_id: UUID) -> SyncCom
                 event_day_id=move_payload.event_day_id,
                 event_meal_role_id=move_payload.event_meal_role_id,
                 position_key=move_payload.position_key,
+                placement=move_payload.placement,
+                target_scheduled_recipe_id=move_payload.target_scheduled_recipe_id,
                 client_wall_time=command.client_wall_time,
                 logical_operation_id=move_payload.logical_operation_id,
             )

@@ -247,6 +247,14 @@ describe("offline recipe scheduling", () => {
     ).resolves.toMatchObject({ fields: { position_key: "z9" } });
   });
 
+  it("queues relative placement without inventing an optimistic position key", async () => {
+    await seed();
+    await localDb.canonicalRecords.put({ userId: ids.user, organizationId: ids.organization, recordSchemaVersion: 1, entityType: "scheduled_recipe", entityId: ids.scheduled, fields: { id: ids.scheduled, event_id: ids.event, recipe_id: ids.recipe, recipe_version_id: ids.version, event_day_id: ids.day, event_meal_role_id: ids.role, position_key: "a" }, lifecycle: "active", fieldClocks: {}, immutable: false, updatedAt: "2026-08-07T12:00:00.000Z" });
+    await queueScheduledRecipeMove(ids.user, ids.organization, { scheduledRecipeId: ids.scheduled, eventId: ids.event, eventDayId: ids.day, eventMealRoleId: ids.role, placement: "start" });
+    await expect(localDb.outbox.toArray()).resolves.toEqual([expect.objectContaining({ payload: expect.objectContaining({ placement: "start" }) })]);
+    await expect(localDb.optimisticOverlays.get([ids.user, ids.organization, "scheduled_recipe", ids.scheduled])).resolves.toBeUndefined();
+  });
+
   it("keeps a canonical archived event read-only despite a stale active overlay", async () => {
     await seed();
     await localDb.canonicalRecords.update(

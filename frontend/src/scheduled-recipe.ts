@@ -16,7 +16,9 @@ export type MoveScheduledRecipeInput = {
   eventId: string;
   eventDayId: string;
   eventMealRoleId: string;
-  positionKey: string;
+  positionKey?: string;
+  placement?: "before" | "after" | "start" | "end";
+  targetScheduledRecipeId?: string;
 };
 
 export type ScheduledRecipeCatalogUpdateInput = {
@@ -433,12 +435,11 @@ export async function queueScheduledRecipeMove(
   organizationId: string,
   input: MoveScheduledRecipeInput,
 ): Promise<void> {
-  if (
-    !Object.entries(input)
-      .filter(([key]) => key !== "positionKey")
-      .every(([, value]) => uuid.test(value)) ||
-    !/^[0-9A-Za-z]{1,255}$/.test(input.positionKey)
-  )
+  const relativePlacement = input.placement;
+  if (![input.scheduledRecipeId, input.eventId, input.eventDayId, input.eventMealRoleId].every((value) => uuid.test(value)) ||
+    (relativePlacement !== undefined && !["before", "after", "start", "end"].includes(relativePlacement)) ||
+    (input.positionKey !== undefined && (input.placement !== undefined || input.targetScheduledRecipeId !== undefined || !/^[0-9A-Za-z]{1,255}$/.test(input.positionKey))) ||
+    (input.positionKey === undefined && (relativePlacement === undefined || ((relativePlacement === "before" || relativePlacement === "after") ? (!uuid.test(input.targetScheduledRecipeId ?? "") || input.targetScheduledRecipeId === input.scheduledRecipeId) : input.targetScheduledRecipeId !== undefined))))
     throw new Error("selection");
   const actionAt = new Date().toISOString();
   const mutationId = crypto.randomUUID();
@@ -447,7 +448,9 @@ export async function queueScheduledRecipeMove(
     event_id: input.eventId,
     event_day_id: input.eventDayId,
     event_meal_role_id: input.eventMealRoleId,
-    position_key: input.positionKey,
+    ...(input.positionKey ? { position_key: input.positionKey } : {}),
+    ...(input.placement ? { placement: input.placement } : {}),
+    ...(input.targetScheduledRecipeId ? { target_scheduled_recipe_id: input.targetScheduledRecipeId } : {}),
   };
   await localDb.transaction(
     "rw",
@@ -507,15 +510,17 @@ export async function queueScheduledRecipeMove(
         role.fields.event_id !== input.eventId
       )
         throw new Error("selection");
-      await localDb.optimisticOverlays.put({
-        ...scheduled,
-        fields: { ...scheduled.fields, ...payload },
-        fieldClocks: {
-          ...scheduled.fieldClocks,
-          placement: { mutationId, actionAt },
-        },
-        updatedAt: actionAt,
-      });
+      if (input.positionKey !== undefined) {
+        await localDb.optimisticOverlays.put({
+          ...scheduled,
+          fields: { ...scheduled.fields, ...payload },
+          fieldClocks: {
+            ...scheduled.fieldClocks,
+            placement: { mutationId, actionAt },
+          },
+          updatedAt: actionAt,
+        });
+      }
       await appendOutboxCommand({
         id: mutationId,
         userId,

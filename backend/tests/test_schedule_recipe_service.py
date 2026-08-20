@@ -62,6 +62,7 @@ from cookops.application.scheduled_recipe_lifecycle import (
 from cookops.application.scheduled_recipe_moves import (
     MoveScheduledRecipeCommand,
     MoveScheduledRecipeResult,
+    _between,
     _prepare,
     move_scheduled_recipe,
 )
@@ -437,13 +438,15 @@ def schedule_command(
     )
 
 
-def schedule_then_override(database: ServiceDatabase) -> UUID:
+def schedule_then_override(database: ServiceDatabase, *, position_key: str = "b") -> UUID:
     scheduled_recipe_id = uuid4()
     asyncio.run(
         schedule_recipe(
             database.sessions,
             context(database),
-            schedule_command(database, scheduled_recipe_id=scheduled_recipe_id),
+            schedule_command(
+                database, scheduled_recipe_id=scheduled_recipe_id, position_key=position_key
+            ),
         )
     )
     return scheduled_recipe_id
@@ -456,7 +459,9 @@ def move_command(
     mutation_id: UUID | None = None,
     event_day_id: UUID | None = None,
     event_meal_role_id: UUID | None = None,
-    position_key: str = "z",
+    position_key: str | None = "z",
+    placement: Literal["before", "after", "start", "end"] | None = None,
+    target_scheduled_recipe_id: UUID | None = None,
     client_wall_time: datetime | None = None,
 ) -> MoveScheduledRecipeCommand:
     return MoveScheduledRecipeCommand(
@@ -468,6 +473,8 @@ def move_command(
         event_meal_role_id=event_meal_role_id or database.event_role_id,
         position_key=position_key,
         client_wall_time=client_wall_time or datetime.now(UTC),
+        placement=placement,
+        target_scheduled_recipe_id=target_scheduled_recipe_id,
     )
 
 
@@ -1734,6 +1741,174 @@ def test_member_moves_a_scheduled_recipe_with_lww_placement_and_feed(
     assert bootstrap_placement["winning_mutation_id"] == str(command.mutation_id)
 
 
+@pytest.mark.parametrize(
+    ("left", "right", "expected"), [("a", "z", "b"), ("a", "a", None), ("a", "a0", None)]
+)
+def test_between_requires_a_strict_interval(left: str, right: str, expected: str | None) -> None:
+    assert _between(left, right) == expected
+
+
+def test_relative_move_rekeys_default_positions_and_records_each_change(
+    service_database: ServiceDatabase,
+) -> None:
+    scheduled = [schedule_then_override(service_database, position_key="a") for _ in range(3)]
+    with service_database.sync_engine.connect() as connection:
+        ordered = connection.execute(
+            select(ScheduledRecipe.id)
+            .where(ScheduledRecipe.id.in_(scheduled))
+            .order_by(ScheduledRecipe.position_key, ScheduledRecipe.id)
+        ).scalars().all()
+    first, middle, source = ordered
+    command = move_command(
+        service_database,
+        source,
+        position_key=None,
+        placement="before",
+        target_scheduled_recipe_id=middle,
+    )
+    result = asyncio.run(
+        move_scheduled_recipe(service_database.sessions, context(service_database), command)
+    )
+    assert result.outcome == "accepted"
+    with service_database.sync_engine.connect() as connection:
+        rows = connection.execute(
+            select(ScheduledRecipe.id, ScheduledRecipe.position_key)
+            .where(ScheduledRecipe.id.in_((first, middle, source)))
+            .order_by(ScheduledRecipe.position_key, ScheduledRecipe.id)
+        ).all()
+        assert [row[0] for row in rows] == [first, source, middle]
+        assert [row[1] for row in rows] == ["0", "1", "2"]
+        changes = connection.execute(
+            select(OrganizationChange.entity_id, OrganizationChange.payload)
+            .where(OrganizationChange.mutation_id == command.mutation_id)
+        ).all()
+        assert {row[0] for row in changes} == {first, middle, source}
+        assert all(
+            isinstance(row[1]["record"]["field_clocks"].get("placement"), dict)
+            for row in changes
+        )
+
+
+@pytest.mark.parametrize("placement", ["before", "after"])
+def test_relative_move_persists_order_and_position_clock(
+    service_database: ServiceDatabase, placement: Literal["before", "after"]
+) -> None:
+    source = schedule_then_override(service_database)
+    target = schedule_then_override(service_database)
+    command = move_command(
+        service_database,
+        source,
+        position_key=None,
+        placement=placement,
+        target_scheduled_recipe_id=target,
+    )
+    result = asyncio.run(
+        move_scheduled_recipe(service_database.sessions, context(service_database), command)
+    )
+    assert result.outcome == "accepted"
+    with service_database.sync_engine.connect() as connection:
+        positions = {
+            row.id: row.position_key
+            for row in connection.execute(
+                select(ScheduledRecipe.id, ScheduledRecipe.position_key).where(
+                    ScheduledRecipe.id.in_((source, target))
+                )
+            ).all()
+        }
+        assert (positions[source] < positions[target]) is (placement == "before")
+        assert (
+            connection.scalar(
+                select(FieldClock.winning_mutation_id).where(
+                    FieldClock.entity_id == source, FieldClock.field_name == "placement"
+                )
+            )
+            == command.mutation_id
+        )
+
+
+def test_relative_move_replay_and_stale_outcome_are_retained(
+    service_database: ServiceDatabase,
+) -> None:
+    source, target = (
+        schedule_then_override(service_database),
+        schedule_then_override(service_database),
+    )
+    command = move_command(
+        service_database,
+        source,
+        position_key=None,
+        placement="before",
+        target_scheduled_recipe_id=target,
+    )
+    first = asyncio.run(
+        move_scheduled_recipe(service_database.sessions, context(service_database), command)
+    )
+    replay = asyncio.run(
+        move_scheduled_recipe(service_database.sessions, context(service_database), command)
+    )
+    assert first.outcome == replay.outcome == "accepted" and replay.replayed
+    stale = replace(
+        command,
+        mutation_id=uuid4(),
+        client_wall_time=command.client_wall_time - timedelta(seconds=1),
+        placement="after",
+    )
+    with service_database.sync_engine.connect() as connection:
+        before_rows = connection.execute(
+            select(
+                ScheduledRecipe.id,
+                ScheduledRecipe.event_day_id,
+                ScheduledRecipe.event_meal_role_id,
+                ScheduledRecipe.position_key,
+            )
+            .where(ScheduledRecipe.id.in_((source, target)))
+        ).all()
+        before_clock = connection.scalar(
+            select(FieldClock.winning_mutation_id).where(
+                FieldClock.entity_id == source, FieldClock.field_name == "placement"
+            )
+        )
+        before_changes = connection.scalar(select(func.count()).select_from(OrganizationChange))
+    stale_result = asyncio.run(
+        move_scheduled_recipe(service_database.sessions, context(service_database), stale)
+    )
+    stale_replay = asyncio.run(
+        move_scheduled_recipe(service_database.sessions, context(service_database), stale)
+    )
+    assert (
+        stale_result.outcome == stale_replay.outcome == "partially_superseded"
+        and stale_replay.replayed
+        and stale_result.position_key
+        == stale_replay.position_key
+        == next(row.position_key for row in before_rows if row.id == source)
+    )
+    with service_database.sync_engine.connect() as connection:
+        assert connection.execute(
+            select(
+                ScheduledRecipe.id,
+                ScheduledRecipe.event_day_id,
+                ScheduledRecipe.event_meal_role_id,
+                ScheduledRecipe.position_key,
+            )
+            .where(ScheduledRecipe.id.in_((source, target)))
+        ).all() == before_rows
+        assert connection.scalar(
+            select(FieldClock.winning_mutation_id).where(
+                FieldClock.entity_id == source, FieldClock.field_name == "placement"
+            )
+        ) == before_clock
+        assert (
+            connection.scalar(select(func.count()).select_from(OrganizationChange))
+            == before_changes
+        )
+        retained_ranges = connection.execute(
+            select(Mutation.first_change_sequence, Mutation.last_change_sequence).where(
+                Mutation.id == stale.mutation_id
+            )
+        ).one()
+        assert retained_ranges == (None, None)
+
+
 def test_move_lww_concurrent_actions_converge_to_newer_placement(
     service_database: ServiceDatabase,
 ) -> None:
@@ -2029,3 +2204,23 @@ def test_catalog_update_preserve_and_discard_commands_are_explicit(  # noqa: E50
             else:
                 assert changed.retired_at is not None
                 assert changed.retired_by_user_id == service_database.actor_id
+
+
+def test_relative_move_payload_is_strict_and_does_not_require_client_position_key(
+    service_database: ServiceDatabase,
+) -> None:
+    command = move_command(service_database, uuid4(), position_key=None)
+    command = replace(command, placement="before", target_scheduled_recipe_id=uuid4())
+    prepared = _prepare(command)
+    assert prepared.placement == "before"
+    assert prepared.target_scheduled_recipe_id == command.target_scheduled_recipe_id
+    assert prepared.position_key is None
+    assert not prepared.violations
+
+
+def test_relative_move_rejects_missing_target_without_coercion(
+    service_database: ServiceDatabase,
+) -> None:
+    command = replace(move_command(service_database, uuid4(), position_key=None), placement="after")
+    prepared = _prepare(command)
+    assert any(v.path == "target_scheduled_recipe_id" for v in prepared.violations)
