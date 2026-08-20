@@ -72,6 +72,7 @@ export function createProvider(profile: ProviderProfile): Provider {
         redirect_uris: [],
         response_types: [],
         grant_types: [],
+        id_token_signed_response_alg: "ES256",
         token_endpoint_auth_method: "client_secret_basic",
       },
     ],

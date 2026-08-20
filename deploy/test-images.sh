@@ -26,7 +26,7 @@ prohibited_proxy_route() {
     awk '
         $1 ~ /^ProxyPass(Match|Reverse)?$/ {
             route = $2
-            if (route ~ /(^|[^[:alnum:]_])\/?mcp(\/|[^[:alnum:]_]|$)/) {
+            if (route == "/mcp" || route ~ /^\/mcp\// || route == "/auth/mcp-grants" || route ~ /^\/auth\/mcp-grants\//) {
                 prohibited = 1
                 exit
             }
@@ -59,16 +59,14 @@ if ! awk '$1 == "ProxyPass" && $2 == "/oauth/private" && $3 == "!" { found = 1 }
     exit 1
 fi
 for apache_config in cookops.conf.example oauth-consent-smoke.conf; do
-    for private_auth_route in /auth/mcp-interactions /auth/mcp-grants; do
-        if ! awk -v path="$private_auth_route" '
-            $1 == "ProxyPass" && $2 == path && $3 == "!" { excluded = NR }
-            $1 == "ProxyPass" && $2 == "/auth/" { ordinary = NR }
-            END { exit excluded && ordinary && excluded < ordinary ? 0 : 1 }
-        ' "$root/deploy/apache/$apache_config"; then
-            echo "MCP auth route must be excluded before ordinary auth proxy: $apache_config $private_auth_route" >&2
-            exit 1
-        fi
-    done
+    if ! awk '$1 == "ProxyPass" && $2 == "/auth/mcp-interactions/" && $3 ~ /\/auth\/mcp-interactions\/$/ { found = NR } $1 == "ProxyPass" && $2 == "/auth/" { ordinary = NR } END { exit found && ordinary && found < ordinary ? 0 : 1 }' "$root/deploy/apache/$apache_config"; then
+        echo "MCP consent UI must proxy to the API before ordinary auth proxy: $apache_config" >&2
+        exit 1
+    fi
+    if ! awk '$1 == "ProxyPass" && $2 == "/auth/mcp-grants" && $3 == "!" { excluded = NR } $1 == "ProxyPass" && $2 == "/auth/" { ordinary = NR } END { exit excluded && ordinary && excluded < ordinary ? 0 : 1 }' "$root/deploy/apache/$apache_config"; then
+        echo "MCP grants route must stay excluded before ordinary auth proxy: $apache_config" >&2
+        exit 1
+    fi
 done
 for discovery in \
     '/.well-known/openid-configuration/oauth' \

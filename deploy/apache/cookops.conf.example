@@ -21,8 +21,9 @@
     # API routes must precede the single-page application catch-all route.
     ProxyPass        /health/ http://127.0.0.1:8000/health/
     ProxyPassReverse /health/ http://127.0.0.1:8000/health/
-    # MCP consent bridges stay private until their public conformance gate is complete.
-    ProxyPass        /auth/mcp-interactions !
+    # Only the browser consent UI is public; grant management stays private.
+    ProxyPass        /auth/mcp-interactions/ http://127.0.0.1:8000/auth/mcp-interactions/
+    ProxyPassReverse /auth/mcp-interactions/ http://127.0.0.1:8000/auth/mcp-interactions/
     ProxyPass        /auth/mcp-grants !
     ProxyPass        /auth/ http://127.0.0.1:8000/auth/
     ProxyPassReverse /auth/ http://127.0.0.1:8000/auth/

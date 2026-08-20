@@ -29,6 +29,8 @@ jwks=$(node -e 'const c=require("node:crypto"); const pair=c.generateKeyPairSync
     printf '%s\n' 'POSTGRES_DB=cookops'
     printf '%s\n' 'POSTGRES_USER=smoke'
     printf '%s\n' 'POSTGRES_PASSWORD=smoke-postgres-password'
+    printf '%s\n' 'COOKOPS_APPLICATION_REVISION=oauth-consent-smoke'
+    printf '%s\n' 'COOKOPS_SCHEMA_VERSION=1'
     printf '%s\n' 'COOKOPS_API_DB_PASSWORD=smoke-api-password'
     printf '%s\n' 'OAUTH_DB_PASSWORD=smoke-oauth-password'
     printf '%s\n' 'COOKOPS_GOOGLE_CLIENT_ID=not-used-by-dummy-smoke'
@@ -42,8 +44,10 @@ jwks=$(node -e 'const c=require("node:crypto"); const pair=c.generateKeyPairSync
     printf 'OAUTH_INTERACTION_APPROVAL_SECRET_BASE64URL=%s\n' "$(secret)"
     printf 'OAUTH_APPROVAL_API_CREDENTIAL_BASE64URL=%s\n' "$(secret)"
     printf 'OAUTH_INTERACTION_DETAILS_API_CREDENTIAL_BASE64URL=%s\n' "$(secret)"
-    printf 'COOKOPS_API_PORT=%s\nCOOKOPS_OAUTH_PORT=%s\nCOOKOPS_EDGE_PORT=%s\nSMOKE_TMP=%s\n' "$api_port" "$oauth_port" "$public_port" "$temporary"
+    printf 'OAUTH_GRANTS_API_CREDENTIAL_BASE64URL=%s\n' "$(secret)"
+    printf 'COOKOPS_API_PORT=%s\nCOOKOPS_OAUTH_PORT=%s\nCOOKOPS_EDGE_PORT=%s\nCOOKOPS_BACKUP_DIR=%s/backups\nCOOKOPS_BACKUP_ARCHIVE=%s/backups/archive.tar.zst\nCOOKOPS_RESTORE_DIR=%s/restore\nCOOKOPS_RESTORE_MEDIA_SUBDIR=media\nSMOKE_TMP=%s\n' "$api_port" "$oauth_port" "$public_port" "$temporary" "$temporary" "$temporary" "$temporary"
 } >"$temporary/.env"
+mkdir "$temporary/backups"
 
 openssl req -x509 -newkey rsa:2048 -nodes -days 1 -subj '/CN=127.0.0.1' \
     -keyout "$temporary/key.pem" -out "$temporary/certificate.pem" >/dev/null 2>&1
@@ -69,7 +73,7 @@ until curl --insecure --fail --silent --show-error "$origin/auth/dummy/identitie
 done
 test "$(curl --insecure --silent --output /dev/null --write-out '%{http_code}' "$origin/mcp")" = 404
 test "$(curl --insecure --silent --output /dev/null --write-out '%{http_code}' "$origin/mcp/probe")" = 404
-test "$(curl --insecure --silent --output /dev/null --write-out '%{http_code}' "$origin/auth/mcp-interactions/probe")" = 404
+test "$(curl --insecure --silent --output /dev/null --write-out '%{http_code}' "$origin/auth/mcp-interactions/AAAAAAAAAAAAAAAA")" = 401
 test "$(curl --insecure --silent --output /dev/null --write-out '%{http_code}' "$origin/auth/mcp-grants/probe")" = 404
 test "$(curl --insecure --silent --output /dev/null --write-out '%{http_code}' "$origin/oauth/private/interactions/approval")" = 404
 test "$(curl --insecure --silent --output /dev/null --write-out '%{http_code}' "$origin/oauth/private/interactions/AAAAAAAAAAAAAAAA")" = 404
@@ -77,5 +81,7 @@ for discovery_path in /.well-known/openid-configuration/oauth /.well-known/oauth
     metadata=$(curl --insecure --fail --silent --show-error "$origin$discovery_path")
     OAUTH_SMOKE_METADATA="$metadata" node -e 'process.exit(JSON.parse(process.env.OAUTH_SMOKE_METADATA).issuer === process.argv[1] ? 0 : 1)' "$origin/oauth"
 done
-COOKOPS_OAUTH_SMOKE_ORIGIN="$origin" npx --prefix "$root/frontend" playwright test \
+COOKOPS_OAUTH_SMOKE_ORIGIN="$origin" \
+COOKOPS_OAUTH_SMOKE_RESOURCE_SECRET=smoke-resource-server-secret-at-least-32 \
+npx --prefix "$root/frontend" playwright test \
     -c "$root/frontend/playwright.oauth-consent-smoke.config.ts"
