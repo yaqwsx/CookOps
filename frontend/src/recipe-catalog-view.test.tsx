@@ -383,6 +383,12 @@ describe("recipe retired ingredient warning", () => {
     await user.type(search, "CARROT");
     expect(screen.getByRole("heading", { name: "Soup" })).toBeVisible();
     await user.clear(search);
+    await user.type(search, "sopu");
+    expect(screen.getByRole("heading", { name: "Soup" })).toBeVisible();
+    await user.clear(search);
+    await user.type(search, "čarrot");
+    expect(screen.getByRole("heading", { name: "Soup" })).toBeVisible();
+    await user.clear(search);
     await user.type(search, "missing");
     expect(
       screen.getByText("Hledání neodpovídá žádnému receptu."),

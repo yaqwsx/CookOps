@@ -21,7 +21,7 @@ import { queueRecipeLifecycle } from "./recipe-lifecycle";
 import { queueCatalogConfiguration } from "./catalog-configuration";
 import { pullOrganization, SyncRequestError } from "./sync-bootstrap";
 import { defaultMassForUnit, queueIngredientCreateWithVersion, type IngredientCreateInput } from "./ingredient-create";
-import { rankIngredients } from "./ingredient-fuzzy";
+import { matchesIngredient, rankIngredients } from "./ingredient-fuzzy";
 import { RecipeCopyPanel } from "./recipe-copy-panel";
 
 type CatalogState =
@@ -915,7 +915,6 @@ export function RecipeCatalog({
     (recipe) =>
       (showRetired || !recipe.retired) || recipe.id === selectedRecipeId || recipe.id === editRecipeId,
   );
-  const normalizedQuery = query.normalize("NFC").trim().toLocaleLowerCase();
   const tagNameById = new Map(
     state.catalog.tags.map((tag) => [tag.id, tag.name]),
   );
@@ -928,7 +927,7 @@ export function RecipeCatalog({
   const recipes = visibleRecipes.filter((recipe) => {
     if (selectedRecipeId && recipe.id !== selectedRecipeId) return false;
     if (tagFilter && !recipe.recipeTagIds.includes(tagFilter) && recipe.id !== editRecipeId) return false;
-    if (!normalizedQuery) return true;
+    if (!query.trim()) return true;
     const tagNames = recipe.recipeTagIds
       .map((id) => tagNameById.get(id))
       .filter((name): name is string => Boolean(name));
@@ -940,11 +939,7 @@ export function RecipeCatalog({
       recipe.description ?? "",
       ...tagNames,
       ...ingredientNames,
-    ]
-      .join("\n")
-      .normalize("NFC")
-      .toLocaleLowerCase()
-      .includes(normalizedQuery);
+    ].some((value) => matchesIngredient(value, query));
   });
   return (
     <div className="recipe-catalog">

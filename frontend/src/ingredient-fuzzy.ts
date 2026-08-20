@@ -13,19 +13,21 @@ export function normalizeIngredientSearch(value: string): string {
 }
 
 function editDistance(left: string, right: string): number {
-  const previous = Array.from({ length: right.length + 1 }, (_, index) => index);
-  for (let row = 1; row <= left.length; row += 1) {
+  const leftCharacters = [...left];
+  const rightCharacters = [...right];
+  const previous = Array.from({ length: rightCharacters.length + 1 }, (_, index) => index);
+  for (let row = 1; row <= leftCharacters.length; row += 1) {
     let diagonal = previous[0];
     previous[0] = row;
-    for (let column = 1; column <= right.length; column += 1) {
+    for (let column = 1; column <= rightCharacters.length; column += 1) {
       const above = previous[column];
-      previous[column] = left[row - 1] === right[column - 1]
+      previous[column] = leftCharacters[row - 1] === rightCharacters[column - 1]
         ? diagonal
         : 1 + Math.min(diagonal, above, previous[column - 1]);
       diagonal = above;
     }
   }
-  return previous[right.length];
+  return previous[rightCharacters.length];
 }
 
 function validCandidate(value: unknown, includeRetired = false): value is CatalogIngredient {
@@ -62,6 +64,12 @@ function score(name: string, query: string): number {
   if (tokens.some((token) => token.startsWith(query))) return 20;
   if (name.includes(query)) return 30;
   if (query.length < 3) return 100;
+  const nameCharacters = [...name];
+  const queryCharacters = [...query];
+  if (nameCharacters.length === queryCharacters.length) {
+    const differences = nameCharacters.flatMap((character, index) => character === queryCharacters[index] ? [] : [index]);
+    if (differences.length === 2 && differences[1] === differences[0] + 1 && nameCharacters[differences[0]] === queryCharacters[differences[1]] && nameCharacters[differences[1]] === queryCharacters[differences[0]]) return 40;
+  }
   const nearest = tokens.reduce(
     (best, token) => Math.min(best, editDistance(token, query)),
     Number.POSITIVE_INFINITY,
@@ -70,7 +78,8 @@ function score(name: string, query: string): number {
 }
 
 export function matchesIngredient(name: string, query: string): boolean {
-  return score(normalizeIngredientSearch(name), normalizeIngredientSearch(query)) < 100;
+  const normalizedQuery = normalizeIngredientSearch(query);
+  return normalizedQuery !== "" && score(normalizeIngredientSearch(name), normalizedQuery) < 100;
 }
 
 /** Rank only active current ingredient versions; callers may keep a historic selection separately. */

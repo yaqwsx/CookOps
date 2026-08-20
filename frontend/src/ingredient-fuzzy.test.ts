@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { rankIngredients } from "./ingredient-fuzzy";
+import { matchesIngredient, rankIngredients } from "./ingredient-fuzzy";
 
 const ingredient = (versionId: string, name: string, flags: Partial<{ retired: boolean; historical: boolean }> = {}) => ({
   id: versionId,
@@ -12,6 +12,19 @@ const ingredient = (versionId: string, name: string, flags: Partial<{ retired: b
 });
 
 describe("rankIngredients", () => {
+  it("matches adjacent transpositions", () => {
+    expect(matchesIngredient("soup", "sopu")).toBe(true);
+  });
+
+  it("does not match an empty or whitespace-only query", () => {
+    expect(matchesIngredient("soup", "")).toBe(false);
+    expect(matchesIngredient("soup", "   ")).toBe(false);
+  });
+
+  it("handles adjacent transpositions of astral code points", () => {
+    expect(matchesIngredient("🍅🥕", "🥕🍅")).toBe(true);
+  });
+
   it("matches diacritics and ranks exact/prefix before substrings", () => {
     const result = rankIngredients([
       ingredient("00000000-0000-0000-0000-000000000002", "Červená paprika"),
