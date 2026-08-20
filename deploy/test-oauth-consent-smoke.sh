@@ -69,6 +69,8 @@ until curl --insecure --fail --silent --show-error "$origin/auth/dummy/identitie
 done
 test "$(curl --insecure --silent --output /dev/null --write-out '%{http_code}' "$origin/mcp")" = 404
 test "$(curl --insecure --silent --output /dev/null --write-out '%{http_code}' "$origin/mcp/probe")" = 404
+test "$(curl --insecure --silent --output /dev/null --write-out '%{http_code}' "$origin/auth/mcp-interactions/probe")" = 404
+test "$(curl --insecure --silent --output /dev/null --write-out '%{http_code}' "$origin/auth/mcp-grants/probe")" = 404
 test "$(curl --insecure --silent --output /dev/null --write-out '%{http_code}' "$origin/oauth/private/interactions/approval")" = 404
 test "$(curl --insecure --silent --output /dev/null --write-out '%{http_code}' "$origin/oauth/private/interactions/AAAAAAAAAAAAAAAA")" = 404
 for discovery_path in /.well-known/openid-configuration/oauth /.well-known/oauth-authorization-server/oauth; do

@@ -58,6 +58,18 @@ if ! awk '$1 == "ProxyPass" && $2 == "/oauth/private" && $3 == "!" { found = 1 }
     echo 'OAuth private bridge must be excluded before the public OAuth proxy' >&2
     exit 1
 fi
+for apache_config in cookops.conf.example oauth-consent-smoke.conf; do
+    for private_auth_route in /auth/mcp-interactions /auth/mcp-grants; do
+        if ! awk -v path="$private_auth_route" '
+            $1 == "ProxyPass" && $2 == path && $3 == "!" { excluded = NR }
+            $1 == "ProxyPass" && $2 == "/auth/" { ordinary = NR }
+            END { exit excluded && ordinary && excluded < ordinary ? 0 : 1 }
+        ' "$root/deploy/apache/$apache_config"; then
+            echo "MCP auth route must be excluded before ordinary auth proxy: $apache_config $private_auth_route" >&2
+            exit 1
+        fi
+    done
+done
 for discovery in \
     '/.well-known/openid-configuration/oauth' \
     '/.well-known/oauth-authorization-server/oauth'; do
