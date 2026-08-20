@@ -23,6 +23,9 @@ import {
   type ReceiptProjection,
 } from "./receipt-projections";
 import { pullOrganization, SyncRequestError } from "./sync-bootstrap";
+import { readEventPlanner, type EventPlannerProjection } from "./planner-projections";
+import { readEventCosts, type EventCostsProjection } from "./event-cost-projections";
+import { EventSummary, useEventPendingSync } from "./event-summary";
 
 const blank: ReceiptInput = {
   title: "",
@@ -386,12 +389,27 @@ export function EventReceipts({
   userId: string;
 }) {
   const { t } = useTranslation();
-  const [receipts, setReceipts] = useState<ReceiptProjection[]>();
+  const identity = `${userId}:${organizationId}:${eventId}`;
+  const [receiptsState, setReceiptsState] = useState<{
+    identity: string;
+    receipts?: ReceiptProjection[];
+  }>();
   const [uploads, setUploads] = useState<PendingUpload[]>([]);
   const optimisticUploadIds = useRef(new Set<string>());
-  const [offline, setOffline] = useState(false);
-  const [error, setError] = useState(false);
-  const [readOnly, setReadOnly] = useState(false);
+  const [offlineState, setOfflineState] = useState({ identity, value: false });
+  const [errorState, setErrorState] = useState({ identity, value: false });
+  const [readOnlyState, setReadOnlyState] = useState({ identity, value: false });
+  const identityRef = useRef(identity);
+  identityRef.current = identity;
+  const [plannerState, setPlannerState] = useState<{
+    identity: string;
+    planner?: EventPlannerProjection;
+  }>();
+  const [costsState, setCostsState] = useState<{
+    identity: string;
+    costs?: EventCostsProjection;
+  }>();
+  const pendingSync = useEventPendingSync(userId, organizationId, eventId);
   const uploadsByReceipt = useMemo(() => {
     const byReceipt = new Map<string, PendingUpload[]>();
     for (const upload of uploads) {
@@ -403,6 +421,8 @@ export function EventReceipts({
     return byReceipt;
   }, [uploads]);
   const refresh = useCallback(async () => {
+    const requestIdentity = identity;
+    const isCurrent = () => identityRef.current === requestIdentity;
     try {
       const readOnly = async () => {
         const event = await localDb.canonicalRecords.get([
@@ -416,27 +436,40 @@ export function EventReceipts({
           typeof event.fields.current_archive_snapshot_id === "string"
         );
       };
-      setReadOnly(await readOnly());
+      if (!isCurrent()) return;
+      setReadOnlyState({ identity: requestIdentity, value: await readOnly() });
       await pullOrganization(userId, organizationId);
-      setReadOnly(await readOnly());
-      setOffline(false);
-      setError(false);
+      if (!isCurrent()) return;
+      setReadOnlyState({ identity: requestIdentity, value: await readOnly() });
+      setOfflineState({ identity: requestIdentity, value: false });
+      setErrorState({ identity: requestIdentity, value: false });
     } catch (reason) {
       if (reason instanceof SyncRequestError && reason.status === 401)
         return onUnauthenticated();
-      setOffline(true);
+      if (isCurrent()) setOfflineState({ identity: requestIdentity, value: true });
     }
-  }, [eventId, onUnauthenticated, organizationId, userId]);
+  }, [eventId, identity, onUnauthenticated, organizationId, userId]);
   useEffect(() => {
+    const effectIdentity = identity;
+    setReceiptsState(undefined);
+    setPlannerState(undefined);
+    setCostsState(undefined);
+    setOfflineState({ identity: effectIdentity, value: false });
+    setErrorState({ identity: effectIdentity, value: false });
+    setReadOnlyState({ identity: effectIdentity, value: false });
+    const plannerSubscription = liveQuery(() => readEventPlanner(userId, organizationId, eventId)).subscribe({ next: (next) => setPlannerState({ identity: effectIdentity, planner: next }) });
+    const costsSubscription = liveQuery(() => readEventCosts(userId, organizationId, eventId)).subscribe({ next: (next) => setCostsState({ identity: effectIdentity, costs: next }) });
     const subscription = liveQuery(() =>
       readEventReceipts(userId, organizationId, eventId),
     ).subscribe({
-      next: setReceipts,
-      error: () => setError(true),
+      next: (next) => setReceiptsState({ identity: effectIdentity, receipts: next }),
+      error: () => setErrorState({ identity: effectIdentity, value: true }),
     });
     void refresh();
-    return () => subscription.unsubscribe();
-  }, [eventId, organizationId, refresh, userId]);
+    return () => { subscription.unsubscribe(); plannerSubscription.unsubscribe(); costsSubscription.unsubscribe(); };
+  }, [eventId, organizationId, refresh, userId, identity]);
+  const planner = plannerState?.identity === identity ? plannerState.planner : undefined;
+  const costs = costsState?.identity === identity ? costsState.costs : undefined;
   useEffect(() => {
     const subscription = liveQuery(() =>
       localDb.pendingUploads.toArray(),
@@ -459,6 +492,10 @@ export function EventReceipts({
     });
     return () => subscription.unsubscribe();
   }, [organizationId, userId]);
+  const receipts = receiptsState?.identity === identity ? receiptsState.receipts : undefined;
+  const offline = offlineState.identity === identity && offlineState.value;
+  const error = errorState.identity === identity && errorState.value;
+  const readOnly = readOnlyState.identity === identity && readOnlyState.value;
   if (!receipts && !error) return <p role="status">{t("receipts.loading")}</p>;
   if (error)
     return (
@@ -470,6 +507,8 @@ export function EventReceipts({
       </div>
     );
   return (
+    <>
+    {planner ? <EventSummary planner={planner} costs={costs} pendingSync={pendingSync} /> : null}
     <section className="event-receipts" aria-labelledby="receipts-heading">
       <header className="event-receipts__header">
         <h2 id="receipts-heading">{t("receipts.heading")}</h2>
@@ -516,5 +555,6 @@ export function EventReceipts({
         </ul>
       )}
     </section>
+    </>
   );
 }

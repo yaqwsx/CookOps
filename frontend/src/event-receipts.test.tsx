@@ -5,6 +5,8 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { EventReceipts } from "./event-receipts";
 import "./i18n";
 import { localDb } from "./local-db";
+import * as plannerProjections from "./planner-projections";
+import * as costProjections from "./event-cost-projections";
 
 const receiptMocks = vi.hoisted(() => ({ queueReceiptCreate: vi.fn() }));
 const mediaMocks = vi.hoisted(() => ({
@@ -86,6 +88,50 @@ describe("event receipt metadata screen", () => {
     await screen.findByText("Bakery");
     expect(screen.queryByRole("button", { name: "Uložit účtenku" })).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Upravit" })).not.toBeInTheDocument();
+  });
+
+  it("renders the shared summary from the scoped planner and cost projections", async () => {
+    const planner = vi.spyOn(plannerProjections, "readEventPlanner").mockResolvedValue({ name: "Receipt Event", startDate: "2026-08-15", endDate: "2026-08-15", attendance: 3, lifecycle: "archived", days: [], hiddenDays: [], retiredDays: [], roles: [], retiredRoles: [], recipes: [], ingredients: [], scheduled: [] });
+    const costs = vi.spyOn(costProjections, "readEventCosts").mockResolvedValue({ budget: "30", total: "20", actual: "10", remaining: "20", currency: "CZK", expectedShopping: "20", missingIngredients: [], scheduled: new Map() });
+    try {
+      render(<EventReceipts eventId={eventId} onBack={vi.fn()} onUnauthenticated={vi.fn()} organizationId={organizationId} userId={userId} />);
+      expect(await screen.findByRole("heading", { name: "Receipt Event" })).toBeInTheDocument();
+      expect(screen.getByText("Očekávaná účast")).toBeInTheDocument();
+      expect(screen.getByText("30 CZK")).toBeInTheDocument();
+    } finally {
+      planner.mockRestore();
+      costs.mockRestore();
+    }
+  });
+
+  it("does not render the previous summary while switching event identity", async () => {
+    const eventB = crypto.randomUUID();
+    const planner = vi.spyOn(plannerProjections, "readEventPlanner").mockImplementation(async (_userId, _organizationId, requestedEventId) => ({ name: requestedEventId === eventId ? "Event A" : "Event B", startDate: "2026-08-15", endDate: "2026-08-15", attendance: 3, lifecycle: "active", days: [], hiddenDays: [], retiredDays: [], roles: [], retiredRoles: [], recipes: [], ingredients: [], scheduled: [] }));
+    const costs = vi.spyOn(costProjections, "readEventCosts").mockResolvedValue({ budget: "30", total: "20", actual: "10", remaining: "20", currency: "CZK", expectedShopping: "20", missingIngredients: [], scheduled: new Map() });
+    try {
+      const view = render(<EventReceipts eventId={eventId} onBack={vi.fn()} onUnauthenticated={vi.fn()} organizationId={organizationId} userId={userId} />);
+      expect(await screen.findByRole("heading", { name: "Event A" })).toBeInTheDocument();
+      view.rerender(<EventReceipts eventId={eventB} onBack={vi.fn()} onUnauthenticated={vi.fn()} organizationId={organizationId} userId={userId} />);
+      expect(screen.queryByRole("heading", { name: "Event A" })).not.toBeInTheDocument();
+      expect(await screen.findByRole("heading", { name: "Event B" })).toBeInTheDocument();
+    } finally {
+      planner.mockRestore();
+      costs.mockRestore();
+    }
+  });
+
+  it("clears receipts and read-only state while switching event identity", async () => {
+    const eventB = crypto.randomUUID();
+    const receiptId = crypto.randomUUID();
+    await localDb.canonicalRecords.bulkPut([
+      { userId, organizationId, entityType: "receipt", entityId: receiptId, recordSchemaVersion: 1, lifecycle: "active", fields: { id: receiptId, organization_id: organizationId, event_id: eventId, title: "Old receipt", total_amount: "1", currency: "CZK", receipt_date: null, note: null }, fieldClocks: {}, immutable: false, updatedAt: new Date().toISOString() },
+      { userId, organizationId, entityType: "event", entityId: eventB, recordSchemaVersion: 1, lifecycle: "retired", fields: { id: eventB, organization_id: organizationId, lifecycle: "archived", current_archive_snapshot_id: crypto.randomUUID() }, fieldClocks: {}, immutable: true, updatedAt: new Date().toISOString() },
+    ]);
+    const view = render(<EventReceipts eventId={eventId} onBack={vi.fn()} onUnauthenticated={vi.fn()} organizationId={organizationId} userId={userId} />);
+    expect(await screen.findByText("Old receipt")).toBeInTheDocument();
+    view.rerender(<EventReceipts eventId={eventB} onBack={vi.fn()} onUnauthenticated={vi.fn()} organizationId={organizationId} userId={userId} />);
+    expect(screen.queryByText("Old receipt")).not.toBeInTheDocument();
+    expect(screen.queryByText("Událost je archivována")).not.toBeInTheDocument();
   });
 
   it("previews persisted pending photos across remounts without marking them synchronized", async () => {

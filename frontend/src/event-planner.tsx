@@ -28,24 +28,13 @@ import { queueEventMealRoleCreate, queueEventMealRoleLifecycle, queueEventMealRo
 import { pullOrganization, SyncRequestError } from "./sync-bootstrap";
 import { dietaryTagSeedKeys, ensureArchivedEventCached } from "./archive-cache";
 import { mealRoleLabels } from "./meal-role-labels";
-import { localDb } from "./local-db";
 import { readRecipeCatalog, type RecipeCatalogProjection } from "./recipe-catalog";
 import { assertPlannerTarget, queueRecipeCreate, type RecipeCreateInput } from "./recipe-create";
+import { EventSummary, formattedDate, useEventPendingSync } from "./event-summary";
 
 const plannerDragMime = "application/x-cookops-planner";
 type PlannerDragPayload = { kind: "recipe" | "scheduled"; id: string };
 const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
-
-function formattedDate(value: string, locale: string): string {
-  const date = new Date(`${value}T00:00:00Z`);
-  if (Number.isNaN(date.valueOf())) return value;
-  return new Intl.DateTimeFormat(locale, {
-    day: "numeric",
-    month: "long",
-    year: "numeric",
-    timeZone: "UTC",
-  }).format(date);
-}
 
 function roleName(role: EventPlannerProjection["roles"][number], language: string) {
   return mealRoleLabels[role.name]?.[language.startsWith("en") ? "en" : "cs"] ?? role.name;
@@ -70,44 +59,6 @@ function readPlannerDrag(event: React.DragEvent): PlannerDragPayload | undefined
 }
 
 type PlannerState = "loading" | "ready" | "offline" | "error";
-
-function EventSummary({ planner, costs, pendingSync }: { planner: EventPlannerProjection; costs?: EventCostsProjection; pendingSync: { pending: number; failed: number } }) {
-  const { i18n, t } = useTranslation();
-  const locale = i18n.resolvedLanguage ?? "cs";
-  return (
-    <header className="event-workspace__summary">
-      <div>
-        <h2>{planner.name}</h2>
-        <p>
-          {t("planner.dateRange", {
-            start: formattedDate(planner.startDate, locale),
-            end: formattedDate(planner.endDate, locale),
-          })}
-        </p>
-      </div>
-      <dl>
-        <div>
-          <dt>{t("planner.attendance")}</dt>
-          <dd>{planner.attendance}</dd>
-        </div>
-        <div>
-          <dt>{t("planner.lifecycle")}</dt>
-          <dd>{t(`eventsOverview.lifecycle.${planner.lifecycle}`)}</dd>
-        </div>
-        {costs ? <>
-          <div><dt>{t("costs.budget")}</dt><dd>{t("costs.amount", { amount: costs.budget, currency: costs.currency })}</dd></div>
-          <div><dt>{t("costs.scheduled")}</dt><dd>{t("costs.amount", { amount: costs.total, currency: costs.currency })}</dd></div>
-          <div><dt>{t("costs.actual")}</dt><dd>{t("costs.amount", { amount: costs.actual, currency: costs.currency })}</dd></div>
-          <div><dt>{t("costs.remaining")}</dt><dd>{t("costs.amount", { amount: costs.remaining, currency: costs.currency })}</dd></div>
-        </> : null}
-        <div>
-          <dt>{t("planner.pendingSync")}</dt>
-          <dd>{pendingSync.failed ? t("planner.pendingSyncFailed", { count: pendingSync.failed }) : t("planner.pendingSyncCount", { count: pendingSync.pending })}</dd>
-        </div>
-      </dl>
-    </header>
-  );
-}
 
 function CatalogUpdateChoice({ item, planner, eventId, organizationId, userId }: { item: EventPlannerProjection["scheduled"][number]; planner: EventPlannerProjection; eventId: string; organizationId: string; userId: string }) {
   const { t } = useTranslation();
@@ -886,7 +837,7 @@ export function EventPlanner({
   const [planner, setPlanner] = useState<EventPlannerProjection>();
   const identity = `${userId}:${organizationId}:${eventId}`;
   const [recipeCosts, setRecipeCosts] = useState<{ identity: string; costs?: EventCostsProjection }>();
-  const [pendingSync, setPendingSync] = useState({ pending: 0, failed: 0 });
+  const pendingSync = useEventPendingSync(userId, organizationId, eventId);
   const [recipeCostsError, setRecipeCostsError] = useState({ identity, error: false });
   const [dropTarget, setDropTarget] = useState<string>();
   const generation = useRef(0);
@@ -916,15 +867,6 @@ export function EventPlanner({
     setRecipeCosts(undefined);
     setRecipeCostsError({ identity: effectIdentity, error: false });
     const costSubscription = liveQuery(() => readEventCosts(userId, organizationId, eventId)).subscribe({ next: (next) => active && setRecipeCosts({ identity: effectIdentity, costs: next }), error: () => active && setRecipeCostsError({ identity: effectIdentity, error: true }) });
-    const pendingSubscription = liveQuery(async () => {
-      const commands = await localDb.outbox.where("organizationId").equals(organizationId).toArray();
-      return commands.reduce((result, command) => {
-        if (command.userId !== userId || command.payload.event_id !== eventId) return result;
-        if (command.state === "pending") result.pending += 1;
-        else result.failed += 1;
-        return result;
-      }, { pending: 0, failed: 0 });
-    }).subscribe({ next: (next) => active && setPendingSync(next) });
     const offline = () => setState("offline");
     window.addEventListener("online", synchronize);
     window.addEventListener("offline", offline);
@@ -934,7 +876,6 @@ export function EventPlanner({
       generation.current += 1;
       subscription.unsubscribe();
       costSubscription.unsubscribe();
-      pendingSubscription.unsubscribe();
       window.removeEventListener("online", synchronize);
       window.removeEventListener("offline", offline);
     };

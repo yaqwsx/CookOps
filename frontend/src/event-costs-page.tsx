@@ -8,6 +8,7 @@ import {
   readEventPlanner,
   type EventPlannerProjection,
 } from "./planner-projections";
+import { EventSummary, useEventPendingSync } from "./event-summary";
 
 export function EventCostsPage({
   eventId,
@@ -31,6 +32,7 @@ export function EventCostsPage({
   const [costsState, setCostsState] = useState<{ identity: string; costs?: EventCostsProjection }>();
   const [errorState, setErrorState] = useState({ identity, error: false });
   const [costsErrorState, setCostsErrorState] = useState({ identity, error: false });
+  const pendingSync = useEventPendingSync(userId, organizationId, eventId);
   // biome-ignore lint/correctness/useExhaustiveDependencies: identity is derived from the listed route dependencies.
   useEffect(() => {
     const effectIdentity = identity;
@@ -54,6 +56,7 @@ export function EventCostsPage({
   if (!planner) return <p role="alert">{t("costs.unavailable")}</p>;
   return (
     <>
+      <EventSummary planner={planner} costs={costsState?.identity === identity ? costsState.costs : undefined} pendingSync={pendingSync} />
       <nav aria-label={t("costs.navigation")}>
         <button onClick={onBack} type="button">
           {t("costs.planner")}
