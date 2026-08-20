@@ -1,0 +1,10 @@
+FROM httpd@sha256:cc4c94eb4e9c3d94ac2147cb9ce8057096362de83fa12b7aeecd4c0c3d5d1f21
+
+RUN sed -i \
+    -e 's/^#LoadModule socache_shmcb_module/LoadModule socache_shmcb_module/' \
+    -e 's/^#LoadModule proxy_module/LoadModule proxy_module/' \
+    -e 's/^#LoadModule proxy_http_module/LoadModule proxy_http_module/' \
+    -e 's/^#LoadModule ssl_module/LoadModule ssl_module/' \
+    /usr/local/apache2/conf/httpd.conf
+COPY shopping-sync-smoke.conf /usr/local/apache2/conf/extra/shopping-sync-smoke.conf
+RUN printf '\nListen 443\nInclude conf/extra/shopping-sync-smoke.conf\n' >> /usr/local/apache2/conf/httpd.conf
