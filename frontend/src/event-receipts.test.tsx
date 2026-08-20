@@ -288,6 +288,55 @@ describe("event receipt metadata screen", () => {
     );
   });
 
+  it("asks for a legible retake when compression cannot preserve readability", async () => {
+    const receiptId = crypto.randomUUID();
+    await localDb.canonicalRecords.put({
+      userId,
+      organizationId,
+      entityType: "receipt",
+      entityId: receiptId,
+      recordSchemaVersion: 1,
+      lifecycle: "active",
+      fields: {
+        id: receiptId,
+        organization_id: organizationId,
+        event_id: eventId,
+        title: "Bakery",
+        total_amount: "12.50",
+        currency: "CZK",
+        receipt_date: null,
+        note: null,
+      },
+      fieldClocks: {},
+      immutable: false,
+      updatedAt: new Date().toISOString(),
+    });
+    mediaMocks.prepareReceiptImage.mockRejectedValue({
+      code: "receipt_image_readability",
+    });
+    const user = userEvent.setup();
+    render(
+      <EventReceipts
+        eventId={eventId}
+        onBack={vi.fn()}
+        onUnauthenticated={vi.fn()}
+        organizationId={organizationId}
+        userId={userId}
+      />,
+    );
+    await screen.findByRole("heading", { name: "Účtenky" });
+    await user.upload(
+      screen.getByLabelText("Přidat fotografii účtenky"),
+      new File(["source"], "receipt.jpg", { type: "image/jpeg" }),
+    );
+    expect(
+      await screen.findByText(
+        "Účtenku se nepodařilo zkomprimovat čitelně. Vyfoťte ji znovu, nebo ji rozdělte do více fotografií.",
+      ),
+    ).toBeInTheDocument();
+    expect(mediaMocks.queueReceiptAttachment).not.toHaveBeenCalled();
+  });
+
   it("queues every selected receipt photo in picker order", async () => {
     const receiptId = crypto.randomUUID();
     await localDb.canonicalRecords.put({

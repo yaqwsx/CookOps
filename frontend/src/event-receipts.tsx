@@ -11,6 +11,7 @@ import {
 } from "./receipt-metadata";
 import {
   prepareReceiptImage,
+  isReceiptImageReadabilityError,
   queueReceiptAttachment,
   removeReceiptUpload,
   retryReceiptUpload,
@@ -147,7 +148,7 @@ function ReceiptItem({
 }) {
   const { t } = useTranslation();
   const [editing, setEditing] = useState(false);
-  const [error, setError] = useState(false);
+  const [error, setError] = useState<"unavailable" | "retakePhoto">();
   const [attaching, setAttaching] = useState(false);
   const [previewUrls, setPreviewUrls] = useState<Record<string, string>>({});
   const previewUrlEntries = useRef(
@@ -206,21 +207,21 @@ function ReceiptItem({
         receipt.id,
       );
     } catch {
-      setError(true);
+      setError("unavailable");
     } finally {
       busy.current = false;
     }
   }
   async function attach(input: HTMLInputElement) {
     if (attachingRef.current) {
-      setError(true);
+      setError("unavailable");
       return;
     }
     const files = Array.from(input.files ?? []);
     if (!files.length) return;
     attachingRef.current = true;
     setAttaching(true);
-    setError(false);
+    setError(undefined);
     try {
       for (const file of files) {
         const pending = await queueReceiptAttachment(
@@ -231,8 +232,12 @@ function ReceiptItem({
         );
         onQueued(pending);
       }
-    } catch {
-      setError(true);
+    } catch (reason) {
+      setError(
+        isReceiptImageReadabilityError(reason)
+          ? "retakePhoto"
+          : "unavailable",
+      );
     } finally {
       input.value = "";
       attachingRef.current = false;
@@ -252,7 +257,7 @@ function ReceiptItem({
         operation,
       );
     } catch {
-      setError(true);
+      setError("unavailable");
     }
   }
   return (
@@ -353,7 +358,7 @@ function ReceiptItem({
           </button>
         ) : null}
       </div>
-      {error ? <p role="alert">{t("receipts.errors.unavailable")}</p> : null}
+      {error ? <p role="alert">{t(`receipts.errors.${error}`)}</p> : null}
       {!readOnly && editing && !receipt.retired ? (
         <ReceiptForm
           eventId={eventId}

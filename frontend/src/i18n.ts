@@ -560,6 +560,8 @@ const resources = {
           receiptDate: "Zadejte platné datum.",
           event: "Účtenku nelze místně upravit.",
           unavailable: "Účtenku se nepodařilo uložit místně. Zkuste to znovu.",
+          retakePhoto:
+            "Účtenku se nepodařilo zkomprimovat čitelně. Vyfoťte ji znovu, nebo ji rozdělte do více fotografií.",
         },
       },
       costs: {
@@ -1217,6 +1219,8 @@ const resources = {
           event: "The receipt cannot be edited locally.",
           unavailable:
             "The receipt could not be saved locally. Please try again.",
+          retakePhoto:
+            "The receipt could not be compressed legibly. Retake it or split it across multiple photos.",
         },
       },
       costs: {

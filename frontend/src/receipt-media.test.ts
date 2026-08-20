@@ -1,7 +1,12 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { localDb } from "./local-db";
-import { dispatchReceiptUploads, removeReceiptUpload } from "./receipt-media";
+import {
+  dispatchReceiptUploads,
+  prepareReceiptImage,
+  ReceiptImageReadabilityError,
+  removeReceiptUpload,
+} from "./receipt-media";
 
 const userId = "a6a58bd6-214e-49af-8fae-e5f974bf8e08";
 const organizationId = "5ce17d2f-8365-4b1f-a80b-34d10425d51c";
@@ -109,6 +114,50 @@ describe("receipt upload removal", () => {
       state: "failed",
       failureReason: "removal_reconciliation_required",
     });
+  });
+});
+
+describe("receipt image preparation", () => {
+  it("distinguishes an unreadable size-preserving compression failure", async () => {
+    const bitmap = { width: 1000, height: 1000, close: vi.fn() };
+    vi.stubGlobal("createImageBitmap", vi.fn().mockResolvedValue(bitmap));
+    const canvas = {
+      width: 0,
+      height: 0,
+      getContext: vi.fn().mockReturnValue({ drawImage: vi.fn() }),
+      toBlob: (callback: BlobCallback) =>
+        callback(new Blob([new Uint8Array(2_000_001)], { type: "image/jpeg" })),
+    };
+    vi.spyOn(document, "createElement").mockReturnValueOnce(
+      canvas as unknown as HTMLElement,
+    );
+
+    await expect(
+      prepareReceiptImage(new File(["source"], "receipt.jpg", { type: "image/jpeg" })),
+    ).rejects.toBeInstanceOf(ReceiptImageReadabilityError);
+    expect(bitmap.close).toHaveBeenCalledOnce();
+  });
+
+  it("reports encoder failure generically when every output is empty", async () => {
+    const bitmap = { width: 1000, height: 1000, close: vi.fn() };
+    vi.stubGlobal("createImageBitmap", vi.fn().mockResolvedValue(bitmap));
+    const canvas = {
+      width: 0,
+      height: 0,
+      getContext: vi.fn().mockReturnValue({ drawImage: vi.fn() }),
+      toBlob: (callback: BlobCallback) => callback(null),
+    };
+    vi.spyOn(document, "createElement").mockReturnValueOnce(
+      canvas as unknown as HTMLElement,
+    );
+
+    const error = await prepareReceiptImage(
+      new File(["source"], "receipt.jpg", { type: "image/jpeg" }),
+    ).catch((reason: unknown) => reason);
+    expect(error).toBeInstanceOf(Error);
+    expect(error).not.toBeInstanceOf(ReceiptImageReadabilityError);
+    expect((error as Error).message).toBe("image");
+    expect(bitmap.close).toHaveBeenCalledOnce();
   });
 });
 
