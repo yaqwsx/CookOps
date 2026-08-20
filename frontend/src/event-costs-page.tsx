@@ -1,5 +1,5 @@
 import { liveQuery } from "dexie";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 
 import { EventCosts } from "./event-planner";
@@ -10,15 +10,20 @@ import {
 } from "./planner-projections";
 import { EventSummary, useEventPendingSync } from "./event-summary";
 import { EventSectionNavigation } from "./event-section-navigation";
+import { ensureArchivedEventCached } from "./archive-cache";
+import { pullOrganization, SyncRequestError } from "./sync-bootstrap";
+import { readVisibleEventSummaries } from "./event-projections";
 
 export function EventCostsPage({
   eventId,
   organizationId,
   userId,
+  onUnauthenticated,
 }: {
   eventId: string;
   organizationId: string;
   userId: string;
+  onUnauthenticated?: () => void;
 }) {
   const { t } = useTranslation();
   const identity = `${userId}:${organizationId}:${eventId}`;
@@ -30,6 +35,33 @@ export function EventCostsPage({
   const [errorState, setErrorState] = useState({ identity, error: false });
   const [costsErrorState, setCostsErrorState] = useState({ identity, error: false });
   const pendingSync = useEventPendingSync(userId, organizationId, eventId);
+  const generation = useRef(0);
+  useEffect(() => {
+    const current = ++generation.current;
+    const controller = new AbortController();
+    void (async () => {
+      if (!navigator.onLine) return;
+      try {
+        const initial = (await readVisibleEventSummaries(userId, organizationId)).find(
+          (candidate) => candidate.id === eventId,
+        );
+        if (initial?.lifecycle === "active") return;
+        await pullOrganization(userId, organizationId);
+        if (current !== generation.current) return;
+        const event = (await readVisibleEventSummaries(userId, organizationId)).find(
+          (candidate) => candidate.id === eventId,
+        );
+        if (event?.lifecycle !== "archived") return;
+        await ensureArchivedEventCached(userId, organizationId, eventId, fetch, controller.signal);
+      } catch (error) {
+        if (controller.signal.aborted || current !== generation.current) return;
+        if (error instanceof SyncRequestError && error.status === 401)
+          return onUnauthenticated?.();
+        // Keep the cached projection available when refresh fails.
+      }
+    })();
+    return () => controller.abort();
+  }, [eventId, onUnauthenticated, organizationId, userId]);
   // biome-ignore lint/correctness/useExhaustiveDependencies: identity is derived from the listed route dependencies.
   useEffect(() => {
     const effectIdentity = identity;

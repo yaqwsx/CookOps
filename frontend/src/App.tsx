@@ -707,6 +707,7 @@ function AuthenticatedShell({
                 !shoppingListId ? (
                   <EventSettingsPage
                     eventId={eventId}
+                    onUnauthenticated={onUnauthenticated}
                     organizationId={organizationId}
                     userId={identity.id}
                   />
@@ -746,6 +747,7 @@ function AuthenticatedShell({
                   !shoppingListId ? (
                   <EventCostsPage
                     eventId={eventId}
+                    onUnauthenticated={onUnauthenticated}
                     organizationId={organizationId}
                     userId={identity.id}
                   />

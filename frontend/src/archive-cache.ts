@@ -516,6 +516,7 @@ export async function ensureArchivedEventCached(
   organizationId: string,
   eventId: string,
   fetcher: typeof fetch = fetch,
+  signal?: AbortSignal,
 ): Promise<boolean> {
   if (!uuid.test(eventId) || !uuid.test(organizationId)) return false;
   const event = await localDb.canonicalRecords.get([
@@ -545,7 +546,7 @@ export async function ensureArchivedEventCached(
     return true;
   const response = await fetcher(
     `/api/v1/organizations/${encodeURIComponent(organizationId)}/events/${encodeURIComponent(eventId)}/archive/${encodeURIComponent(snapshotId)}`,
-    { credentials: "same-origin", cache: "no-store" },
+    { credentials: "same-origin", cache: "no-store", signal },
   );
   if (response.status === 401) throw new SyncRequestError(401);
   if (!response.ok)

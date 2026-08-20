@@ -5,6 +5,8 @@ import { readVisibleEventSummaries } from "./event-projections";
 import { EventSettingsPage } from "./event-settings-page";
 import i18n, { defaultLocale } from "./i18n";
 import { localDb } from "./local-db";
+import * as archiveCache from "./archive-cache";
+import * as syncBootstrap from "./sync-bootstrap";
 
 const { queueEventAttendanceUpdate } = vi.hoisted(() => ({
   queueEventAttendanceUpdate: vi.fn().mockResolvedValue(undefined),
@@ -68,9 +70,73 @@ async function grantEventLifecycleManagement(
 
 describe("EventSettingsPage", () => {
   beforeEach(async () => {
+    vi.restoreAllMocks();
+    vi.spyOn(syncBootstrap, "pullOrganization").mockResolvedValue(false);
+    vi.spyOn(archiveCache, "ensureArchivedEventCached").mockResolvedValue(true);
     await i18n.changeLanguage(defaultLocale);
     await localDb.canonicalRecords.clear();
     await localDb.optimisticOverlays.clear();
+  });
+
+  it("hydrates an uncached archived route after pulling organization state", async () => {
+    const archivedId = "cccccccc-cccc-4ccc-8ccc-cccccccccccc";
+    const order: string[] = [];
+    vi.mocked(syncBootstrap.pullOrganization).mockImplementation(async () => {
+      order.push("pull");
+      await addEvent(archivedId, "Archived", "archived");
+      const record = await localDb.canonicalRecords.get([userId, organizationId, "event", archivedId]);
+      if (record) await localDb.canonicalRecords.put({ ...record, fields: { ...record.fields, current_archive_snapshot_id: "eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee" } });
+      return false;
+    });
+    vi.mocked(archiveCache.ensureArchivedEventCached).mockImplementation(async () => {
+      order.push("archive");
+      return true;
+    });
+
+    render(
+      <EventSettingsPage
+        eventId={archivedId}
+        organizationId={organizationId}
+        userId={userId}
+        onUnauthenticated={vi.fn()}
+      />,
+    );
+
+    expect(await screen.findByText("Archivovaná akce je jen pro čtení.")).toBeInTheDocument();
+    await vi.waitFor(() => expect(order).toEqual(["pull", "archive"]));
+    expect(archiveCache.ensureArchivedEventCached).toHaveBeenCalledWith(userId, organizationId, archivedId, expect.any(Function), expect.any(AbortSignal));
+  });
+
+  it("calls unauthenticated callback when archive hydration returns 401", async () => {
+    const archivedId = "dddddddd-dddd-4ddd-8ddd-dddddddddddd";
+    vi.mocked(syncBootstrap.pullOrganization).mockImplementation(async () => {
+      await addEvent(archivedId, "Archived", "archived");
+      return false;
+    });
+    vi.mocked(archiveCache.ensureArchivedEventCached).mockRejectedValue(new syncBootstrap.SyncRequestError(401));
+    const onUnauthenticated = vi.fn();
+    render(<EventSettingsPage eventId={archivedId} organizationId={organizationId} userId={userId} onUnauthenticated={onUnauthenticated} />);
+    await vi.waitFor(() => expect(onUnauthenticated).toHaveBeenCalledOnce());
+  });
+
+  it("aborts an in-flight archive hydration when the route changes", async () => {
+    const archivedId = "ffffffff-ffff-4fff-8fff-ffffffffffff";
+    await addEvent("aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa", "Event A");
+    let signal: AbortSignal | undefined;
+    vi.mocked(syncBootstrap.pullOrganization).mockImplementation(async () => {
+      await addEvent(archivedId, "Archived", "archived");
+      return false;
+    });
+    vi.mocked(archiveCache.ensureArchivedEventCached).mockImplementation(async (...args) => {
+      signal = args[4];
+      await new Promise<void>(() => undefined);
+      return true;
+    });
+    const view = render(<EventSettingsPage eventId={archivedId} organizationId={organizationId} userId={userId} />);
+    await vi.waitFor(() => expect(signal).toBeDefined());
+    view.rerender(<EventSettingsPage eventId="aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa" organizationId={organizationId} userId={userId} />);
+    expect(signal?.aborted).toBe(true);
+    expect(await screen.findByDisplayValue("Event A")).toBeInTheDocument();
   });
 
   it("keeps projection identity scoped when route changes from event A to B", async () => {
