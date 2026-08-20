@@ -27,6 +27,7 @@ import { readEventPlanner, type EventPlannerProjection } from "./planner-project
 import { readEventCosts, type EventCostsProjection } from "./event-cost-projections";
 import { EventSummary, useEventPendingSync } from "./event-summary";
 import { EventSectionNavigation } from "./event-section-navigation";
+import { ensureArchivedEventCached } from "./archive-cache";
 
 const blank: ReceiptInput = {
   title: "",
@@ -420,7 +421,7 @@ export function EventReceipts({
     }
     return byReceipt;
   }, [uploads]);
-  const refresh = useCallback(async () => {
+  const refresh = useCallback(async (signal?: AbortSignal) => {
     const requestIdentity = identity;
     const isCurrent = () => identityRef.current === requestIdentity;
     try {
@@ -431,22 +432,35 @@ export function EventReceipts({
           "event",
           eventId,
         ]);
-        return (
-          event?.fields.lifecycle === "archived" &&
-          typeof event.fields.current_archive_snapshot_id === "string"
-        );
+        if (!event) return undefined;
+        return event.fields.lifecycle === "archived" &&
+          typeof event.fields.current_archive_snapshot_id === "string";
       };
-      if (!isCurrent()) return;
-      setReadOnlyState({ identity: requestIdentity, value: await readOnly() });
-      await pullOrganization(userId, organizationId);
-      if (!isCurrent()) return;
-      setReadOnlyState({ identity: requestIdentity, value: await readOnly() });
+      if (!isCurrent() || signal?.aborted) return;
+      const initiallyReadOnly = await readOnly();
+      if (initiallyReadOnly !== false) {
+        await pullOrganization(userId, organizationId);
+        if (!isCurrent() || signal?.aborted) return;
+        if (await readOnly())
+          await ensureArchivedEventCached(
+            userId,
+            organizationId,
+            eventId,
+            fetch,
+            signal,
+          );
+      } else {
+        setReadOnlyState({ identity: requestIdentity, value: false });
+      }
+      if (!isCurrent() || signal?.aborted) return;
+      setReadOnlyState({ identity: requestIdentity, value: (await readOnly()) === true });
       setOfflineState({ identity: requestIdentity, value: false });
       setErrorState({ identity: requestIdentity, value: false });
     } catch (reason) {
+      if (signal?.aborted || !isCurrent()) return;
       if (reason instanceof SyncRequestError && reason.status === 401)
         return onUnauthenticated();
-      if (isCurrent()) setOfflineState({ identity: requestIdentity, value: true });
+      setOfflineState({ identity: requestIdentity, value: true });
     }
   }, [eventId, identity, onUnauthenticated, organizationId, userId]);
   useEffect(() => {
@@ -465,8 +479,9 @@ export function EventReceipts({
       next: (next) => setReceiptsState({ identity: effectIdentity, receipts: next }),
       error: () => setErrorState({ identity: effectIdentity, value: true }),
     });
-    void refresh();
-    return () => { subscription.unsubscribe(); plannerSubscription.unsubscribe(); costsSubscription.unsubscribe(); };
+    const controller = new AbortController();
+    void refresh(controller.signal);
+    return () => { controller.abort(); subscription.unsubscribe(); plannerSubscription.unsubscribe(); costsSubscription.unsubscribe(); };
   }, [eventId, organizationId, refresh, userId, identity]);
   const planner = plannerState?.identity === identity ? plannerState.planner : undefined;
   const costs = costsState?.identity === identity ? costsState.costs : undefined;

@@ -13,18 +13,31 @@ const mediaMocks = vi.hoisted(() => ({
   prepareReceiptImage: vi.fn(),
   queueReceiptAttachment: vi.fn(),
 }));
+const archiveMocks = vi.hoisted(() => ({
+  ensureArchivedEventCached: vi.fn().mockResolvedValue(true),
+}));
 vi.mock("./receipt-metadata", async (importOriginal) => ({
   ...(await importOriginal<typeof import("./receipt-metadata")>()),
   queueReceiptCreate: receiptMocks.queueReceiptCreate,
 }));
 vi.mock("./sync-bootstrap", () => ({
   pullOrganization: vi.fn().mockResolvedValue(undefined),
-  SyncRequestError: class SyncRequestError extends Error {},
+  SyncRequestError: class SyncRequestError extends Error {
+    status: number;
+    constructor(status: number) {
+      super(`sync-${status}`);
+      this.status = status;
+    }
+  },
 }));
 vi.mock("./receipt-media", async (importOriginal) => ({
   ...(await importOriginal<typeof import("./receipt-media")>()),
   prepareReceiptImage: mediaMocks.prepareReceiptImage,
   queueReceiptAttachment: mediaMocks.queueReceiptAttachment,
+}));
+vi.mock("./archive-cache", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("./archive-cache")>()),
+  ensureArchivedEventCached: archiveMocks.ensureArchivedEventCached,
 }));
 
 const userId = "a6a58bd6-214e-49af-8fae-e5f974bf8e08";
@@ -48,6 +61,64 @@ describe("event receipt metadata screen", () => {
       .mockResolvedValue(crypto.randomUUID());
     mediaMocks.prepareReceiptImage.mockReset();
     mediaMocks.queueReceiptAttachment.mockReset();
+    archiveMocks.ensureArchivedEventCached.mockReset().mockResolvedValue(true);
+    vi.mocked((await import("./sync-bootstrap")).pullOrganization)
+      .mockReset()
+      .mockResolvedValue(false);
+  });
+
+  it("does not refresh or hydrate a known active event", async () => {
+    await localDb.canonicalRecords.put({ userId, organizationId, entityType: "event", entityId: eventId, recordSchemaVersion: 1, lifecycle: "active", fields: { id: eventId, organization_id: organizationId, lifecycle: "active", current_archive_snapshot_id: null }, fieldClocks: {}, immutable: false, updatedAt: new Date().toISOString() });
+    const sync = vi.mocked((await import("./sync-bootstrap")).pullOrganization);
+    render(<EventReceipts eventId={eventId} onBack={vi.fn()} onUnauthenticated={vi.fn()} organizationId={organizationId} userId={userId} />);
+    await screen.findByRole("heading", { name: "Účtenky" });
+    expect(sync).not.toHaveBeenCalled();
+    expect(archiveMocks.ensureArchivedEventCached).not.toHaveBeenCalled();
+  });
+
+  it("reports archive hydration authorization failures", async () => {
+    const onUnauthenticated = vi.fn();
+    await localDb.canonicalRecords.put({ userId, organizationId, entityType: "event", entityId: eventId, recordSchemaVersion: 1, lifecycle: "retired", fields: { id: eventId, organization_id: organizationId, lifecycle: "archived", current_archive_snapshot_id: crypto.randomUUID() }, fieldClocks: {}, immutable: true, updatedAt: new Date().toISOString() });
+    const { SyncRequestError, pullOrganization } = await import("./sync-bootstrap");
+    vi.mocked(pullOrganization).mockResolvedValueOnce(false);
+    archiveMocks.ensureArchivedEventCached.mockRejectedValueOnce(new SyncRequestError(401));
+    render(<EventReceipts eventId={eventId} onBack={vi.fn()} onUnauthenticated={onUnauthenticated} organizationId={organizationId} userId={userId} />);
+    await waitFor(() => expect(onUnauthenticated).toHaveBeenCalledTimes(1));
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+  });
+
+  it("aborts archive hydration when the route changes", async () => {
+    const eventB = crypto.randomUUID();
+    let release!: () => void;
+    const hydration = new Promise<boolean>((resolve) => { release = () => resolve(true); });
+    archiveMocks.ensureArchivedEventCached.mockImplementationOnce(async (...args) => {
+      const signal = args[4];
+      await hydration;
+      expect(signal?.aborted).toBe(true);
+      return true;
+    });
+    await localDb.canonicalRecords.put({ userId, organizationId, entityType: "event", entityId: eventId, recordSchemaVersion: 1, lifecycle: "retired", fields: { id: eventId, organization_id: organizationId, lifecycle: "archived", current_archive_snapshot_id: crypto.randomUUID() }, fieldClocks: {}, immutable: true, updatedAt: new Date().toISOString() });
+    const view = render(<EventReceipts eventId={eventId} onBack={vi.fn()} onUnauthenticated={vi.fn()} organizationId={organizationId} userId={userId} />);
+    await waitFor(() => expect(archiveMocks.ensureArchivedEventCached).toHaveBeenCalled());
+    view.rerender(<EventReceipts eventId={eventB} onBack={vi.fn()} onUnauthenticated={vi.fn()} organizationId={organizationId} userId={userId} />);
+    release();
+    await screen.findByRole("heading", { name: "Účtenky" });
+    expect(screen.queryByText("Načítáme účtenky…")).not.toBeInTheDocument();
+  });
+
+  it("does not report authorization after an aborted archive hydration", async () => {
+    const eventB = crypto.randomUUID();
+    let rejectHydration!: (reason: unknown) => void;
+    const hydration = new Promise<boolean>((_resolve, reject) => { rejectHydration = reject; });
+    archiveMocks.ensureArchivedEventCached.mockImplementationOnce(async () => hydration);
+    await localDb.canonicalRecords.put({ userId, organizationId, entityType: "event", entityId: eventId, recordSchemaVersion: 1, lifecycle: "retired", fields: { id: eventId, organization_id: organizationId, lifecycle: "archived", current_archive_snapshot_id: crypto.randomUUID() }, fieldClocks: {}, immutable: true, updatedAt: new Date().toISOString() });
+    const onUnauthenticated = vi.fn();
+    const view = render(<EventReceipts eventId={eventId} onBack={vi.fn()} onUnauthenticated={onUnauthenticated} organizationId={organizationId} userId={userId} />);
+    await waitFor(() => expect(archiveMocks.ensureArchivedEventCached).toHaveBeenCalled());
+    view.rerender(<EventReceipts eventId={eventB} onBack={vi.fn()} onUnauthenticated={onUnauthenticated} organizationId={organizationId} userId={userId} />);
+    rejectHydration(new (await import("./sync-bootstrap")).SyncRequestError(401));
+    await screen.findByRole("heading", { name: "Účtenky" });
+    expect(onUnauthenticated).not.toHaveBeenCalled();
   });
 
   it("uses accessible exact-decimal metadata controls and a camera-capable photo picker", async () => {
@@ -80,10 +151,9 @@ describe("event receipt metadata screen", () => {
   it("hides receipt mutations when refresh archives the event", async () => {
     const snapshotId = crypto.randomUUID();
     const receiptId = crypto.randomUUID();
-    await localDb.canonicalRecords.put({ userId, organizationId, entityType: "event", entityId: eventId, recordSchemaVersion: 1, lifecycle: "active", fields: { id: eventId, organization_id: organizationId, lifecycle: "active", current_archive_snapshot_id: null }, fieldClocks: {}, immutable: false, updatedAt: new Date().toISOString() });
     await localDb.canonicalRecords.put({ userId, organizationId, entityType: "receipt", entityId: receiptId, recordSchemaVersion: 1, lifecycle: "active", fields: { id: receiptId, organization_id: organizationId, event_id: eventId, title: "Bakery", total_amount: "12.50", currency: "CZK", receipt_date: null, note: null }, fieldClocks: {}, immutable: false, updatedAt: new Date().toISOString() });
     const sync = vi.mocked((await import("./sync-bootstrap")).pullOrganization);
-    sync.mockImplementationOnce(async () => { await localDb.canonicalRecords.update([userId, organizationId, "event", eventId], { fields: { id: eventId, organization_id: organizationId, lifecycle: "archived", current_archive_snapshot_id: snapshotId }, lifecycle: "retired" }); await localDb.archiveRecords.put({ userId, organizationId, eventId, snapshotId, entityType: "receipt", entityId: receiptId, recordSchemaVersion: 1, lifecycle: "active", fields: { id: receiptId, organization_id: organizationId, event_id: eventId, title: "Bakery", total_amount: "12.50", currency: "CZK", receipt_date: null, note: null }, fieldClocks: {}, immutable: true, updatedAt: new Date().toISOString() }); return true; });
+    sync.mockImplementationOnce(async () => { await localDb.canonicalRecords.put({ userId, organizationId, entityType: "event", entityId: eventId, recordSchemaVersion: 1, lifecycle: "retired", fields: { id: eventId, organization_id: organizationId, lifecycle: "archived", current_archive_snapshot_id: snapshotId }, fieldClocks: {}, immutable: true, updatedAt: new Date().toISOString() }); await localDb.archiveRecords.put({ userId, organizationId, eventId, snapshotId, entityType: "receipt", entityId: receiptId, recordSchemaVersion: 1, lifecycle: "active", fields: { id: receiptId, organization_id: organizationId, event_id: eventId, title: "Bakery", total_amount: "12.50", currency: "CZK", receipt_date: null, note: null }, fieldClocks: {}, immutable: true, updatedAt: new Date().toISOString() }); return true; });
     render(<EventReceipts eventId={eventId} onBack={vi.fn()} onUnauthenticated={vi.fn()} organizationId={organizationId} userId={userId} />);
     await screen.findByText("Bakery");
     expect(screen.queryByRole("button", { name: "Uložit účtenku" })).not.toBeInTheDocument();
