@@ -829,11 +829,41 @@ class AddedScheduledIngredientOverridePayload(_ScheduledIngredientOverridePayloa
     position_key: str
 
 
-ScheduledIngredientOverridePayload = Annotated[
+_SetScheduledIngredientOverridePayload = Annotated[
     ReplacementScheduledIngredientOverridePayload | AddedScheduledIngredientOverridePayload,
     Field(discriminator="override_kind"),
 ]
-scheduled_ingredient_override_payload_adapter = TypeAdapter(ScheduledIngredientOverridePayload)
+class ClearReplacementScheduledIngredientOverridePayload(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    override_id: UUID
+    event_id: UUID
+    scheduled_recipe_id: UUID
+    operation: Literal["clear"]
+    override_kind: Literal["replace"]
+    target_line_key: UUID
+
+
+class ClearAddedScheduledIngredientOverridePayload(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    override_id: UUID
+    event_id: UUID
+    scheduled_recipe_id: UUID
+    operation: Literal["clear"]
+    override_kind: Literal["add"]
+
+
+ScheduledIngredientOverridePayload = (
+    _SetScheduledIngredientOverridePayload
+    | ClearReplacementScheduledIngredientOverridePayload
+    | ClearAddedScheduledIngredientOverridePayload
+)
+scheduled_ingredient_override_payload_adapter: TypeAdapter[
+    ScheduledIngredientOverridePayload
+] = TypeAdapter(
+    ScheduledIngredientOverridePayload
+)
 
 
 class ReceiptMetadataPayload(BaseModel):
@@ -1569,14 +1599,14 @@ def _push_command(command: PushCommandRequest, organization_id: UUID) -> SyncCom
                 target_line_key=getattr(override_payload, "target_line_key", None),
                 ingredient_id=getattr(override_payload, "ingredient_id", None),
                 ingredient_version_id=getattr(override_payload, "ingredient_version_id", None),
-                quantity=override_payload.quantity,
+                quantity=getattr(override_payload, "quantity", None),
                 include_in_portion_weight=getattr(
                     override_payload, "include_in_portion_weight", None
                 ),
-                note=override_payload.note,
+                note=getattr(override_payload, "note", None),
                 position_key=getattr(override_payload, "position_key", None),
                 client_wall_time=command.client_wall_time,
-                logical_operation_id=override_payload.logical_operation_id,
+                logical_operation_id=getattr(override_payload, "logical_operation_id", None),
             )
         if command.command_kind in ("receipt.create", "receipt.update"):
             receipt_payload = ReceiptMetadataPayload.model_validate(command.payload)

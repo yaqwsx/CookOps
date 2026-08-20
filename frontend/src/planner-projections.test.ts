@@ -3,7 +3,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { CanonicalRecord } from "./local-db";
 import { localDb } from "./local-db";
 import { readEventPlanner, suggestedScale } from "./planner-projections";
-import { queueClearReplacementOverride } from "./scheduled-ingredient-override";
+import { queueClearAddedOverride, queueClearReplacementOverride } from "./scheduled-ingredient-override";
 
 const organizationId = "55555555-5555-4555-8555-555555555555";
 const userId = "66666666-6666-4666-8666-666666666666";
@@ -216,6 +216,24 @@ describe("readEventPlanner catalog update projection", () => {
     expect(planner?.scheduled[0]?.detailLines[0]).toMatchObject({ quantity: "2" });
     expect(planner?.scheduled[0]?.detailLines[0]).not.toHaveProperty("replacementOverrideId");
     expect(planner?.scheduled[0]?.detailLines[0]).not.toHaveProperty("replacementOverrideActive");
+  });
+
+  it("removes only an added line after a durable added clear", async () => {
+    const added = record("scheduled_ingredient_override", ids.addedVersion, { event_id: ids.event, scheduled_recipe_id: ids.scheduled, override_kind: "add", ingredient_version_id: ids.oldVersion, quantity: "3", include_in_portion_weight: true }, { immutable: false });
+    const records = cache({ overrides: [added] });
+    await localDb.canonicalRecords.bulkPut([records.event[0], records.scheduled_recipe[0], records.recipe_ingredient_line[0], added]);
+    const before = await readEventPlanner(userId, organizationId, ids.event);
+    expect(before?.scheduled[0]?.detailLines.map((line) => line.name)).toEqual(["Old", "Old"]);
+    await queueClearAddedOverride(userId, organizationId, { eventId: ids.event, scheduledRecipeId: ids.scheduled, overrideId: ids.addedVersion });
+    const overlay = await localDb.optimisticOverlays.get([userId, organizationId, "scheduled_ingredient_override", ids.addedVersion]);
+    readVisibleRecords.mockImplementation(async (_user: string, _org: string, entityType: string) => {
+      const base = [...(records[entityType] ?? [])];
+      if (entityType !== "scheduled_ingredient_override") return base;
+      return base.filter((item) => item.entityId !== ids.addedVersion).concat(overlay ? [overlay] : []);
+    });
+    const after = await readEventPlanner(userId, organizationId, ids.event);
+    expect(after?.scheduled[0]?.detailLines).toHaveLength(1);
+    expect(after?.scheduled[0]?.detailLines[0]).toMatchObject({ name: "Old", quantity: "2" });
   });
 
   it("scales detail quantities when the pinned base is 0.5", async () => {

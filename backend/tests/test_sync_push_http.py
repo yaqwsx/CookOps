@@ -2732,6 +2732,39 @@ def test_push_schedules_a_recipe_through_the_typed_shared_command(
         assert client.post("/api/v1/sync/push", json=added_body).json()["outcomes"][0][
             "replayed"
         ]
+        clear_added = _scheduled_ingredient_override_command(
+            mutation_id=uuid4(),
+            event_id=event_id,
+            scheduled_recipe_id=scheduled_recipe_id,
+            line_key=line_key,
+            operation="clear",
+            override_kind="add",
+            override_id=cast(dict[str, object], added_override["payload"])["override_id"],
+        )
+        clear_added_payload = cast(dict[str, object], clear_added["payload"])
+        clear_added_payload.pop("target_line_key", None)
+        clear_added_payload.pop("quantity", None)
+        clear_added_body = _body(sync_database, installation_id, [clear_added])
+        assert (
+            client.post("/api/v1/sync/push", json=clear_added_body).json()["outcomes"][0]["status"]
+            == "accepted"
+        )
+        assert (
+            client.post("/api/v1/sync/push", json=clear_added_body)
+            .json()["outcomes"][0]["replayed"]
+        )
+        clear_added_extra = {
+            **clear_added,
+            "mutation_id": str(uuid4()),
+            "payload": {**clear_added_payload, "target_line_key": str(line_key)},
+        }
+        assert (
+            client.post(
+                "/api/v1/sync/push",
+                json=_body(sync_database, installation_id, [clear_added_extra]),
+            ).json()["outcomes"][0]["error"]["code"]
+            == "validation_failed"
+        )
         malformed_added = _scheduled_ingredient_override_command(
             mutation_id=uuid4(),
             event_id=event_id,
@@ -2948,6 +2981,17 @@ def test_push_schedules_a_recipe_through_the_typed_shared_command(
         assert (
             client.post(
                 "/api/v1/sync/push", json=_body(sync_database, installation_id, [archived_add])
+            ).json()["outcomes"][0]["error"]["code"]
+            == "archived_event"
+        )
+        archived_clear = {
+            **clear_added,
+            "mutation_id": str(uuid4()),
+        }
+        assert (
+            client.post(
+                "/api/v1/sync/push",
+                json=_body(sync_database, installation_id, [archived_clear]),
             ).json()["outcomes"][0]["error"]["code"]
             == "archived_event"
         )

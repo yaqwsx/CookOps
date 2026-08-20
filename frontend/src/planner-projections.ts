@@ -30,7 +30,7 @@ export type PlannedRecipe = {
   scalingUnitName?: string;
   scaleMode?: "suggested" | "manual";
   hasLocalOverrides: boolean;
-  detailLines: { id: string; name: string; quantity: string; unitName: string; note?: string; includeInPortionWeight?: boolean; massPerCanonicalQuantity?: string; localOverride?: true; replacementOverrideId?: string; replacementOverrideActive?: true }[];
+  detailLines: { id: string; name: string; quantity: string; unitName: string; note?: string; includeInPortionWeight?: boolean; massPerCanonicalQuantity?: string; localOverride?: true; replacementOverrideId?: string; replacementOverrideActive?: true; addedOverrideId?: string; addedOverrideActive?: true }[];
   preparedWeight: string | null;
   perDinerWeight: string | null;
   dietaryWarnings?: { exceptionName: string; tagNames: string[]; ingredientNames: string[]; tagDescriptors?: { id: string; seedKey?: string; name?: string }[] }[];
@@ -500,7 +500,7 @@ export async function readEventPlanner(
   }
   const localAddedIngredients = new Map<
     string,
-    { id: string; name: string; quantity: string; unitName?: string; includeInPortionWeight: boolean; massPerCanonicalQuantity?: string; localOverride?: true }[]
+    { id: string; name: string; quantity: string; unitName?: string; includeInPortionWeight: boolean; massPerCanonicalQuantity?: string; localOverride?: true; addedOverrideId?: string; addedOverrideActive?: true }[]
   >();
   for (const record of overrideRecords) {
     const scheduledRecipeId = value(record, "scheduled_recipe_id");
@@ -526,7 +526,7 @@ export async function readEventPlanner(
     )
       localAddedIngredients.set(scheduledRecipeId, [
         ...(localAddedIngredients.get(scheduledRecipeId) ?? []),
-        { id: record.entityId, name, quantity, includeInPortionWeight: includeInPortionWeight !== false, unitName: ingredientUnitNames.get(value(version, "canonical_unit_id") ?? "") as string, massPerCanonicalQuantity: value(version, "mass_per_canonical_quantity"), localOverride: true },
+        { id: record.entityId, name, quantity, includeInPortionWeight: includeInPortionWeight !== false, unitName: ingredientUnitNames.get(value(version, "canonical_unit_id") ?? "") as string, massPerCanonicalQuantity: value(version, "mass_per_canonical_quantity"), localOverride: true, addedOverrideId: record.entityId, addedOverrideActive: true },
       ]);
   }
   const scheduled = (scheduledRecords

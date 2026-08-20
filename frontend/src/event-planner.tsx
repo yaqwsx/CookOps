@@ -21,6 +21,7 @@ import {
 } from "./scheduled-recipe";
 import {
   queueAddedOverride,
+  queueClearAddedOverride,
   queueClearReplacementOverride,
   queueReplacementOverride,
 } from "./scheduled-ingredient-override";
@@ -741,6 +742,23 @@ function ResetReplacementOverride({ eventId, organizationId, userId, scheduledRe
   return <><button type="button" onClick={() => void reset()}>{t("planner.resetToCatalog")}</button>{error ? <span role="alert"> {t("planner.errors.unavailable")}</span> : null}</>;
 }
 
+function RemoveAddedOverride({ eventId, organizationId, userId, scheduledRecipeId, line }: { eventId: string; organizationId: string; userId: string; scheduledRecipeId: string; line: NonNullable<EventPlannerProjection["scheduled"][number]["detailLines"]>[number] }) {
+  const { t } = useTranslation();
+  const [error, setError] = useState(false);
+  const inFlight = useRef(false);
+  if (!line.addedOverrideId || !line.addedOverrideActive) return null;
+  async function remove() {
+    if (inFlight.current) return;
+    inFlight.current = true;
+    try {
+      await queueClearAddedOverride(userId, organizationId, { eventId, scheduledRecipeId, overrideId: line.addedOverrideId as string });
+      setError(false);
+    } catch { setError(true); }
+    finally { inFlight.current = false; }
+  }
+  return <><button type="button" onClick={() => void remove()}>{t("planner.removeAddedIngredient")}</button>{error ? <span role="alert"> {t("planner.errors.unavailable")}</span> : null}</>;
+}
+
 function AddedOverride({
   eventId,
   active,
@@ -1031,7 +1049,7 @@ export function EventPlanner({
                             {recipeCosts?.identity === identity && recipeCosts.costs?.scheduled.get(item.id) ? <p>{t("planner.recipeCost", { total: recipeCosts.costs.scheduled.get(item.id)?.total ?? "—", perDiner: recipeCosts.costs.scheduled.get(item.id)?.perDiner ?? "—" })}{recipeCosts.costs.scheduled.get(item.id)?.missing ? ` · ${t("planner.recipeCostMissing")}` : ""}</p> : null}
                             {item.hasLocalOverrides ? <p role="status">{t("planner.localOverrides")}</p> : null}
                             {item.detailLines.length ? <ul aria-label={t("planner.ingredients")}>
-                              {item.detailLines.map((line) => <li key={line.id}>{line.name}: {line.quantity}{line.unitName ? ` ${line.unitName}` : ""}{line.note ? ` · ${line.note}` : ""}{line.localOverride ? <span className="planner-local-override"> · {t("planner.localOverrideMarker")}</span> : null} <ResetReplacementOverride eventId={eventId} organizationId={organizationId} userId={userId} scheduledRecipeId={item.id} line={line} /></li>)}
+                              {item.detailLines.map((line) => <li key={line.id}>{line.name}: {line.quantity}{line.unitName ? ` ${line.unitName}` : ""}{line.note ? ` · ${line.note}` : ""}{line.localOverride ? <span className="planner-local-override"> · {t("planner.localOverrideMarker")}</span> : null} <ResetReplacementOverride eventId={eventId} organizationId={organizationId} userId={userId} scheduledRecipeId={item.id} line={line} /><RemoveAddedOverride eventId={eventId} organizationId={organizationId} userId={userId} scheduledRecipeId={item.id} line={line} /></li>)}
                             </ul> : null}
                           </details>
                           {(item.dietaryWarnings?.length ?? 0) ? (

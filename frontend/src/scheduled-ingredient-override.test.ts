@@ -3,6 +3,7 @@ import { beforeEach, expect, it } from "vitest";
 import { localDb } from "./local-db";
 import {
   queueAddedOverride,
+  queueClearAddedOverride,
   queueClearReplacementOverride,
   queueReplacementOverride,
   replayScheduledIngredientOverride,
@@ -298,6 +299,26 @@ it("does not queue an added override for an ingredient pinned in the recipe", as
       includeInPortionWeight: true,
     }),
   ).rejects.toThrow("override");
+});
+
+it("queues an exact clear for an active added override and tombstones it", async () => {
+  await activePlan();
+  const overrideId = "cce17d2f-8365-4b1f-a80b-34d10425d51c";
+  await localDb.canonicalRecords.put({ userId: user, organizationId: organization, entityType: "scheduled_ingredient_override", entityId: overrideId, recordSchemaVersion: 1, lifecycle: "active", fields: { id: overrideId, organization_id: organization, event_id: event, scheduled_recipe_id: scheduled, override_kind: "add", ingredient_id: ingredient, ingredient_version_id: ingredientVersion, quantity: "2" }, fieldClocks: { [`add.${overrideId}`]: { mutationId: "dce17d2f-8365-4b1f-a80b-34d10425d51c", actionAt: "2026-08-08T12:00:00.000000Z" } }, immutable: false, updatedAt: new Date().toISOString() });
+  await queueClearAddedOverride(user, organization, { eventId: event, scheduledRecipeId: scheduled, overrideId });
+  await expect(localDb.outbox.toArray()).resolves.toEqual([expect.objectContaining({ payload: { override_id: overrideId, event_id: event, scheduled_recipe_id: scheduled, operation: "clear", override_kind: "add" } })]);
+  await expect(localDb.optimisticOverlays.get([user, organization, "scheduled_ingredient_override", overrideId])).resolves.toMatchObject({ lifecycle: "retired", fields: { retired_at: expect.any(String), override_kind: "add" } });
+});
+
+it("replays only a newer clear for an existing active added override", async () => {
+  await activePlan();
+  const overrideId = "cce17d2f-8365-4b1f-a80b-34d10425d51c";
+  await localDb.canonicalRecords.put({ userId: user, organizationId: organization, entityType: "scheduled_ingredient_override", entityId: overrideId, recordSchemaVersion: 1, lifecycle: "active", fields: { id: overrideId, organization_id: organization, event_id: event, scheduled_recipe_id: scheduled, override_kind: "add", ingredient_id: ingredient, ingredient_version_id: ingredientVersion, quantity: "2" }, fieldClocks: { [`add.${overrideId}`]: { mutationId: "dce17d2f-8365-4b1f-a80b-34d10425d51c", actionAt: "2026-08-08T12:00:00.000001Z" } }, immutable: false, updatedAt: new Date().toISOString() });
+  const payload = { override_id: overrideId, event_id: event, scheduled_recipe_id: scheduled, operation: "clear", override_kind: "add" };
+  await replayScheduledIngredientOverride(user, organization, { id: "ece17d2f-8365-4b1f-a80b-34d10425d51c", actionAt: "2026-08-08T12:00:00.000000Z", payload });
+  expect(await localDb.optimisticOverlays.get([user, organization, "scheduled_ingredient_override", overrideId])).toBeUndefined();
+  await replayScheduledIngredientOverride(user, organization, { id: "ffffffff-ffff-4fff-8fff-ffffffffffff", actionAt: "2026-08-08T12:00:00.000002Z", payload });
+  await expect(localDb.optimisticOverlays.get([user, organization, "scheduled_ingredient_override", overrideId])).resolves.toMatchObject({ lifecycle: "retired", fields: { operation: "clear" } });
 });
 
 it("keeps the LWW-winning replacement overlay when replay order is stale", async () => {
