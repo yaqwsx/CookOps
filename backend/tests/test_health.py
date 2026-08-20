@@ -7,6 +7,9 @@ from cookops.config import Environment, HumanAuthProvider, Settings
 from cookops.http_auth import BrowserAuthenticationServices
 from cookops.main import create_app
 
+KEY = "MDEyMzQ1Njc4OWFiY2RlZjAxMjM0NTY3ODlhYmNkZWY"
+DETAILS_KEY = "MDEyMzQ1Njc4OWFiY2RlZjAxMjM0NTY3ODlhYmNkZWU"
+
 
 @pytest.fixture
 def anyio_backend() -> str:
@@ -71,6 +74,44 @@ def test_mcp_is_unmounted_even_when_its_private_verifier_is_configured() -> None
         )
     )
     assert "/mcp" not in {getattr(route, "path", None) for route in app.routes}
+
+
+def test_private_oauth_bridge_routes_require_complete_configuration() -> None:
+    default_routes = set(
+        create_app(
+            Settings(environment=Environment.TEST, human_auth_provider=HumanAuthProvider.DUMMY)
+        ).openapi()["paths"]
+    )
+    assert "/auth/mcp-interactions/{interaction_uid}" not in default_routes
+    assert "/auth/mcp-grants" not in default_routes
+
+    grants_only_routes = set(
+        create_app(
+            Settings(
+                environment=Environment.TEST,
+                human_auth_provider=HumanAuthProvider.DUMMY,
+                oauth_grants_api_credential_base64url=KEY,
+            )
+        ).openapi()["paths"]
+    )
+    assert "/auth/mcp-interactions/{interaction_uid}" not in grants_only_routes
+    assert "/auth/mcp-grants" not in grants_only_routes
+
+    configured_routes = set(
+        create_app(
+            Settings(
+                environment=Environment.TEST,
+                human_auth_provider=HumanAuthProvider.DUMMY,
+                browser_origin="https://test",
+                oauth_interaction_origin="https://test",
+                oauth_interaction_details_api_credential_base64url=DETAILS_KEY,
+                oauth_interaction_approval_api_credential_base64url=KEY,
+                oauth_grants_api_credential_base64url="MDEyMzQ1Njc4OWFiY2RlZjAxMjM0NTY3ODlhYmNkZWc",
+            )
+        ).openapi()["paths"]
+    )
+    assert "/auth/mcp-interactions/{interaction_uid}" in configured_routes
+    assert "/auth/mcp-grants" in configured_routes
 
 
 @pytest.mark.anyio
