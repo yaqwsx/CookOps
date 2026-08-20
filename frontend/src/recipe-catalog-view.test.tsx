@@ -112,6 +112,14 @@ vi.mock("./recipe-catalog", () => ({
         historical: true,
         retired: true,
       },
+      {
+        id: "0ce17d2f-8365-4b1f-8000-000000000002",
+        versionId: "0ce17d2f-8365-4b1f-8000-000000000003",
+        name: "Beans",
+        canonicalUnitName: "piece",
+        massPerCanonicalQuantity: "1",
+        canonicalUnitId: "0ce17d2f-8365-4b1f-8000-000000000001",
+      },
     ],
     tags: [
       {
@@ -119,7 +127,10 @@ vi.mock("./recipe-catalog", () => ({
         name: "Quick meals",
       },
     ],
-    units: [{ id: "9ce17d2f-8365-4b1f-a80b-34d10425d51c", name: "g", dimension: "mass", baseUnitFactor: "1" }],
+    units: [
+      { id: "9ce17d2f-8365-4b1f-a80b-34d10425d51c", name: "g", dimension: "mass", baseUnitFactor: "1" },
+      { id: "0ce17d2f-8365-4b1f-8000-000000000001", name: "piece", dimension: "count", baseUnitFactor: "1" },
+    ],
     storeSections: emptyStoreSections.value ? [] : [{ id: "3ce17d2f-8365-4b1f-a80b-34d10425d51c", name: "Produce" }, { id: "4ce17d2f-8365-4b1f-a80b-34d10425d51c", name: "Pantry" }],
     organizationDefaultCurrency: "EUR",
     costs: {
@@ -310,6 +321,42 @@ describe("recipe retired ingredient warning", () => {
     expect(newIngredientSelect).toHaveValue("Current carrot");
     await user.click(newIngredientSelect);
     expect(screen.queryByRole("option", { name: "Historical carrot" })).not.toBeInTheDocument();
+  });
+
+  it("publishes editable ingredient-line semantics and clears incompatible units", async () => {
+    const user = userEvent.setup();
+    render(
+      <RecipeCatalog
+        editRecipeId="6ce17d2f-8365-4b1f-a80b-34d10425d51c"
+        onUnauthenticated={() => undefined}
+        organizationId="5ce17d2f-8365-4b1f-a80b-34d10425d51c"
+        selectedRecipeId="6ce17d2f-8365-4b1f-a80b-34d10425d51c"
+        userId="a6a58bd6-214e-49af-8fae-e5f974bf8e08"
+      />,
+    );
+    const ingredient = await screen.findByRole("combobox", { name: "Surovina" });
+    const preferred = screen.getByRole("combobox", { name: "Preferovaná zobrazovací jednotka" });
+    await user.selectOptions(preferred, "9ce17d2f-8365-4b1f-a80b-34d10425d51c");
+    await user.selectOptions(screen.getByRole("combobox", { name: "Škálování" }), "fixed");
+    await user.click(screen.getByRole("checkbox", { name: "Zahrnout do hmotnosti porce" }));
+    await user.type(screen.getByRole("textbox", { name: "Poznámka" }), "soak overnight");
+    await user.clear(ingredient);
+    await user.type(ingredient, "beans");
+    await user.click(screen.getByRole("option", { name: /Beans/ }));
+    expect(preferred).toHaveValue("");
+    await user.click(screen.getByRole("button", { name: "Publikovat verzi" }));
+    expect(queueRecipeVersionPublish).toHaveBeenCalledWith(
+      expect.any(String), expect.any(String),
+      expect.objectContaining({
+        ingredientLines: [expect.objectContaining({
+          ingredientVersionId: "0ce17d2f-8365-4b1f-8000-000000000003",
+          scalingBehavior: "fixed",
+          includeInPortionWeight: false,
+          note: "soak overnight",
+          preferredDisplayUnitId: undefined,
+        })],
+      }),
+    );
   });
 
   it("matches description, tag, and ingredient with normalized search", async () => {

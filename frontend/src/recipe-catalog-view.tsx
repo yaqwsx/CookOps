@@ -493,6 +493,11 @@ function RecipeEditor({
     tabs[next]?.focus();
     setDescriptionMode(next === 0 ? "visual" : "markdown");
   }
+  const compatibleUnits = (ingredientVersionId: string) => {
+    const dimension = catalog.ingredients.find((item) => item.versionId === ingredientVersionId)?.canonicalUnitId;
+    const canonicalDimension = catalog.units.find((unit) => unit.id === dimension)?.dimension;
+    return canonicalDimension ? catalog.units.filter((unit) => unit.dimension === canonicalDimension) : [];
+  };
   return (
     <form className="recipe-create" onSubmit={(event) => void submit(event)}>
       <h4>{t("recipesCatalog.editHeading")}</h4>
@@ -573,7 +578,13 @@ function RecipeEditor({
               userId={userId}
               onSelect={(ingredientVersionId) => setInput((current) => ({
                 ...current,
-                ingredientLines: current.ingredientLines.map((item, itemIndex) => itemIndex === index ? { ...item, ingredientVersionId } : item),
+                ingredientLines: current.ingredientLines.map((item, itemIndex) => {
+                  if (itemIndex !== index) return item;
+                  const preferred = compatibleUnits(ingredientVersionId).some((unit) => unit.id === item.preferredDisplayUnitId)
+                    ? item.preferredDisplayUnitId
+                    : undefined;
+                  return { ...item, ingredientVersionId, preferredDisplayUnitId: preferred };
+                }),
               }))}
             />
             <input
@@ -592,6 +603,44 @@ function RecipeEditor({
               }
               value={line.baseQuantity}
             />
+            <label>
+              {t("recipesCatalog.scalingBehavior")}
+              <select
+                aria-label={t("recipesCatalog.scalingBehavior")}
+                value={line.scalingBehavior}
+                onChange={(event) => setInput((current) => ({ ...current, ingredientLines: current.ingredientLines.map((item, itemIndex) => itemIndex === index ? { ...item, scalingBehavior: event.target.value as "proportional" | "fixed" } : item) }))}
+              >
+                <option value="proportional">{t("recipesCatalog.proportional")}</option>
+                <option value="fixed">{t("recipesCatalog.fixed")}</option>
+              </select>
+            </label>
+            <label>
+              <input
+                checked={line.includeInPortionWeight}
+                onChange={(event) => setInput((current) => ({ ...current, ingredientLines: current.ingredientLines.map((item, itemIndex) => itemIndex === index ? { ...item, includeInPortionWeight: event.target.checked } : item) }))}
+                type="checkbox"
+              />
+              {t("recipesCatalog.includeInPortionWeight")}
+            </label>
+            <label>
+              {t("recipesCatalog.preferredDisplayUnit")}
+              <select
+                aria-label={t("recipesCatalog.preferredDisplayUnit")}
+                value={line.preferredDisplayUnitId ?? ""}
+                onChange={(event) => setInput((current) => ({ ...current, ingredientLines: current.ingredientLines.map((item, itemIndex) => itemIndex === index ? { ...item, ...(event.target.value ? { preferredDisplayUnitId: event.target.value } : { preferredDisplayUnitId: undefined }) } : item) }))}
+              >
+                <option value="">{t("recipesCatalog.noPreferredDisplayUnit")}</option>
+                {compatibleUnits(line.ingredientVersionId).map((unit) => <option key={unit.id} value={unit.id}>{unit.name}</option>)}
+              </select>
+            </label>
+            <label>
+              {t("recipesCatalog.note")}
+              <input
+                aria-label={t("recipesCatalog.note")}
+                value={line.note}
+                onChange={(event) => setInput((current) => ({ ...current, ingredientLines: current.ingredientLines.map((item, itemIndex) => itemIndex === index ? { ...item, note: event.target.value } : item) }))}
+              />
+            </label>
             <button
               onClick={() =>
                 setInput((current) => ({

@@ -172,6 +172,37 @@ describe("offline recipe version publication", () => {
     });
   });
 
+  it("serializes ingredient-line semantics into the optimistic overlay", async () => {
+    const published = await queueRecipeVersionPublish(userId, organizationId, {
+      ...input,
+      ingredientLines: [{
+        ...input.ingredientLines[0],
+        scalingBehavior: "fixed",
+        includeInPortionWeight: false,
+        note: "soak overnight",
+        preferredDisplayUnitId: unitId,
+      }],
+    });
+    const [command] = await localDb.outbox.toArray();
+    const line = (command.payload.ingredient_lines as Array<Record<string, unknown>>)[0];
+    expect(line).toMatchObject({
+      scaling_behavior: "fixed",
+      include_in_portion_weight: false,
+      note: "soak overnight",
+      preferred_display_unit_id: unitId,
+    });
+    const overlay = (await localDb.optimisticOverlays.toArray()).find((record) => record.entityType === "recipe_ingredient_line");
+    expect(overlay).toMatchObject({
+      fields: expect.objectContaining({
+        scaling_behavior: "fixed",
+        include_in_portion_weight: false,
+        note: "soak overnight",
+        preferred_display_unit_id: unitId,
+      }),
+    });
+    expect(published).toEqual(expect.any(String));
+  });
+
   it("does not replay a stale publication over a newer canonical version", async () => {
     await queueRecipeVersionPublish(userId, organizationId, input);
     const [command] = await localDb.outbox.toArray();
