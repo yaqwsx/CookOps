@@ -1,5 +1,41 @@
 # Deployment foundation
 
+## Deploy a selected Git revision
+
+Run the workflow from a clean checkout. It fetches and verifies the requested
+revision into a temporary worktree, validates that selected worktree's
+deployment configuration, tags the built images with its full commit hash,
+runs both migration services, recreates the application services, and
+waits for loopback and Apache health checks. It never checks out or resets the
+operator's worktree.
+
+Set `COOKOPS_APPLICATION_DIR` to the checkout, and optionally set
+`COOKOPS_COMPOSE_COMMAND` to a Docker-compatible CLI (default: `docker`),
+`COOKOPS_GIT_REMOTE` (default: `origin`), `COOKOPS_COMPOSE_PROJECT`, and the
+loopback port variables from `.env`. `COOKOPS_PUBLIC_HEALTH_URL` must be an
+HTTPS public Apache URL, for example
+`https://cookops.example/health/ready`. The operator checkout's `deploy/.env`
+is deliberately used for credentials and host configuration; `deploy/compose.yaml`
+is always read from the selected detached revision.
+
+```sh
+COOKOPS_APPLICATION_DIR=/srv/cookops \
+COOKOPS_PUBLIC_HEALTH_URL=https://cookops.example/health/ready \
+deploy/deploy.sh v1.2.3
+```
+
+Validate command construction without fetching, building, or changing services:
+
+```sh
+COOKOPS_APPLICATION_DIR=/srv/cookops \
+COOKOPS_PUBLIC_HEALTH_URL=https://cookops.example/health/ready \
+deploy/deploy.sh --dry-run HEAD
+```
+
+The script refuses dirty worktrees, unresolved revisions, missing deployment
+configuration, and failed health checks. Run `deploy/test-deploy-script.sh` for
+the non-Docker dry-run contract.
+
 Copy `.env.example` to `.env`, replace every placeholder, then run:
 
 ```sh
