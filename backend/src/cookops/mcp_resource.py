@@ -7,10 +7,13 @@ from typing import Any, cast
 from uuid import UUID
 
 import httpx
+from mcp.server.auth.middleware.auth_context import get_access_token
 from mcp.server.auth.provider import AccessToken, TokenVerifier
 from mcp.server.auth.settings import AuthSettings
 from mcp.server.fastmcp import FastMCP
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
+from cookops.application.events import EventQueryDenied, EventSummary, get_event_summary
 from cookops.config import Settings
 
 
@@ -93,9 +96,42 @@ def _audience_contains(value: Any, resource: str) -> bool:
     return value == resource or (isinstance(value, list) and resource in value)
 
 
-def create_mcp_protected_resource(verifier: TokenVerifier, *, issuer: str, resource: str) -> object:
+def _parse_uuid(value: str) -> UUID:
+    try:
+        return UUID(value)
+    except (AttributeError, TypeError, ValueError) as error:
+        raise ValueError("invalid identifier") from error
+
+
+def _summary_payload(summary: EventSummary) -> dict[str, object]:
+    return {
+        "id": str(summary.id),
+        "organization_id": str(summary.organization_id),
+        "name": summary.name,
+        "start_date": summary.start_date.isoformat(),
+        "end_date": summary.end_date.isoformat(),
+        "attendance": summary.base_expected_attendance,
+        "budget": format(summary.budget_amount, "f"),
+        "currency": summary.currency,
+        "lifecycle": summary.lifecycle,
+        "archived_at": summary.archived_at.isoformat() if summary.archived_at else None,
+        "archive_snapshot_id": (
+            str(summary.current_archive_snapshot_id)
+            if summary.current_archive_snapshot_id
+            else None
+        ),
+    }
+
+
+def create_mcp_protected_resource(
+    verifier: TokenVerifier,
+    *,
+    issuer: str,
+    resource: str,
+    session_factory: async_sessionmaker[AsyncSession],
+) -> object:
     """Build, but do not mount, the Streamable HTTP ASGI protected resource."""
-    return FastMCP(
+    server = FastMCP(
         "CookOps",
         token_verifier=verifier,
         auth=AuthSettings(
@@ -105,10 +141,39 @@ def create_mcp_protected_resource(verifier: TokenVerifier, *, issuer: str, resou
         ),
         stateless_http=True,
         streamable_http_path="/mcp",
-    ).streamable_http_app()
+    )
+
+    @server.tool(
+        name="get_event_summary",
+        description="Read one authorized event summary using explicit organization and event IDs.",
+        structured_output=True,
+    )
+    async def read_event_summary(
+        organization_id: str, event_id: str
+    ) -> dict[str, object]:
+        organization = _parse_uuid(organization_id)
+        event = _parse_uuid(event_id)
+        token = get_access_token()
+        if token is None or not isinstance(token.subject, str):
+            raise ValueError("not authenticated")
+        actor = _parse_uuid(token.subject)
+        try:
+            summary = await get_event_summary(
+                session_factory,
+                actor_user_id=actor,
+                organization_id=organization,
+                event_id=event,
+            )
+        except EventQueryDenied as error:
+            raise ValueError("event not found") from error
+        return _summary_payload(summary)
+
+    return server.streamable_http_app()
 
 
-def create_mcp_protected_resource_from_settings(settings: Settings) -> object | None:
+def create_mcp_protected_resource_from_settings(
+    settings: Settings, session_factory: async_sessionmaker[AsyncSession]
+) -> object | None:
     """Return no app only when MCP is entirely disabled; callers must mount deliberately."""
     values = (
         settings.oauth_issuer,
@@ -130,4 +195,5 @@ def create_mcp_protected_resource_from_settings(settings: Settings) -> object | 
         ),
         issuer=issuer,
         resource=resource,
+        session_factory=session_factory,
     )

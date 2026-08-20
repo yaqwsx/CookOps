@@ -415,6 +415,23 @@ def _canonical_decimal_string(value: Decimal) -> str:
     return format(value.normalize(), "f")
 
 
+def _event_summary(event: Event) -> EventSummary:
+    return EventSummary(
+        id=event.id,
+        organization_id=event.organization_id,
+        name=event.name,
+        start_date=event.start_date,
+        end_date=event.end_date,
+        base_expected_attendance=event.base_expected_attendance,
+        budget_amount=event.budget_amount,
+        currency=event.currency,
+        lifecycle=cast(Literal["active", "archived"], event.lifecycle),
+        archived_at=event.archived_at,
+        current_archive_snapshot_id=event.current_archive_snapshot_id,
+        created_at=event.created_at,
+    )
+
+
 async def list_event_summaries(
     session_factory: async_sessionmaker[AsyncSession],
     *,
@@ -473,24 +490,27 @@ async def list_event_summaries(
             .all()
         )
         page_events = events[:limit]
-        summaries = tuple(
-            EventSummary(
-                id=event.id,
-                organization_id=event.organization_id,
-                name=event.name,
-                start_date=event.start_date,
-                end_date=event.end_date,
-                base_expected_attendance=event.base_expected_attendance,
-                budget_amount=event.budget_amount,
-                currency=event.currency,
-                lifecycle=cast(Literal["active", "archived"], event.lifecycle),
-                archived_at=event.archived_at,
-                current_archive_snapshot_id=event.current_archive_snapshot_id,
-                created_at=event.created_at,
-            )
-            for event in page_events
-        )
+        summaries = tuple(_event_summary(event) for event in page_events)
         return EventSummaryPage(summaries=summaries, has_more=len(events) > limit)
+
+
+async def get_event_summary(
+    session_factory: async_sessionmaker[AsyncSession],
+    *,
+    actor_user_id: UUID,
+    organization_id: UUID,
+    event_id: UUID,
+) -> EventSummary:
+    """Return one authorized event overview without leaking scope."""
+
+    async with session_factory() as session:
+        await _require_event_read_access(session, actor_user_id, organization_id)
+        event = await session.scalar(
+            select(Event).where(Event.id == event_id, Event.organization_id == organization_id)
+        )
+        if event is None:
+            raise EventQueryDenied("event unavailable")
+        return _event_summary(event)
 
 
 async def get_event_archive_snapshot(
