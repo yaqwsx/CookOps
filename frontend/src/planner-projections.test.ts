@@ -223,7 +223,7 @@ describe("readEventPlanner catalog update projection", () => {
     const records = cache({ overrides: [added] });
     await localDb.canonicalRecords.bulkPut([records.event[0], records.scheduled_recipe[0], records.recipe_ingredient_line[0], added]);
     const before = await readEventPlanner(userId, organizationId, ids.event);
-    expect(before?.scheduled[0]?.detailLines.map((line) => line.name)).toEqual(["Old", "Old"]);
+    expect(before?.scheduled[0]?.detailLines.map((line) => line.name)).toEqual(["Old"]);
     await queueClearAddedOverride(userId, organizationId, { eventId: ids.event, scheduledRecipeId: ids.scheduled, overrideId: ids.addedVersion });
     const overlay = await localDb.optimisticOverlays.get([userId, organizationId, "scheduled_ingredient_override", ids.addedVersion]);
     readVisibleRecords.mockImplementation(async (_user: string, _org: string, entityType: string) => {
@@ -234,6 +234,13 @@ describe("readEventPlanner catalog update projection", () => {
     const after = await readEventPlanner(userId, organizationId, ids.event);
     expect(after?.scheduled[0]?.detailLines).toHaveLength(1);
     expect(after?.scheduled[0]?.detailLines[0]).toMatchObject({ name: "Old", quantity: "2" });
+  });
+
+  it("hides an added line whose version is no longer current", async () => {
+    const added = record("scheduled_ingredient_override", ids.addedVersion, { event_id: ids.event, scheduled_recipe_id: ids.scheduled, override_kind: "add", ingredient_version_id: ids.oldVersion, quantity: "3", include_in_portion_weight: true }, { immutable: false });
+    cache({ overrides: [added] });
+    const planner = await readEventPlanner(userId, organizationId, ids.event);
+    expect(planner?.scheduled[0]?.detailLines.map((line) => line.name)).toEqual(["Old"]);
   });
 
   it("scales detail quantities when the pinned base is 0.5", async () => {

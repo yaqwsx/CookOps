@@ -759,6 +759,30 @@ function RemoveAddedOverride({ eventId, organizationId, userId, scheduledRecipeI
   return <><button type="button" onClick={() => void remove()}>{t("planner.removeAddedIngredient")}</button>{error ? <span role="alert"> {t("planner.errors.unavailable")}</span> : null}</>;
 }
 
+function EditAddedOverride({ eventId, organizationId, userId, scheduledRecipeId, line }: { eventId: string; organizationId: string; userId: string; scheduledRecipeId: string; line: NonNullable<EventPlannerProjection["scheduled"][number]["detailLines"]>[number] }) {
+  const { t } = useTranslation();
+  const [amount, setAmount] = useState(line.quantity);
+  const [included, setIncluded] = useState(line.includeInPortionWeight !== false);
+  const [error, setError] = useState(false);
+  const inFlight = useRef(false);
+  if (!line.addedOverrideId || !line.addedOverrideActive) return null;
+  async function submit(event: React.FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (inFlight.current) return;
+    inFlight.current = true;
+    try {
+      await queueAddedOverride(userId, organizationId, { eventId, scheduledRecipeId, ingredientId: line.ingredientId as string, ingredientVersionId: line.ingredientVersionId as string, quantity: amount, includeInPortionWeight: included, overrideId: line.addedOverrideId });
+      setError(false);
+    } catch { setError(true); }
+    finally { inFlight.current = false; }
+  }
+  return <details><summary>{t("planner.editAddedIngredient")}</summary><form onSubmit={(event) => void submit(event)}>
+    <label>{t("planner.quantity")} <input value={amount} onChange={(event) => setAmount(event.target.value)} inputMode="decimal" pattern="(?:0|[1-9][0-9]*)(?:\.[0-9]+)?" required /></label>
+    <label><input checked={included} onChange={(event) => setIncluded(event.target.checked)} type="checkbox" /> {t("planner.includeInPortionWeight")}</label>
+    <button type="submit">{t("planner.saveAddedIngredient")}</button>{error ? <p role="alert">{t("planner.errors.unavailable")}</p> : null}
+  </form></details>;
+}
+
 function AddedOverride({
   eventId,
   active,
@@ -1049,7 +1073,7 @@ export function EventPlanner({
                             {recipeCosts?.identity === identity && recipeCosts.costs?.scheduled.get(item.id) ? <p>{t("planner.recipeCost", { total: recipeCosts.costs.scheduled.get(item.id)?.total ?? "—", perDiner: recipeCosts.costs.scheduled.get(item.id)?.perDiner ?? "—" })}{recipeCosts.costs.scheduled.get(item.id)?.missing ? ` · ${t("planner.recipeCostMissing")}` : ""}</p> : null}
                             {item.hasLocalOverrides ? <p role="status">{t("planner.localOverrides")}</p> : null}
                             {item.detailLines.length ? <ul aria-label={t("planner.ingredients")}>
-                              {item.detailLines.map((line) => <li key={line.id}>{line.name}: {line.quantity}{line.unitName ? ` ${line.unitName}` : ""}{line.note ? ` · ${line.note}` : ""}{line.localOverride ? <span className="planner-local-override"> · {t("planner.localOverrideMarker")}</span> : null} <ResetReplacementOverride eventId={eventId} organizationId={organizationId} userId={userId} scheduledRecipeId={item.id} line={line} /><RemoveAddedOverride eventId={eventId} organizationId={organizationId} userId={userId} scheduledRecipeId={item.id} line={line} /></li>)}
+                              {item.detailLines.map((line) => <li key={line.id}>{line.name}: {line.quantity}{line.unitName ? ` ${line.unitName}` : ""}{line.note ? ` · ${line.note}` : ""}{line.localOverride ? <span className="planner-local-override"> · {t("planner.localOverrideMarker")}</span> : null} <ResetReplacementOverride eventId={eventId} organizationId={organizationId} userId={userId} scheduledRecipeId={item.id} line={line} /><EditAddedOverride eventId={eventId} organizationId={organizationId} userId={userId} scheduledRecipeId={item.id} line={line} /><RemoveAddedOverride eventId={eventId} organizationId={organizationId} userId={userId} scheduledRecipeId={item.id} line={line} /></li>)}
                             </ul> : null}
                           </details>
                           {(item.dietaryWarnings?.length ?? 0) ? (

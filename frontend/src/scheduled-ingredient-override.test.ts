@@ -269,6 +269,36 @@ it("fails closed for an added override with a stale catalog version", async () =
   ).rejects.toThrow("override");
 });
 
+it("edits an existing added override in place", async () => {
+  await activePlan();
+  await activeIngredient();
+  const overrideId = "cce17d2f-8365-4b1f-a80b-34d10425d51c";
+  await localDb.canonicalRecords.put({ userId: user, organizationId: organization, entityType: "scheduled_ingredient_override", entityId: overrideId, recordSchemaVersion: 1, lifecycle: "active", fields: { id: overrideId, organization_id: organization, event_id: event, scheduled_recipe_id: scheduled, override_kind: "add", ingredient_id: ingredient, ingredient_version_id: ingredientVersion, quantity: "2", include_in_portion_weight: true, note: "keep this", position_key: "b" }, fieldClocks: { [`add.${overrideId}`]: { mutationId: "dce17d2f-8365-4b1f-a80b-34d10425d51c", actionAt: "2026-08-08T12:00:00.000000Z" } }, immutable: false, updatedAt: new Date().toISOString() });
+  await queueAddedOverride(user, organization, { eventId: event, scheduledRecipeId: scheduled, ingredientId: ingredient, ingredientVersionId: ingredientVersion, quantity: "3.5", includeInPortionWeight: false, overrideId });
+  expect(await localDb.optimisticOverlays.count()).toBe(1);
+  await expect(localDb.optimisticOverlays.get([user, organization, "scheduled_ingredient_override", overrideId])).resolves.toMatchObject({ fields: { id: overrideId, quantity: "3.5", include_in_portion_weight: false, note: "keep this", position_key: "b" }, fieldClocks: { [`add.${overrideId}`]: expect.anything() } });
+  await expect(localDb.outbox.toArray()).resolves.toEqual([expect.objectContaining({ payload: expect.objectContaining({ override_id: overrideId, quantity: "3.5", include_in_portion_weight: false, note: "keep this", position_key: "b" }) })]);
+});
+
+it("does not overwrite a colliding add replay entity", async () => {
+  await activePlan();
+  await activeIngredient();
+  const overrideId = "cce17d2f-8365-4b1f-a80b-34d10425d51c";
+  const otherId = "dce17d2f-8365-4b1f-a80b-34d10425d51c";
+  await localDb.canonicalRecords.put({ userId: user, organizationId: organization, entityType: "scheduled_ingredient_override", entityId: otherId, recordSchemaVersion: 1, lifecycle: "active", fields: { id: otherId, organization_id: organization, event_id: event, scheduled_recipe_id: scheduled, override_kind: "replace", target_line_key: line, quantity: "9" }, fieldClocks: { [`add.${overrideId}`]: { mutationId: crypto.randomUUID(), actionAt: "2026-08-08T12:00:00.000000Z" } }, immutable: false, updatedAt: new Date().toISOString() });
+  await replayScheduledIngredientOverride(user, organization, { id: crypto.randomUUID(), actionAt: "2026-08-08T12:00:01.000000Z", payload: { override_id: overrideId, event_id: event, scheduled_recipe_id: scheduled, operation: "set", override_kind: "add", ingredient_id: ingredient, ingredient_version_id: ingredientVersion, quantity: "3", include_in_portion_weight: false, position_key: "z" } });
+  await expect(localDb.optimisticOverlays.count()).resolves.toBe(0);
+  await expect(localDb.canonicalRecords.get([user, organization, "scheduled_ingredient_override", otherId])).resolves.toMatchObject({ fields: { override_kind: "replace", quantity: "9" } });
+});
+
+it("fails closed when editing an added override without a valid position", async () => {
+  await activePlan();
+  await activeIngredient();
+  const overrideId = "cce17d2f-8365-4b1f-a80b-34d10425d51c";
+  await localDb.canonicalRecords.put({ userId: user, organizationId: organization, entityType: "scheduled_ingredient_override", entityId: overrideId, recordSchemaVersion: 1, lifecycle: "active", fields: { id: overrideId, organization_id: organization, event_id: event, scheduled_recipe_id: scheduled, override_kind: "add", ingredient_id: ingredient, ingredient_version_id: ingredientVersion, quantity: "2" }, fieldClocks: {}, immutable: false, updatedAt: new Date().toISOString() });
+  await expect(queueAddedOverride(user, organization, { eventId: event, scheduledRecipeId: scheduled, ingredientId: ingredient, ingredientVersionId: ingredientVersion, quantity: "3.5", includeInPortionWeight: false, overrideId })).rejects.toThrow("override");
+});
+
 it("does not queue an added override for an ingredient pinned in the recipe", async () => {
   await activePlan();
   await activeIngredient();
