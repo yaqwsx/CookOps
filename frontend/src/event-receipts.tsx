@@ -217,7 +217,7 @@ function ReceiptItem({
       busy.current = false;
     }
   }
-  async function attach(input: HTMLInputElement) {
+  async function attach(input: HTMLInputElement, replaceAttachmentId?: string) {
     if (attachingRef.current) {
       setError("unavailable");
       return;
@@ -229,12 +229,21 @@ function ReceiptItem({
     setError(undefined);
     try {
       for (const file of files) {
-        const pending = await queueReceiptAttachment(
-          userId,
-          organizationId,
-          receipt.id,
-          await prepareReceiptImage(file),
-        );
+        const prepared = await prepareReceiptImage(file);
+        const pending = replaceAttachmentId
+          ? await queueReceiptAttachment(
+              userId,
+              organizationId,
+              receipt.id,
+              prepared,
+              replaceAttachmentId,
+            )
+          : await queueReceiptAttachment(
+              userId,
+              organizationId,
+              receipt.id,
+              prepared,
+            );
         onQueued(pending);
       }
     } catch (reason) {
@@ -302,6 +311,25 @@ function ReceiptItem({
                     : "receipts.removePhoto",
                 )}
               </button>
+            ) : null}
+            {!readOnly && !receipt.retired && !attachment.retired &&
+            !uploads.some(
+              (upload) =>
+                upload.replaceAttachmentId === attachment.id &&
+                (upload.state === "pending" || upload.state === "uploading"),
+            ) ? (
+              <label className="receipt-item__media">
+                {t("receipts.replacePhoto")}
+                <input
+                  accept="image/*"
+                  capture="environment"
+                  disabled={attaching}
+                  onChange={(event) =>
+                    void attach(event.currentTarget, attachment.id)
+                  }
+                  type="file"
+                />
+              </label>
             ) : null}
           </div>
         ))}

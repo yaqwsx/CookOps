@@ -580,4 +580,55 @@ describe("event receipt metadata screen", () => {
     expect(mediaMocks.queueReceiptAttachment).toHaveBeenCalledTimes(1);
     expect(await screen.findByRole("alert")).toBeInTheDocument();
   });
+
+  it("queues a replacement for the canonical attachment without hiding the old photo", async () => {
+    const receiptId = crypto.randomUUID();
+    const attachmentId = crypto.randomUUID();
+    await localDb.canonicalRecords.bulkPut([
+      {
+        userId,
+        organizationId,
+        entityType: "receipt",
+        entityId: receiptId,
+        recordSchemaVersion: 1,
+        lifecycle: "active",
+        fields: { id: receiptId, organization_id: organizationId, event_id: eventId, title: "Bakery", total_amount: "12.50", currency: "CZK", receipt_date: null, note: null },
+        fieldClocks: {}, immutable: false, updatedAt: new Date().toISOString(),
+      },
+      {
+        userId,
+        organizationId,
+        entityType: "receipt_attachment",
+        entityId: attachmentId,
+        recordSchemaVersion: 1,
+        lifecycle: "active",
+        fields: { id: attachmentId, organization_id: organizationId, receipt_id: receiptId, storage_state: "ready", media_type: "image/jpeg" },
+        fieldClocks: {}, immutable: false, updatedAt: new Date().toISOString(),
+      },
+    ]);
+    const prepared = new Blob(["replacement"], { type: "image/jpeg" });
+    mediaMocks.prepareReceiptImage.mockResolvedValue(prepared);
+    mediaMocks.queueReceiptAttachment.mockResolvedValue({ id: "pending-replacement" });
+    const user = userEvent.setup();
+    render(<EventReceipts eventId={eventId} onBack={vi.fn()} onUnauthenticated={vi.fn()} organizationId={organizationId} userId={userId} />);
+    await screen.findByRole("heading", { name: "Účtenky" });
+    const oldPhoto = await screen.findByRole("img", { name: "Fotografie účtenky" });
+    await user.upload(screen.getByLabelText("Nahradit fotografii"), new File(["new"], "new.jpg", { type: "image/jpeg" }));
+    expect(mediaMocks.queueReceiptAttachment).toHaveBeenCalledWith(userId, organizationId, receiptId, prepared, attachmentId);
+    expect(oldPhoto).toHaveAttribute("src", expect.stringContaining(`/media/receipt-attachments/${attachmentId}`));
+  });
+
+  it("does not offer replacement for retired attachments or an in-flight replacement", async () => {
+    const receiptId = crypto.randomUUID();
+    const retiredId = crypto.randomUUID();
+    const busyId = crypto.randomUUID();
+    await localDb.canonicalRecords.bulkPut([
+      { userId, organizationId, entityType: "receipt", entityId: receiptId, recordSchemaVersion: 1, lifecycle: "active", fields: { id: receiptId, organization_id: organizationId, event_id: eventId, title: "Bakery", total_amount: "12.50", currency: "CZK", receipt_date: null, note: null }, fieldClocks: {}, immutable: false, updatedAt: new Date().toISOString() },
+      ...[retiredId, busyId].map((id, index) => ({ userId, organizationId, entityType: "receipt_attachment", entityId: id, recordSchemaVersion: 1, lifecycle: index ? "active" as const : "retired" as const, fields: { id, organization_id: organizationId, receipt_id: receiptId, storage_state: "ready", media_type: "image/jpeg" }, fieldClocks: {}, immutable: false, updatedAt: new Date().toISOString() })),
+    ]);
+    await localDb.pendingUploads.add({ id: "busy", userId, organizationId, receiptId, attachmentId: crypto.randomUUID(), replaceAttachmentId: busyId, blob: new Blob(["old"], { type: "image/jpeg" }), createdAt: new Date().toISOString(), state: "pending" });
+    render(<EventReceipts eventId={eventId} onBack={vi.fn()} onUnauthenticated={vi.fn()} organizationId={organizationId} userId={userId} />);
+    await screen.findByRole("heading", { name: "Účtenky" });
+    expect(screen.queryAllByLabelText("Nahradit fotografii")).toHaveLength(0);
+  });
 });

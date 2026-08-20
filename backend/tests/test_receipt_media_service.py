@@ -362,24 +362,34 @@ def test_replacement_retires_previous_attachment_and_lifecycle_can_restore(
         )
     )
     assert second.ticket_secret is not None
+    replacement_finalize = FinalizeReceiptAttachmentCommand(
+        uuid4(),
+        second_command.attachment_id,
+        service_database.organization_id,
+        receipt_id,
+        second.ticket_secret,
+        datetime.now(UTC),
+        first_command.attachment_id,
+    )
     finalized = asyncio.run(
         finalize_receipt_attachment(
             service_database.sessions,
             context(service_database),
-            FinalizeReceiptAttachmentCommand(
-                uuid4(),
-                second_command.attachment_id,
-                service_database.organization_id,
-                receipt_id,
-                second.ticket_secret,
-                datetime.now(UTC),
-                first_command.attachment_id,
-            ),
+            replacement_finalize,
             storage.stage(storage.new_stage_path(), [_jpeg()], 2_000_000),
             storage,
         )
     )
     assert finalized.last_change_sequence == finalized.first_change_sequence + 1
+    with service_database.sync_engine.connect() as connection:
+        assert connection.scalar(
+            select(Mutation.target_identities).where(
+                Mutation.id == replacement_finalize.mutation_id
+            )
+        ) == [
+            {"entity_kind": "receipt_attachment", "entity_id": str(second_command.attachment_id)},
+            {"entity_kind": "receipt_attachment", "entity_id": str(first_command.attachment_id)},
+        ]
     restored = asyncio.run(
         set_receipt_attachment_lifecycle(
             service_database.sessions,

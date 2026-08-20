@@ -13,7 +13,7 @@ const organizationId = "5ce17d2f-8365-4b1f-a80b-34d10425d51c";
 const receiptId = "6ce17d2f-8365-4b1f-a80b-34d10425d51c";
 const attachmentId = "7ce17d2f-8365-4b1f-a80b-34d10425d51c";
 
-async function upload() {
+async function upload(replaceAttachmentId?: string) {
   const blob = await new Response("image", {
     headers: { "content-type": "image/jpeg" },
   }).blob();
@@ -23,6 +23,7 @@ async function upload() {
     organizationId,
     receiptId,
     attachmentId,
+    replaceAttachmentId,
     createMutationId: "8ce17d2f-8365-4b1f-a80b-34d10425d51c",
     finalizeMutationId: "9ce17d2f-8365-4b1f-a80b-34d10425d51c",
     positionKey: "a",
@@ -211,6 +212,26 @@ describe("receipt upload lost finalization recovery", () => {
 
     await expect(localDb.pendingUploads.get("upload")).resolves.toBeUndefined();
     expect(send).toHaveBeenCalledTimes(3);
+  });
+
+  it("replays a replacement with the original attachment header", async () => {
+    const originalAttachmentId = "acb2b2d2-214e-49af-8fae-e5f974bf8e08";
+    await upload(originalAttachmentId);
+    const blob = (await localDb.pendingUploads.get("upload"))?.blob;
+    const send = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input);
+      if (url === "/media/receipt-attachments")
+        return Response.json({ attachment_id: attachmentId, ticket_secret: "ticket" });
+      if (init?.method === "PUT") {
+        expect(new Headers(init.headers).get("x-cookops-replace-attachment-id")).toBe(originalAttachmentId);
+        return Response.json({ storage_state: "ready" });
+      }
+      if (url.startsWith(`/media/receipt-attachments/${attachmentId}/status?`))
+        return Response.json({ attachment_id: attachmentId, storage_state: "ready", content_hash: "0".repeat(64), source_content_hash: await hash(blob as Blob), byte_size: 5, source_byte_size: blob?.size, pixel_width: 1, pixel_height: 1, media_type: "image/jpeg", retired: false });
+      throw new Error(`unexpected ${url}`);
+    });
+    await dispatchReceiptUploads(userId, organizationId, { fetch: send });
+    await expect(localDb.pendingUploads.get("upload")).resolves.toBeUndefined();
   });
 
   it("removes only the exact blob after a create replay reports it ready", async () => {
