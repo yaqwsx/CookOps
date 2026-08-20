@@ -1,8 +1,10 @@
 import asyncio
+import base64
 from time import time
 from uuid import uuid4
 
 import httpx
+import pytest
 
 from cookops.config import Environment, HumanAuthProvider, Settings
 from cookops.mcp_resource import (
@@ -38,6 +40,74 @@ def test_private_introspection_accepts_only_complete_mcp_access_token() -> None:
         ).verify_token("opaque")
     )
     assert token is not None and token.subject == subject
+
+
+def test_private_introspection_posts_form_token_with_basic_credentials() -> None:
+    requests: list[httpx.Request] = []
+
+    def transport(request: httpx.Request) -> httpx.Response:
+        requests.append(request)
+        return httpx.Response(
+            200,
+            json={
+                "active": False,
+            },
+        )
+
+    verifier_instance = McpIntrospectionVerifier(
+        issuer="https://cookops.example/oauth",
+        resource="https://cookops.example/mcp",
+        introspection_url="http://oauth-server:3000/oauth/introspect",
+        resource_server_secret="secret",
+        transport=httpx.MockTransport(transport),
+    )
+    assert asyncio.run(verifier_instance.verify_token("opaque")) is None
+
+    assert len(requests) == 1
+    request = requests[0]
+    assert request.method == "POST"
+    assert str(request.url) == "http://oauth-server:3000/oauth/introspect"
+    assert request.content == b"token=opaque"
+    assert request.headers["authorization"] == "Basic " + base64.b64encode(
+        b"cookops-resource-server:secret"
+    ).decode()
+
+
+def test_private_introspection_does_not_follow_redirects() -> None:
+    requests: list[httpx.Request] = []
+
+    def transport(request: httpx.Request) -> httpx.Response:
+        requests.append(request)
+        return httpx.Response(307, headers={"location": "https://public.example/introspect"})
+
+    verifier_instance = McpIntrospectionVerifier(
+        issuer="https://cookops.example/oauth",
+        resource="https://cookops.example/mcp",
+        introspection_url="http://oauth-server:3000/oauth/introspect",
+        resource_server_secret="secret",
+        transport=httpx.MockTransport(transport),
+    )
+    assert asyncio.run(verifier_instance.verify_token("opaque")) is None
+    assert len(requests) == 1
+    assert str(requests[0].url) == "http://oauth-server:3000/oauth/introspect"
+
+
+@pytest.mark.parametrize(
+    "response",
+    [httpx.Response(503), httpx.Response(200, content=b"not-json")],
+    ids=["non-200", "malformed-body"],
+)
+def test_private_introspection_fails_closed_for_invalid_transport_response(
+    response: httpx.Response,
+) -> None:
+    verifier_instance = McpIntrospectionVerifier(
+        issuer="https://cookops.example/oauth",
+        resource="https://cookops.example/mcp",
+        introspection_url="http://oauth-server:3000/oauth/introspect",
+        resource_server_secret="secret",
+        transport=httpx.MockTransport(lambda _request: response),
+    )
+    assert asyncio.run(verifier_instance.verify_token("opaque")) is None
 
 
 def test_private_introspection_rejects_wrong_resource_and_never_mounts_routes() -> None:
