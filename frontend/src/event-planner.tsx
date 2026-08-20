@@ -35,6 +35,7 @@ import { readRecipeCatalog, type RecipeCatalogProjection } from "./recipe-catalo
 import { assertPlannerTarget, queueRecipeCreate, type RecipeCreateInput } from "./recipe-create";
 import { EventSummary, formattedDate, useEventPendingSync } from "./event-summary";
 import { EventSectionNavigation } from "./event-section-navigation";
+import { ShoppingCreate } from "./shopping-create";
 
 const plannerDragMime = "application/x-cookops-planner";
 type PlannerDragPayload = { kind: "recipe" | "scheduled"; id: string };
@@ -885,11 +886,13 @@ export function EventPlanner({
   organizationId,
   userId,
   onUnauthenticated,
+  onShoppingListCreated,
 }: {
   eventId: string;
   organizationId: string;
   userId: string;
   onUnauthenticated: () => void;
+  onShoppingListCreated?: (shoppingListId: string) => void;
 }) {
   const { t, i18n } = useTranslation();
   const [state, setState] = useState<PlannerState>("loading");
@@ -1006,6 +1009,7 @@ export function EventPlanner({
       ) : null}
       {state === "offline" ? <p role="status">{t("planner.offline")}</p> : null}
       <h2 id="planner-heading">{t("planner.heading")}</h2>
+      <ShoppingCreate eventId={eventId} onCreated={onShoppingListCreated} organizationId={organizationId} planner={planner} userId={userId} />
       <EventCosts
         eventId={eventId}
         organizationId={organizationId}

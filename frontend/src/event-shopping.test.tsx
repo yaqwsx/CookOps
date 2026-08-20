@@ -156,6 +156,8 @@ describe("EventShopping", () => {
           position: "a",
         },
       ],
+      days: [{ id: "day", date: "2026-08-10" }],
+      roles: [{ id: "role", name: "Dinner", position: "a", custom: false }],
     });
     readShoppingLists.mockResolvedValue([]);
     pullOrganization.mockResolvedValue(false);
@@ -182,6 +184,19 @@ describe("EventShopping", () => {
       name: "Sobota",
       scheduledRecipeIds: [ids.scheduled],
     });
+  });
+
+  it("fails closed for a partial planner projection", async () => {
+    await i18n.changeLanguage(defaultLocale);
+    readEventPlanner.mockResolvedValue({
+      name: "Letní vaření",
+      lifecycle: "active",
+    });
+    readShoppingLists.mockResolvedValue([]);
+    pullOrganization.mockResolvedValue(false);
+    render(<EventShopping eventId={ids.event} onBack={vi.fn()} onOpenList={vi.fn()} onUnauthenticated={vi.fn()} organizationId={ids.organization} userId={ids.user} />);
+    await screen.findByRole("heading", { name: "Nákupy" });
+    expect(screen.queryByText("V plánu zatím nejsou žádné recepty.")).toBeInTheDocument();
   });
 
   it("keeps a mobile-sized shopping row editable through the typed outbox only", async () => {

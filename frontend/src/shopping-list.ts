@@ -100,13 +100,10 @@ export async function queueShoppingList(
   userId: string,
   organizationId: string,
   input: CreateShoppingListInput,
-): Promise<void> {
-  const name = input.name.trim();
+): Promise<string> {
+  const name = canonicalName(input.name);
   if (
     !uuid.test(input.eventId) ||
-    !name ||
-    name.length > 200 ||
-    new TextEncoder().encode(JSON.stringify(name)).byteLength > 800 ||
     input.scheduledRecipeIds.some((id) => !uuid.test(id)) ||
     new Set(input.scheduledRecipeIds).size !== input.scheduledRecipeIds.length
   )
@@ -122,7 +119,7 @@ export async function queueShoppingList(
     name,
     scheduled_recipe_ids: input.scheduledRecipeIds,
   };
-  await localDb.transaction(
+  return localDb.transaction(
     "rw",
     localDb.canonicalRecords,
     localDb.optimisticOverlays,
@@ -133,10 +130,12 @@ export async function queueShoppingList(
         organizationId,
         input.eventId,
       );
+      const days = planner?.days ?? [];
+      const roles = planner?.roles ?? [];
       if (
         planner?.lifecycle !== "active" ||
         input.scheduledRecipeIds.some(
-          (id) => !planner.scheduled.some((recipe) => recipe.id === id),
+          (id) => !(planner.scheduled ?? []).some((recipe) => recipe.id === id && !recipe.retired && days.some((day) => day.id === recipe.dayId) && roles.some((role) => role.id === recipe.roleId)),
         )
       )
         throw new Error("shopping_list");
@@ -171,6 +170,7 @@ export async function queueShoppingList(
         createdAt: actionAt,
         state: "pending",
       });
+      return shoppingListId;
     },
   );
 }

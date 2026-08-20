@@ -9,10 +9,10 @@ import {
 import { readEventCosts, type EventCostsProjection } from "./event-cost-projections";
 import {
   hasQueuedShoppingListRefresh,
-  queueShoppingList,
   queueShoppingListRename,
   queueShoppingListRefresh,
 } from "./shopping-list";
+import { ShoppingCreate } from "./shopping-create";
 import {
   queueAdHocShoppingItem,
   queueAdHocShoppingItemFulfilment,
@@ -40,94 +40,6 @@ import { EventSummary, useEventPendingSync } from "./event-summary";
 import { EventSectionNavigation } from "./event-section-navigation";
 
 type ShoppingState = "loading" | "ready" | "offline" | "error";
-
-function ShoppingCreate({
-  planner,
-  eventId,
-  organizationId,
-  userId,
-}: {
-  planner: EventPlannerProjection;
-  eventId: string;
-  organizationId: string;
-  userId: string;
-}) {
-  const { t } = useTranslation();
-  const [name, setName] = useState("");
-  const [selected, setSelected] = useState<string[]>([]);
-  const [error, setError] = useState<string>();
-  const [saved, setSaved] = useState(false);
-  const inFlight = useRef(false);
-
-  function toggle(id: string, checked: boolean) {
-    setSelected((current) =>
-      checked
-        ? [...new Set([...current, id])]
-        : current.filter((item) => item !== id),
-    );
-  }
-
-  async function submit(event: React.FormEvent<HTMLFormElement>) {
-    event.preventDefault();
-    if (inFlight.current) return;
-    inFlight.current = true;
-    try {
-      await queueShoppingList(userId, organizationId, {
-        eventId,
-        name,
-        scheduledRecipeIds: selected,
-      });
-      setName("");
-      setSelected([]);
-      setError(undefined);
-      setSaved(true);
-    } catch {
-      setSaved(false);
-      setError("unavailable");
-    } finally {
-      inFlight.current = false;
-    }
-  }
-
-  if (planner.lifecycle !== "active") return null;
-  return (
-    <form className="shopping-create" onSubmit={(event) => void submit(event)}>
-      <h3>{t("shopping.createHeading")}</h3>
-      <label>
-        {t("shopping.name")}
-        <input
-          maxLength={200}
-          onChange={(event) => setName(event.target.value)}
-          required
-          value={name}
-        />
-      </label>
-      <fieldset>
-        <legend>{t("shopping.sources")}</legend>
-        {planner.scheduled.length ? (
-          planner.scheduled.map((recipe) => (
-            <label className="shopping-create__source" key={recipe.id}>
-              <input
-                checked={selected.includes(recipe.id)}
-                onChange={(event) => toggle(recipe.id, event.target.checked)}
-                type="checkbox"
-              />
-              <span>
-                {recipe.name} ·{" "}
-                {t("planner.diners", { count: recipe.dinerCount })}
-              </span>
-            </label>
-          ))
-        ) : (
-          <p>{t("shopping.noSources")}</p>
-        )}
-      </fieldset>
-      <button type="submit">{t("shopping.create")}</button>
-      {error ? <p role="alert">{t(`shopping.errors.${error}`)}</p> : null}
-      {saved ? <p role="status">{t("shopping.saved")}</p> : null}
-    </form>
-  );
-}
 
 function ShoppingIndex({
   lists,

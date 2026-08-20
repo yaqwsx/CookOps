@@ -718,6 +718,7 @@ function AuthenticatedShell({
                     eventId={eventId}
                     onUnauthenticated={onUnauthenticated}
                     organizationId={organizationId}
+                    onShoppingListCreated={(listId) => openShopping(eventId, listId)}
                     userId={identity.id}
                   />
                 ) : eventId &&

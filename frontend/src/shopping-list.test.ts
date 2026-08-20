@@ -787,6 +787,49 @@ describe("offline shopping-list creation", () => {
     await expect(localDb.outbox.count()).resolves.toBe(0);
   });
 
+  it("rejects a retired scheduled recipe without partial state", async () => {
+    await seedPlanner();
+    await localDb.canonicalRecords.update(
+      [ids.user, ids.organization, "scheduled_recipe", ids.scheduled],
+      { lifecycle: "retired" },
+    );
+    await expect(queueShoppingList(ids.user, ids.organization, {
+      eventId: ids.event,
+      name: "List",
+      scheduledRecipeIds: [ids.scheduled],
+    })).rejects.toThrow("shopping_list");
+    await expect(localDb.optimisticOverlays.count()).resolves.toBe(0);
+    await expect(localDb.outbox.count()).resolves.toBe(0);
+  });
+
+  it("allows an empty source selection and rejects hidden planner locations", async () => {
+    await seedPlanner();
+    await queueShoppingList(ids.user, ids.organization, {
+      eventId: ids.event,
+      name: "Empty list",
+      scheduledRecipeIds: [],
+    });
+    await expect(localDb.outbox.count()).resolves.toBe(1);
+    await expect(localDb.optimisticOverlays.count()).resolves.toBe(1);
+    await Promise.all([localDb.outbox.clear(), localDb.optimisticOverlays.clear()]);
+
+    const scheduledKey: [string, string, string, string] = [ids.user, ids.organization, "scheduled_recipe", ids.scheduled];
+    await localDb.canonicalRecords.update(scheduledKey, { "fields.event_day_id": "9d8b2b21-c378-4574-9e46-9338c81305ef" });
+    await expect(queueShoppingList(ids.user, ids.organization, {
+      eventId: ids.event,
+      name: "Hidden day",
+      scheduledRecipeIds: [ids.scheduled],
+    })).rejects.toThrow("shopping_list");
+    await localDb.canonicalRecords.update(scheduledKey, { "fields.event_day_id": ids.day, "fields.event_meal_role_id": "9d8b2b21-c378-4574-9e46-9338c81305ef" });
+    await expect(queueShoppingList(ids.user, ids.organization, {
+      eventId: ids.event,
+      name: "Hidden role",
+      scheduledRecipeIds: [ids.scheduled],
+    })).rejects.toThrow("shopping_list");
+    await expect(localDb.outbox.count()).resolves.toBe(0);
+    await expect(localDb.optimisticOverlays.count()).resolves.toBe(0);
+  });
+
   it("durably queues refresh without advancing the canonical generation pointer", async () => {
     await seedPlanner();
     await localDb.canonicalRecords.bulkAdd([
