@@ -7,7 +7,11 @@ import { RecipeCatalog } from "./recipe-catalog-view";
 import { queueRecipeVersionPublish } from "./recipe-publish";
 import { queueIngredientCreateWithVersion } from "./ingredient-create";
 
-const { queueCatalogConfiguration } = vi.hoisted(() => ({ queueCatalogConfiguration: vi.fn(async () => "2ce17d2f-8365-4b1f-a80b-34d10425d51c") }));
+const { emptyStoreSections, queueCatalogConfiguration, refreshCatalog } = vi.hoisted(() => ({
+  emptyStoreSections: { value: false },
+  queueCatalogConfiguration: vi.fn(async () => "2ce17d2f-8365-4b1f-a80b-34d10425d51c"),
+  refreshCatalog: vi.fn<() => void>(),
+}));
 vi.mock("./catalog-configuration", () => ({ queueCatalogConfiguration }));
 
 vi.mock("dexie", async (importOriginal) => ({
@@ -15,6 +19,7 @@ vi.mock("dexie", async (importOriginal) => ({
   liveQuery: (query: () => Promise<unknown>) => ({
     subscribe: (observer: { next: (value: unknown) => void }) => {
       void query().then(observer.next);
+      refreshCatalog.mockImplementation(() => { void query().then(observer.next); });
       return { unsubscribe: () => undefined };
     },
   }),
@@ -115,6 +120,7 @@ vi.mock("./recipe-catalog", () => ({
       },
     ],
     units: [{ id: "9ce17d2f-8365-4b1f-a80b-34d10425d51c", name: "g", dimension: "mass", baseUnitFactor: "1" }],
+    storeSections: emptyStoreSections.value ? [] : [{ id: "3ce17d2f-8365-4b1f-a80b-34d10425d51c", name: "Produce" }, { id: "4ce17d2f-8365-4b1f-a80b-34d10425d51c", name: "Pantry" }],
     organizationDefaultCurrency: "EUR",
     costs: {
       "6ce17d2f-8365-4b1f-a80b-34d10425d51c": {
@@ -154,6 +160,7 @@ vi.mock("./ingredient-create", () => ({
 describe("recipe retired ingredient warning", () => {
   beforeEach(async () => {
     vi.clearAllMocks();
+    emptyStoreSections.value = false;
     await i18n.changeLanguage(defaultLocale);
   });
 
@@ -411,9 +418,41 @@ describe("recipe retired ingredient warning", () => {
     await user.type(combobox, "not found");
     await user.click(screen.getByRole("button", { name: "Vytvořit novou surovinu" }));
     await user.type(screen.getByRole("textbox", { name: "Název nové suroviny" }), "New ingredient");
+    const section = screen.getByRole("combobox", { name: "Výchozí oddělení ingredience" });
+    expect(section).toHaveValue("3ce17d2f-8365-4b1f-a80b-34d10425d51c");
+    await user.selectOptions(section, "4ce17d2f-8365-4b1f-a80b-34d10425d51c");
     await user.click(screen.getByRole("button", { name: "Uložit a vybrat surovinu" }));
     expect(queueIngredientCreateWithVersion).toHaveBeenCalledOnce();
+    expect(queueIngredientCreateWithVersion).toHaveBeenCalledWith(expect.any(String), expect.any(String), expect.objectContaining({ defaultStoreSectionId: "4ce17d2f-8365-4b1f-a80b-34d10425d51c" }));
     expect(combobox).toHaveValue("New ingredient");
+  });
+
+  it("blocks inline ingredient creation when no store sections are available", async () => {
+    emptyStoreSections.value = true;
+    const user = userEvent.setup();
+    render(<RecipeCatalog editRecipeId="6ce17d2f-8365-4b1f-a80b-34d10425d51c" onUnauthenticated={() => undefined} organizationId="5ce17d2f-8365-4b1f-a80b-34d10425d51c" selectedRecipeId="6ce17d2f-8365-4b1f-a80b-34d10425d51c" userId="a6a58bd6-214e-49af-8fae-e5f974bf8e08" />);
+    const combobox = await screen.findByRole("combobox", { name: "Surovina" });
+    await user.clear(combobox);
+    await user.type(combobox, "not found");
+    await user.click(screen.getByRole("button", { name: "Vytvořit novou surovinu" }));
+    expect(screen.getByText("Pro vytvoření suroviny je potřeba aktivní oddělení obchodu.")).toBeVisible();
+    expect(screen.getByRole("button", { name: "Uložit a vybrat surovinu" })).toBeDisabled();
+    expect(queueIngredientCreateWithVersion).not.toHaveBeenCalled();
+  });
+
+  it("uses sections loaded after mount when opening inline ingredient creation", async () => {
+    emptyStoreSections.value = true;
+    const user = userEvent.setup();
+    render(<RecipeCatalog editRecipeId="6ce17d2f-8365-4b1f-a80b-34d10425d51c" onUnauthenticated={() => undefined} organizationId="5ce17d2f-8365-4b1f-a80b-34d10425d51c" selectedRecipeId="6ce17d2f-8365-4b1f-a80b-34d10425d51c" userId="a6a58bd6-214e-49af-8fae-e5f974bf8e08" />);
+    const combobox = await screen.findByRole("combobox", { name: "Surovina" });
+    await user.click(combobox);
+    emptyStoreSections.value = false;
+    refreshCatalog();
+    await waitFor(() => expect(screen.getByRole("button", { name: "Vytvořit novou surovinu" })).toBeVisible());
+    await user.click(screen.getByRole("button", { name: "Vytvořit novou surovinu" }));
+    expect(screen.getByRole("combobox", { name: "Výchozí oddělení ingredience" })).toHaveValue("3ce17d2f-8365-4b1f-a80b-34d10425d51c");
+    expect(screen.getByRole("button", { name: "Uložit a vybrat surovinu" })).toBeEnabled();
+    expect(combobox).toBeVisible();
   });
 
   it("keeps retired filtering independent from search", async () => {

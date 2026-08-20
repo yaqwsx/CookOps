@@ -99,6 +99,7 @@ describe("offline recipe creation", () => {
       scalingUnits: [{ id: unitId, name: "person" }],
       ingredients: [],
       units: [],
+      storeSections: [],
       tags: [],
       costs: { [recipeId]: { currency: "", total: "0.00", missingCount: 0 } },
       recipes: [

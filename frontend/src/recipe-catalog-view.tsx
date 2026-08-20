@@ -239,6 +239,7 @@ function IngredientCombobox({
     canonicalUnitId: catalog.units[0]?.id ?? "",
     massPerCanonicalQuantity: defaultMassForUnit(catalog.units[0]),
     dietaryTagIds: [],
+    defaultStoreSectionId: catalog.storeSections[0]?.id ?? "",
   });
   const [createError, setCreateError] = useState<string>();
   const [createPending, setCreatePending] = useState(false);
@@ -266,6 +267,17 @@ function IngredientCombobox({
     } finally {
       setCreatePending(false);
     }
+  }
+  function openCreate() {
+    const unit = catalog.units[0];
+    setCreateInput({
+      ...createInput,
+      name: "",
+      canonicalUnitId: unit?.id ?? "",
+      massPerCanonicalQuantity: defaultMassForUnit(unit),
+      defaultStoreSectionId: catalog.storeSections[0]?.id ?? "",
+    });
+    setCreating(true);
   }
   function keyDown(event: React.KeyboardEvent<HTMLInputElement>) {
     if (event.key === "ArrowDown") {
@@ -324,15 +336,17 @@ function IngredientCombobox({
           {!results.length ? <div role="status">{t("recipesCatalog.ingredientSearchEmpty")}</div> : null}
         </div>
       ) : null}
-      {open ? <button onClick={() => setCreating(true)} type="button">{t("recipesCatalog.createIngredient")}</button> : null}
+      {open ? <button onClick={openCreate} type="button">{t("recipesCatalog.createIngredient")}</button> : null}
       {creating ? (
         <fieldset>
           <legend>{t("recipesCatalog.createIngredient")}</legend>
           <label>{t("recipesCatalog.newIngredientName")}<input required value={createInput.name} onChange={(event) => setCreateInput({ ...createInput, name: event.target.value })} /></label>
           <label>{t("recipesCatalog.ingredientUnit")}<select required value={createInput.canonicalUnitId} onChange={(event) => { const unit = catalog.units.find((item) => item.id === event.target.value); setCreateInput({ ...createInput, canonicalUnitId: event.target.value, massPerCanonicalQuantity: defaultMassForUnit(unit) }); }}>{catalog.units.map((unit) => <option key={unit.id} value={unit.id}>{unit.name}</option>)}</select></label>
           <label>{t("recipesCatalog.ingredientMass")}<input inputMode="decimal" required value={createInput.massPerCanonicalQuantity} onChange={(event) => setCreateInput({ ...createInput, massPerCanonicalQuantity: event.target.value })} /></label>
+          <label>{t("ingredientsCatalog.defaultStoreSection")}<select required disabled={!catalog.storeSections.length} value={createInput.defaultStoreSectionId ?? ""} onChange={(event) => setCreateInput({ ...createInput, defaultStoreSectionId: event.target.value })}>{catalog.storeSections.map((section) => <option key={section.id} value={section.id}>{section.name}</option>)}</select></label>
+          {!catalog.storeSections.length ? <p role="status">{t("ingredientsCatalog.noStoreSections")}</p> : null}
           {createError ? <p role="alert">{t(`recipesCatalog.errors.${createError}`, { defaultValue: t("recipesCatalog.errors.unavailable") })}</p> : null}
-          <button disabled={createPending || !catalog.units.length} onClick={() => void createIngredient()} type="button">{t("recipesCatalog.saveIngredient")}</button>
+          <button disabled={createPending || !catalog.units.length || !catalog.storeSections.length} onClick={() => void createIngredient()} type="button">{t("recipesCatalog.saveIngredient")}</button>
           <button onClick={() => setCreating(false)} type="button">{t("recipesCatalog.cancel")}</button>
         </fieldset>
       ) : null}

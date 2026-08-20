@@ -46,7 +46,7 @@ function catalog(source: boolean, sourceUnit: TestUnit = { id: sourceUnitId, nam
     recipe,
     recipes: [recipe], scalingUnits: [{ id: scalingUnitId, name: "portion", dimension: "count", baseUnitFactor: undefined }],
     ingredients: source ? [sourceIngredient] : [destinationIngredient], units: source ? [sourceUnit] : [destinationUnit],
-    tags: [], costs: {},
+    tags: [], storeSections: [], costs: {},
   };
 }
 

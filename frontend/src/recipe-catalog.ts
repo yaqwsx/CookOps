@@ -42,6 +42,7 @@ export type RecipeCatalogProjection = {
   scalingUnits: RecipeScalingUnit[];
   ingredients: CatalogIngredient[];
   units: IngredientUnit[];
+  storeSections: { id: string; name: string }[];
   sourceUnits?: IngredientUnit[];
   tags: { id: string; name: string; retired?: boolean }[];
   costs: Record<string, RecipeCostProjection>;
@@ -200,7 +201,7 @@ export async function readRecipeCatalog(
   includeOptimisticOverlays = true,
 ): Promise<RecipeCatalogProjection> {
   if (!uuid.test(userId) || !uuid.test(organizationId))
-    return { recipes: [], scalingUnits: [], ingredients: [], units: [], tags: [], costs: {} };
+    return { recipes: [], scalingUnits: [], ingredients: [], units: [], storeSections: [], tags: [], costs: {} };
   const read = includeOptimisticOverlays ? readVisibleRecords : readCanonicalRecords;
   const [
     recipeRecords,
@@ -486,6 +487,7 @@ export async function readRecipeCatalog(
     scalingUnits,
     ingredients,
     units: ingredientCatalog.units,
+    storeSections: ingredientCatalog.storeSections,
     ...(includeRetired && ingredientCatalog.sourceUnits ? { sourceUnits: ingredientCatalog.sourceUnits } : {}),
     tags,
     costs,
