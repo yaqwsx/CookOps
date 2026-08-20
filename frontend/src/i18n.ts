@@ -96,6 +96,8 @@ const resources = {
         archiveSearch: "Hledat v archivovaných akcích podle názvu nebo ID",
         clearArchiveSearch: "Vymazat hledání archivovaných akcí",
         archiveSearchEmpty: "Archivované akci neodpovídají hledání.",
+        archiveError: "Archivované akce se nepodařilo načíst.",
+        loadMore: "Načíst další archivované akce",
       },
       eventsCreate: {
         heading: "Nová akce",
@@ -748,6 +750,8 @@ const resources = {
         archiveSearch: "Search archived events by name or ID",
         clearArchiveSearch: "Clear archived event search",
         archiveSearchEmpty: "No archived events match the search.",
+        archiveError: "Archived events could not be loaded.",
+        loadMore: "Load more archived events",
       },
       eventsCreate: {
         heading: "New event",
