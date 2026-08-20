@@ -66,6 +66,18 @@ for discovery in \
         exit 1
     fi
 done
+if ! awk '$1 == "ProxyPass" && $2 == "/api/v1/sync/hints" && $3 == "http://127.0.0.1:8000/api/v1/sync/hints" && $4 == "upgrade=websocket" { found = 1 } END { exit found ? 0 : 1 }' "$root/deploy/apache/cookops.conf.example"; then
+    echo 'Sync hints WebSocket proxy is missing or not loopback' >&2
+    exit 1
+fi
+if ! awk '$1 == "ProxyPassReverse" && $2 == "/api/v1/sync/hints" && $3 == "http://127.0.0.1:8000/api/v1/sync/hints" { found = 1 } END { exit found ? 0 : 1 }' "$root/deploy/apache/cookops.conf.example"; then
+    echo 'Sync hints WebSocket reverse proxy is missing' >&2
+    exit 1
+fi
+if awk '$1 ~ /^ProxyPass(Reverse)?$/ && $2 == "/api/v1/sync/notifications" { found = 1 } END { exit found ? 0 : 1 }' "$root/deploy/apache/cookops.conf.example"; then
+    echo 'Stale sync notifications WebSocket route must not be proxied' >&2
+    exit 1
+fi
 
 if docker run --rm --env 'COOKOPS_TRUSTED_PROXY_IPS=*' cookops-api-image-test; then
     echo 'wildcard proxy trust unexpectedly accepted' >&2

@@ -32,8 +32,8 @@
     ProxyPassReverse /.well-known/oauth-authorization-server/oauth http://127.0.0.1:3000/.well-known/oauth-authorization-server/oauth
     ProxyPass        /oauth/ http://127.0.0.1:3000/oauth/
     ProxyPassReverse /oauth/ http://127.0.0.1:3000/oauth/
-    ProxyPass        /api/v1/sync/notifications http://127.0.0.1:8000/api/v1/sync/notifications upgrade=websocket
-    ProxyPassReverse /api/v1/sync/notifications http://127.0.0.1:8000/api/v1/sync/notifications
+    ProxyPass        /api/v1/sync/hints http://127.0.0.1:8000/api/v1/sync/hints upgrade=websocket
+    ProxyPassReverse /api/v1/sync/hints http://127.0.0.1:8000/api/v1/sync/hints
     ProxyPass        /api/ http://127.0.0.1:8000/api/
     ProxyPassReverse /api/ http://127.0.0.1:8000/api/
     ProxyPass        /media/ http://127.0.0.1:8000/media/
