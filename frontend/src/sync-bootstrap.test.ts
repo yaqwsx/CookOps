@@ -588,6 +588,53 @@ describe("bootstrapOrganization", () => {
     ).resolves.toMatchObject({ cursor: "old-cursor" });
   });
 
+  it("applies receipt attachment metadata without clearing pending upload bytes", async () => {
+    const blob = new Blob(["photo"], { type: "image/jpeg" });
+    await localDb.pendingUploads.add({
+      id: "receipt-upload",
+      userId,
+      organizationId,
+      attachmentId: "attachment",
+      blob,
+      createdAt: "2026-08-07T10:00:00.000Z",
+      state: "pending",
+    });
+
+    await bootstrapOrganization(userId, organizationId, {
+      fetch: vi.fn<typeof fetch>(async () =>
+        response([
+          {
+            organization_id: organizationId,
+            entity_id: "attachment",
+            entity_kind: "receipt_attachment",
+            operation: "upsert",
+            payload: {
+              record_schema_version: 1,
+              record: {
+                id: "attachment",
+                receipt_id: "receipt",
+                storage_state: "ready",
+                media_type: "image/jpeg",
+                byte_size: 5,
+                pixel_width: 1,
+                pixel_height: 1,
+                retired_at: null,
+              },
+            },
+          },
+        ]),
+      ),
+    });
+
+    await expect(
+      readVisibleCanonicalRecord(userId, organizationId, "receipt_attachment", "attachment"),
+    ).resolves.toMatchObject({ fields: { storage_state: "ready", byte_size: 5 } });
+    await expect(localDb.pendingUploads.get("receipt-upload")).resolves.toMatchObject({
+      state: "pending",
+      blob,
+    });
+  });
+
   it("publishes only the requested user's organization and its durable cursor", async () => {
     await localDb.canonicalRecords.add({
       userId: "user-b",

@@ -2987,6 +2987,19 @@ def test_push_rejects_unknown_commands_and_untrusted_batch_shapes(
             }
         ]
         assert client.post("/api/v1/sync/push", json=unknown_body).json()["outcomes"][0]["replayed"]
+        for kind in (
+            "receipt_attachment.create",
+            "receipt_attachment.upload_ticket.issue",
+            "receipt_attachment.finalize",
+            "receipt_attachment.lifecycle",
+        ):
+            command = _command(mutation_id=uuid4(), event_id=uuid4(), kind=kind)
+            body = _body(sync_database, installation_id, [command])
+            outcome = client.post("/api/v1/sync/push", json=body).json()["outcomes"][0]
+            assert outcome["command_kind"] == kind
+            assert outcome["status"] == "rejected"
+            assert outcome["error"]["code"] == "unsupported_command_kind"
+            assert client.post("/api/v1/sync/push", json=body).json()["outcomes"][0]["replayed"]
         too_many = client.post(
             "/api/v1/sync/push",
             json=_body(

@@ -28,6 +28,7 @@ from cookops.application.receipt_media import (
     set_receipt_attachment_lifecycle,
 )
 from cookops.application.receipts import CreateReceiptCommand, create_receipt
+from cookops.application.synchronization import SynchronizationQueryService
 from cookops.media_storage import LocalReceiptMediaStorage
 from cookops.persistence.models import (
     ClientInstallation,
@@ -290,12 +291,40 @@ def test_finalization_only_accepts_server_measured_staged_bytes_and_replays(
         attachment_record = cast(dict[str, object], record["record"])
         assert attachment_record["storage_state"] == "ready"
         assert "storage_object_key" not in attachment_record
+        assert "thumbnail_object_key" not in attachment_record
+        assert not any(
+            key in attachment_record
+            for key in ("bytes", "content", "binary", "data")
+        )
+        assert attachment_record["id"] == str(created_command.attachment_id)
+        assert attachment_record["organization_id"] == str(service_database.organization_id)
+        assert attachment_record["receipt_id"] == str(receipt_id)
+        assert attachment_record["media_type"] == "image/jpeg"
+        assert attachment_record["byte_size"] == finalized.byte_size
+        assert attachment_record["pixel_width"] == finalized.pixel_width
+        assert attachment_record["pixel_height"] == finalized.pixel_height
         source_hash, source_size = connection.execute(
             select(ReceiptAttachment.source_content_hash, ReceiptAttachment.source_byte_size).where(
                 ReceiptAttachment.id == created_command.attachment_id
             )
         ).one()
         assert (source_hash, source_size) == (hashlib.sha256(_jpeg()).digest(), len(_jpeg()))
+    bootstrap = asyncio.run(
+        SynchronizationQueryService(
+            service_database.sessions,
+            encoded_cursor_hmac_key="MDEyMzQ1Njc4OWFiY2RlZjAxMjM0NTY3ODlhYmNkZWY",
+        ).bootstrap(
+            actor_user_id=service_database.actor_id,
+            organization_id=service_database.organization_id,
+        )
+    )
+    canonical = next(
+        record.payload["record"]
+        for record in bootstrap.records
+        if record.entity_kind == "receipt_attachment"
+        and record.entity_id == created_command.attachment_id
+    )
+    assert canonical == attachment_record
 
 
 def test_replacement_retires_previous_attachment_and_lifecycle_can_restore(
