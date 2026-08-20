@@ -15,10 +15,23 @@ export function useEventPendingSync(userId: string, organizationId: string, even
   useEffect(() => {
     let active = true;
     setStatus({ pending: 0, failed: 0 });
-    const subscription = liveQuery(async () => (await localDb.outbox.where("organizationId").equals(organizationId).toArray()).reduce((result, command) => {
-      if (command.userId === userId && command.payload.event_id === eventId) command.state === "pending" ? result.pending++ : result.failed++;
-      return result;
-    }, { pending: 0, failed: 0 })).subscribe({ next: (next) => active && setStatus(next) });
+    const subscription = liveQuery(async () => {
+      const [commands, lists, overlays, archives] = await Promise.all([
+        localDb.outbox.where("organizationId").equals(organizationId).toArray(),
+        localDb.canonicalRecords.where("[userId+organizationId]").equals([userId, organizationId]).toArray(),
+        localDb.optimisticOverlays.where("[userId+organizationId]").equals([userId, organizationId]).toArray(),
+        localDb.archiveRecords.toArray(),
+      ]);
+      const eventLists = new Set([...lists, ...overlays].filter((record) => record.userId === userId && record.entityType === "shopping_list" && record.fields.event_id === eventId).map((record) => record.entityId));
+      for (const record of archives) if (record.userId === userId && record.organizationId === organizationId && record.entityType === "shopping_list" && record.eventId === eventId) eventLists.add(record.entityId);
+      return commands.reduce((result, command) => {
+        if (command.userId !== userId) return result;
+        const payload = command.payload;
+        const belongs = payload.event_id === eventId || (typeof payload.shopping_list_id === "string" && eventLists.has(payload.shopping_list_id));
+        if (belongs) command.state === "pending" ? result.pending++ : result.failed++;
+        return result;
+      }, { pending: 0, failed: 0 });
+    }).subscribe({ next: (next) => active && setStatus(next) });
     return () => { active = false; subscription.unsubscribe(); };
   }, [eventId, organizationId, userId]);
   return status;

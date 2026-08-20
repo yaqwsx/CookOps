@@ -8,6 +8,7 @@ import { SyncRequestError } from "./sync-bootstrap";
 
 const {
   readEventPlanner,
+  readEventCosts,
   readShoppingList,
   readShoppingLists,
   queueShoppingList,
@@ -24,6 +25,7 @@ const {
   pullOrganization,
 } = vi.hoisted(() => ({
   readEventPlanner: vi.fn(),
+  readEventCosts: vi.fn().mockResolvedValue(undefined),
   readShoppingList: vi.fn(),
   readShoppingLists: vi.fn(),
   queueShoppingList: vi.fn(),
@@ -40,6 +42,7 @@ const {
   pullOrganization: vi.fn(),
 }));
 vi.mock("./planner-projections", () => ({ readEventPlanner }));
+vi.mock("./event-cost-projections", () => ({ readEventCosts }));
 vi.mock("./shopping-projections", () => ({
   readShoppingLists,
   readShoppingList,
@@ -78,6 +81,27 @@ const ids = {
 
 describe("EventShopping", () => {
   afterEach(() => vi.clearAllMocks());
+
+  it("renders summary costs and clears stale costs and read-only list on route switch", async () => {
+    await i18n.changeLanguage(defaultLocale);
+    const costs = { budget: "30", total: "20", actual: "10", remaining: "20", currency: "CZK", expectedShopping: "20", missingIngredients: [], scheduled: new Map() };
+    readEventPlanner.mockResolvedValue({ name: "Letní vaření", lifecycle: "active", attendance: 4, scheduled: [] });
+    readEventCosts.mockResolvedValue(costs);
+    readShoppingLists.mockResolvedValue([]);
+    readShoppingList.mockResolvedValue({ id: "list", name: "Starý seznam", sourceCount: 0, sourceRecipeIds: [], adHocItems: [], rows: [], quantityUnits: [], storeSections: [] });
+    pullOrganization.mockResolvedValue(false);
+    const view = render(<EventShopping eventId={ids.event} shoppingListId="list" onBack={vi.fn()} onOpenList={vi.fn()} onOpenPlanner={vi.fn()} onUnauthenticated={vi.fn()} organizationId={ids.organization} userId={ids.user} />);
+    expect(await screen.findByText(/30/)).toBeInTheDocument();
+    expect(await screen.findByText("Starý seznam")).toBeInTheDocument();
+
+    readEventCosts.mockResolvedValue(undefined);
+    readEventPlanner.mockResolvedValue({ name: "Nové vaření", lifecycle: "planned", attendance: 2, scheduled: [] });
+    view.rerender(<EventShopping eventId={`${ids.event}-next`} onBack={vi.fn()} onOpenList={vi.fn()} onOpenPlanner={vi.fn()} onUnauthenticated={vi.fn()} organizationId={ids.organization} userId={ids.user} />);
+    await waitFor(() => expect(screen.getByRole("heading", { name: "Nové vaření" })).toBeInTheDocument());
+    expect(screen.queryByText(/30/)).not.toBeInTheDocument();
+    expect(screen.queryByText("Starý seznam")).not.toBeInTheDocument();
+    expect(screen.getByText("2")).toBeInTheDocument();
+  });
 
   it("caches the archived event after organization pull completes", async () => {
     await i18n.changeLanguage(defaultLocale);

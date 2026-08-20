@@ -6,6 +6,7 @@ import {
   readEventPlanner,
   type EventPlannerProjection,
 } from "./planner-projections";
+import { readEventCosts, type EventCostsProjection } from "./event-cost-projections";
 import {
   hasQueuedShoppingListRefresh,
   queueShoppingList,
@@ -35,6 +36,7 @@ import {
 import { pullOrganization, SyncRequestError } from "./sync-bootstrap";
 import { ensureArchivedEventCached } from "./archive-cache";
 import { SynchronizationStatus } from "./synchronization-status";
+import { EventSummary, useEventPendingSync } from "./event-summary";
 
 type ShoppingState = "loading" | "ready" | "offline" | "error";
 
@@ -994,6 +996,9 @@ export function EventShopping({
   const [lists, setLists] = useState<ShoppingListSummary[]>([]);
   const [shoppingList, setShoppingList] = useState<ShoppingListProjection>();
   const [refreshPending, setRefreshPending] = useState(false);
+  const [costs, setCosts] = useState<{ identity: string; value: EventCostsProjection }>();
+  const identity = `${userId}:${organizationId}:${eventId}`;
+  const pendingSync = useEventPendingSync(userId, organizationId, eventId);
   const generation = useRef(0);
   const synchronize = useCallback(async () => {
     const current = generation.current;
@@ -1010,9 +1015,16 @@ export function EventShopping({
   }, [eventId, onUnauthenticated, organizationId, userId]);
   useEffect(() => {
     let active = true;
+    const effectIdentity = identity;
     generation.current += 1;
+    setState("loading");
+    setPlanner(undefined);
+    setLists([]);
+    setShoppingList(undefined);
+    setCosts(undefined);
     const subscription = liveQuery(async () => ({
       planner: await readEventPlanner(userId, organizationId, eventId),
+      costs: await readEventCosts(userId, organizationId, eventId),
       lists: await readShoppingLists(userId, organizationId, eventId),
       shoppingList: shoppingListId
         ? await readShoppingList(
@@ -1033,6 +1045,7 @@ export function EventShopping({
       next: (next) => {
         if (!active) return;
         setPlanner(next.planner);
+        setCosts(next.costs ? { identity: effectIdentity, value: next.costs } : undefined);
         setLists(next.lists);
         setShoppingList(next.shoppingList);
         setRefreshPending(next.refreshPending);
@@ -1050,7 +1063,7 @@ export function EventShopping({
       window.removeEventListener("online", synchronize);
       window.removeEventListener("offline", offline);
     };
-  }, [eventId, organizationId, shoppingListId, synchronize, userId]);
+  }, [eventId, identity, organizationId, shoppingListId, synchronize, userId]);
   if (!planner && state === "loading")
     return <p role="status">{t("shopping.loading")}</p>;
   if (!planner)
@@ -1063,17 +1076,20 @@ export function EventShopping({
       </div>
     );
   return (
-    <section className="event-shopping" aria-labelledby="shopping-heading">
-      <header className="event-workspace__summary">
-        <div>
+    <>
+      <EventSummary
+        costs={costs?.identity === identity ? costs.value : undefined}
+        pendingSync={pendingSync}
+        planner={planner}
+      />
+      <section className="event-shopping" aria-labelledby="shopping-heading">
+        <header>
           <h2 id="shopping-heading">{t("shopping.heading")}</h2>
-          <p>{planner.name}</p>
-        </div>
+        </header>
         <SynchronizationStatus
           organizationId={organizationId}
           userId={userId}
         />
-      </header>
       <button onClick={onOpenPlanner} type="button">
         {t("shopping.planner")}
       </button>
@@ -1123,6 +1139,7 @@ export function EventShopping({
           </button>
         </div>
       ) : null}
-    </section>
+      </section>
+    </>
   );
 }
