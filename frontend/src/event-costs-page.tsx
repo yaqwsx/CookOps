@@ -69,6 +69,11 @@ export function EventCostsPage({
         userId={userId}
         providedCosts={costsState?.identity === identity ? costsState.costs : undefined}
       />
+      {planner.lifecycle === "archived" ? (
+        <p className="planner-archived" role="status">
+          {t("planner.archived")}
+        </p>
+      ) : null}
       {costsErrorState.identity === identity && costsErrorState.error ? <p role="alert">{t("costs.unavailable")}</p> : null}
     </>
   );

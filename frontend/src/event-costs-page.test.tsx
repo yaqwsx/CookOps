@@ -12,7 +12,7 @@ const eventA = "6ce17d2f-8365-4b1f-a80b-34d10425d51c";
 const eventB = "7ce17d2f-8365-4b1f-a80b-34d10425d51c";
 const eventMissing = "9ce17d2f-8365-4b1f-a80b-34d10425d51c";
 
-async function record(eventId: string, budget: string) {
+async function record(eventId: string, budget: string, lifecycle: "active" | "archived" = "active") {
   await localDb.canonicalRecords.add({
     userId,
     organizationId,
@@ -27,7 +27,7 @@ async function record(eventId: string, budget: string) {
       start_date: "2026-08-15",
       end_date: "2026-08-15",
       base_expected_attendance: 2,
-      lifecycle: "active",
+      lifecycle,
       currency: "CZK",
       budget_amount: budget,
     },
@@ -102,5 +102,24 @@ describe("event costs route", () => {
       ).toBeNull(),
     );
     expect((await screen.findAllByText("20.00 CZK")).length).toBeGreaterThan(0);
+  });
+
+  it("shows archived costs as read-only while retaining values", async () => {
+    const archivedEvent = "8ce17d2f-8365-4b1f-a80b-34d10425d51c";
+    await record(archivedEvent, "30", "archived");
+
+    render(
+      <EventCostsPage
+        eventId={archivedEvent}
+        onBack={vi.fn()}
+        onOpenReceipts={vi.fn()}
+        organizationId={organizationId}
+        userId={userId}
+      />,
+    );
+
+    expect(await screen.findByText("Tato akce je archivovaná a plán je jen pro čtení.")).toBeInTheDocument();
+    expect((await screen.findAllByText("30.00 CZK")).length).toBeGreaterThan(0);
+    expect(screen.queryByRole("button", { name: "Aktualizovat odhady cen" })).toBeNull();
   });
 });
