@@ -3,9 +3,12 @@ import { beforeEach, describe, expect, it } from "vitest";
 import {
   appendOutboxCommand,
   compareOutboxCommands,
+  discardFailedOutboxCommand,
   localDb,
+  readFailedOutboxCommands,
   readOrCreateBrowserInstallationId,
   readSynchronizationSummary,
+  toRecoverableIntent,
 } from "./local-db";
 
 async function clearLocalDatabase() {
@@ -34,6 +37,27 @@ async function clearLocalDatabase() {
 
 describe("local synchronization database", () => {
   beforeEach(clearLocalDatabase);
+
+  it("reads and discards only failed commands in the requested user and organization", async () => {
+    await localDb.outbox.bulkAdd([
+      { id: "selected", userId: "user-a", organizationId: "org-a", commandType: "event.update", payload: { event_id: "e" }, actionAt: "2026-08-07T10:00:00Z", createdAt: "2026-08-07T10:00:00Z", state: "failed", failureReason: "stale" },
+      { id: "pending", userId: "user-a", organizationId: "org-a", commandType: "event.update", payload: {}, actionAt: "2026-08-07T10:00:00Z", createdAt: "2026-08-07T10:00:00Z", state: "pending" },
+      { id: "other-org", userId: "user-a", organizationId: "org-b", commandType: "event.update", payload: {}, actionAt: "2026-08-07T10:00:00Z", createdAt: "2026-08-07T10:00:00Z", state: "failed" },
+      { id: "other-user", userId: "user-b", organizationId: "org-a", commandType: "event.update", payload: {}, actionAt: "2026-08-07T10:00:00Z", createdAt: "2026-08-07T10:00:00Z", state: "failed" },
+    ]);
+    await expect(readFailedOutboxCommands("user-a", "org-a")).resolves.toMatchObject([{ id: "selected" }]);
+    await expect(discardFailedOutboxCommand("user-a", "org-a", "other-org")).resolves.toBe(false);
+    await expect(discardFailedOutboxCommand("user-a", "org-a", "selected")).resolves.toBe(true);
+    await expect(localDb.outbox.get("selected")).resolves.toBeUndefined();
+    await expect(localDb.outbox.get("pending")).resolves.toBeDefined();
+    await expect(localDb.outbox.get("other-org")).resolves.toBeDefined();
+  });
+
+  it("creates a small JSON recoverable intent without browser metadata", async () => {
+    await expect(toRecoverableIntent({ id: "cmd", userId: "u", organizationId: "o", commandType: "event.update", payload: { event_id: "e" }, actionAt: "2026-08-07T10:00:00Z", createdAt: "2026-08-07T10:00:00Z", state: "failed", failureReason: "stale" })).toEqual({
+      schema: "cookops.recoverable-intent", version: 1, commandId: "cmd", commandType: "event.update", actionAt: "2026-08-07T10:00:00Z", failureCode: "stale", payload: { event_id: "e" },
+    });
+  });
 
   it("persists separate browser installation identities for each user", async () => {
     const first = await readOrCreateBrowserInstallationId("user-a");

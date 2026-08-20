@@ -1,4 +1,4 @@
-import { render, screen, waitFor } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import i18n, { defaultLocale } from "./i18n";
@@ -112,6 +112,40 @@ describe("SynchronizationStatus", () => {
     await waitFor(() => {
       expect(screen.getByRole("status")).toHaveTextContent("Bez připojení");
     });
+  });
+
+  it("opens scoped rejected work without showing payload and supports export or confirmed discard", async () => {
+    await localDb.outbox.bulkAdd([
+      { id: "failed-a", userId: "user-a", organizationId: "organization-a", commandType: "event.update", payload: { secret: "hidden" }, actionAt: "2026-08-07T10:00:00.000Z", createdAt: "2026-08-07T10:00:00.000Z", state: "failed", failureReason: "stale_precondition" },
+      { id: "failed-b", userId: "user-a", organizationId: "organization-b", commandType: "event.update", payload: { secret: "other" }, actionAt: "2026-08-07T10:00:00.000Z", createdAt: "2026-08-07T10:00:00.000Z", state: "failed" },
+    ]);
+    const createObjectURL = vi.spyOn(URL, "createObjectURL").mockReturnValue("blob:test");
+    const revokeObjectURL = vi.spyOn(URL, "revokeObjectURL").mockImplementation(() => {});
+    const click = vi.spyOn(HTMLAnchorElement.prototype, "click").mockImplementation(() => {});
+    const confirm = vi.spyOn(window, "confirm").mockReturnValue(false);
+    render(<SynchronizationStatus organizationId="organization-a" userId="user-a" />);
+    fireEvent.click(await screen.findByRole("button", { name: "Zobrazit odmítnuté změny (1)" }));
+    const opener = screen.getByRole("button", { name: "Zobrazit odmítnuté změny (1)" });
+    const dialog = screen.getByRole("dialog");
+    expect(dialog).toHaveTextContent("stale_precondition");
+    expect(dialog).not.toHaveTextContent("hidden");
+    fireEvent.click(screen.getByRole("button", { name: "Exportovat JSON" }));
+    expect(createObjectURL).toHaveBeenCalled();
+    expect(await localDb.outbox.get("failed-a")).toBeDefined();
+    fireEvent.click(screen.getByRole("button", { name: "Zavřít" }));
+    expect(opener).toHaveFocus();
+    fireEvent.click(screen.getByRole("button", { name: "Zobrazit odmítnuté změny (1)" }));
+    fireEvent.click(screen.getByRole("button", { name: "Zahodit" }));
+    expect(confirm).toHaveBeenCalled();
+    expect(await localDb.outbox.get("failed-a")).toBeDefined();
+    confirm.mockReturnValue(true);
+    fireEvent.click(screen.getByRole("button", { name: "Zahodit" }));
+    await waitFor(async () => expect(await localDb.outbox.get("failed-a")).toBeUndefined());
+    expect(await localDb.outbox.get("failed-b")).toBeDefined();
+    createObjectURL.mockRestore();
+    revokeObjectURL.mockRestore();
+    click.mockRestore();
+    confirm.mockRestore();
   });
 
   it.each([

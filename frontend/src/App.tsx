@@ -612,7 +612,10 @@ function AuthenticatedShell({
               </select>
             </label>
           ) : null}
-          <SynchronizationStatus userId={identity.id} />
+          <SynchronizationStatus
+            organizationId={organizationId}
+            userId={identity.id}
+          />
           <LocalePicker persist />
           <div className="user-menu">
             <span className="identity-name">{identity.display_name}</span>

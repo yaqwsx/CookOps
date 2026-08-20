@@ -120,6 +120,26 @@ textarea:focus-visible {
   font-weight: 500;
 }
 
+.synchronization-dialog {
+  position: fixed;
+  z-index: 2;
+  inset: 1rem;
+  max-width: 38rem;
+  margin: auto;
+  padding: 1rem;
+  border: 1px solid #315b43;
+  border-radius: 0.5rem;
+  color: #302922;
+  background: #fffdf9;
+  box-shadow: 0 0.5rem 2rem #30292233;
+}
+
+.synchronization-dialog li {
+  display: grid;
+  gap: 0.35rem;
+  margin: 0.75rem 0;
+}
+
 .user-menu {
   padding-left: 0.75rem;
   border-left: 1px solid #ddd2c2;

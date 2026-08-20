@@ -210,6 +210,58 @@ export async function appendOutboxCommand(
   await localDb.outbox.add({ ...command, sequence });
 }
 
+export async function readFailedOutboxCommands(
+  userId: string,
+  organizationId: string,
+): Promise<OutboxCommand[]> {
+  return localDb.outbox
+    .where("[userId+organizationId+state]")
+    .equals([userId, organizationId, "failed"])
+    .toArray();
+}
+
+export async function discardFailedOutboxCommand(
+  userId: string,
+  organizationId: string,
+  commandId: string,
+): Promise<boolean> {
+  return localDb.transaction("rw", localDb.outbox, async () => {
+    const command = await localDb.outbox.get(commandId);
+    if (
+      command?.state !== "failed" ||
+      command.userId !== userId ||
+      command.organizationId !== organizationId
+    )
+      return false;
+    await localDb.outbox.delete(commandId);
+    return true;
+  });
+}
+
+export interface RecoverableIntent {
+  schema: "cookops.recoverable-intent";
+  version: 1;
+  commandId: string;
+  commandType: string;
+  actionAt: string;
+  failureCode: string;
+  payload: Record<string, unknown>;
+}
+
+export function toRecoverableIntent(command: OutboxCommand): RecoverableIntent {
+  const payload = JSON.parse(JSON.stringify(command.payload)) as unknown;
+  if (!payload || typeof payload !== "object" || Array.isArray(payload)) throw new Error("Invalid outbox payload.");
+  return {
+    schema: "cookops.recoverable-intent",
+    version: 1,
+    commandId: command.id,
+    commandType: command.commandType,
+    actionAt: command.actionAt,
+    failureCode: command.failureReason ?? "unknown",
+    payload: payload as Record<string, unknown>,
+  };
+}
+
 /** Legacy records retain their pre-v7 timestamp order until Dexie upgrades them. */
 export function compareOutboxCommands(
   left: OutboxCommand,
