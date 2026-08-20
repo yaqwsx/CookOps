@@ -50,6 +50,7 @@ const catalog = {
   }],
   units: [{ id: "9ce17d2f-8365-4b1f-a80b-34d10425d51c", name: "gram", dimension: "mass", baseUnitFactor: "1" }],
   dietaryTags: [],
+  storeSections: [{ id: "ace17d2f-8365-4b1f-a80b-34d10425d51c", name: "Produce" }],
   organizationDefaultCurrency: "EUR",
 };
 

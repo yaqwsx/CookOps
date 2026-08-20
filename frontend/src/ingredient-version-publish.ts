@@ -41,6 +41,10 @@ async function available(
   const baseUnitId = typeof base?.fields.canonical_unit_id === "string" ? base.fields.canonical_unit_id : undefined;
   const baseUnit = baseUnitId ? await localDb.canonicalRecords.get([userId, organizationId, "unit_definition", baseUnitId]) : undefined;
   if (ingredient?.lifecycle !== "active" || !base || base.fields.ingredient_id !== payload.ingredient_id || !unit || !baseUnit || unit.lifecycle !== "active" || baseUnit.lifecycle !== "active" || unit.fields.organization_id !== null && unit.fields.organization_id !== organizationId || baseUnit.fields.organization_id !== null && baseUnit.fields.organization_id !== organizationId || unit.fields.allows_ingredient_quantity !== true || baseUnit.fields.allows_ingredient_quantity !== true || unit.fields.dimension !== baseUnit.fields.dimension) return false;
+  if (payload.default_store_section_id !== null) {
+    const section = await localDb.canonicalRecords.get([userId, organizationId, "store_section", payload.default_store_section_id as string]);
+    if (section?.lifecycle !== "active" || section.fields.organization_id !== organizationId) return false;
+  }
   if (unit.fields.dimension === "mass" && unit.fields.base_unit_factor !== payload.mass_per_canonical_quantity) return false;
   const tags = payload.dietary_tag_ids as string[];
   const old = new Set(Array.isArray(base.fields.dietary_tag_ids) ? base.fields.dietary_tag_ids : []);

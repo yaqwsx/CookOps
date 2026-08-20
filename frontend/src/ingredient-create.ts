@@ -39,8 +39,9 @@ export type IngredientCreateInput = {
   canonicalUnitId: string;
   massPerCanonicalQuantity: string;
   dietaryTagIds: string[];
+  defaultStoreSectionId?: string;
 };
-export type IngredientCreateValidationError = "name" | "unit" | "mass" | "tag";
+export type IngredientCreateValidationError = "name" | "unit" | "mass" | "tag" | "storeSection";
 export type IngredientCreateResult = { ingredientId: string; ingredientVersionId: string };
 
 export function validateIngredientCreate(
@@ -48,6 +49,7 @@ export function validateIngredientCreate(
 ): IngredientCreateValidationError | undefined {
   if (!validName(input.name)) return "name";
   if (!uuid.test(input.canonicalUnitId)) return "unit";
+  if (input.defaultStoreSectionId !== undefined && !uuid.test(input.defaultStoreSectionId)) return "storeSection";
   if (!positiveDecimal(input.massPerCanonicalQuantity)) return "mass";
   if (
     new Set(input.dietaryTagIds).size !== input.dietaryTagIds.length ||
@@ -95,7 +97,7 @@ function overlays(
         id: payload.ingredient_version_id,
         ingredient_id: payload.ingredient_id,
         dietary_tag_ids: [],
-        default_store_section_id: null,
+        default_store_section_id: payload.default_store_section_id ?? null,
         immutable: true,
         ...fields,
       },
@@ -142,6 +144,11 @@ async function availableDietaryTags(
       tag?.lifecycle === "active" && tag.fields.organization_id === organizationId,
   );
 }
+async function availableStoreSection(userId: string, organizationId: string, id: unknown) {
+  if (typeof id !== "string" || !uuid.test(id)) return false;
+  const section = await localDb.canonicalRecords.get([userId, organizationId, "store_section", id]);
+  return section?.lifecycle === "active" && section.fields.organization_id === organizationId;
+}
 
 async function queueIngredientCreateResult(
   userId: string,
@@ -162,6 +169,7 @@ async function queueIngredientCreateResult(
     canonical_unit_id: input.canonicalUnitId,
     mass_per_canonical_quantity: input.massPerCanonicalQuantity,
     dietary_tag_ids: input.dietaryTagIds,
+    ...(input.defaultStoreSectionId !== undefined ? { default_store_section_id: input.defaultStoreSectionId } : {}),
   };
   await localDb.transaction(
     "rw",
@@ -178,6 +186,7 @@ async function queueIngredientCreateResult(
       if (!availableUnit(unit, organizationId)) throw new Error("unit");
       if (!(await availableDietaryTags(userId, organizationId, input.dietaryTagIds)))
         throw new Error("tag");
+      if (input.defaultStoreSectionId !== undefined && !(await availableStoreSection(userId, organizationId, input.defaultStoreSectionId))) throw new Error("storeSection");
       if (
         unit?.fields.dimension === "mass" &&
         unit.fields.base_unit_factor !== input.massPerCanonicalQuantity
@@ -225,9 +234,10 @@ export async function replayIngredientCreate(
   command: { id: string; actionAt: string; payload: Record<string, unknown> },
 ) {
   const payload = command.payload;
+  if (payload === null || typeof payload !== "object" || Array.isArray(payload)) return;
   const dietaryTagIds = payload.dietary_tag_ids;
   if (
-    Object.keys(payload).length !== 6 ||
+    (Object.keys(payload).length !== 7 && Object.keys(payload).length !== 6) ||
     !Object.keys(payload).every((key) =>
       [
         "ingredient_id",
@@ -235,7 +245,7 @@ export async function replayIngredientCreate(
         "name",
         "canonical_unit_id",
         "mass_per_canonical_quantity",
-        "dietary_tag_ids",
+        "dietary_tag_ids", "default_store_section_id",
       ].includes(key),
     ) ||
     typeof payload.ingredient_id !== "string" ||
@@ -250,7 +260,8 @@ export async function replayIngredientCreate(
     ].every((id) => uuid.test(id)) ||
     !Array.isArray(dietaryTagIds) ||
     !dietaryTagIds.every((id) => typeof id === "string") ||
-    !positiveDecimal(payload.mass_per_canonical_quantity)
+    !positiveDecimal(payload.mass_per_canonical_quantity) ||
+    ("default_store_section_id" in payload && typeof payload.default_store_section_id !== "string")
   )
     return;
   const unit = await localDb.canonicalRecords.get([
@@ -266,6 +277,7 @@ export async function replayIngredientCreate(
   )
     return;
   if (!(await availableDietaryTags(userId, organizationId, dietaryTagIds))) return;
+  if ("default_store_section_id" in payload && !(await availableStoreSection(userId, organizationId, payload.default_store_section_id))) return;
   await localDb.optimisticOverlays.bulkPut(
     overlays(userId, organizationId, command.id, command.actionAt, payload),
   );

@@ -73,4 +73,17 @@ describe("readIngredientCatalog current prices", () => {
     expect(result.sourceUnits).toEqual([expect.objectContaining({ id: unitId, name: "old-g" })]);
     expect(result.ingredients).toEqual([expect.objectContaining({ id: ingredientId, canonicalUnitName: "old-g" })]);
   });
+
+  it("orders store sections by position key before name", async () => {
+    readVisibleRecords.mockImplementation(async (_user: string, _org: string, type: string) =>
+      type === "store_section"
+        ? [
+            record("store_section", "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa", { id: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa", organization_id: organizationId, name: "Zeta", position_key: "a" }),
+            record("store_section", "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb", { id: "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb", organization_id: organizationId, name: "Alpha", position_key: "z" }),
+          ]
+        : [],
+    );
+    const result = await readIngredientCatalog(userId, organizationId);
+    expect(result.storeSections.map((section) => section.name)).toEqual(["Zeta", "Alpha"]);
+  });
 });

@@ -21,9 +21,11 @@ export type IngredientUnit = {
   dimension: string;
   baseUnitFactor: string | undefined;
 };
+export type StoreSection = { id: string; name: string };
 export type IngredientCatalogProjection = {
   ingredients: CatalogIngredient[];
   units: IngredientUnit[];
+  storeSections: StoreSection[];
   /** Retired source dependencies for guarded copy projections; editor callers use units. */
   sourceUnits?: IngredientUnit[];
   dietaryTags: { id: string; name: string }[];
@@ -46,15 +48,16 @@ export async function readIngredientCatalog(
   includeOptimisticOverlays = true,
 ): Promise<IngredientCatalogProjection> {
   if (!uuid.test(userId) || !uuid.test(organizationId))
-    return { ingredients: [], units: [], dietaryTags: [], organizationDefaultCurrency: "" };
+    return { ingredients: [], units: [], storeSections: [], dietaryTags: [], organizationDefaultCurrency: "" };
   const read = includeOptimisticOverlays ? readVisibleRecords : readCanonicalRecords;
-  const [roots, versions, records, tags, prices, organizations] = await Promise.all([
+  const [roots, versions, records, tags, prices, organizations, sections] = await Promise.all([
     read(userId, organizationId, "ingredient", includeRetired),
     read(userId, organizationId, "ingredient_version"),
     read(userId, organizationId, "unit_definition", includeRetired),
     read(userId, organizationId, "dietary_tag", true),
     read(userId, organizationId, "ingredient_price_estimate"),
     read(userId, organizationId, "organization"),
+    read(userId, organizationId, "store_section"),
   ]);
   const allUnits = records
     .filter((record) => {
@@ -87,6 +90,12 @@ export async function readIngredientCatalog(
   const units = allUnits.filter((unit) =>
     records.find((record) => record.entityId === unit.id)?.lifecycle === "active",
   );
+  const storeSections = sections
+    .filter((record) => record.lifecycle === "active" && uuid.test(record.entityId) && text(record, "id") === record.entityId && text(record, "organization_id") === organizationId)
+    .map((record) => ({ id: record.entityId, name: text(record, "name"), positionKey: text(record, "position_key") ?? "" }))
+    .filter((section): section is StoreSection & { positionKey: string } => Boolean(section.name))
+    .sort((left, right) => left.positionKey.localeCompare(right.positionKey) || left.id.localeCompare(right.id))
+    .map(({ id, name }) => ({ id, name }));
   const versionById = new Map(
     versions
       .filter(
@@ -180,5 +189,5 @@ export async function readIngredientCatalog(
     .map((record) => ({ id: record.entityId, name: text(record, "name") }))
     .filter((tag): tag is { id: string; name: string } => Boolean(tag.name));
   const organizationDefaultCurrency = text(organizations.find((record) => record.entityId === organizationId) ?? { fields: {} } as CanonicalRecord, "default_currency") ?? "";
-  return { ingredients, units, ...(includeRetired ? { sourceUnits: allUnits } : {}), dietaryTags, organizationDefaultCurrency };
+  return { ingredients, units, storeSections, ...(includeRetired ? { sourceUnits: allUnits } : {}), dietaryTags, organizationDefaultCurrency };
 }

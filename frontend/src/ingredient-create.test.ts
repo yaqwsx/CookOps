@@ -13,6 +13,7 @@ const userId = "a6a58bd6-214e-49af-8fae-e5f974bf8e08";
 const organizationId = "5ce17d2f-8365-4b1f-a80b-34d10425d51c";
 const unitId = "6ce17d2f-8365-4b1f-a80b-34d10425d51c";
 const tagId = "7ce17d2f-8365-4b1f-a80b-34d10425d51c";
+const sectionId = "8ce17d2f-8365-4b1f-a80b-34d10425d51c";
 const input = {
   name: "  Rajčata  ",
   canonicalUnitId: unitId,
@@ -59,6 +60,21 @@ async function addTag(lifecycle: "active" | "retired" = "active") {
     recordSchemaVersion: 1,
     lifecycle,
     fields: { id: tagId, organization_id: organizationId, name: "Vegan" },
+    fieldClocks: {},
+    immutable: false,
+    updatedAt: "2026-08-07T12:00:00.000Z",
+  });
+}
+
+async function addSection(lifecycle: "active" | "retired" = "active", owner = organizationId) {
+  await localDb.canonicalRecords.add({
+    userId,
+    organizationId,
+    entityType: "store_section",
+    entityId: sectionId,
+    recordSchemaVersion: 1,
+    lifecycle,
+    fields: { id: sectionId, organization_id: owner, name: "Produce" },
     fieldClocks: {},
     immutable: false,
     updatedAt: "2026-08-07T12:00:00.000Z",
@@ -120,6 +136,7 @@ describe("offline ingredient creation", () => {
       readIngredientCatalog(userId, organizationId),
     ).resolves.toEqual({
       organizationDefaultCurrency: "",
+      storeSections: [],
       units: [
         { id: unitId, name: "g", dimension: "mass", baseUnitFactor: "1" },
       ],
@@ -240,6 +257,41 @@ describe("offline ingredient creation", () => {
     await expect(localDb.optimisticOverlays.count()).resolves.toBe(0);
   });
 
+  it("ignores a null persisted payload without throwing", async () => {
+    await expect(
+      replayIngredientCreate(userId, organizationId, {
+        id: "8ce17d2f-8365-4b1f-a80b-34d10425d51c",
+        actionAt: "2026-08-08T00:00:00Z",
+        payload: null as unknown as Record<string, unknown>,
+      }),
+    ).resolves.toBeUndefined();
+    await expect(localDb.optimisticOverlays.count()).resolves.toBe(0);
+  });
+
+  it("normalizes a legacy six-key replay payload to a null store section", async () => {
+    await addUnit();
+    await replayIngredientCreate(userId, organizationId, {
+      id: "8ce17d2f-8365-4b1f-a80b-34d10425d51c",
+      actionAt: "2026-08-08T00:00:00Z",
+      payload: {
+        ingredient_id: "9ce17d2f-8365-4b1f-a80b-34d10425d51c",
+        ingredient_version_id: "ace17d2f-8365-4b1f-a80b-34d10425d51c",
+        name: "Tomatoes",
+        canonical_unit_id: unitId,
+        mass_per_canonical_quantity: "1",
+        dietary_tag_ids: [],
+      },
+    });
+    await expect(
+      localDb.optimisticOverlays.get([
+        userId,
+        organizationId,
+        "ingredient_version",
+        "ace17d2f-8365-4b1f-a80b-34d10425d51c",
+      ]),
+    ).resolves.toMatchObject({ fields: { default_store_section_id: null } });
+  });
+
   it("does not optimistically publish an impossible mass-unit conversion", async () => {
     await addUnit();
     await expect(
@@ -250,6 +302,32 @@ describe("offline ingredient creation", () => {
     ).rejects.toThrow("mass");
     await expect(localDb.optimisticOverlays.count()).resolves.toBe(0);
     await expect(localDb.outbox.count()).resolves.toBe(0);
+  });
+
+  it("includes an active section in the payload and optimistic version", async () => {
+    await addUnit();
+    await addSection();
+    const result = await queueIngredientCreateWithVersion(userId, organizationId, { ...input, defaultStoreSectionId: sectionId });
+    expect((await localDb.outbox.toArray())[0]?.payload).toMatchObject({ default_store_section_id: sectionId });
+    await expect(localDb.optimisticOverlays.get([userId, organizationId, "ingredient_version", result.ingredientVersionId])).resolves.toMatchObject({ fields: { default_store_section_id: sectionId } });
+  });
+
+  it.each([["retired", "retired"], ["foreign", organizationId.replace("5", "a")]])("does not queue a %s selected section", async (_label, ownerOrLifecycle) => {
+    await addUnit();
+    await addSection(ownerOrLifecycle === "retired" ? "retired" : "active", ownerOrLifecycle === "retired" ? organizationId : ownerOrLifecycle);
+    await expect(queueIngredientCreate(userId, organizationId, { ...input, defaultStoreSectionId: sectionId })).rejects.toThrow("storeSection");
+    await expect(localDb.outbox.count()).resolves.toBe(0);
+  });
+
+  it("does not replay a create whose selected section is retired or foreign", async () => {
+    await addUnit();
+    const command = { id: "9ce17d2f-8365-4b1f-a80b-34d10425d51c", actionAt: "2026-08-08T00:00:00Z", payload: { ingredient_id: "ace17d2f-8365-4b1f-a80b-34d10425d51c", ingredient_version_id: "bce17d2f-8365-4b1f-a80b-34d10425d51c", name: "Tomatoes", canonical_unit_id: unitId, mass_per_canonical_quantity: "1", dietary_tag_ids: [], default_store_section_id: sectionId } };
+    await addSection("retired");
+    await replayIngredientCreate(userId, organizationId, command);
+    await localDb.canonicalRecords.delete([userId, organizationId, "store_section", sectionId]);
+    await addSection("active", organizationId.replace("5", "a"));
+    await replayIngredientCreate(userId, organizationId, command);
+    await expect(localDb.optimisticOverlays.count()).resolves.toBe(0);
   });
 
   it("does not attach another ingredient's immutable version to a cached root", async () => {
