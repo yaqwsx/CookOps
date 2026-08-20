@@ -76,8 +76,11 @@ const emptyPlannerCollections = {
 };
 
 describe("EventPlanner", () => {
+  const originalMatchMedia = window.matchMedia;
+
   afterEach(async () => {
     vi.clearAllMocks();
+    Object.defineProperty(window, "matchMedia", { configurable: true, value: originalMatchMedia });
     await localDb.outbox.clear();
   });
 
@@ -207,6 +210,35 @@ describe("EventPlanner", () => {
     );
   });
 
+  it("moves the recipe catalog into an accessible mobile dialog", async () => {
+    Object.defineProperty(window, "matchMedia", {
+      configurable: true,
+      value: vi.fn(() => ({ matches: true, addEventListener: vi.fn(), removeEventListener: vi.fn() })),
+    });
+    await i18n.changeLanguage(defaultLocale);
+    readEventPlanner.mockResolvedValue({
+      name: "Letní vaření", startDate: "2026-08-10", endDate: "2026-08-10", attendance: 2, lifecycle: "active",
+      days: [{ id: ids.day, date: "2026-08-10", note: null }],
+      roles: [{ id: ids.role, name: "Večeře", position: "a", custom: false }],
+      recipes: [{ id: ids.recipe, versionId: "7d8b2b21-c378-4574-9e46-9338c81305ef", name: "Chili" }],
+      scheduled: [], ...emptyPlannerCollections,
+    });
+    pullOrganization.mockResolvedValue(false);
+    const user = userEvent.setup();
+    render(<EventPlanner eventId={ids.event} onUnauthenticated={vi.fn()} organizationId={ids.organization} userId="a6a58bd6-214e-49af-8fae-e5f974bf8e08" />);
+    const opener = await screen.findByRole("button", { name: "Otevřít katalog receptů" });
+    expect(opener).toHaveAttribute("aria-expanded", "false");
+    await user.click(opener);
+    expect(opener).toHaveAttribute("aria-expanded", "true");
+    const dialog = screen.getByRole("dialog", { name: "Otevřít katalog receptů" });
+    expect(within(dialog).getByRole("combobox", { name: "Recept" })).toBeVisible();
+    await user.click(within(dialog).getByRole("button", { name: "Přidat do plánu" }));
+    expect(queueRecipeSchedule).toHaveBeenCalledWith("a6a58bd6-214e-49af-8fae-e5f974bf8e08", ids.organization, { eventId: ids.event, eventDayId: ids.day, eventMealRoleId: ids.role, recipeId: ids.recipe });
+    fireEvent(dialog, new Event("cancel", { bubbles: true, cancelable: true }));
+    expect(opener).toHaveAttribute("aria-expanded", "false");
+    expect(document.activeElement).toBe(opener);
+  });
+
   it("schedules a catalog recipe dropped onto an active meal role", async () => {
     await i18n.changeLanguage(defaultLocale);
     readEventPlanner.mockResolvedValue({
@@ -310,6 +342,7 @@ describe("EventPlanner", () => {
     render(<EventPlanner eventId={ids.event} onUnauthenticated={vi.fn()} organizationId={ids.organization} userId="a6a58bd6-214e-49af-8fae-e5f974bf8e08" />);
     const note = await screen.findByLabelText("Poznámka dne");
     await user.clear(note);
+    await waitFor(() => expect(note).toHaveValue(""));
     await user.type(note, "Nová poznámka");
     await user.click(screen.getByRole("button", { name: "Uložit poznámku dne" }));
     expect(queueEventDayNote).toHaveBeenCalledWith("a6a58bd6-214e-49af-8fae-e5f974bf8e08", ids.organization, { eventDayId: ids.day, eventId: ids.event, note: "Nová poznámka" });

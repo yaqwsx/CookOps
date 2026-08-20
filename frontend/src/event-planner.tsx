@@ -323,7 +323,42 @@ function AddRecipe({
   const [error, setError] = useState<string>();
   const [saved, setSaved] = useState(false);
   const [creating, setCreating] = useState(false);
+  const [mobile, setMobile] = useState(false);
+  const [catalogOpen, setCatalogOpen] = useState(false);
+  const catalogDialog = useRef<HTMLDialogElement>(null);
+  const catalogTrigger = useRef<HTMLButtonElement>(null);
   const inFlight = useRef(false);
+
+  useEffect(() => {
+    const query = window.matchMedia?.("(max-width: 46rem)");
+    if (!query) return;
+    const update = () => setMobile(query.matches);
+    update();
+    if (query.addEventListener) query.addEventListener("change", update);
+    else query.addListener?.(update);
+    return () => {
+      if (query.removeEventListener) query.removeEventListener("change", update);
+      else query.removeListener?.(update);
+    };
+  }, []);
+
+  useEffect(() => {
+    const dialog = catalogDialog.current;
+    if (!dialog || !mobile || !catalogOpen) return;
+    if (typeof dialog.showModal === "function") dialog.showModal();
+    else dialog.setAttribute("open", "");
+    return () => {
+      if (dialog.open && typeof dialog.close === "function") dialog.close();
+      else dialog.removeAttribute("open");
+    };
+  }, [catalogOpen, mobile]);
+
+  function closeCatalog() {
+    setCatalogOpen(false);
+    if (catalogDialog.current?.open && typeof catalogDialog.current.close === "function") catalogDialog.current.close();
+    else catalogDialog.current?.removeAttribute("open");
+    catalogTrigger.current?.focus();
+  }
 
   useEffect(() => {
     setDayId((current) =>
@@ -367,8 +402,7 @@ function AddRecipe({
   if (planner.lifecycle !== "active") return null;
   if (!planner.days.length || !planner.roles.length)
     return <p role="status">{t("planner.noAddOptions")}</p>;
-  return (
-    <>
+  const catalog = (
     <form className="planner-add" onSubmit={(event) => void submit(event)}>
       <h3>{t("planner.addHeading")}</h3>
       <label>
@@ -428,7 +462,41 @@ function AddRecipe({
         ))}
       </ul>
     </form>
-    {creating ? <PlannerRecipeCreateForm eventId={eventId} eventDayId={dayId} eventMealRoleId={roleId} organizationId={organizationId} userId={userId} /> : null}
+  );
+  const createForm = creating ? <PlannerRecipeCreateForm eventId={eventId} eventDayId={dayId} eventMealRoleId={roleId} organizationId={organizationId} userId={userId} /> : null;
+  if (!mobile) return <>{catalog}{createForm}</>;
+  return (
+    <>
+      <button
+        aria-controls="planner-recipe-catalog"
+        aria-expanded={catalogOpen}
+        ref={catalogTrigger}
+        type="button"
+        onClick={() => setCatalogOpen(true)}
+      >
+        {t("planner.openRecipeCatalog")}
+      </button>
+      <dialog
+        aria-labelledby="planner-recipe-catalog-heading"
+        className="planner-recipe-catalog-dialog"
+        id="planner-recipe-catalog"
+        ref={catalogDialog}
+        onCancel={(event) => {
+          event.preventDefault();
+          closeCatalog();
+        }}
+        onClose={() => {
+          setCatalogOpen(false);
+          catalogTrigger.current?.focus();
+        }}
+      >
+        <div className="planner-recipe-catalog-dialog__header">
+          <h3 id="planner-recipe-catalog-heading">{t("planner.openRecipeCatalog")}</h3>
+          <button aria-label={t("planner.closeRecipeCatalog")} type="button" onClick={closeCatalog}>×</button>
+        </div>
+        {catalog}
+        {createForm}
+      </dialog>
     </>
   );
 }

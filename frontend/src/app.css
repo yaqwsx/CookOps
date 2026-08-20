@@ -950,6 +950,39 @@ h1 {
   color: #6f4f37;
 }
 
+.planner-recipe-catalog-dialog {
+  width: min(36rem, calc(100% - 2rem));
+  max-height: calc(100% - 2rem);
+  overflow-y: auto;
+  padding: 1rem;
+  border: 0;
+  border-radius: 0.75rem;
+  color: inherit;
+  background: #fdfbf7;
+}
+
+.planner-recipe-catalog-dialog::backdrop {
+  background: rgb(0 0 0 / 45%);
+}
+
+.planner-recipe-catalog-dialog__header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+}
+
+.planner-recipe-catalog-dialog__header h3 {
+  margin: 0;
+}
+
+.planner-recipe-catalog-dialog .planner-add {
+  margin-top: 1rem;
+  padding: 0;
+  border: 0;
+  background: transparent;
+}
+
 @media (max-width: 46rem) {
   .app-header {
     grid-template-columns: 1fr;
