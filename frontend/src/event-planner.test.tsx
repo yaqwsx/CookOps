@@ -13,6 +13,7 @@ const {
   queueScheduledRecipeMove,
   queueScheduledRecipeCatalogUpdate,
   queueAddedOverride,
+  queueClearReplacementOverride,
   queueEventDayCreate,
   queueEventDayNote,
   queueEventDayVisibility,
@@ -28,6 +29,7 @@ const {
   queueScheduledRecipeMove: vi.fn(),
   queueScheduledRecipeCatalogUpdate: vi.fn(),
   queueAddedOverride: vi.fn(),
+  queueClearReplacementOverride: vi.fn(),
   queueEventDayCreate: vi.fn(),
   queueEventDayNote: vi.fn(),
   queueEventDayVisibility: vi.fn(),
@@ -45,7 +47,7 @@ vi.mock("./scheduled-recipe", () => ({
   queueScheduledRecipeMove,
   queueScheduledRecipeCatalogUpdate,
 }));
-vi.mock("./scheduled-ingredient-override", () => ({ queueAddedOverride }));
+vi.mock("./scheduled-ingredient-override", () => ({ queueAddedOverride, queueClearReplacementOverride }));
 vi.mock("./event-day", () => ({ queueEventDayCreate, queueEventDayNote, queueEventDayVisibility }));
 vi.mock("./event-meal-role", () => ({ queueEventMealRoleCreate, queueEventMealRoleName }));
 vi.mock("./sync-bootstrap", () => ({
@@ -635,5 +637,25 @@ describe("EventPlanner", () => {
     expect(screen.getByText("Připravená hmotnost: 3 · na strávníka 1.5")).toBeVisible();
     expect(screen.getByText(/# Pinned/)).toHaveTextContent("<script>bad()</script>");
     expect(screen.queryByRole("button", { name: "Upravit škálování" })).not.toBeInTheDocument();
+  });
+
+  it("shows and queues reset to catalog for an active replacement", async () => {
+    await i18n.changeLanguage(defaultLocale);
+    readEventPlanner.mockResolvedValue({
+      name: "Akce", startDate: "2026-08-10", endDate: "2026-08-10", attendance: 2, lifecycle: "active",
+      days: [{ id: ids.day, date: "2026-08-10", note: null }], roles: [{ id: ids.role, name: "Večeře", position: "a", retired: false, custom: false }], recipes: [],
+      scheduled: [{ id: ids.recipe, recipeId: ids.recipe, recipeVersionId: "old-version", name: "Salát", recipeVersionName: "Pinned", dinerCount: 2, dayId: ids.day, roleId: ids.role, position: "a", retired: false, detailLines: [{ id: "line", name: "Tomato", quantity: "2", unitName: "ks", localOverride: true, replacementOverrideId: "7d8b2b21-c378-4574-9e46-9338c81305ef", replacementOverrideActive: true }], preparedWeight: null, perDinerWeight: null, hasLocalOverrides: true, lines: [], localAddedIngredients: [], dietaryWarnings: [], catalogUpdateAvailable: false, catalogUpdateChanges: { added: 0, removed: 0, changed: 0 }, catalogScaleImpact: { reset: false } }], ...emptyPlannerCollections,
+    });
+    readEventCosts.mockResolvedValue({ currency: "CZK", budget: "1000", total: "0", expectedShopping: "0", actual: "0", remaining: "1000", missingIngredients: [], scheduled: new Map() });
+    pullOrganization.mockResolvedValue(false);
+    const user = userEvent.setup();
+    render(<EventPlanner eventId={ids.event} onUnauthenticated={vi.fn()} organizationId={ids.organization} userId="a6a58bd6-214e-49af-8fae-e5f974bf8e08" />);
+    const card = (await screen.findAllByRole("listitem")).find((item) => item.textContent?.includes("Salát"));
+    if (!card) throw new Error("Scheduled recipe card is missing");
+    await user.click(within(card).getByText("Podrobnosti receptu"));
+    const reset = within(card).getByRole("button", { name: "Vrátit na katalog" });
+    expect(reset).toBeVisible();
+    await user.click(reset);
+    expect(queueClearReplacementOverride).toHaveBeenCalledWith("a6a58bd6-214e-49af-8fae-e5f974bf8e08", ids.organization, { eventId: ids.event, scheduledRecipeId: ids.recipe, targetLineKey: "line", overrideId: "7d8b2b21-c378-4574-9e46-9338c81305ef" });
   });
 });

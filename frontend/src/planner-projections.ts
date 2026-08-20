@@ -30,7 +30,7 @@ export type PlannedRecipe = {
   scalingUnitName?: string;
   scaleMode?: "suggested" | "manual";
   hasLocalOverrides: boolean;
-  detailLines: { id: string; name: string; quantity: string; unitName: string; note?: string; includeInPortionWeight?: boolean; massPerCanonicalQuantity?: string; localOverride?: true }[];
+  detailLines: { id: string; name: string; quantity: string; unitName: string; note?: string; includeInPortionWeight?: boolean; massPerCanonicalQuantity?: string; localOverride?: true; replacementOverrideId?: string; replacementOverrideActive?: true }[];
   preparedWeight: string | null;
   perDinerWeight: string | null;
   dietaryWarnings?: { exceptionName: string; tagNames: string[]; ingredientNames: string[]; tagDescriptors?: { id: string; seedKey?: string; name?: string }[] }[];
@@ -561,7 +561,7 @@ export async function readEventPlanner(
         const resolvedMetadata = replacementVersionId && resolved && replacementValid ? { name: value(resolved, "name"), unitName: ingredientUnitNames.get(value(resolved, "canonical_unit_id") ?? ""), massPerCanonicalQuantity: value(resolved, "mass_per_canonical_quantity") } : undefined;
         const name = resolvedMetadata?.name ?? line.name;
         const unitName = resolvedMetadata?.unitName ?? line.unitName;
-        return parsedQuantity && parsedQuantity.value >= 0n && scaled && parseDecimal(scaled)?.value !== 0n && name && unitName && replacementValid ? [{ ...line, quantity: scaled, name, unitName, ...(replacement ? { localOverride: true as const } : {}), ...(resolvedMetadata ? { massPerCanonicalQuantity: resolvedMetadata.massPerCanonicalQuantity } : {}) }] : [];
+        return parsedQuantity && parsedQuantity.value >= 0n && scaled && parseDecimal(scaled)?.value !== 0n && name && unitName && replacementValid ? [{ ...line, quantity: scaled, name, unitName, ...(replacement ? { localOverride: true as const, replacementOverrideId: replacement.entityId, replacementOverrideActive: true as const } : {}), ...(resolvedMetadata ? { massPerCanonicalQuantity: resolvedMetadata.massPerCanonicalQuantity } : {}) }] : [];
       }).concat((localAddedIngredients.get(record.entityId) ?? []).flatMap((ingredient) => parseDecimal(ingredient.quantity)?.value !== 0n ? [ingredient] : []) as typeof detailLines extends Map<string, infer T> ? T : never) : [];
       const toFraction = (value: string): Fraction | undefined => { const parsed = parseDecimal(value); return parsed ? { numerator: parsed.value, denominator: 10n ** BigInt(parsed.scale) } : undefined; };
       const weightValues = resolvedDetailLines.filter((line) => line.includeInPortionWeight).map((line) => { const quantity = toFraction(line.quantity), mass = toFraction(line.massPerCanonicalQuantity ?? ""); return quantity && mass && mass.numerator > 0n ? multiply(quantity, mass) : undefined; });

@@ -1,7 +1,9 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import type { CanonicalRecord } from "./local-db";
+import { localDb } from "./local-db";
 import { readEventPlanner, suggestedScale } from "./planner-projections";
+import { queueClearReplacementOverride } from "./scheduled-ingredient-override";
 
 const organizationId = "55555555-5555-4555-8555-555555555555";
 const userId = "66666666-6666-4666-8666-666666666666";
@@ -68,7 +70,7 @@ function cache(options: {
   overrides?: CanonicalRecord[];
   dietaryTag?: Partial<CanonicalRecord>;
   extraRecords?: Partial<Record<string, CanonicalRecord[]>>;
-}) {
+}): Record<string, CanonicalRecord[]> {
   const currentVersion = record("ingredient_version", ids.currentVersion, {
     ingredient_id: ids.ingredient,
     name: "Current",
@@ -101,6 +103,7 @@ function cache(options: {
     event_dietary_exception_tag: options.dietary?.filter((item) => item.entityType === "event_dietary_exception_tag") ?? [],
   };
   readVisibleRecords.mockImplementation(async (_user: string, _org: string, entityType: string) => [...(records[entityType] ?? []), ...(options.extraRecords?.[entityType] ?? [])]);
+  return records;
 }
 
 describe("readEventPlanner catalog update projection", () => {
@@ -195,6 +198,24 @@ describe("readEventPlanner catalog update projection", () => {
     const invalid = record("scheduled_ingredient_override", "cececece-cece-4cec-8ece-cececececece", { event_id: ids.event, scheduled_recipe_id: ids.scheduled, override_kind: "replace", target_line_key: ids.line, ingredient_version_id: "not-a-uuid", quantity: "2" }, { immutable: false });
     cache({ overrides: [invalid] });
     expect((await readEventPlanner(userId, organizationId, ids.event))?.scheduled[0]?.detailLines).toEqual([]);
+  });
+
+  it("projects the catalog line after a durable replacement clear", async () => {
+    const replacement = record("scheduled_ingredient_override", ids.replacement, { event_id: ids.event, scheduled_recipe_id: ids.scheduled, override_kind: "replace", target_line_key: ids.line, ingredient_version_id: ids.currentVersion, quantity: "3" }, { immutable: false });
+    const records = cache({ overrides: [replacement] });
+    await localDb.canonicalRecords.bulkPut([records.event[0], records.scheduled_recipe[0], records.recipe_ingredient_line[0], replacement]);
+    await queueClearReplacementOverride(userId, organizationId, { eventId: ids.event, scheduledRecipeId: ids.scheduled, targetLineKey: ids.line, overrideId: ids.replacement });
+    const overlay = await localDb.optimisticOverlays.get([userId, organizationId, "scheduled_ingredient_override", ids.replacement]);
+    expect(overlay).toMatchObject({ lifecycle: "retired" });
+    readVisibleRecords.mockImplementation(async (_user: string, _org: string, entityType: string) => {
+      const base = [...(records[entityType] ?? [])];
+      if (entityType !== "scheduled_ingredient_override") return base;
+      return base.filter((item) => item.entityId !== ids.replacement).concat(overlay ? [overlay] : []);
+    });
+    const planner = await readEventPlanner(userId, organizationId, ids.event);
+    expect(planner?.scheduled[0]?.detailLines[0]).toMatchObject({ quantity: "2" });
+    expect(planner?.scheduled[0]?.detailLines[0]).not.toHaveProperty("replacementOverrideId");
+    expect(planner?.scheduled[0]?.detailLines[0]).not.toHaveProperty("replacementOverrideActive");
   });
 
   it("scales detail quantities when the pinned base is 0.5", async () => {

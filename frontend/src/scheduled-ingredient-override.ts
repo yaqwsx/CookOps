@@ -1,5 +1,6 @@
 import { appendOutboxCommand, localDb } from "./local-db";
 import { readVisibleRecords } from "./visible-records";
+import { timestampNanoseconds } from "./timestamp";
 
 const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const quantity = /^(?:0|[1-9]\d*)(?:\.\d+)?$/;
@@ -24,6 +25,25 @@ const addedPayloadKeys = [
   "include_in_portion_weight",
   "position_key",
 ];
+const clearReplacementPayloadKeys = [
+  "override_id",
+  "event_id",
+  "scheduled_recipe_id",
+  "operation",
+  "override_kind",
+  "target_line_key",
+];
+
+function wins(clock: unknown, mutationId: string, actionAt: string): boolean {
+  if (clock === undefined || clock === null) return true;
+  if (typeof clock !== "object" || Array.isArray(clock)) return false;
+  const value = clock as Record<string, unknown>;
+  const currentAt = typeof value.actionAt === "string" ? value.actionAt : value.winning_client_wall_time;
+  const currentId = typeof value.mutationId === "string" ? value.mutationId : value.winning_mutation_id;
+  const candidate = timestampNanoseconds(actionAt);
+  const current = typeof currentAt === "string" ? timestampNanoseconds(currentAt) : undefined;
+  return typeof currentId === "string" && uuid.test(currentId) && candidate !== undefined && current !== undefined && (candidate > current || (candidate === current && mutationId > currentId));
+}
 
 async function activeScheduledRecipe(
   userId: string,
@@ -62,7 +82,9 @@ async function activeScheduledRecipe(
     canonicalScheduled;
   return (
     visibleEvent?.fields.lifecycle === "active" &&
+    visibleEvent.fields.organization_id === organizationId &&
     scheduled?.lifecycle === "active" &&
+    scheduled.fields.organization_id === organizationId &&
     scheduled.fields.event_id === eventId
   );
 }
@@ -158,6 +180,13 @@ async function pinnedRecipeContainsIngredient(
     if (version?.fields.ingredient_id === ingredientId) return true;
   }
   return false;
+}
+
+async function pinnedRecipeContainsLine(userId: string, organizationId: string, scheduledRecipeId: string, lineKey: string) {
+  const scheduled = (await localDb.optimisticOverlays.get([userId, organizationId, "scheduled_recipe", scheduledRecipeId])) ?? await localDb.canonicalRecords.get([userId, organizationId, "scheduled_recipe", scheduledRecipeId]);
+  if (scheduled?.lifecycle !== "active") return false;
+  const lines = await readVisibleRecords(userId, organizationId, "recipe_ingredient_line");
+  return lines.some((line) => line.lifecycle === "active" && line.fields.recipe_version_id === scheduled.fields.recipe_version_id && line.fields.line_key === lineKey && line.fields.organization_id === organizationId);
 }
 
 export async function queueReplacementOverride(
@@ -335,12 +364,42 @@ export async function queueAddedOverride(
   );
 }
 
+export async function queueClearReplacementOverride(
+  userId: string,
+  organizationId: string,
+  input: { eventId: string; scheduledRecipeId: string; targetLineKey: string; overrideId: string },
+) {
+  if (![input.eventId, input.scheduledRecipeId, input.targetLineKey, input.overrideId].every((value) => uuid.test(value))) throw new Error("override");
+  const id = crypto.randomUUID();
+  const actionAt = new Date().toISOString();
+  const payload = {
+    override_id: input.overrideId,
+    event_id: input.eventId,
+    scheduled_recipe_id: input.scheduledRecipeId,
+    operation: "clear" as const,
+    override_kind: "replace" as const,
+    target_line_key: input.targetLineKey,
+  };
+  await localDb.transaction("rw", localDb.canonicalRecords, localDb.optimisticOverlays, localDb.outbox, async () => {
+    if (!(await activeScheduledRecipe(userId, organizationId, input.eventId, input.scheduledRecipeId))) throw new Error("override");
+    const lines = await readVisibleRecords(userId, organizationId, "recipe_ingredient_line");
+    const scheduled = (await localDb.optimisticOverlays.get([userId, organizationId, "scheduled_recipe", input.scheduledRecipeId])) ?? await localDb.canonicalRecords.get([userId, organizationId, "scheduled_recipe", input.scheduledRecipeId]);
+    if (!scheduled || !lines.some((line) => line.lifecycle === "active" && line.fields.organization_id === organizationId && line.fields.recipe_version_id === scheduled.fields.recipe_version_id && line.fields.line_key === input.targetLineKey)) throw new Error("override");
+    const overrides = await readVisibleRecords(userId, organizationId, "scheduled_ingredient_override");
+    const current = overrides.find((record) => record.entityId === input.overrideId && record.lifecycle === "active" && record.fields.organization_id === organizationId && record.fields.event_id === input.eventId && record.fields.scheduled_recipe_id === input.scheduledRecipeId && record.fields.override_kind === "replace" && record.fields.target_line_key === input.targetLineKey);
+    if (!current) throw new Error("override");
+    await localDb.optimisticOverlays.put({ ...current, lifecycle: "retired", fields: { ...current.fields, ...payload, retired_at: actionAt }, fieldClocks: { ...current.fieldClocks, [`replace.${input.targetLineKey}`]: { mutationId: id, actionAt } }, updatedAt: actionAt });
+    await appendOutboxCommand({ id, userId, organizationId, commandType: "scheduled_recipe.ingredient_override", payload, actionAt, createdAt: actionAt, state: "pending" });
+  });
+}
+
 export async function replayScheduledIngredientOverride(
   userId: string,
   organizationId: string,
   command: { id: string; actionAt: string; payload: Record<string, unknown> },
 ) {
   const p = command.payload;
+  const clearReplacement = Object.keys(p).length === clearReplacementPayloadKeys.length && clearReplacementPayloadKeys.every((key) => key in p) && p.operation === "clear" && p.override_kind === "replace" && [p.override_id, p.event_id, p.scheduled_recipe_id, p.target_line_key].every((value) => typeof value === "string" && uuid.test(value));
   const replacement =
     Object.keys(p).length === replacementPayloadKeys.length &&
     replacementPayloadKeys.every((key) => key in p) &&
@@ -368,7 +427,8 @@ export async function replayScheduledIngredientOverride(
     typeof p.include_in_portion_weight === "boolean" &&
     typeof p.position_key === "string" &&
     /^[0-9A-Za-z]{1,255}$/.test(p.position_key);
-  if (!replacement && !added) return;
+  if (!replacement && !added && !clearReplacement) return;
+  if (!uuid.test(command.id) || timestampNanoseconds(command.actionAt) === undefined) return;
   if (
     !(await activeScheduledRecipe(
       userId,
@@ -378,6 +438,7 @@ export async function replayScheduledIngredientOverride(
     ))
   )
     return;
+  if (clearReplacement && !(await pinnedRecipeContainsLine(userId, organizationId, p.scheduled_recipe_id as string, p.target_line_key as string))) return;
   if (
     added &&
     !(await activeCatalogIngredient(
@@ -389,7 +450,7 @@ export async function replayScheduledIngredientOverride(
   )
     return;
   const key = `${p.override_kind}.${
-    replacement ? p.target_line_key : p.override_id
+    replacement || clearReplacement ? p.target_line_key : p.override_id
   }`;
   const records = await localDb.canonicalRecords
     .where("[userId+organizationId+entityType]")
@@ -402,30 +463,15 @@ export async function replayScheduledIngredientOverride(
   const existing =
     overlays.find((record) => record.fieldClocks[key] !== undefined) ??
     records.find((record) => record.fieldClocks[key] !== undefined);
-  const clock = existing?.fieldClocks[key];
-  if (clock !== undefined) {
-    if (clock === null || typeof clock !== "object" || Array.isArray(clock)) return;
-    const record = clock as Record<string, unknown>;
-    const at =
-      typeof record.actionAt === "string"
-        ? record.actionAt
-        : record.winning_client_wall_time;
-    const id =
-      typeof record.mutationId === "string"
-        ? record.mutationId
-        : record.winning_mutation_id;
-    const candidateTime = Date.parse(command.actionAt);
-    const currentTime = typeof at === "string" ? Date.parse(at) : NaN;
-    if (
-      typeof id !== "string" ||
-      !Number.isFinite(candidateTime) ||
-      !Number.isFinite(currentTime) ||
-      candidateTime < currentTime ||
-      (candidateTime === currentTime && command.id <= id)
-    )
-      return;
-  }
+  if (!wins(existing?.fieldClocks[key], command.id, command.actionAt)) return;
+  if (clearReplacement && (!existing || existing.entityId !== p.override_id || existing.lifecycle !== "active")) return;
   const entityId = replacement && existing ? existing.entityId : (p.override_id as string);
+  if (clearReplacement) {
+    const current = existing;
+    if (!current) return;
+    await localDb.optimisticOverlays.put({ ...current, lifecycle: "retired", fields: { ...current.fields, ...p, retired_at: command.actionAt }, fieldClocks: { ...current.fieldClocks, [key]: { mutationId: command.id, actionAt: command.actionAt } }, updatedAt: command.actionAt });
+    return;
+  }
   await localDb.optimisticOverlays.put({
     userId,
     organizationId,
