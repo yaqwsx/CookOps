@@ -37,6 +37,7 @@ import { pullOrganization, SyncRequestError } from "./sync-bootstrap";
 import { ensureArchivedEventCached } from "./archive-cache";
 import { SynchronizationStatus } from "./synchronization-status";
 import { EventSummary, useEventPendingSync } from "./event-summary";
+import { EventSectionNavigation } from "./event-section-navigation";
 
 type ShoppingState = "loading" | "ready" | "offline" | "error";
 
@@ -977,7 +978,6 @@ export function EventShopping({
   shoppingListId,
   userId,
   onOpenList,
-  onOpenPlanner,
   onBack,
   onUnauthenticated,
 }: {
@@ -986,7 +986,6 @@ export function EventShopping({
   shoppingListId?: string;
   userId: string;
   onOpenList: (shoppingListId: string) => void;
-  onOpenPlanner: () => void;
   onBack: () => void;
   onUnauthenticated: () => void;
 }) {
@@ -1082,6 +1081,7 @@ export function EventShopping({
         pendingSync={pendingSync}
         planner={planner}
       />
+      <EventSectionNavigation current="shopping" eventId={eventId} organizationId={organizationId} />
       <section className="event-shopping" aria-labelledby="shopping-heading">
         <header>
           <h2 id="shopping-heading">{t("shopping.heading")}</h2>
@@ -1090,9 +1090,6 @@ export function EventShopping({
           organizationId={organizationId}
           userId={userId}
         />
-      <button onClick={onOpenPlanner} type="button">
-        {t("shopping.planner")}
-      </button>
       {planner.lifecycle === "archived" ? (
         <p className="planner-archived" role="status">
           {t("shopping.archived")}

@@ -93,7 +93,7 @@ describe("EventPlanner", () => {
       { id: "other-event", userId, organizationId: ids.organization, commandType: "event.update", payload: { event_id: ids.recipe }, actionAt: "2026-08-10T00:00:00Z", createdAt: "2026-08-10T00:00:00Z", state: "pending" },
       { id: "other-org", userId, organizationId: ids.recipe, commandType: "event.update", payload: { event_id: ids.event }, actionAt: "2026-08-10T00:00:00Z", createdAt: "2026-08-10T00:00:00Z", state: "pending" },
     ]);
-    await waitFor(() => expect(screen.getByText("1 neúspěšných změn")).toBeVisible());
+    await waitFor(() => expect(screen.getByText((text) => text.includes("1 neúspěšných změn"))).toBeVisible());
   });
 
   it.each([

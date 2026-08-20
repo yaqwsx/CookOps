@@ -9,19 +9,16 @@ import {
   type EventPlannerProjection,
 } from "./planner-projections";
 import { EventSummary, useEventPendingSync } from "./event-summary";
+import { EventSectionNavigation } from "./event-section-navigation";
 
 export function EventCostsPage({
   eventId,
   organizationId,
   userId,
-  onBack,
-  onOpenReceipts,
 }: {
   eventId: string;
   organizationId: string;
   userId: string;
-  onBack: () => void;
-  onOpenReceipts: () => void;
 }) {
   const { t } = useTranslation();
   const identity = `${userId}:${organizationId}:${eventId}`;
@@ -57,14 +54,7 @@ export function EventCostsPage({
   return (
     <>
       <EventSummary planner={planner} costs={costsState?.identity === identity ? costsState.costs : undefined} pendingSync={pendingSync} />
-      <nav aria-label={t("costs.navigation")}>
-        <button onClick={onBack} type="button">
-          {t("costs.planner")}
-        </button>
-        <button onClick={onOpenReceipts} type="button">
-          {t("costs.receipts")}
-        </button>
-      </nav>
+      <EventSectionNavigation current="costs" eventId={eventId} organizationId={organizationId} />
       <EventCosts
         eventId={eventId}
         organizationId={organizationId}

@@ -31,6 +31,7 @@ import { mealRoleLabels } from "./meal-role-labels";
 import { readRecipeCatalog, type RecipeCatalogProjection } from "./recipe-catalog";
 import { assertPlannerTarget, queueRecipeCreate, type RecipeCreateInput } from "./recipe-create";
 import { EventSummary, formattedDate, useEventPendingSync } from "./event-summary";
+import { EventSectionNavigation } from "./event-section-navigation";
 
 const plannerDragMime = "application/x-cookops-planner";
 type PlannerDragPayload = { kind: "recipe" | "scheduled"; id: string };
@@ -823,17 +824,11 @@ export function EventPlanner({
   organizationId,
   userId,
   onUnauthenticated,
-  onOpenShopping,
-  onOpenReceipts,
-  onOpenCosts,
 }: {
   eventId: string;
   organizationId: string;
   userId: string;
   onUnauthenticated: () => void;
-  onOpenShopping?: () => void;
-  onOpenReceipts?: () => void;
-  onOpenCosts?: () => void;
 }) {
   const { t, i18n } = useTranslation();
   const [state, setState] = useState<PlannerState>("loading");
@@ -942,6 +937,7 @@ export function EventPlanner({
   return (
     <section className="event-workspace" aria-labelledby="planner-heading">
       <EventSummary planner={planner} costs={recipeCosts?.identity === identity ? recipeCosts.costs : undefined} pendingSync={pendingSync} />
+      <EventSectionNavigation current="planner" eventId={eventId} organizationId={organizationId} />
       {planner.lifecycle === "archived" ? (
         <p className="planner-archived" role="status">
           {t("planner.archived")}
@@ -949,21 +945,6 @@ export function EventPlanner({
       ) : null}
       {state === "offline" ? <p role="status">{t("planner.offline")}</p> : null}
       <h2 id="planner-heading">{t("planner.heading")}</h2>
-      {onOpenShopping ? (
-        <button onClick={onOpenShopping} type="button">
-          {t("planner.shopping")}
-        </button>
-      ) : null}
-      {onOpenReceipts ? (
-        <button onClick={onOpenReceipts} type="button">
-          {t("planner.receipts")}
-        </button>
-      ) : null}
-      {onOpenCosts ? (
-        <button onClick={onOpenCosts} type="button">
-          {t("planner.costs")}
-        </button>
-      ) : null}
       <EventCosts
         eventId={eventId}
         organizationId={organizationId}

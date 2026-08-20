@@ -59,8 +59,6 @@ describe("event costs route", () => {
     const props = {
       organizationId,
       userId,
-      onBack: vi.fn(),
-      onOpenReceipts: vi.fn(),
     };
     const view = render(<EventCostsPage {...props} eventId={eventA} />);
     expect((await screen.findAllByText("10.00 CZK")).length).toBeGreaterThan(0);
@@ -85,8 +83,6 @@ describe("event costs route", () => {
     const props = {
       organizationId,
       userId,
-      onBack: vi.fn(),
-      onOpenReceipts: vi.fn(),
     };
     const readPlanner = vi
       .spyOn(plannerProjections, "readEventPlanner")
@@ -113,8 +109,6 @@ describe("event costs route", () => {
     render(
       <EventCostsPage
         eventId={archivedEvent}
-        onBack={vi.fn()}
-        onOpenReceipts={vi.fn()}
         organizationId={organizationId}
         userId={userId}
       />,

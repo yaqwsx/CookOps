@@ -84,31 +84,23 @@ describe("EventSettingsPage", () => {
     const { rerender } = render(
       <EventSettingsPage
         eventId="aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"
-        onOpenCosts={vi.fn()}
-        onOpenPlanner={vi.fn()}
-        onOpenReceipts={vi.fn()}
-        onOpenShopping={vi.fn()}
         organizationId={organizationId}
         userId={userId}
       />,
     );
     await screen.findByDisplayValue("Event A");
     expect(
-      screen.getByRole("button", { name: "Zpět na plán" }),
+      screen.getByRole("link", { name: "Nastavení akce" }),
     ).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Náklady" })).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "Náklady" })).toBeInTheDocument();
     await i18n.changeLanguage("en");
     expect(
-      screen.getByRole("button", { name: "Back to planner" }),
+      screen.getByRole("link", { name: "Event settings" }),
     ).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Costs" })).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "Costs" })).toBeInTheDocument();
     rerender(
       <EventSettingsPage
         eventId="bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb"
-        onOpenCosts={vi.fn()}
-        onOpenPlanner={vi.fn()}
-        onOpenReceipts={vi.fn()}
-        onOpenShopping={vi.fn()}
         organizationId={organizationId}
         userId={userId}
       />,
@@ -121,32 +113,23 @@ describe("EventSettingsPage", () => {
   });
 
   it("navigates to every event workspace section", async () => {
-    const onOpenPlanner = vi.fn();
-    const onOpenCosts = vi.fn();
-    const onOpenShopping = vi.fn();
-    const onOpenReceipts = vi.fn();
     await addEvent("99999999-9999-4999-8999-999999999999", "Event");
     render(
       <EventSettingsPage
         eventId="99999999-9999-4999-8999-999999999999"
-        onOpenCosts={onOpenCosts}
-        onOpenPlanner={onOpenPlanner}
-        onOpenReceipts={onOpenReceipts}
-        onOpenShopping={onOpenShopping}
         organizationId={organizationId}
         userId={userId}
       />,
     );
     expect(await screen.findByDisplayValue("Event")).toBeInTheDocument();
-    const user = userEvent.setup();
-    await user.click(screen.getByRole("button", { name: "Nákupy" }));
-    await user.click(screen.getByRole("button", { name: "Účtenky" }));
-    expect(
-      screen.getByRole("button", { name: "Zpět na plán" }),
-    ).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Náklady" })).toBeInTheDocument();
-    expect(onOpenShopping).toHaveBeenCalledOnce();
-    expect(onOpenReceipts).toHaveBeenCalledOnce();
+    expect(screen.getByRole("link", { name: "Nakupování" })).toHaveAttribute(
+      "href",
+      `/organizations/${organizationId}/events/99999999-9999-4999-8999-999999999999/shopping`,
+    );
+    expect(screen.getByRole("link", { name: "Účtenky" })).toHaveAttribute(
+      "href",
+      `/organizations/${organizationId}/events/99999999-9999-4999-8999-999999999999/receipts`,
+    );
   });
 
   it("queues active attendance and keeps archived attendance read-only", async () => {
@@ -157,10 +140,6 @@ describe("EventSettingsPage", () => {
     const { rerender } = render(
       <EventSettingsPage
         eventId={activeId}
-        onOpenCosts={vi.fn()}
-        onOpenPlanner={vi.fn()}
-        onOpenReceipts={vi.fn()}
-        onOpenShopping={vi.fn()}
         organizationId={organizationId}
         userId={userId}
       />,
@@ -179,10 +158,6 @@ describe("EventSettingsPage", () => {
     rerender(
       <EventSettingsPage
         eventId={archivedId}
-        onOpenCosts={vi.fn()}
-        onOpenPlanner={vi.fn()}
-        onOpenReceipts={vi.fn()}
-        onOpenShopping={vi.fn()}
         organizationId={organizationId}
         userId={userId}
       />,
@@ -213,10 +188,6 @@ describe("EventSettingsPage", () => {
     render(
       <EventSettingsPage
         eventId={eventId}
-        onOpenCosts={vi.fn()}
-        onOpenPlanner={vi.fn()}
-        onOpenReceipts={vi.fn()}
-        onOpenShopping={vi.fn()}
         organizationId={organizationId}
         userId={userId}
       />,
@@ -254,10 +225,6 @@ describe("EventSettingsPage", () => {
     render(
       <EventSettingsPage
         eventId="cccccccc-cccc-4ccc-8ccc-cccccccccccc"
-        onOpenCosts={vi.fn()}
-        onOpenPlanner={vi.fn()}
-        onOpenReceipts={vi.fn()}
-        onOpenShopping={vi.fn()}
         organizationId={organizationId}
         userId={userId}
       />,
@@ -276,10 +243,6 @@ describe("EventSettingsPage", () => {
     render(
       <EventSettingsPage
         eventId="dddddddd-dddd-4ddd-8ddd-dddddddddddd"
-        onOpenCosts={vi.fn()}
-        onOpenPlanner={vi.fn()}
-        onOpenReceipts={vi.fn()}
-        onOpenShopping={vi.fn()}
         organizationId={organizationId}
         userId={userId}
       />,
@@ -295,10 +258,6 @@ describe("EventSettingsPage", () => {
     render(
       <EventSettingsPage
         eventId="eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee"
-        onOpenCosts={vi.fn()}
-        onOpenPlanner={vi.fn()}
-        onOpenReceipts={vi.fn()}
-        onOpenShopping={vi.fn()}
         organizationId={organizationId}
         userId={userId}
       />,

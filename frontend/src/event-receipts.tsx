@@ -26,6 +26,7 @@ import { pullOrganization, SyncRequestError } from "./sync-bootstrap";
 import { readEventPlanner, type EventPlannerProjection } from "./planner-projections";
 import { readEventCosts, type EventCostsProjection } from "./event-cost-projections";
 import { EventSummary, useEventPendingSync } from "./event-summary";
+import { EventSectionNavigation } from "./event-section-navigation";
 
 const blank: ReceiptInput = {
   title: "",
@@ -377,7 +378,6 @@ function ReceiptItem({
 
 export function EventReceipts({
   eventId,
-  onBack,
   onUnauthenticated,
   organizationId,
   userId,
@@ -509,12 +509,10 @@ export function EventReceipts({
   return (
     <>
     {planner ? <EventSummary planner={planner} costs={costs} pendingSync={pendingSync} /> : null}
+    <EventSectionNavigation current="receipts" eventId={eventId} organizationId={organizationId} />
     <section className="event-receipts" aria-labelledby="receipts-heading">
       <header className="event-receipts__header">
         <h2 id="receipts-heading">{t("receipts.heading")}</h2>
-        <button onClick={onBack} type="button">
-          {t("receipts.planner")}
-        </button>
       </header>
       <p>{t("receipts.scope")}</p>
       {offline ? <p role="status">{t("receipts.offline")}</p> : null}

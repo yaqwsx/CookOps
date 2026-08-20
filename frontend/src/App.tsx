@@ -550,18 +550,6 @@ function AuthenticatedShell({
     setPathname(nextPath);
   }
 
-  function openReceipts(eventId: string) {
-    const nextPath = `/organizations/${organizationId}/events/${eventId}/receipts`;
-    window.history.pushState(null, "", nextPath);
-    setPathname(nextPath);
-  }
-
-  function openCosts(eventId: string) {
-    const nextPath = `/organizations/${organizationId}/events/${eventId}/costs`;
-    window.history.pushState(null, "", nextPath);
-    setPathname(nextPath);
-  }
-
   async function signOut() {
     setLogoutError(false);
     try {
@@ -719,10 +707,6 @@ function AuthenticatedShell({
                 !shoppingListId ? (
                   <EventSettingsPage
                     eventId={eventId}
-                    onOpenCosts={() => openCosts(eventId)}
-                    onOpenPlanner={() => openEvent(eventId)}
-                    onOpenReceipts={() => openReceipts(eventId)}
-                    onOpenShopping={() => openShopping(eventId)}
                     organizationId={organizationId}
                     userId={identity.id}
                   />
@@ -731,9 +715,6 @@ function AuthenticatedShell({
                   validEventRoute ? (
                   <EventPlanner
                     eventId={eventId}
-                    onOpenCosts={() => openCosts(eventId)}
-                    onOpenReceipts={() => openReceipts(eventId)}
-                    onOpenShopping={() => openShopping(eventId)}
                     onUnauthenticated={onUnauthenticated}
                     organizationId={organizationId}
                     userId={identity.id}
@@ -745,7 +726,6 @@ function AuthenticatedShell({
                     eventId={eventId}
                     onBack={() => openShopping(eventId)}
                     onOpenList={(listId) => openShopping(eventId, listId)}
-                    onOpenPlanner={() => openEvent(eventId)}
                     onUnauthenticated={onUnauthenticated}
                     organizationId={organizationId}
                     shoppingListId={shoppingListId}
@@ -766,8 +746,6 @@ function AuthenticatedShell({
                   !shoppingListId ? (
                   <EventCostsPage
                     eventId={eventId}
-                    onBack={() => openEvent(eventId)}
-                    onOpenReceipts={() => openReceipts(eventId)}
                     organizationId={organizationId}
                     userId={identity.id}
                   />

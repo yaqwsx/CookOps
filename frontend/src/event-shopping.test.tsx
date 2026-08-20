@@ -90,13 +90,13 @@ describe("EventShopping", () => {
     readShoppingLists.mockResolvedValue([]);
     readShoppingList.mockResolvedValue({ id: "list", name: "Starý seznam", sourceCount: 0, sourceRecipeIds: [], adHocItems: [], rows: [], quantityUnits: [], storeSections: [] });
     pullOrganization.mockResolvedValue(false);
-    const view = render(<EventShopping eventId={ids.event} shoppingListId="list" onBack={vi.fn()} onOpenList={vi.fn()} onOpenPlanner={vi.fn()} onUnauthenticated={vi.fn()} organizationId={ids.organization} userId={ids.user} />);
+    const view = render(<EventShopping eventId={ids.event} shoppingListId="list" onBack={vi.fn()} onOpenList={vi.fn()} onUnauthenticated={vi.fn()} organizationId={ids.organization} userId={ids.user} />);
     expect(await screen.findByText(/30/)).toBeInTheDocument();
     expect(await screen.findByText("Starý seznam")).toBeInTheDocument();
 
     readEventCosts.mockResolvedValue(undefined);
     readEventPlanner.mockResolvedValue({ name: "Nové vaření", lifecycle: "planned", attendance: 2, scheduled: [] });
-    view.rerender(<EventShopping eventId={`${ids.event}-next`} onBack={vi.fn()} onOpenList={vi.fn()} onOpenPlanner={vi.fn()} onUnauthenticated={vi.fn()} organizationId={ids.organization} userId={ids.user} />);
+    view.rerender(<EventShopping eventId={`${ids.event}-next`} onBack={vi.fn()} onOpenList={vi.fn()} onUnauthenticated={vi.fn()} organizationId={ids.organization} userId={ids.user} />);
     await waitFor(() => expect(screen.getByRole("heading", { name: "Nové vaření" })).toBeInTheDocument());
     expect(screen.queryByText(/30/)).not.toBeInTheDocument();
     expect(screen.queryByText("Starý seznam")).not.toBeInTheDocument();
@@ -115,7 +115,6 @@ describe("EventShopping", () => {
         eventId={ids.event}
         onBack={vi.fn()}
         onOpenList={vi.fn()}
-        onOpenPlanner={vi.fn()}
         onUnauthenticated={vi.fn()}
         organizationId={ids.organization}
         userId={ids.user}
@@ -137,7 +136,7 @@ describe("EventShopping", () => {
     pullOrganization.mockResolvedValue(false);
     ensureArchivedEventCached.mockRejectedValue(new SyncRequestError(401));
     const onUnauthenticated = vi.fn();
-    render(<EventShopping eventId={ids.event} onBack={vi.fn()} onOpenList={vi.fn()} onOpenPlanner={vi.fn()} onUnauthenticated={onUnauthenticated} organizationId={ids.organization} userId={ids.user} />);
+    render(<EventShopping eventId={ids.event} onBack={vi.fn()} onOpenList={vi.fn()} onUnauthenticated={onUnauthenticated} organizationId={ids.organization} userId={ids.user} />);
     await waitFor(() => expect(onUnauthenticated).toHaveBeenCalledOnce());
     expect(screen.queryByText("Nákupy se nepodařilo načíst.")).not.toBeInTheDocument();
   });
@@ -166,7 +165,6 @@ describe("EventShopping", () => {
         eventId={ids.event}
         onBack={vi.fn()}
         onOpenList={vi.fn()}
-        onOpenPlanner={vi.fn()}
         onUnauthenticated={vi.fn()}
         organizationId={ids.organization}
         userId={ids.user}
@@ -247,7 +245,6 @@ describe("EventShopping", () => {
         eventId={ids.event}
         onBack={vi.fn()}
         onOpenList={vi.fn()}
-        onOpenPlanner={vi.fn()}
         onUnauthenticated={vi.fn()}
         organizationId={ids.organization}
         shoppingListId="9d8b2b21-c378-4574-9e46-9338c81305ef"
@@ -315,7 +312,6 @@ describe("EventShopping", () => {
         eventId="4d8b2b21-c378-4574-9e46-9338c81305ef"
         onBack={vi.fn()}
         onOpenList={vi.fn()}
-        onOpenPlanner={vi.fn()}
         onUnauthenticated={vi.fn()}
         organizationId={ids.organization}
         shoppingListId="9d8b2b21-c378-4574-9e46-9338c81305ef"
@@ -354,7 +350,6 @@ describe("EventShopping", () => {
         eventId={ids.event}
         onBack={vi.fn()}
         onOpenList={vi.fn()}
-        onOpenPlanner={vi.fn()}
         onUnauthenticated={vi.fn()}
         organizationId={ids.organization}
         shoppingListId="9d8b2b21-c378-4574-9e46-9338c81305ef"
@@ -400,7 +395,6 @@ describe("EventShopping", () => {
         eventId={ids.event}
         onBack={vi.fn()}
         onOpenList={vi.fn()}
-        onOpenPlanner={vi.fn()}
         onUnauthenticated={vi.fn()}
         organizationId={ids.organization}
         shoppingListId="9d8b2b21-c378-4574-9e46-9338c81305ef"
@@ -444,7 +438,6 @@ describe("EventShopping", () => {
         eventId={ids.event}
         onBack={vi.fn()}
         onOpenList={vi.fn()}
-        onOpenPlanner={vi.fn()}
         onUnauthenticated={vi.fn()}
         organizationId={ids.organization}
         shoppingListId="9d8b2b21-c378-4574-9e46-9338c81305ef"
@@ -487,7 +480,7 @@ describe("EventShopping", () => {
     });
     pullOrganization.mockResolvedValue(false);
     const user = userEvent.setup();
-    render(<EventShopping eventId={ids.event} onBack={vi.fn()} onOpenList={vi.fn()} onOpenPlanner={vi.fn()} onUnauthenticated={vi.fn()} organizationId={ids.organization} shoppingListId="9d8b2b21-c378-4574-9e46-9338c81305ef" userId={ids.user} />);
+    render(<EventShopping eventId={ids.event} onBack={vi.fn()} onOpenList={vi.fn()} onUnauthenticated={vi.fn()} organizationId={ids.organization} shoppingListId="9d8b2b21-c378-4574-9e46-9338c81305ef" userId={ids.user} />);
     const checkbox = await screen.findByLabelText("Nakoupeno");
     await waitFor(() => expect(checkbox).toHaveProperty("indeterminate", true));
     expect(checkbox).toHaveAttribute("aria-checked", "mixed");
@@ -512,7 +505,7 @@ describe("EventShopping", () => {
     });
     pullOrganization.mockResolvedValue(false);
     const user = userEvent.setup();
-    render(<EventShopping eventId={ids.event} onBack={vi.fn()} onOpenList={vi.fn()} onOpenPlanner={vi.fn()} onUnauthenticated={vi.fn()} organizationId={ids.organization} shoppingListId="9d8b2b21-c378-4574-9e46-9338c81305ef" userId={ids.user} />);
+    render(<EventShopping eventId={ids.event} onBack={vi.fn()} onOpenList={vi.fn()} onUnauthenticated={vi.fn()} organizationId={ids.organization} shoppingListId="9d8b2b21-c378-4574-9e46-9338c81305ef" userId={ids.user} />);
     await user.click(await screen.findByRole("button", { name: "Obnovit položku" }));
     expect(queueAdHocShoppingItemLifecycle).toHaveBeenCalledWith(ids.user, ids.organization, {
       shoppingListId: "9d8b2b21-c378-4574-9e46-9338c81305ef",
@@ -534,7 +527,7 @@ describe("EventShopping", () => {
     });
     pullOrganization.mockResolvedValue(false);
     const user = userEvent.setup();
-    render(<EventShopping eventId={ids.event} onBack={vi.fn()} onOpenList={vi.fn()} onOpenPlanner={vi.fn()} onUnauthenticated={vi.fn()} organizationId={ids.organization} shoppingListId="9d8b2b21-c378-4574-9e46-9338c81305ef" userId={ids.user} />);
+    render(<EventShopping eventId={ids.event} onBack={vi.fn()} onOpenList={vi.fn()} onUnauthenticated={vi.fn()} organizationId={ids.organization} shoppingListId="9d8b2b21-c378-4574-9e46-9338c81305ef" userId={ids.user} />);
     await user.click(await screen.findByRole("button", { name: "Upravit položku" }));
     const name = screen.getAllByLabelText("Název položky").at(-1);
     if (!name) throw new Error("missing edit name input");
@@ -580,7 +573,6 @@ describe("EventShopping", () => {
         eventId={ids.event}
         onBack={vi.fn()}
         onOpenList={vi.fn()}
-        onOpenPlanner={vi.fn()}
         onUnauthenticated={vi.fn()}
         organizationId={ids.organization}
         shoppingListId="9d8b2b21-c378-4574-9e46-9338c81305ef"

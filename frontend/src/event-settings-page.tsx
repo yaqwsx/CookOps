@@ -7,6 +7,7 @@ import { EventLifecycle } from "./event-lifecycle-form";
 import { EventMetadata } from "./event-metadata-form";
 import { EventPriceRefreshControl } from "./event-price-refresh-control";
 import { EventDietaryExceptions } from "./event-dietary-exception-form";
+import { EventSectionNavigation } from "./event-section-navigation";
 import {
   canCreateEvents,
   readVisibleEventSummaries,
@@ -16,18 +17,10 @@ export function EventSettingsPage({
   eventId,
   organizationId,
   userId,
-  onOpenCosts,
-  onOpenPlanner,
-  onOpenReceipts,
-  onOpenShopping,
 }: {
   eventId: string;
   organizationId: string;
   userId: string;
-  onOpenCosts: () => void;
-  onOpenPlanner: () => void;
-  onOpenReceipts: () => void;
-  onOpenShopping: () => void;
 }) {
   const { t } = useTranslation();
   const identity = `${userId}:${organizationId}:${eventId}`;
@@ -59,20 +52,7 @@ export function EventSettingsPage({
   if (!event) return <p role="alert">{t("eventSettings.unavailable")}</p>;
   return (
     <section aria-labelledby="event-settings-heading">
-      <nav aria-label={t("eventSettings.navigation")}>
-        <button onClick={onOpenPlanner} type="button">
-          {t("eventSettings.planner")}
-        </button>
-        <button onClick={onOpenCosts} type="button">
-          {t("eventSettings.costs")}
-        </button>
-        <button onClick={onOpenShopping} type="button">
-          {t("eventSettings.shopping")}
-        </button>
-        <button onClick={onOpenReceipts} type="button">
-          {t("eventSettings.receipts")}
-        </button>
-      </nav>
+      <EventSectionNavigation current="settings" eventId={eventId} organizationId={organizationId} />
       <h2 id="event-settings-heading">{t("eventSettings.heading")}</h2>
       <p>
         {t("eventSettings.lifecycle")}:{" "}
