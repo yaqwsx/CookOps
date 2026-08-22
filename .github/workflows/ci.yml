@@ -90,6 +90,8 @@ jobs:
           cache-dependency-path: frontend/package-lock.json
       - name: Install locked dependencies
         run: npm ci
+      - name: Check generated API client drift
+        run: npm run check:api
       - name: Check formatting
         run: npm run format:check
       - name: Lint

@@ -1,3 +1,6 @@
+import createClient from "openapi-fetch";
+import type { paths } from "./generated";
+
 export type AvailableOrganization = {
   id: string;
   name: string;
@@ -8,6 +11,12 @@ export class OrganizationRequestError extends Error {
     super("Organization request failed.");
   }
 }
+
+const api = createClient<paths>({
+  baseUrl: globalThis.location?.origin ?? "http://localhost",
+  credentials: "same-origin",
+  fetch: (input) => globalThis.fetch(input),
+});
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null;
@@ -49,9 +58,7 @@ function parseOrganizations(value: unknown): AvailableOrganization[] {
 export async function getAvailableOrganizations(): Promise<
   AvailableOrganization[]
 > {
-  const response = await fetch("/api/v1/organizations", {
-    credentials: "same-origin",
-  });
+  const { data, response } = await api.GET("/api/v1/organizations");
   if (!response.ok) throw new OrganizationRequestError(response.status);
-  return parseOrganizations(await response.json());
+  return parseOrganizations(data);
 }

@@ -23,9 +23,7 @@ describe("getAvailableOrganizations", () => {
     await expect(getAvailableOrganizations()).resolves.toEqual([
       { id: "5ce17d2f-8365-4b1f-a80b-34d10425d51c", name: "Kitchen" },
     ]);
-    expect(fetchMock).toHaveBeenCalledWith("/api/v1/organizations", {
-      credentials: "same-origin",
-    });
+    expect(fetchMock).toHaveBeenCalledWith(expect.any(Request));
   });
 
   it.each([
