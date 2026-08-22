@@ -24,6 +24,8 @@ export function EventCostsPage({
   organizationId: string;
   userId: string;
   onUnauthenticated?: () => void;
+  onBack?: () => void;
+  onOpenReceipts?: () => void;
 }) {
   const { t } = useTranslation();
   const identity = `${userId}:${organizationId}:${eventId}`;

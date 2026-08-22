@@ -76,6 +76,7 @@ export interface OrganizationSyncMetadata {
   changeCursorHint?: string;
   activity: SynchronizationActivity;
   lastSuccessfulServerContact?: string;
+  lastAuthorizedAt?: string;
   clockSkewWarning?: {
     approximateDifferenceSeconds: number;
     serverTime: string;
@@ -187,6 +188,24 @@ export class CookOpsDatabase extends Dexie {
 }
 
 export const localDb = new CookOpsDatabase();
+
+export const OFFLINE_AUTHORIZATION_LEASE_MS = 7 * 24 * 60 * 60 * 1000;
+
+export function hasValidOfflineAuthorization(lastAuthorizedAt: unknown, now = new Date()): boolean {
+  if (typeof lastAuthorizedAt !== "string" || !/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/.test(lastAuthorizedAt)) return false;
+  const authorized = Date.parse(lastAuthorizedAt);
+  return Number.isFinite(authorized) && new Date(authorized).toISOString() === lastAuthorizedAt && Number.isFinite(now.getTime()) && now.getTime() >= authorized && now.getTime() - authorized <= OFFLINE_AUTHORIZATION_LEASE_MS;
+}
+
+export async function readOfflineAuthorization(userId: string, organizationId: string, now = new Date()): Promise<boolean> {
+  const metadata = await localDb.syncMetadata.get([userId, organizationId]);
+  return hasValidOfflineAuthorization(metadata?.lastAuthorizedAt, now);
+}
+
+export async function readCachedOrganizations(userId: string): Promise<{ id: string; name: string }[]> {
+  const records = await localDb.canonicalRecords.where("[userId+organizationId]").between([userId, Dexie.minKey], [userId, Dexie.maxKey]).toArray();
+  return records.filter((record) => record.entityType === "organization" && typeof record.fields.name === "string").map((record) => ({ id: record.organizationId, name: record.fields.name as string }));
+}
 
 /** Append while holding the outbox transaction, preserving dependency order across equal timestamps. */
 export async function appendOutboxCommand(

@@ -7,6 +7,8 @@ import {
   localDb,
   readFailedOutboxCommands,
   readOrCreateBrowserInstallationId,
+  readOfflineAuthorization,
+  hasValidOfflineAuthorization,
   readSynchronizationSummary,
   toRecoverableIntent,
 } from "./local-db";
@@ -51,6 +53,17 @@ describe("local synchronization database", () => {
     await expect(localDb.outbox.get("selected")).resolves.toBeUndefined();
     await expect(localDb.outbox.get("pending")).resolves.toBeDefined();
     await expect(localDb.outbox.get("other-org")).resolves.toBeDefined();
+  });
+
+  it("scopes the seven-day authorization lease to one user and fails closed", async () => {
+    const now = new Date("2026-08-22T12:00:00.000Z");
+    await localDb.syncMetadata.put({ userId: "user-a", organizationId: "organization-a", activity: "caughtUp", lastAuthorizedAt: "2026-08-15T12:00:00.000Z" });
+    await expect(readOfflineAuthorization("user-a", "organization-a", now)).resolves.toBe(true);
+    expect(hasValidOfflineAuthorization("2026-08-15T11:59:59.999Z", now)).toBe(false);
+    expect(hasValidOfflineAuthorization("not-a-date", now)).toBe(false);
+    expect(hasValidOfflineAuthorization("2026-08-23T12:00:00.000Z", now)).toBe(false);
+    expect(hasValidOfflineAuthorization("2026-02-30T12:00:00.000Z", now)).toBe(false);
+    await expect(readOfflineAuthorization("user-b", "organization-a", now)).resolves.toBe(false);
   });
 
   it("creates a small JSON recoverable intent without browser metadata", async () => {

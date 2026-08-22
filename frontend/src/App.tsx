@@ -35,6 +35,7 @@ import { SynchronizationStatus } from "./synchronization-status";
 import { SystemOrganizationCreate } from "./system-organization-create";
 import { McpGrantsPage } from "./mcp-grants-page";
 import { getSystemAdministrationAccess } from "./api/system-organizations";
+import { hasValidOfflineAuthorization, localDb, readCachedOrganizations } from "./local-db";
 import "./app.css";
 
 const sections = ["events", "recipes", "ingredients", "settings"] as const;
@@ -78,6 +79,7 @@ type AuthenticationState =
 type OrganizationState =
   | { status: "loading" }
   | { status: "error" }
+  | { status: "offlineBlocked" }
   | { status: "ready"; organizations: AvailableOrganization[] };
 
 function applyIdentityLocale(
@@ -368,7 +370,7 @@ function AuthenticatedShell({
   const reportIngredientDirty = useCallback((dirty: boolean) => {
     ingredientEditorDirtyRef.current = dirty;
   }, []);
-  useOutboxSynchronization(identity.id);
+  useOutboxSynchronization(identity.id, onUnauthenticated);
   currentPathnameRef.current = pathname;
 
   const loadOrganizations = useCallback(async () => {
@@ -381,9 +383,16 @@ function AuthenticatedShell({
         onUnauthenticated();
         return;
       }
+      if (!navigator.onLine) {
+        const [cached, metadata] = await Promise.all([readCachedOrganizations(identity.id), localDb.syncMetadata.where("userId").equals(identity.id).toArray()]);
+        const valid = cached.filter((organization) => metadata.some((entry) => entry.organizationId === organization.id && hasValidOfflineAuthorization(entry.lastAuthorizedAt)));
+        if (valid.length === 0) setOrganizations({ status: "offlineBlocked" });
+        else setOrganizations({ status: "ready", organizations: valid });
+        return;
+      }
       setOrganizations({ status: "error" });
     }
-  }, [onUnauthenticated]);
+  }, [identity.id, onUnauthenticated]);
 
   useEffect(() => {
     function updatePathname() {
@@ -437,6 +446,15 @@ function AuthenticatedShell({
       organizations.organizations.some(({ id }) => id === pathOrganizationId))
       ? pathOrganizationId
       : undefined;
+  const routeAccess = pathOrganizationId
+    ? organizations.status === "ready" && organizationId
+      ? "allowed"
+      : organizations.status === "offlineBlocked"
+        ? "blocked"
+        : "loading"
+    : organizations.status === "loading" || organizations.status === "error"
+      ? "loading"
+      : "allowed";
 
   useEffect(() => {
     if (
@@ -647,17 +665,19 @@ function AuthenticatedShell({
             </button>
           </div>
         ) : null}
+        {routeAccess === "loading" ? <p aria-live="polite" role="status">{t("shell.organizationsLoading")}</p> : null}
+        {routeAccess === "blocked" ? <div role="alert" aria-live="assertive" className="connectivity-gate"><p>{t("shell.authorizationRequiredOffline")}</p><button onClick={() => void loadOrganizations()} type="button">{t("authentication.retry")}</button></div> : null}
         {organizations.status === "ready" &&
         organizations.organizations.length === 0 ? (
           <p role="status">{t("shell.noOrganizations")}</p>
         ) : null}
-        <section className="introduction" aria-labelledby="app-heading">
+        <section className="introduction" aria-labelledby="app-heading" hidden={organizations.status === "offlineBlocked"}>
           <p className="eyebrow">CookOps</p>
           <h1 id="app-heading">{t("shell.heading")}</h1>
           <p>{t("shell.introduction")}</p>
         </section>
 
-        {systemOrganizationsOpen ? (
+        {organizations.status !== "offlineBlocked" && systemOrganizationsOpen ? (
           systemAdmin ? (
             <SystemOrganizationCreate
               onCreated={() => void loadOrganizations()}
@@ -669,8 +689,8 @@ function AuthenticatedShell({
           )
         ) : null}
 
-        {mcpGrantsPath.test(pathname) ? <McpGrantsPage onUnauthenticated={onUnauthenticated} /> : null}
-        <div className="section-grid" hidden={systemOrganizationsOpen || mcpGrantsPath.test(pathname)}>
+        {organizations.status !== "offlineBlocked" && mcpGrantsPath.test(pathname) ? <McpGrantsPage onUnauthenticated={onUnauthenticated} /> : null}
+        <div className="section-grid" hidden={routeAccess !== "allowed" || systemOrganizationsOpen || mcpGrantsPath.test(pathname)}>
           {sections.map((section) => (
             <section id={section} className="section-card" key={section}>
               <h2 id={section === "events" ? "events-heading" : undefined}>
@@ -711,6 +731,12 @@ function AuthenticatedShell({
                   <EventSettingsPage
                     eventId={eventId}
                     onUnauthenticated={onUnauthenticated}
+                    onOpenPlanner={() => openEvent(eventId)}
+                    onOpenCosts={() => {
+                      const nextPath = `/organizations/${organizationId}/events/${eventId}/costs`;
+                      window.history.pushState(null, "", nextPath);
+                      setPathname(nextPath);
+                    }}
                     organizationId={organizationId}
                     userId={identity.id}
                   />
@@ -752,6 +778,12 @@ function AuthenticatedShell({
                   <EventCostsPage
                     eventId={eventId}
                     onUnauthenticated={onUnauthenticated}
+                    onBack={() => openEvent(eventId)}
+                    onOpenReceipts={() => {
+                      const nextPath = `/organizations/${organizationId}/events/${eventId}/receipts`;
+                      window.history.pushState(null, "", nextPath);
+                      setPathname(nextPath);
+                    }}
                     organizationId={organizationId}
                     userId={identity.id}
                   />

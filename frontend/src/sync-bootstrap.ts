@@ -676,6 +676,7 @@ export async function bootstrapOrganization(
         changeCursorHint: undefined,
         activity: "caughtUp",
         lastSuccessfulServerContact: body.server_time,
+        lastAuthorizedAt: body.server_time,
       });
       await localDb.bootstrapStaging
         .where("[userId+organizationId+attemptId]")
@@ -755,6 +756,7 @@ export async function pullOrganization(
     cursor: body.next_cursor ?? metadata.cursor,
     activity: "caughtUp",
     lastSuccessfulServerContact: body.server_time,
+    lastAuthorizedAt: body.server_time,
   });
   return body.transaction_groups.length > 0;
 }

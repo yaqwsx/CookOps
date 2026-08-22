@@ -25,6 +25,8 @@ export function EventSettingsPage({
   organizationId: string;
   userId: string;
   onUnauthenticated?: () => void;
+  onOpenPlanner?: () => void;
+  onOpenCosts?: () => void;
 }) {
   const { t } = useTranslation();
   const identity = `${userId}:${organizationId}:${eventId}`;

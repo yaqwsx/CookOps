@@ -28,6 +28,7 @@ const resources = {
         logout: "Odhlásit se",
         logoutError: "Odhlášení se nepodařilo. Zkuste to znovu.",
         localeError: "Jazyk se nepodařilo uložit. Zkuste to znovu.",
+        authorizationRequiredOffline: "Offline přístup vypršel. Připojte se k internetu a ověřte oprávnění organizace.",
       },
       mcpGrants: { navigation: "Připojení MCP", heading: "Připojení MCP", empty: "Nemáte žádné aktivní připojení.", revoke: "Odvolat", confirm: "Opravdu chcete toto připojení odvolat?", error: "Připojení se nepodařilo načíst." },
       systemOrganizations: {
@@ -702,6 +703,7 @@ const resources = {
         logout: "Log out",
         logoutError: "Log out failed. Please try again.",
         localeError: "The language could not be saved. Please try again.",
+        authorizationRequiredOffline: "Offline access has expired. Connect to the internet to verify organization access.",
       },
       mcpGrants: { navigation: "MCP connections", heading: "MCP connections", empty: "You have no active connections.", revoke: "Revoke", confirm: "Revoke this connection?", error: "Unable to load connections." },
       systemOrganizations: {
