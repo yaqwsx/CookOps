@@ -15,6 +15,15 @@ const { fetchMock, readVisibleRecords, readCopyCatalog, pull, readInstallationId
   readInstallationId: vi.fn(),
 }));
 
+function requestPath(input: RequestInfo | URL): string {
+  const url = new URL(input instanceof Request ? input.url : input, window.location.origin);
+  return url.pathname + url.search;
+}
+
+function isGet(input: RequestInfo | URL, init?: RequestInit): boolean {
+  return (init?.method ?? (input instanceof Request ? input.method : "GET")).toUpperCase() === "GET";
+}
+
 vi.mock("./visible-records", () => ({ readVisibleRecords }));
 vi.mock("./ingredient-copy-catalog", () => ({ readIngredientCopyCatalog: readCopyCatalog }));
 vi.mock("./sync-bootstrap", () => ({
@@ -174,8 +183,8 @@ describe("IngredientCopyPanel", () => {
       organizationId === sourceOrganizationId ? sourceCatalog : destinationCatalog,
     );
     fetchMock.mockImplementation(async (input: RequestInfo | URL, init?: RequestInit) => {
-      const url = String(input);
-      if (url === "/api/v1/organizations" && !init?.method)
+      const url = requestPath(input);
+      if (url === "/api/v1/organizations" && isGet(input, init))
         return new Response(JSON.stringify({
           organizations: [
             { id: sourceOrganizationId, name: "Source kitchen" },
@@ -267,8 +276,8 @@ describe("IngredientCopyPanel", () => {
     let attempts = 0;
     let releaseFirstPost: (() => void) | undefined;
     fetchMock.mockImplementation(async (input: RequestInfo | URL, init?: RequestInit) => {
-      const url = String(input);
-      if (url === "/api/v1/organizations" && !init?.method)
+      const url = requestPath(input);
+      if (url === "/api/v1/organizations" && isGet(input, init))
         return new Response(JSON.stringify({
           organizations: [
             { id: sourceOrganizationId, name: "Source kitchen" },
@@ -388,9 +397,9 @@ describe("IngredientCopyPanel", () => {
   it("reports an unauthorized organization list generically", async () => {
     const onUnauthenticated = vi.fn();
     fetchMock.mockImplementation(async (input: RequestInfo | URL, init?: RequestInit) => {
-      if (String(input) === "/api/v1/organizations" && !init?.method)
+      if (requestPath(input) === "/api/v1/organizations" && isGet(input, init))
         return new Response("", { status: 401 });
-      throw new Error(`Unexpected request: ${String(input)}`);
+      throw new Error(`Unexpected request: ${requestPath(input)}`);
     });
     renderPanel(onUnauthenticated);
     await userEvent.setup().click(screen.getByRole("button", { name: "Copy to another organization" }));
@@ -439,9 +448,9 @@ describe("IngredientCopyPanel", () => {
   it("does not reopen after closing while organizations are still loading", async () => {
     let releaseOrganizations: ((response: Response) => void) | undefined;
     fetchMock.mockImplementation(async (input: RequestInfo | URL, init?: RequestInit) => {
-      if (String(input) === "/api/v1/organizations" && !init?.method)
+      if (requestPath(input) === "/api/v1/organizations" && isGet(input, init))
         return new Promise<Response>((resolve) => { releaseOrganizations = resolve; });
-      throw new Error(`Unexpected request: ${String(input)}`);
+      throw new Error(`Unexpected request: ${requestPath(input)}`);
     });
     renderPanel();
     const user = userEvent.setup();

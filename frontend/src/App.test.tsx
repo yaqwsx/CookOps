@@ -126,6 +126,11 @@ function response(body: object | null, status = 200) {
   });
 }
 
+function requestPath(input: RequestInfo | URL): string {
+  const url = new URL(input instanceof Request ? input.url : input, window.location.origin);
+  return url.pathname + url.search;
+}
+
 function mockAnonymousDevelopmentSession({
   logoutFails = false,
   localePersistFails = false,
@@ -139,7 +144,7 @@ function mockAnonymousDevelopmentSession({
   let accessRevoked = false;
   const fetchMock = vi.fn(
     async (input: RequestInfo | URL, init?: RequestInit) => {
-      const path = String(input);
+      const path = requestPath(input);
       if (path === "/auth/session") {
         return signedIn && !accessRevoked
           ? response({ ...alice, preferred_locale: preferredLocale })
@@ -184,7 +189,7 @@ function mockAnonymousGoogleSession() {
   let signedIn = false;
   const fetchMock = vi.fn(
     async (input: RequestInfo | URL, init?: RequestInit) => {
-      const path = String(input);
+      const path = requestPath(input);
       if (path === "/auth/session") {
         return signedIn
           ? response(alice)
@@ -254,17 +259,17 @@ describe("development authentication", () => {
     vi.stubGlobal(
       "fetch",
       vi.fn(async (input: RequestInfo | URL) => {
-        if (String(input) === "/auth/session" && !failed) {
+        if (requestPath(input) === "/auth/session" && !failed) {
           failed = true;
           throw new Error("network unavailable");
         }
-        if (String(input) === "/auth/session") {
+        if (requestPath(input) === "/auth/session") {
           return response({ detail: "not authenticated" }, 401);
         }
-        if (String(input) === "/auth/dummy/identities") {
+        if (requestPath(input) === "/auth/dummy/identities") {
           return response({ identities: [] });
         }
-        throw new Error(`Unexpected request: ${String(input)}`);
+        throw new Error(`Unexpected request: ${requestPath(input)}`);
       }),
     );
     const user = userEvent.setup();
@@ -283,10 +288,10 @@ describe("development authentication", () => {
 
   it("requires an explicit runtime authentication provider", async () => {
     const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
-      if (String(input) === "/auth/session") {
+      if (requestPath(input) === "/auth/session") {
         return response({ detail: "not authenticated" }, 401);
       }
-      throw new Error(`Unexpected request: ${String(input)}`);
+      throw new Error(`Unexpected request: ${requestPath(input)}`);
     });
     vi.stubGlobal("fetch", fetchMock);
     render(<App />);
@@ -305,10 +310,10 @@ describe("development authentication", () => {
     vi.stubGlobal(
       "fetch",
       vi.fn(async (input: RequestInfo | URL) => {
-        if (String(input) === "/auth/session") {
+        if (requestPath(input) === "/auth/session") {
           return response({ detail: "not authenticated" }, 401);
         }
-        if (String(input) === "/auth/dummy/identities") {
+        if (requestPath(input) === "/auth/dummy/identities") {
           listAttempts += 1;
           return listAttempts === 1
             ? response({ detail: "unavailable" }, 503)
@@ -318,7 +323,7 @@ describe("development authentication", () => {
                 ],
               });
         }
-        throw new Error(`Unexpected request: ${String(input)}`);
+        throw new Error(`Unexpected request: ${requestPath(input)}`);
       }),
     );
     const user = userEvent.setup();
@@ -835,7 +840,7 @@ describe("development authentication", () => {
     vi.stubGlobal(
       "fetch",
       vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
-        const path = String(input);
+        const path = requestPath(input);
         if (path === "/auth/session") {
           return tokenAttempts > 1
             ? response(alice)
@@ -924,7 +929,7 @@ describe("development authentication", () => {
     vi.stubGlobal(
       "fetch",
       vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
-        const path = String(input);
+        const path = requestPath(input);
         if (path === "/auth/session") {
           return signedIn ? response({ ...alice }) : response(null, 401);
         }
