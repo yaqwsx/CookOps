@@ -790,6 +790,8 @@ function AuthenticatedShell({
                 ) : (
                   <EventOverview
                     onOpen={openEvent}
+                    onOpenIngredients={openIngredients}
+                    onOpenRecipes={openRecipes}
                     onUnauthenticated={onUnauthenticated}
                     organizationId={organizationId}
                     userId={identity.id}

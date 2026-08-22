@@ -1,5 +1,5 @@
 import { liveQuery } from "dexie";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState, type MouseEvent } from "react";
 import { useTranslation } from "react-i18next";
 
 import type { EventSummary } from "./api/events";
@@ -122,11 +122,15 @@ function EventCard({
 
 export function EventOverview({
   onOpen = () => undefined,
+  onOpenRecipes,
+  onOpenIngredients,
   organizationId,
   userId,
   onUnauthenticated,
 }: {
   onOpen?: (eventId: string) => void;
+  onOpenRecipes?: (event: MouseEvent<HTMLAnchorElement>) => void;
+  onOpenIngredients?: (event: MouseEvent<HTMLAnchorElement>) => void;
   organizationId: string;
   userId: string;
   onUnauthenticated: () => void;
@@ -232,6 +236,16 @@ export function EventOverview({
       value.normalize("NFC").toLocaleLowerCase().includes(normalizedArchiveQuery),
     ),
   );
+  const catalogLinks = (
+    <p className="event-overview__catalog-links">
+      <a href={`/organizations/${organizationId}/recipes`} onClick={onOpenRecipes}>
+        {t("shell.recipes")}
+      </a>
+      <a href={`/organizations/${organizationId}/ingredients`} onClick={onOpenIngredients}>
+        {t("shell.ingredients")}
+      </a>
+    </p>
+  );
 
   if (state === "loading" && events.length === 0) {
     return (
@@ -243,6 +257,7 @@ export function EventOverview({
   if (state === "error" && events.length === 0) {
     return (
       <div className="event-overview">
+        {catalogLinks}
         {canCreate ? (
           <EventCreate organizationId={organizationId} userId={userId} />
         ) : null}
@@ -258,6 +273,7 @@ export function EventOverview({
   if (state === "ready" && allEvents.length === 0) {
     return (
       <div className="event-overview">
+        {catalogLinks}
         {canCreate ? (
           <EventCreate organizationId={organizationId} userId={userId} />
         ) : null}
@@ -270,6 +286,7 @@ export function EventOverview({
       <p className="event-overview__scope" role="note">
         {t("eventsOverview.scope")}
       </p>
+      {catalogLinks}
       {canCreate ? (
         <EventCreate organizationId={organizationId} userId={userId} />
       ) : null}

@@ -145,6 +145,27 @@ describe("EventOverview", () => {
     expect(pullOrganization).toHaveBeenCalledWith(userId, organizationId);
   });
 
+  it("links to the organization recipe and ingredient catalogs", async () => {
+    await addEvent({ base_expected_attendance: 24 });
+    render(
+      <EventOverview
+        onUnauthenticated={vi.fn()}
+        organizationId={organizationId}
+        userId={userId}
+      />,
+    );
+
+    await screen.findByRole("heading", { name: "Letní vaření" });
+    expect(screen.getByRole("link", { name: "Recepty" })).toHaveAttribute(
+      "href",
+      `/organizations/${organizationId}/recipes`,
+    );
+    expect(screen.getByRole("link", { name: "Suroviny" })).toHaveAttribute(
+      "href",
+      `/organizations/${organizationId}/ingredients`,
+    );
+  });
+
   it("loads archive pages without replacing local records and resets them on organization change", async () => {
     const archived = (id: string, name: string): EventSummary => ({
       id,
