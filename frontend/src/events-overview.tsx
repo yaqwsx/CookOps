@@ -14,6 +14,11 @@ import {
   readVisibleEventSummaries,
 } from "./event-projections";
 import { pullOrganization, SyncRequestError } from "./sync-bootstrap";
+import {
+  cacheArchivedEventSummaries,
+  readHydratedArchivedEventIds,
+  readCachedArchivedEventSummaries,
+} from "./local-db";
 
 type EventOverviewState = "loading" | "ready" | "offline" | "error";
 
@@ -34,12 +39,14 @@ function EventCard({
   organizationId,
   userId,
   canManage,
+  canOpenOffline,
 }: {
   event: EventSummary;
   onOpen: (eventId: string) => void;
   organizationId: string;
   userId: string;
   canManage: boolean;
+  canOpenOffline: boolean;
 }) {
   const { i18n, t } = useTranslation();
   const dateRange =
@@ -58,10 +65,13 @@ function EventCard({
       </div>
       <button
         className="event-card__open"
+        disabled={event.lifecycle === "archived" && !navigator.onLine && !canOpenOffline}
         onClick={() => onOpen(event.id)}
         type="button"
       >
-        {t("eventsOverview.open")}
+        {event.lifecycle === "archived" && !navigator.onLine && !canOpenOffline
+          ? t("eventsOverview.archiveOpenOfflineUnavailable")
+          : t("eventsOverview.open")}
       </button>
       <dl className="event-card__details">
         <div>
@@ -143,6 +153,7 @@ export function EventOverview({
   const [archiveLoading, setArchiveLoading] = useState(false);
   const [archiveError, setArchiveError] = useState(false);
   const [archiveQuery, setArchiveQuery] = useState("");
+  const [hydratedArchiveEventIds, setHydratedArchiveEventIds] = useState<Set<string>>(new Set());
   const [canCreate, setCanCreate] = useState(false);
   const generation = useRef(0);
   const loadArchivePage = useCallback(async (cursor?: string, expectedGeneration = generation.current) => {
@@ -154,6 +165,13 @@ export function EventOverview({
     try {
       const page = await getEventPage(organizationId, cursor);
       if (currentGeneration !== generation.current) return;
+      try {
+        await cacheArchivedEventSummaries(userId, organizationId, page.events);
+        const hydrated = await readHydratedArchivedEventIds(userId, organizationId, page.events);
+        setHydratedArchiveEventIds((current) => new Set([...current, ...hydrated]));
+      } catch {
+        // A cache failure must not hide an otherwise valid online page.
+      }
       setArchiveEvents((current) => {
         const merged = new Map(current.map((event) => [event.id, event]));
         for (const event of page.events) merged.set(event.id, event);
@@ -170,7 +188,7 @@ export function EventOverview({
     } finally {
       if (currentGeneration === generation.current) setArchiveLoading(false);
     }
-  }, [onUnauthenticated, organizationId]);
+  }, [onUnauthenticated, organizationId, userId]);
   const synchronize = useCallback(async () => {
     const currentGeneration = generation.current;
     if (!navigator.onLine) {
@@ -193,7 +211,9 @@ export function EventOverview({
   useEffect(() => {
     let active = true;
     generation.current += 1;
+    const expectedGeneration = generation.current;
     setArchiveEvents([]);
+    setHydratedArchiveEventIds(new Set());
     setArchiveCursor(null);
     setArchiveError(false);
     const subscription = liveQuery(async () => ({
@@ -215,7 +235,18 @@ export function EventOverview({
     }
     window.addEventListener("online", synchronize);
     window.addEventListener("offline", offline);
-    void synchronize();
+    void (async () => {
+      try {
+        const cached = await readCachedArchivedEventSummaries(userId, organizationId);
+        if (!active || generation.current !== expectedGeneration) return;
+        setArchiveEvents(cached);
+        setHydratedArchiveEventIds(await readHydratedArchivedEventIds(userId, organizationId, cached));
+      } catch {
+        if (active) setState("error");
+        return;
+      }
+      await synchronize();
+    })();
     return () => {
       active = false;
       generation.current += 1;
@@ -254,7 +285,7 @@ export function EventOverview({
       </p>
     );
   }
-  if (state === "error" && events.length === 0) {
+  if (state === "error" && events.length === 0 && archiveEvents.length === 0) {
     return (
       <div className="event-overview">
         {catalogLinks}
@@ -333,6 +364,7 @@ export function EventOverview({
             organizationId={organizationId}
             userId={userId}
             canManage={canCreate}
+            canOpenOffline={hydratedArchiveEventIds.has(event.id)}
           />
         ))}
       </div>

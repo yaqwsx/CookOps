@@ -5,11 +5,14 @@ import {
   compareOutboxCommands,
   discardFailedOutboxCommand,
   localDb,
+  cacheArchivedEventSummaries,
   readFailedOutboxCommands,
   readOrCreateBrowserInstallationId,
   readOfflineAuthorization,
   hasValidOfflineAuthorization,
   readSynchronizationSummary,
+  readCachedArchivedEventSummaries,
+  readHydratedArchivedEventIds,
   toRecoverableIntent,
 } from "./local-db";
 
@@ -23,6 +26,7 @@ async function clearLocalDatabase() {
       localDb.outbox,
       localDb.pendingUploads,
       localDb.syncMetadata,
+      localDb.archivedEventSummaries,
     ],
     async () => {
       await Promise.all([
@@ -32,6 +36,7 @@ async function clearLocalDatabase() {
         localDb.outbox.clear(),
         localDb.pendingUploads.clear(),
         localDb.syncMetadata.clear(),
+        localDb.archivedEventSummaries.clear(),
       ]);
     },
   );
@@ -39,6 +44,53 @@ async function clearLocalDatabase() {
 
 describe("local synchronization database", () => {
   beforeEach(clearLocalDatabase);
+
+  it("upserts archived summaries without crossing user or organization scopes", async () => {
+    const summary = {
+      id: "event-a",
+      organizationId: "org-a",
+      name: "Archived",
+      startDate: "2026-08-10",
+      endDate: "2026-08-10",
+      baseExpectedAttendance: 4,
+      budgetAmount: "20.00",
+      currency: "CZK",
+      lifecycle: "archived" as const,
+      archivedAt: "2026-08-11T00:00:00.000Z",
+    };
+    await cacheArchivedEventSummaries("user-a", "org-a", [summary]);
+    await cacheArchivedEventSummaries("user-a", "org-a", [{ ...summary, organizationId: "org-b", id: "cross-org" }]);
+    await cacheArchivedEventSummaries("user-a", "org-a", [{ ...summary, id: "invalid-date", archivedAt: "2026-08-11" }]);
+    await cacheArchivedEventSummaries("user-a", "org-a", [{ ...summary, name: "Updated" }]);
+    await cacheArchivedEventSummaries("user-b", "org-a", [{ ...summary, name: "Other user" }]);
+    await expect(readCachedArchivedEventSummaries("user-a", "org-a")).resolves.toEqual([{ ...summary, name: "Updated" }]);
+    await expect(readCachedArchivedEventSummaries("user-b", "org-a")).resolves.toEqual([{ ...summary, name: "Other user" }]);
+    await expect(readCachedArchivedEventSummaries("user-a", "org-b")).resolves.toEqual([]);
+    await cacheArchivedEventSummaries("user-a", "org-a", [{ ...summary, lifecycle: "active", archivedAt: null }]);
+    await expect(readCachedArchivedEventSummaries("user-a", "org-a")).resolves.toEqual([]);
+  });
+
+  it("orders cached summaries by newest archive timestamp", async () => {
+    const summary = { id: "event-a", organizationId: "org-a", name: "A", startDate: "2026-08-10", endDate: "2026-08-10", baseExpectedAttendance: 1, budgetAmount: "1", currency: "CZK", lifecycle: "archived" as const, archivedAt: "2026-08-11T00:00:00.000Z" };
+    await cacheArchivedEventSummaries("user-a", "org-a", [
+      { ...summary, archivedAt: "2026-08-11T00:00:00+00:00" },
+      { ...summary, id: "event-b", archivedAt: "2026-08-12T00:00:00.123456Z" },
+    ]);
+    await expect(readCachedArchivedEventSummaries("user-a", "org-a")).resolves.toMatchObject([{ id: "event-b" }, { id: "event-a" }]);
+  });
+
+  it("requires the current archive snapshot marker for offline opening", async () => {
+    const record = (eventId: string, snapshotId: string, entityType: string, entityId: string) => ({
+      userId: "user-a", organizationId: "org-a", eventId, snapshotId, entityType, entityId,
+      recordSchemaVersion: 1, lifecycle: "active" as const, fields: { snapshot_id: snapshotId }, fieldClocks: {}, immutable: true, updatedAt: "2026-08-11T00:00:00.000Z",
+    });
+    await localDb.archiveRecords.bulkPut([
+      record("event-a", "old-snapshot", "event_archive_snapshot", "archive:old-snapshot"),
+      record("event-a", "current-snapshot", "event_archive_snapshot", "archive:current-snapshot"),
+    ]);
+    await expect(readHydratedArchivedEventIds("user-a", "org-a", [{ id: "event-a", currentArchiveSnapshotId: "missing" }])).resolves.toEqual(new Set());
+    await expect(readHydratedArchivedEventIds("user-a", "org-a", [{ id: "event-a", currentArchiveSnapshotId: "current-snapshot" }])).resolves.toEqual(new Set(["event-a"]));
+  });
 
   it("reads and discards only failed commands in the requested user and organization", async () => {
     await localDb.outbox.bulkAdd([

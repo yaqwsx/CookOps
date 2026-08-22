@@ -99,6 +99,7 @@ const resources = {
         archiveSearchEmpty: "Archivované akci neodpovídají hledání.",
         archiveError: "Archivované akce se nepodařilo načíst.",
         loadMore: "Načíst další archivované akce",
+        archiveOpenOfflineUnavailable: "Otevření vyžaduje připojení nebo uložený archivní snímek",
       },
       eventsCreate: {
         heading: "Nová akce",
@@ -775,6 +776,7 @@ const resources = {
         archiveSearchEmpty: "No archived events match the search.",
         archiveError: "Archived events could not be loaded.",
         loadMore: "Load more archived events",
+        archiveOpenOfflineUnavailable: "Opening requires a connection or a cached archive snapshot",
       },
       eventsCreate: {
         heading: "New event",

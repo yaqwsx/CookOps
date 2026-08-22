@@ -1,4 +1,5 @@
 import Dexie, { type EntityTable, type Table } from "dexie";
+import type { EventSummary } from "./api/events";
 
 export type OutboxState = "pending" | "failed";
 export type UploadState = "pending" | "uploading" | "failed" | "synchronized";
@@ -36,6 +37,10 @@ export interface CanonicalRecord {
 export interface ArchiveRecord extends CanonicalRecord {
   eventId: string;
   snapshotId: string;
+}
+
+export interface CachedArchivedEventSummary extends EventSummary {
+  userId: string;
 }
 
 export interface OutboxCommand {
@@ -97,6 +102,10 @@ export class CookOpsDatabase extends Dexie {
   readonly archiveRecords!: Table<
     ArchiveRecord,
     [string, string, string, string, string, string]
+  >;
+  readonly archivedEventSummaries!: Table<
+    CachedArchivedEventSummary,
+    [string, string, string]
   >;
   readonly outbox!: EntityTable<OutboxCommand, "id">;
   readonly pendingUploads!: EntityTable<PendingUpload, "id">;
@@ -184,10 +193,76 @@ export class CookOpsDatabase extends Dexie {
       archiveRecords:
         "[userId+organizationId+eventId+snapshotId+entityType+entityId], [userId+organizationId+eventId+snapshotId]",
     });
+    this.version(9).stores({
+      archivedEventSummaries:
+        "[userId+organizationId+id], [userId+organizationId]",
+    });
   }
 }
 
 export const localDb = new CookOpsDatabase();
+
+export async function readCachedArchivedEventSummaries(
+  userId: string,
+  organizationId: string,
+): Promise<EventSummary[]> {
+  const cached = await localDb.archivedEventSummaries
+    .where("[userId+organizationId]")
+    .equals([userId, organizationId])
+    .toArray();
+  return cached
+    .sort((left, right) => (right.archivedAt ?? "").localeCompare(left.archivedAt ?? "") || left.id.localeCompare(right.id))
+    .map(({ userId: _userId, ...summary }) => summary);
+}
+
+function isCanonicalTimestamp(value: unknown): value is string {
+  if (typeof value !== "string") return false;
+  const match = /^(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2})(?:\.(\d{1,6}))?(Z|\+00:00)$/.exec(value);
+  if (!match) return false;
+  const milliseconds = (match[2] ?? "").slice(0, 3).padEnd(3, "0");
+  const timestamp = Date.parse(`${match[1]}.${milliseconds}Z`);
+  return Number.isFinite(timestamp) && new Date(timestamp).toISOString() === `${match[1]}.${milliseconds}Z`;
+}
+
+export async function readHydratedArchivedEventIds(
+  userId: string,
+  organizationId: string,
+  summaries: Pick<EventSummary, "id" | "currentArchiveSnapshotId">[],
+): Promise<Set<string>> {
+  const hydrated = new Set<string>();
+  for (const summary of summaries) {
+    if (!summary.currentArchiveSnapshotId) continue;
+    const marker = await localDb.archiveRecords.get([
+      userId,
+      organizationId,
+      summary.id,
+      summary.currentArchiveSnapshotId,
+      "event_archive_snapshot",
+      `archive:${summary.currentArchiveSnapshotId}`,
+    ]);
+    if (marker?.lifecycle === "active" && marker.fields.snapshot_id === summary.currentArchiveSnapshotId) hydrated.add(summary.id);
+  }
+  return hydrated;
+}
+
+export async function cacheArchivedEventSummaries(
+  userId: string,
+  organizationId: string,
+  summaries: EventSummary[],
+): Promise<void> {
+  if (summaries.some((summary) =>
+    summary.organizationId !== organizationId ||
+    !summary.id ||
+    (summary.lifecycle === "archived" && !isCanonicalTimestamp(summary.archivedAt)) ||
+    (summary.lifecycle !== "archived" && summary.lifecycle !== "active")
+  )) return;
+  await localDb.transaction("rw", localDb.archivedEventSummaries, async () => {
+    await localDb.archivedEventSummaries.bulkDelete(
+      summaries.filter((summary) => summary.lifecycle === "active").map((summary) => [userId, organizationId, summary.id] as [string, string, string]),
+    );
+    await localDb.archivedEventSummaries.bulkPut(summaries.filter((summary) => summary.lifecycle === "archived").map((summary) => ({ ...summary, userId, organizationId })));
+  });
+}
 
 export const OFFLINE_AUTHORIZATION_LEASE_MS = 7 * 24 * 60 * 60 * 1000;
 

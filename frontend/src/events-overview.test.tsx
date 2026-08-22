@@ -38,6 +38,7 @@ async function clearDatabase() {
     localDb.optimisticOverlays.clear(),
     localDb.syncMetadata.clear(),
     localDb.outbox.clear(),
+    localDb.archivedEventSummaries.clear(),
   ]);
 }
 
