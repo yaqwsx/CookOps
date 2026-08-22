@@ -139,6 +139,19 @@ describe("readEventPlanner catalog update projection", () => {
     expect(planner?.scheduled[0]?.catalogScaleImpact.suggestedAmount).toBe("3.5");
   });
 
+  it("keeps a manual amount while projecting the current suggestion", async () => {
+    const records = cache({ scheduledDinerCount: 7 });
+    records.recipe_version[0].fields.estimated_diners_per_scaling_unit = 2;
+    records.scheduled_recipe[0].fields.scale_mode = "manual";
+    records.scheduled_recipe[0].fields.consumption_percentage = "50";
+    const planner = await readEventPlanner(userId, organizationId, ids.event);
+    expect(planner?.scheduled[0]).toMatchObject({ selectedScaleAmount: "2", suggestedScaleAmount: "1.75" });
+
+    records.scheduled_recipe[0].fields.diner_count = 8;
+    const updated = await readEventPlanner(userId, organizationId, ids.event);
+    expect(updated?.scheduled[0]).toMatchObject({ selectedScaleAmount: "2", suggestedScaleAmount: "2" });
+  });
+
   it("uses the pinned immutable version for detail and drops malformed detail records", async () => {
     const newer = "dddddddd-dddd-4ddd-8ddd-dddddddddddd";
     cache({ recipeCurrentVersionId: newer, recipeCurrentVersion: { fields: { name: "New catalog name" } }, lineVersionId: ids.oldVersion, lineVersion: { fields: { note: "pinned note" } } });

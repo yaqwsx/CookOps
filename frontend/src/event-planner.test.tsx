@@ -458,6 +458,9 @@ describe("EventPlanner", () => {
           dinerCount: 12,
           consumptionPercentage: "100",
           selectedScaleAmount: "2",
+          scaleMode: "manual",
+          suggestedScaleAmount: "3",
+          scalingUnitName: "porce",
           dayId: ids.day,
           roleId: ids.role,
           position: "a",
@@ -481,6 +484,9 @@ describe("EventPlanner", () => {
       />,
     );
     await user.click(await screen.findByText("Upravit škálování"));
+    expect(screen.getByText("Ruční množství: 2 porce")).toBeInTheDocument();
+    expect(screen.getByText("Doporučené množství: 3 porce")).toBeInTheDocument();
+    expect(queueScheduledRecipeContext).not.toHaveBeenCalled();
     await user.click(screen.getByRole("button", { name: "Použít doporučení" }));
     expect(queueScheduledRecipeContext).toHaveBeenCalledWith(
       "a6a58bd6-214e-49af-8fae-e5f974bf8e08",

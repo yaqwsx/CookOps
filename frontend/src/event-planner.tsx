@@ -1144,6 +1144,8 @@ export function EventPlanner({
                             {item.recipeVersionName ? <p><strong>{t("planner.recipeVersion")}</strong>: {item.recipeVersionName}</p> : null}
                             {item.recipeDescription ? <><p><strong>{t("planner.recipeDescriptionMarkdown")}</strong></p><pre>{item.recipeDescription}</pre></> : null}
                             <p>{t("planner.scaleDetail", { amount: item.selectedScaleAmount, unit: item.scalingUnitName ?? "—" })}{item.scaleMode ? ` · ${t(`planner.scaleMode.${item.scaleMode}`)}` : ""}</p>
+                            {item.scaleMode === "manual" ? <p>{t("planner.manualScaleAmount", { amount: item.selectedScaleAmount, unit: item.scalingUnitName ?? "—" })}</p> : null}
+                            {item.scaleMode === "manual" && typeof item.suggestedScaleAmount === "string" ? <p role="status">{t("planner.suggestedScaleAmount", { amount: item.suggestedScaleAmount, unit: item.scalingUnitName ?? "—" })}</p> : null}
                             <p>{item.preparedWeight && item.perDinerWeight ? t("planner.weightDetail", { total: item.preparedWeight, perDiner: item.perDinerWeight }) : t("planner.weightUnavailable")}</p>
                             {recipeCosts?.identity === identity && recipeCosts.costs?.scheduled.get(item.id) ? <p>{t("planner.recipeCost", { total: recipeCosts.costs.scheduled.get(item.id)?.total ?? "—", perDiner: recipeCosts.costs.scheduled.get(item.id)?.perDiner ?? "—" })}{recipeCosts.costs.scheduled.get(item.id)?.missing ? ` · ${t("planner.recipeCostMissing")}` : ""}</p> : null}
                             {item.hasLocalOverrides ? <p role="status">{t("planner.localOverrides")}</p> : null}

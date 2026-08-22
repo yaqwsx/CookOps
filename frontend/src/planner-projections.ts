@@ -18,6 +18,7 @@ export type PlannedRecipe = {
   dinerCount: number;
   consumptionPercentage: string;
   selectedScaleAmount: string;
+  suggestedScaleAmount?: string | null;
   position: string;
   retired: boolean;
   note: string | null;
@@ -554,6 +555,18 @@ export async function readEventPlanner(
       const parsedPinnedBase = parseDecimal(pinnedBase);
       const pinnedVersionValid = pinnedVersion?.immutable === true && hasId(pinnedVersion) && recipeRoot !== undefined && hasId(recipeRoot) && value(recipeRoot, "organization_id") === organizationId && value(pinnedVersion, "organization_id") === organizationId && value(pinnedVersion, "recipe_id") === value(record, "recipe_id") && typeof value(pinnedVersion, "name") === "string" && Boolean(value(pinnedVersion, "name")) && Boolean(parsedPinnedBase && parsedPinnedBase.value > 0n) && scalingUnitNames.has(value(pinnedVersion, "scaling_unit_id") ?? "");
       const pinnedUnitName = pinnedVersionValid ? scalingUnitNames.get(value(pinnedVersion, "scaling_unit_id") ?? "") : undefined;
+      const pinnedUnit = pinnedVersionValid ? unitRecords.find((unit) => unit.entityId === value(pinnedVersion, "scaling_unit_id")) : undefined;
+      const dinerCount = typeof record.fields.diner_count === "number" ? record.fields.diner_count : attendance;
+      const suggestedAmount = pinnedVersionValid
+        ? suggestedScale(
+          dinerCount,
+          value(record, "consumption_percentage") ?? "",
+          value(pinnedUnit ?? ({ fields: {} } as CanonicalRecord), "code"),
+          String(pinnedVersion?.fields.estimated_diners_per_scaling_unit ?? ""),
+          pinnedBase,
+          pinnedVersion?.fields.round_suggestions_up === true,
+        ) ?? null
+        : null;
       const resolvedDetailLines = pinnedVersionValid ? (detailLines.get(value(record, "recipe_version_id") ?? "") ?? []).flatMap((line) => {
         const source = lineRecords.find((candidate) => value(candidate, "line_key") === line.id && value(candidate, "recipe_version_id") === value(record, "recipe_version_id"));
         const replacement = source && overrideRecords.find((candidate) => candidate.lifecycle === "active" && value(candidate, "organization_id") === organizationId && value(candidate, "event_id") === eventId && value(candidate, "scheduled_recipe_id") === record.entityId && candidate.fields.override_kind === "replace" && value(candidate, "target_line_key") === line.id);
@@ -633,6 +646,7 @@ export async function readEventPlanner(
       dinerCount: record.fields.diner_count,
       consumptionPercentage: value(record, "consumption_percentage"),
       selectedScaleAmount: value(record, "selected_scale_amount"),
+      suggestedScaleAmount: suggestedAmount,
       position: value(record, "position_key"),
       retired: record.lifecycle === "retired",
       note: typeof record.fields.note === "string" ? record.fields.note : null,
