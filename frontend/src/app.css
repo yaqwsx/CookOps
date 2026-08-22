@@ -983,7 +983,39 @@ h1 {
   background: transparent;
 }
 
+.recipe-editor-dialog {
+  border: 0;
+  border-radius: 0.75rem;
+  max-height: 90vh;
+  max-width: min(42rem, calc(100vw - 2rem));
+  padding: 0;
+  width: 42rem;
+}
+
+.recipe-editor-dialog::backdrop {
+  background: rgb(0 0 0 / 45%);
+}
+
+.recipe-editor-dialog .recipe-create {
+  max-height: 90vh;
+  overflow: auto;
+  padding: 1.25rem;
+}
+
 @media (max-width: 46rem) {
+  .recipe-editor-dialog {
+    border-radius: 0;
+    height: 100dvh;
+    margin: 0;
+    max-height: none;
+    max-width: none;
+    width: 100vw;
+  }
+
+  .recipe-editor-dialog .recipe-create {
+    max-height: 100dvh;
+  }
+
   .app-header {
     grid-template-columns: 1fr;
     gap: 0.75rem;

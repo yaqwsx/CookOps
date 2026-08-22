@@ -397,6 +397,7 @@ function RecipeEditor({
   organizationId,
   userId,
   initiallyOpen = false,
+  onRouteBack,
   onDirtyChange,
   discardToken = 0,
 }: {
@@ -405,6 +406,7 @@ function RecipeEditor({
   organizationId: string;
   userId: string;
   initiallyOpen?: boolean;
+  onRouteBack?: () => void;
   onDirtyChange?: (recipeId: string, dirty: boolean) => void;
   discardToken?: number;
 }) {
@@ -430,6 +432,8 @@ function RecipeEditor({
   const [saved, setSaved] = useState(false);
   const [descriptionMode, setDescriptionMode] = useState<"visual" | "markdown">("visual");
   const [unsupportedDescription, setUnsupportedDescription] = useState(false);
+  const dialogRef = useRef<HTMLDialogElement>(null);
+  const openerRef = useRef<HTMLButtonElement>(null);
   const descriptionId = `recipe-description-${recipe.id}`;
   const previousDiscardToken = useRef(discardToken);
   const initialInput = useMemo(() => ({
@@ -461,12 +465,36 @@ function RecipeEditor({
     setOpen(false);
   }, [discardToken, initialInput]);
   useEffect(() => {
+    const dialog = dialogRef.current;
+    if (!dialog) return;
+    if (open) {
+      if (!dialog.open) {
+        if (typeof dialog.showModal === "function") dialog.showModal();
+        else dialog.setAttribute("open", "");
+      }
+      dialog.querySelector<HTMLElement>("input, select, textarea, button")?.focus();
+    } else if (dialog.open) {
+      if (typeof dialog.close === "function") dialog.close();
+      else dialog.removeAttribute("open");
+    }
+  }, [open]);
+  useEffect(() => {
     onDirtyChange?.(recipe.id, open && dirty);
     return () => onDirtyChange?.(recipe.id, false);
   }, [dirty, onDirtyChange, open, recipe.id]);
+  function closeEditor() {
+    if (onRouteBack) {
+      onRouteBack();
+      return;
+    }
+    if (dirty && !window.confirm(t("recipesCatalog.discardChanges"))) return;
+    setInput(initialInput);
+    setOpen(false);
+    requestAnimationFrame(() => openerRef.current?.focus());
+  }
   if (!open)
     return (
-      <button onClick={() => setOpen(true)} type="button">
+      <button onClick={() => setOpen(true)} ref={openerRef} type="button">
         {t("recipesCatalog.edit")}
       </button>
     );
@@ -480,6 +508,7 @@ function RecipeEditor({
       await queueRecipeVersionPublish(userId, organizationId, input);
       setSaved(true);
       setOpen(false);
+      if (onRouteBack) requestAnimationFrame(onRouteBack);
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : "unavailable");
     }
@@ -499,8 +528,17 @@ function RecipeEditor({
     return canonicalDimension ? catalog.units.filter((unit) => unit.dimension === canonicalDimension) : [];
   };
   return (
-    <form className="recipe-create" onSubmit={(event) => void submit(event)}>
-      <h4>{t("recipesCatalog.editHeading")}</h4>
+    <dialog
+      aria-labelledby={`recipe-editor-${recipe.id}`}
+      className="recipe-editor-dialog"
+      onCancel={(event) => {
+        event.preventDefault();
+        closeEditor();
+      }}
+      ref={dialogRef}
+    >
+      <form className="recipe-create" onSubmit={(event) => void submit(event)}>
+        <h4 id={`recipe-editor-${recipe.id}`}>{t("recipesCatalog.editHeading")}</h4>
       <label>
         {t("recipesCatalog.name")}
         <input
@@ -683,17 +721,11 @@ function RecipeEditor({
       {error ? <p role="alert">{t(`recipesCatalog.errors.${error}`)}</p> : null}
       {saved ? <p role="status">{t("recipesCatalog.saved")}</p> : null}
       <button type="submit">{t("recipesCatalog.publish")}</button>
-      <button
-        onClick={() => {
-          if (dirty && !window.confirm(t("recipesCatalog.discardChanges"))) return;
-          setInput(initialInput);
-          setOpen(false);
-        }}
-        type="button"
-      >
-        {t("recipesCatalog.cancel")}
-      </button>
-    </form>
+        <button className={onRouteBack ? "recipe-editor-back" : undefined} onClick={closeEditor} type="button">
+          {onRouteBack ? t("recipesCatalog.backToCatalog") : t("recipesCatalog.cancel")}
+        </button>
+      </form>
+    </dialog>
   );
 }
 
@@ -1059,6 +1091,7 @@ export function RecipeCatalog({
                 organizationId={organizationId}
                 recipe={recipe}
                 initiallyOpen={recipe.id === editRecipeId}
+                onRouteBack={recipe.id === editRecipeId ? onBackToCatalog : undefined}
                 discardToken={discardToken}
                 onDirtyChange={reportRecipeDirty}
                 userId={userId}

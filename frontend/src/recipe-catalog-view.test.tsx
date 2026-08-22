@@ -1,4 +1,4 @@
-import { render, screen, waitFor } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -573,6 +573,109 @@ describe("recipe retired ingredient warning", () => {
       />,
     );
     expect(await screen.findByRole("heading", { name: "Nová verze receptu" })).toBeVisible();
+    expect(screen.getByRole("dialog")).toBeVisible();
+  });
+
+  it("cancels the editor through the dialog and restores the opener focus", async () => {
+    const user = userEvent.setup();
+    render(
+      <RecipeCatalog
+        onUnauthenticated={() => undefined}
+        organizationId="5ce17d2f-8365-4b1f-a80b-34d10425d51c"
+        selectedRecipeId="6ce17d2f-8365-4b1f-a80b-34d10425d51c"
+        userId="a6a58bd6-214e-49af-8fae-e5f974bf8e08"
+      />,
+    );
+    const opener = (await screen.findAllByRole("button", { name: "Upravit recept" }))[0];
+    await user.click(opener);
+    const dialog = await screen.findByRole("dialog");
+    expect(dialog).toBeVisible();
+    const name = (await screen.findAllByRole("textbox", { name: "Název" }))[1];
+    await user.type(name, " changed");
+    vi.spyOn(window, "confirm").mockReturnValue(false);
+    fireEvent(dialog, new Event("cancel", { bubbles: true, cancelable: true }));
+    expect(screen.getByRole("dialog")).toBeVisible();
+    vi.mocked(window.confirm).mockReturnValue(true);
+    fireEvent(dialog, new Event("cancel", { bubbles: true, cancelable: true }));
+    await waitFor(() => expect(screen.getAllByRole("button", { name: "Upravit recept" })[0]).toHaveFocus());
+  });
+
+  it("lets the route guard keep or close a route-backed editor", async () => {
+    const user = userEvent.setup();
+    const recipeId = "6ce17d2f-8365-4b1f-a80b-34d10425d51c";
+    let allowBack = false;
+    const confirmMock = vi.spyOn(window, "confirm").mockImplementation(() => allowBack);
+    let rerender!: ReturnType<typeof render>["rerender"];
+    const onBackToCatalog = vi.fn(() => {
+      if (!window.confirm("discard")) return;
+      rerender(
+        <RecipeCatalog
+          onBackToCatalog={onBackToCatalog}
+          onUnauthenticated={() => undefined}
+          organizationId="5ce17d2f-8365-4b1f-a80b-34d10425d51c"
+          selectedRecipeId={recipeId}
+          userId="a6a58bd6-214e-49af-8fae-e5f974bf8e08"
+        />,
+      );
+    });
+    const rendered = render(
+      <RecipeCatalog
+        editRecipeId={recipeId}
+        onBackToCatalog={onBackToCatalog}
+        onUnauthenticated={() => undefined}
+        organizationId="5ce17d2f-8365-4b1f-a80b-34d10425d51c"
+        selectedRecipeId={recipeId}
+        userId="a6a58bd6-214e-49af-8fae-e5f974bf8e08"
+      />,
+    );
+    rerender = rendered.rerender;
+    await screen.findByRole("dialog");
+    const name = (await screen.findAllByRole("textbox", { name: "Název" }))[1];
+    await user.type(name, " changed");
+    const back = screen.getByRole("button", { name: "Zpět do katalogu" });
+    await user.click(back);
+    expect(onBackToCatalog).toHaveBeenCalledOnce();
+    expect(screen.getByRole("dialog")).toBeVisible();
+    allowBack = true;
+    await user.click(screen.getByRole("button", { name: "Zpět do katalogu" }));
+    expect(await screen.findByRole("button", { name: "Upravit recept" })).toBeVisible();
+    expect(confirmMock).toHaveBeenCalledTimes(2);
+    confirmMock.mockRestore();
+  });
+
+  it("returns a route-backed editor after publishing without a discard prompt", async () => {
+    const user = userEvent.setup();
+    const recipeId = "6ce17d2f-8365-4b1f-a80b-34d10425d51c";
+    const confirmMock = vi.spyOn(window, "confirm");
+    let rerender!: ReturnType<typeof render>["rerender"];
+    const onBackToCatalog = vi.fn(() => {
+      rerender(
+        <RecipeCatalog
+          onBackToCatalog={onBackToCatalog}
+          onUnauthenticated={() => undefined}
+          organizationId="5ce17d2f-8365-4b1f-a80b-34d10425d51c"
+          selectedRecipeId={recipeId}
+          userId="a6a58bd6-214e-49af-8fae-e5f974bf8e08"
+        />,
+      );
+    });
+    const rendered = render(
+      <RecipeCatalog
+        editRecipeId={recipeId}
+        onBackToCatalog={onBackToCatalog}
+        onUnauthenticated={() => undefined}
+        organizationId="5ce17d2f-8365-4b1f-a80b-34d10425d51c"
+        selectedRecipeId={recipeId}
+        userId="a6a58bd6-214e-49af-8fae-e5f974bf8e08"
+      />,
+    );
+    rerender = rendered.rerender;
+    const name = (await screen.findAllByRole("textbox", { name: "Název" }))[1];
+    await user.type(name, " published");
+    await user.click(screen.getByRole("button", { name: "Publikovat verzi" }));
+    await waitFor(() => expect(onBackToCatalog).toHaveBeenCalledOnce());
+    expect(confirmMock).not.toHaveBeenCalled();
+    confirmMock.mockRestore();
   });
 
   it("resets a discarded edit to the current recipe snapshot", async () => {
