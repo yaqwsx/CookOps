@@ -1,4 +1,5 @@
 import { render, screen, waitFor } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it } from "vitest";
 
 import "./i18n";
@@ -17,9 +18,9 @@ const planner: EventPlannerProjection = {
   retiredRoles: [], recipes: [], ingredients: [], scheduled: [],
 };
 
-function SummaryRoute({ eventId }: { eventId: string }) {
+function SummaryRoute({ eventId, lifecycle = "active" }: { eventId: string; lifecycle?: "active" | "archived" }) {
   const pendingSync = useEventPendingSync(userId, organizationId, eventId);
-  return <EventSummary planner={{ ...planner, name: eventId === eventA ? "Event A" : "Event B" }} pendingSync={pendingSync} />;
+  return <EventSummary eventId={eventId} organizationId={organizationId} userId={userId} planner={{ ...planner, lifecycle, name: eventId === eventA ? "Event A" : "Event B" }} pendingSync={pendingSync} />;
 }
 
 describe("event summary", () => {
@@ -30,6 +31,20 @@ describe("event summary", () => {
   const record = (entityId: string, orgId = organizationId, fields = { event_id: eventA }) => ({
     userId, organizationId: orgId, entityType: "shopping_list", entityId, recordSchemaVersion: 1,
     lifecycle: "active" as const, fields, fieldClocks: {}, immutable: false, updatedAt: new Date().toISOString(),
+  });
+
+  const eventRecord = (lifecycle: "active" | "archived", snapshot: string | null = null) => ({
+    userId, organizationId, entityType: "event", entityId: eventA, recordSchemaVersion: 1,
+    lifecycle: "active" as const, fields: {
+      id: eventA, organization_id: organizationId, name: "Event A", start_date: "2026-08-15", end_date: "2026-08-15",
+      base_expected_attendance: 2, budget_amount: "10", currency: "CZK", lifecycle, archived_at: lifecycle === "archived" ? "2026-08-16" : null,
+      current_archive_snapshot_id: snapshot,
+    }, fieldClocks: {}, immutable: false, updatedAt: new Date().toISOString(),
+  });
+
+  const capability = (role: "member" | "organization_admin" = "organization_admin") => ({
+    userId, organizationId, entityType: "organization_capabilities", entityId: organizationId, recordSchemaVersion: 1,
+    lifecycle: "active" as const, fields: { actor_user_id: userId, role, can_manage_organization: role === "organization_admin" }, fieldClocks: {}, immutable: false, updatedAt: new Date().toISOString(),
   });
 
   it("counts a canonical shopping-list command for its event", async () => {
@@ -84,5 +99,39 @@ describe("event summary", () => {
     view.rerender(<SummaryRoute eventId={eventB} />);
     await waitFor(() => expect(screen.getByText("0 čekajících změn")).toBeInTheDocument());
     expect(screen.queryByText("1 čekajících změn")).toBeNull();
+  });
+
+  it("shows archive only for an authorized active event and queues the stable event id", async () => {
+    await localDb.canonicalRecords.bulkAdd([eventRecord("active"), capability()]);
+    const user = userEvent.setup();
+    render(<SummaryRoute eventId={eventA} />);
+    const archive = await screen.findByRole("button", { name: "Archivovat akci" });
+    await user.click(archive);
+    await user.click(screen.getByRole("button", { name: "Potvrdit archivaci" }));
+    await waitFor(async () => expect((await localDb.outbox.toArray()).filter((command) => command.commandType === "event.lifecycle")).toHaveLength(1));
+    expect((await localDb.outbox.toArray()).find((command) => command.commandType === "event.lifecycle")?.payload).toMatchObject({ event_id: eventA, operation: "archive" });
+  });
+
+  it("shows archived read-only state and authorized reactivation/duplication actions", async () => {
+    const snapshotId = "snapshot-a";
+    await localDb.canonicalRecords.bulkAdd([eventRecord("archived", snapshotId), capability()]);
+    const user = userEvent.setup();
+    render(<SummaryRoute eventId={eventA} lifecycle="archived" />);
+    expect(await screen.findByText("Archivovaná akce je jen pro čtení.")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Znovu aktivovat akci" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Duplikovat plán" })).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Duplikovat plán" }));
+    await waitFor(async () => expect((await localDb.outbox.toArray()).filter((command) => command.commandType === "event.duplicate")).toHaveLength(1));
+    expect((await localDb.outbox.toArray()).find((command) => command.commandType === "event.duplicate")?.payload).toMatchObject({ source_event_id: eventA, source_archive_snapshot_id: snapshotId });
+  });
+
+  it("lets ordinary members duplicate archived events without lifecycle controls", async () => {
+    await localDb.canonicalRecords.bulkAdd([eventRecord("archived", "snapshot-member"), capability("member")]);
+    const user = userEvent.setup();
+    render(<SummaryRoute eventId={eventA} lifecycle="archived" />);
+    await waitFor(() => expect(screen.queryByRole("button", { name: "Archivovat akci" })).toBeNull());
+    await user.click(await screen.findByRole("button", { name: "Duplikovat plán" }));
+    await waitFor(async () => expect((await localDb.outbox.toArray()).filter((command) => command.commandType === "event.duplicate")).toHaveLength(1));
+    expect((await localDb.outbox.toArray()).find((command) => command.commandType === "event.duplicate")?.payload).toMatchObject({ source_event_id: eventA, source_archive_snapshot_id: "snapshot-member" });
   });
 });

@@ -89,19 +89,37 @@ export async function readVisibleEventSummaries(
     );
 }
 
-export async function canCreateEvents(
+export async function readEventCapabilities(
   userId: string,
   organizationId: string,
-): Promise<boolean> {
+): Promise<{ canManage: boolean; canDuplicate: boolean }> {
   const capabilities = await localDb.canonicalRecords.get([
     userId,
     organizationId,
     "organization_capabilities",
     organizationId,
   ]);
-  return (
+  const trusted = (
     capabilities?.lifecycle === "active" &&
-    capabilities?.fields.actor_user_id === userId &&
-    capabilities.fields.can_manage_organization === true
+    capabilities.fields.actor_user_id === userId
   );
+  return {
+    canManage: trusted && capabilities.fields.can_manage_organization === true,
+    canDuplicate: trusted && (capabilities.fields.role === "member" || capabilities.fields.role === "organization_admin" || capabilities.fields.role === "system_admin"),
+  };
+}
+
+export async function canCreateEvents(
+  userId: string,
+  organizationId: string,
+): Promise<boolean> {
+  return (await readEventCapabilities(userId, organizationId)).canManage;
+}
+
+/** Event members may duplicate archived snapshots; lifecycle remains admin-only. */
+export async function canDuplicateEvents(
+  userId: string,
+  organizationId: string,
+): Promise<boolean> {
+  return (await readEventCapabilities(userId, organizationId)).canDuplicate;
 }

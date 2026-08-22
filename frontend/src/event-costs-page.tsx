@@ -87,7 +87,7 @@ export function EventCostsPage({
   if (!planner) return <p role="alert">{t("costs.unavailable")}</p>;
   return (
     <>
-      <EventSummary planner={planner} costs={costsState?.identity === identity ? costsState.costs : undefined} pendingSync={pendingSync} />
+      <EventSummary eventId={eventId} organizationId={organizationId} userId={userId} planner={planner} costs={costsState?.identity === identity ? costsState.costs : undefined} pendingSync={pendingSync} />
       <EventSectionNavigation current="costs" eventId={eventId} organizationId={organizationId} />
       <EventCosts
         eventId={eventId}

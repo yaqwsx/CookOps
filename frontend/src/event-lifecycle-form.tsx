@@ -1,4 +1,4 @@
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 
 import {
@@ -21,8 +21,12 @@ export function EventLifecycle({
   const [confirming, setConfirming] = useState(false);
   const [error, setError] = useState<string>();
   const busy = useRef(false);
+  const confirmButton = useRef<HTMLButtonElement>(null);
   const operation: EventLifecycleOperation =
     lifecycle === "active" ? "archive" : "reactivate";
+  useEffect(() => {
+    if (confirming) confirmButton.current?.focus();
+  }, [confirming]);
 
   async function submit(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -50,7 +54,7 @@ export function EventLifecycle({
       <p id={`event-lifecycle-${eventId}`}>
         {t(`eventLifecycle.confirm.${operation}`)}
       </p>
-      <button aria-describedby={`event-lifecycle-${eventId}`} type="submit">
+      <button aria-describedby={`event-lifecycle-${eventId}`} ref={confirmButton} type="submit">
         {t(`eventLifecycle.confirmAction.${operation}`)}
       </button>
       <button onClick={() => setConfirming(false)} type="button">

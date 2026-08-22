@@ -4,6 +4,9 @@ import { useTranslation } from "react-i18next";
 import type { EventCostsProjection } from "./event-cost-projections";
 import type { EventPlannerProjection } from "./planner-projections";
 import { localDb } from "./local-db";
+import { EventDuplicate } from "./event-duplicate-form";
+import { EventLifecycle } from "./event-lifecycle-form";
+import { readEventCapabilities, readVisibleEventSummaries } from "./event-projections";
 
 export function formattedDate(value: string, locale: string) {
   const date = new Date(`${value}T00:00:00Z`);
@@ -37,9 +40,21 @@ export function useEventPendingSync(userId: string, organizationId: string, even
   return status;
 }
 
-export function EventSummary({ planner, costs, pendingSync }: { planner: EventPlannerProjection; costs?: EventCostsProjection; pendingSync: { pending: number; failed: number } }) {
+export function EventSummary({ planner, costs, pendingSync, eventId, organizationId, userId }: { planner: EventPlannerProjection; costs?: EventCostsProjection; pendingSync: { pending: number; failed: number }; eventId?: string; organizationId?: string; userId?: string }) {
   const { i18n, t } = useTranslation();
   const locale = i18n.resolvedLanguage ?? "cs";
+  const [controls, setControls] = useState<{ canManage: boolean; canDuplicate: boolean; snapshotId: string | null }>({ canManage: false, canDuplicate: false, snapshotId: null });
+  useEffect(() => {
+    if (!eventId || !organizationId || !userId) return;
+    const subscription = liveQuery(async () => {
+      const [capabilities, event] = await Promise.all([
+        readEventCapabilities(userId, organizationId),
+        readVisibleEventSummaries(userId, organizationId),
+      ]);
+      return { ...capabilities, snapshotId: event.find((candidate) => candidate.id === eventId)?.currentArchiveSnapshotId ?? null };
+    }).subscribe({ next: setControls });
+    return () => subscription.unsubscribe();
+  }, [eventId, organizationId, userId]);
   const sync = [pendingSync.failed && t("planner.pendingSyncFailed", { count: pendingSync.failed }), pendingSync.pending && t("planner.pendingSyncCount", { count: pendingSync.pending })].filter(Boolean).join(" · ") || t("planner.pendingSyncCount", { count: 0 });
-  return <header className="event-workspace__summary"><div><h2>{planner.name}</h2><p>{t("planner.dateRange", { start: formattedDate(planner.startDate, locale), end: formattedDate(planner.endDate, locale) })}</p></div><dl><div><dt>{t("planner.attendance")}</dt><dd>{planner.attendance}</dd></div><div><dt>{t("planner.lifecycle")}</dt><dd>{t(`eventsOverview.lifecycle.${planner.lifecycle}`)}</dd></div>{costs ? <><div><dt>{t("costs.budget")}</dt><dd>{t("costs.amount", { amount: costs.budget, currency: costs.currency })}</dd></div><div><dt>{t("costs.scheduled")}</dt><dd>{t("costs.amount", { amount: costs.total, currency: costs.currency })}</dd></div><div><dt>{t("costs.actual")}</dt><dd>{t("costs.amount", { amount: costs.actual, currency: costs.currency })}</dd></div><div><dt>{t("costs.remaining")}</dt><dd>{t("costs.amount", { amount: costs.remaining, currency: costs.currency })}</dd></div></> : null}<div><dt>{t("planner.pendingSync")}</dt><dd>{sync}</dd></div></dl></header>;
+  return <header className="event-workspace__summary"><div><h2>{planner.name}</h2><p>{t("planner.dateRange", { start: formattedDate(planner.startDate, locale), end: formattedDate(planner.endDate, locale) })}</p></div><dl><div><dt>{t("planner.attendance")}</dt><dd>{planner.attendance}</dd></div><div><dt>{t("planner.lifecycle")}</dt><dd>{t(`eventsOverview.lifecycle.${planner.lifecycle}`)}</dd></div>{costs ? <><div><dt>{t("costs.budget")}</dt><dd>{t("costs.amount", { amount: costs.budget, currency: costs.currency })}</dd></div><div><dt>{t("costs.scheduled")}</dt><dd>{t("costs.amount", { amount: costs.total, currency: costs.currency })}</dd></div><div><dt>{t("costs.actual")}</dt><dd>{t("costs.amount", { amount: costs.actual, currency: costs.currency })}</dd></div><div><dt>{t("costs.remaining")}</dt><dd>{t("costs.amount", { amount: costs.remaining, currency: costs.currency })}</dd></div></> : null}<div><dt>{t("planner.pendingSync")}</dt><dd>{sync}</dd></div></dl>{planner.lifecycle === "archived" ? <p className="event-workspace__archived" role="status">{t("eventSettings.archivedReadOnly")}</p> : null}{eventId && organizationId && userId ? <div className="event-workspace__lifecycle">{controls.canManage ? <EventLifecycle eventId={eventId} lifecycle={planner.lifecycle} organizationId={organizationId} userId={userId} /> : null}{controls.canDuplicate && planner.lifecycle === "archived" ? <EventDuplicate eventId={eventId} name={planner.name} organizationId={organizationId} snapshotId={controls.snapshotId} userId={userId} /> : null}</div> : null}</header>;
 }

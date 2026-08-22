@@ -1068,7 +1068,7 @@ export function EventPlanner({
   }
   return (
     <section className="event-workspace" aria-labelledby="planner-heading">
-      <EventSummary planner={planner} costs={recipeCosts?.identity === identity ? recipeCosts.costs : undefined} pendingSync={pendingSync} />
+      <EventSummary eventId={eventId} organizationId={organizationId} userId={userId} planner={planner} costs={recipeCosts?.identity === identity ? recipeCosts.costs : undefined} pendingSync={pendingSync} />
       <EventSectionNavigation current="planner" eventId={eventId} organizationId={organizationId} />
       {planner.lifecycle === "archived" ? (
         <p className="planner-archived" role="status">

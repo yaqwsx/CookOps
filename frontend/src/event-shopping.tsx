@@ -1001,6 +1001,9 @@ export function EventShopping({
   return (
     <>
       <EventSummary
+        eventId={eventId}
+        organizationId={organizationId}
+        userId={userId}
         costs={costs?.identity === identity ? costs.value : undefined}
         pendingSync={pendingSync}
         planner={planner}

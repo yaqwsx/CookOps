@@ -551,7 +551,7 @@ export function EventReceipts({
     );
   return (
     <>
-    {planner ? <EventSummary planner={planner} costs={costs} pendingSync={pendingSync} /> : null}
+    {planner ? <EventSummary eventId={eventId} organizationId={organizationId} userId={userId} planner={planner} costs={costs} pendingSync={pendingSync} /> : null}
     <EventSectionNavigation current="receipts" eventId={eventId} organizationId={organizationId} />
     <section className="event-receipts" aria-labelledby="receipts-heading">
       <header className="event-receipts__header">
