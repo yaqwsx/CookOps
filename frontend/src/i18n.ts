@@ -18,6 +18,7 @@ const resources = {
         organizationsLoading: "Načítáme organizace…",
         organizationsError: "Organizace se nepodařilo načíst. Zkuste to znovu.",
         noOrganizations: "Nemáte přístup k žádné aktivní organizaci.",
+        organizationUnavailable: "Tato organizace není v tomto účtu dostupná.",
         language: "Jazyk",
         heading: "Plánování společného vaření",
         introduction:
@@ -30,6 +31,7 @@ const resources = {
         localeError: "Jazyk se nepodařilo uložit. Zkuste to znovu.",
         authorizationRequiredOffline: "Offline přístup vypršel. Připojte se k internetu a ověřte oprávnění organizace.",
       },
+      routing: { notFound: "Požadovaná stránka nebyla nalezena.", home: "Domů" },
       mcpGrants: { navigation: "Připojení MCP", heading: "Připojení MCP", empty: "Nemáte žádné aktivní připojení.", revoke: "Odvolat", confirm: "Opravdu chcete toto připojení odvolat?", error: "Připojení se nepodařilo načíst." },
       systemOrganizations: {
         navigation: "Správa organizací",
@@ -696,6 +698,7 @@ const resources = {
         organizationsError:
           "Organizations could not be loaded. Please try again.",
         noOrganizations: "You do not have access to an active organization.",
+        organizationUnavailable: "This organization is not available to this account.",
         language: "Language",
         heading: "Plan group cooking",
         introduction:
@@ -707,6 +710,7 @@ const resources = {
         localeError: "The language could not be saved. Please try again.",
         authorizationRequiredOffline: "Offline access has expired. Connect to the internet to verify organization access.",
       },
+      routing: { notFound: "The requested page was not found.", home: "Home" },
       mcpGrants: { navigation: "MCP connections", heading: "MCP connections", empty: "You have no active connections.", revoke: "Revoke", confirm: "Revoke this connection?", error: "Unable to load connections." },
       systemOrganizations: {
         navigation: "Organization administration",
