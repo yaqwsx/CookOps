@@ -1,6 +1,7 @@
 import type { CanonicalRecord } from "./local-db";
 import { readEventScopedRecords } from "./archive-cache";
 import { divide, money, multiply, type Fraction } from "./exact-decimal";
+import { timestampNanoseconds } from "./timestamp";
 
 const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const maxDecimalDigits = 38;
@@ -28,7 +29,10 @@ export type ShoppingRow = {
   partial: boolean;
   notRequired: boolean;
   contributions: ShoppingContribution[];
+  fulfilmentAttribution: FulfilmentAttribution | null;
 };
+
+export type FulfilmentAttribution = { updatedAt: string; updatedByUserId: string };
 
 export type ShoppingContribution = {
   id: string;
@@ -46,6 +50,7 @@ export type ShoppingContribution = {
   ingredientNotes: string[];
   estimatedUnitPrice: string | null;
   expectedCost: string | null;
+  fulfilmentAttribution: FulfilmentAttribution | null;
 };
 
 export type AdHocShoppingItem = {
@@ -60,6 +65,7 @@ export type AdHocShoppingItem = {
   fulfilled: boolean;
   partial: boolean;
   retired: boolean;
+  fulfilmentAttribution: FulfilmentAttribution | null;
 };
 
 export type ShoppingInputOption = { id: string; name: string };
@@ -76,6 +82,14 @@ export type ShoppingListProjection = ShoppingListSummary & {
 function value(record: CanonicalRecord, key: string): string | undefined {
   const item = record.fields[key];
   return typeof item === "string" ? item : undefined;
+}
+
+export function fulfilmentAttribution(record: CanonicalRecord): FulfilmentAttribution | null {
+  const updatedAt = value(record, "fulfilment_updated_at");
+  const updatedByUserId = value(record, "fulfilment_updated_by_user_id");
+  return updatedAt && updatedByUserId && timestampNanoseconds(updatedAt) !== undefined && uuid.test(updatedByUserId)
+    ? { updatedAt, updatedByUserId }
+    : null;
 }
 
 export type Decimal = { value: bigint; scale: number };
@@ -570,6 +584,7 @@ export async function readShoppingList(
               compare(credit, add([])) > 0 &&
               compare(credit, target) < 0,
             retired: item.lifecycle === "retired",
+            fulfilmentAttribution: fulfilmentAttribution(item),
           },
         ];
       })
@@ -663,6 +678,7 @@ export async function readShoppingList(
             compare(remaining, add([])) > 0 &&
             compare(credit, add([])) > 0,
           notRequired: compare(target, add([])) === 0,
+          fulfilmentAttribution: fulfilmentAttribution(row),
           contributions: rowContributions.map((contribution) => {
             const snapshot = validSnapshots.find((item) =>
               validSnapshot(
@@ -719,6 +735,7 @@ export async function readShoppingList(
               ),
               estimatedUnitPrice: price?.estimatedUnitPrice ?? null,
               expectedCost: price?.expectedCost ?? null,
+              fulfilmentAttribution: fulfilmentAttribution(contribution),
             };
           }),
         };

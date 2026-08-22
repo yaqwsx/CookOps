@@ -228,6 +228,10 @@ describe("EventShopping", () => {
           fulfilled: false,
           partial: true,
           notRequired: false,
+          fulfilmentAttribution: {
+            updatedAt: "2026-08-22T12:34:56Z",
+            updatedByUserId: ids.user,
+          },
           contributions: [
               {
                 id: "2e8b2b21-c378-4574-9e46-9338c81305ef",
@@ -245,6 +249,10 @@ describe("EventShopping", () => {
                 ingredientNotes: [],
                 estimatedUnitPrice: "3 / 1 kg (EUR)",
                 expectedCost: "6.00 EUR",
+                fulfilmentAttribution: {
+                  updatedAt: "2026-08-22T12:34:56Z",
+                  updatedByUserId: "00000000-0000-4000-8000-000000000004",
+                },
               },
           ],
         },
@@ -269,6 +277,7 @@ describe("EventShopping", () => {
     const fulfilmentCheckbox = await screen.findByLabelText("Nakoupeno");
     await waitFor(() => expect(fulfilmentCheckbox).toHaveProperty("indeterminate", true));
     expect(fulfilmentCheckbox).toHaveAttribute("aria-checked", "mixed");
+    expect(screen.getByText(/Nakoupil\(a\) vy/)).toBeVisible();
     await user.click(fulfilmentCheckbox);
     expect(queueShoppingRowFulfilment).toHaveBeenCalledWith(
       ids.user,
@@ -280,6 +289,7 @@ describe("EventShopping", () => {
     expect(screen.getAllByText("4 kg")).toHaveLength(1);
     expect(screen.getAllByText("3 kg")).toHaveLength(3);
     const contributionCheckbox = screen.getByLabelText("Chili · 2 kg");
+    expect(screen.getByText(/Nakoupil\(a\) 00000000/)).toBeVisible();
     await waitFor(() => expect(contributionCheckbox).toHaveProperty("indeterminate", true));
     expect(contributionCheckbox).toHaveAttribute("aria-checked", "mixed");
     await user.click(contributionCheckbox);

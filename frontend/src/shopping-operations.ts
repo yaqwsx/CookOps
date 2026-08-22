@@ -280,6 +280,8 @@ async function applyContributionFulfilment(
     fields: {
       ...contribution.fields,
       fulfilment_credit: fulfilled ? print(generated) : "0",
+      fulfilment_updated_at: actionAt,
+      fulfilment_updated_by_user_id: userId,
     },
     fieldClocks: {
       ...contribution.fieldClocks,
@@ -399,7 +401,7 @@ export async function queueShoppingRowFulfilment(
           : "0";
         await localDb.optimisticOverlays.put({
           ...contribution,
-          fields: { ...contribution.fields, fulfilment_credit: credit },
+          fields: { ...contribution.fields, fulfilment_credit: credit, fulfilment_updated_at: actionAt, fulfilment_updated_by_user_id: userId },
           fieldClocks: {
             ...contribution.fieldClocks,
             fulfilment_credit: { mutationId, actionAt },
@@ -430,6 +432,8 @@ export async function queueShoppingRowFulfilment(
           aggregate_fulfilment_credit: input.fulfilled
             ? print(maxZeroSubtract(target, credits))
             : "0",
+          fulfilment_updated_at: actionAt,
+          fulfilment_updated_by_user_id: userId,
         },
         fieldClocks: {
           ...row.fieldClocks,
@@ -611,7 +615,9 @@ export async function replayShoppingOperation(
               ? print(amount)
               : payload.fulfilled
                 ? entry.fields.fulfilment_credit
-                : "0",
+              : "0",
+          fulfilment_updated_at: command.actionAt,
+          fulfilment_updated_by_user_id: userId,
         },
         fieldClocks: {
           ...entry.fieldClocks,
@@ -645,6 +651,8 @@ export async function replayShoppingOperation(
         aggregate_fulfilment_credit: payload.fulfilled
           ? print(maxZeroSubtract(target, credits))
           : "0",
+        fulfilment_updated_at: command.actionAt,
+        fulfilment_updated_by_user_id: userId,
       },
       fieldClocks: {
         ...row.fieldClocks,

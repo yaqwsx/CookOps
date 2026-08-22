@@ -30,6 +30,7 @@ import {
 import {
   readShoppingList,
   readShoppingLists,
+  type FulfilmentAttribution,
   type ShoppingListProjection,
   type ShoppingListSummary,
 } from "./shopping-projections";
@@ -40,6 +41,14 @@ import { EventSummary, useEventPendingSync } from "./event-summary";
 import { EventSectionNavigation } from "./event-section-navigation";
 
 type ShoppingState = "loading" | "ready" | "offline" | "error";
+
+function FulfilmentAttributionNote({ attribution, userId }: { attribution: FulfilmentAttribution | null; userId: string }) {
+  const { t, i18n } = useTranslation();
+  if (!attribution) return null;
+  const actor = attribution.updatedByUserId === userId ? t("shopping.attribution.you") : attribution.updatedByUserId.slice(0, 8);
+  const timestamp = new Intl.DateTimeFormat(i18n.language, { dateStyle: "medium", timeStyle: "short" }).format(new Date(attribution.updatedAt));
+  return <small>{t("shopping.attribution.note", { actor, timestamp })}</small>;
+}
 
 function ShoppingIndex({
   lists,
@@ -195,6 +204,7 @@ function ShoppingDetail({
                 {item.sectionName ? ` · ${item.sectionName}` : null}
                 {item.retired ? ` · ${t("shopping.retired")}` : null}
                 {item.note ? <p>{item.note}</p> : null}
+                {item.fulfilmentAttribution ? <FulfilmentAttributionNote attribution={item.fulfilmentAttribution} userId={userId} /> : null}
                 {editable && !item.retired ? (
                   <AdHocShoppingEdit
                     item={item}
@@ -715,6 +725,7 @@ function ShoppingRowControls({
               ? t("shopping.notRequired")
               : t("shopping.fulfilled")}
           </label>
+          {row.fulfilmentAttribution ? <FulfilmentAttributionNote attribution={row.fulfilmentAttribution} userId={userId} /> : null}
           {row.manualPurchaseTarget !== null ? (
             <button
               onClick={() =>
@@ -792,9 +803,10 @@ function ShoppingRowControls({
                         type="checkbox"
                       />
                       {label}
+                      {contribution.fulfilmentAttribution ? <FulfilmentAttributionNote attribution={contribution.fulfilmentAttribution} userId={userId} /> : null}
                     </label>
                   ) : (
-                    <span>{label}</span>
+                    <span>{label}{contribution.fulfilmentAttribution ? <FulfilmentAttributionNote attribution={contribution.fulfilmentAttribution} userId={userId} /> : null}</span>
                   )}
                   <dl>
                     <div>

@@ -637,6 +637,14 @@ describe("offline shopping-list creation", () => {
       adHocShoppingItemId: itemId,
       fulfilled: true,
     });
+    await expect(
+      localDb.optimisticOverlays.get([ids.user, ids.organization, "ad_hoc_shopping_item", itemId]),
+    ).resolves.toMatchObject({
+      fields: {
+        fulfilment_updated_by_user_id: ids.user,
+        fulfilment_updated_at: expect.any(String),
+      },
+    });
     const baseFields = {
       id: itemId,
       organization_id: ids.organization,
@@ -1151,6 +1159,8 @@ describe("offline shopping-list creation", () => {
       available_supply_quantity: "0.25",
       manual_purchase_target: "2",
       aggregate_fulfilment_credit: "0.75",
+      fulfilment_updated_by_user_id: ids.user,
+      fulfilment_updated_at: expect.any(String),
     });
     await expect(localDb.outbox.toArray()).resolves.toEqual(
       expect.arrayContaining([

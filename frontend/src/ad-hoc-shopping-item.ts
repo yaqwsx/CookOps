@@ -410,6 +410,8 @@ async function applyFulfilment(
     fields: {
       ...item.fields,
       fulfilment_credit: fulfilled ? item.fields.target_amount : "0",
+      fulfilment_updated_at: actionAt,
+      fulfilment_updated_by_user_id: userId,
     },
     fieldClocks: {
       ...item.fieldClocks,
