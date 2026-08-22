@@ -13,6 +13,7 @@ from test_sync_pull_http import SyncDatabase, _settings, _sign_in
 from test_sync_pull_http import sync_database as _sync_database_fixture
 
 from cookops.http_sync import (
+    OrganizationUpdatePayload,
     PublishIngredientPriceEstimatePayload,
     PublishRecipeVersionPayload,
     PushCommandRequest,
@@ -43,6 +44,21 @@ from cookops.persistence.models import (
     StoreSection,
     UnitDefinition,
 )
+
+
+def test_organization_update_payload_is_exact_and_typed() -> None:
+    organization_id = uuid4()
+    valid = {"organization_id": organization_id, "name": "Kitchen", "description": None, "default_currency": "CZK"}
+    assert OrganizationUpdatePayload.model_validate(valid).organization_id == organization_id
+    assert OrganizationUpdatePayload.model_validate({**valid, "name": "Žluťoučká"}).name == "Žluťoučká"
+    with pytest.raises(ValueError):
+        OrganizationUpdatePayload.model_validate({**valid, "name": "Kitchen\0"})
+    with pytest.raises(ValueError):
+        OrganizationUpdatePayload.model_validate({**valid, "extra": True})
+    with pytest.raises(ValueError):
+        OrganizationUpdatePayload.model_validate({**valid, "default_currency": "EURO"})
+    with pytest.raises(ValueError):
+        OrganizationUpdatePayload.model_validate({**valid, "description": "line\r\nfeed"})
 
 
 @pytest.fixture
@@ -131,6 +147,53 @@ def test_push_publishes_price_and_replays_same_mutation(sync_database: SyncDatab
         assert client.post("/api/v1/sync/push", json=body).json()["outcomes"][0]["replayed"]
         huge = {**command, "mutation_id": str(uuid4()), "payload": {**command["payload"], "amount": "1e999"}}
         assert client.post("/api/v1/sync/push", json=_body(sync_database, installation_id, [huge])).json()["outcomes"][0]["status"] == "rejected"
+
+
+def test_push_organization_update_accepts_replays_and_rejects_strict_payload(
+    sync_database: SyncDatabase,
+) -> None:
+    installation_id = _installation(sync_database)
+    mutation_id = uuid4()
+    payload = {
+        "organization_id": str(sync_database.organization_id),
+        "name": "Updated organization",
+        "description": "A short description",
+        "default_currency": "EUR",
+    }
+    command = _command(
+        mutation_id=mutation_id,
+        event_id=uuid4(),
+        kind="organization.update",
+        **payload,
+    )
+    with TestClient(create_app(_settings()), base_url="https://testserver") as client:
+        _sign_in(client, "dummy-member")
+        first = client.post(
+            "/api/v1/sync/push", json=_body(sync_database, installation_id, [command])
+        ).json()["outcomes"][0]
+        assert first["status"] == "accepted", first
+        replay = client.post(
+            "/api/v1/sync/push", json=_body(sync_database, installation_id, [command])
+        ).json()["outcomes"][0]
+        assert replay["replayed"] is True
+        malformed = {
+            **command,
+            "mutation_id": str(uuid4()),
+            "payload": {**payload, "name": "Bad\0name"},
+        }
+        rejected = client.post(
+            "/api/v1/sync/push", json=_body(sync_database, installation_id, [malformed])
+        ).json()["outcomes"][0]
+        assert rejected["status"] == "rejected"
+        cross_org = {
+            **command,
+            "mutation_id": str(uuid4()),
+            "payload": {**payload, "organization_id": str(sync_database.other_organization_id)},
+        }
+        denied = client.post(
+            "/api/v1/sync/push", json=_body(sync_database, installation_id, [cross_org])
+        ).json()["outcomes"][0]
+        assert denied["status"] == "rejected"
 
 
 def test_dietary_exception_create_replays_and_bootstraps_clocks(

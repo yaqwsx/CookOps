@@ -23,6 +23,7 @@ import { replayIngredientPricePublish } from "./ingredient-price-publish";
 import { replayScheduledIngredientOverride } from "./scheduled-ingredient-override";
 import { replayReceiptCommand } from "./receipt-metadata";
 import { replayCatalogConfiguration } from "./catalog-configuration";
+import { replayOrganizationMetadata } from "./organization-metadata";
 import { replayEventDayCreate, replayEventDayLifecycle, replayEventDayNote, replayEventDayVisibility } from "./event-day";
 import { replayEventMealRoleCreate, replayEventMealRoleLifecycle, replayEventMealRoleName, replayEventMealRolePosition } from "./event-meal-role";
 import { replayEventMetadataUpdate } from "./event-metadata";
@@ -358,6 +359,9 @@ async function replayOptimisticCommands(
     }
     if (command.commandType === "catalog_configuration.mutate") {
       await replayCatalogConfiguration(userId, organizationId, command);
+    }
+    if (command.commandType === "organization.update") {
+      await replayOrganizationMetadata(userId, organizationId, command);
     }
     if (command.commandType === "shopping_list.create_ad_hoc_item") {
       try {

@@ -139,6 +139,7 @@ from cookops.application.ingredients import (
     CreateIngredientResult,
     create_ingredient,
 )
+from cookops.application.organization_update import OrganizationUpdateCommand, update_organization
 from cookops.application.organizations import ApplicationServiceError, ExecutionContext
 from cookops.application.receipt_media import _record as _attachment_record
 from cookops.application.receipts import (
@@ -434,6 +435,7 @@ SyncCommand = (
     | UpdateReceiptCommand
     | SetReceiptLifecycleCommand
     | CatalogConfigurationCommand
+    | OrganizationUpdateCommand
     | UnsupportedSyncCommand
 )
 
@@ -487,6 +489,7 @@ def _command_kind(
         | UpdateReceiptCommand
         | SetReceiptLifecycleCommand
         | CatalogConfigurationCommand
+        | OrganizationUpdateCommand
     ),
 ) -> str:
     if isinstance(command, CreateEventCommand):
@@ -585,6 +588,8 @@ def _command_kind(
         return "receipt.lifecycle"
     if isinstance(command, CatalogConfigurationCommand):
         return "catalog_configuration.mutate"
+    if isinstance(command, OrganizationUpdateCommand):
+        return "organization.update"
     return "shopping_list.create"
 
 
@@ -1045,6 +1050,8 @@ class SynchronizationCommandService:
                 )
             elif isinstance(command, CatalogConfigurationCommand):
                 result = await mutate_catalog_configuration(self._session_factory, context, command)
+            elif isinstance(command, OrganizationUpdateCommand):
+                result = await update_organization(self._session_factory, context, command)
             else:
                 result = await create_shopping_list(self._session_factory, context, command)
         except ApplicationServiceError as error:
@@ -1734,6 +1741,14 @@ async def _bootstrap_records(
     organization = await session.get(Organization, organization_id)
     if organization is None:  # authorization already established this invariant.
         raise RuntimeError("Authorized organization disappeared")
+    organization_clocks = {
+        (clock.entity_kind, clock.entity_id, clock.field_name): clock
+        for clock in (
+            await session.execute(
+                select(FieldClock).where(FieldClock.organization_id == organization_id)
+            )
+        ).scalars()
+    }
     append(
         "organization",
         organization.id,
@@ -1746,6 +1761,7 @@ async def _bootstrap_records(
             "created_by_user_id": str(organization.created_by_user_id),
             "retired_at": _time(organization.retired_at),
             "retired_by_user_id": _uuid(organization.retired_by_user_id),
+            "field_clocks": _clock_fields(organization_clocks, "organization", organization.id),
         },
     )
     append(

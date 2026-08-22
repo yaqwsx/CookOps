@@ -57,6 +57,7 @@ const resources = {
         routeForbidden: "Tato stránka je dostupná jen systémovým administrátorům.",
         errors: { name: "Zadejte název do 200 znaků.", currency: "Zadejte platný třípísmenný kód měny." },
       },
+      organizationMetadata: { heading: "Nastavení organizace", name: "Název", description: "Popis", currency: "Výchozí měna", save: "Zařadit změnu k synchronizaci", offline: "Změny budou zařazeny k synchronizaci, až bude připojení.", offlineBlocked: "Offline úpravy vyžadují platné oprávnění organizace.", error: "Změnu se nepodařilo zařadit. Zkontrolujte neúspěšné akce a zkuste to znovu.", saved: "Změna byla zařazena k synchronizaci; server ji ještě musí přijmout." },
       membership: {
         heading: "Členové organizace",
         loading: "Načítáme členy organizace…",
@@ -733,6 +734,7 @@ const resources = {
         routeForbidden: "Only system administrators can access this page.",
         errors: { name: "Enter a name of at most 200 characters.", currency: "Enter a valid three-letter currency code." },
       },
+      organizationMetadata: { heading: "Organization settings", name: "Name", description: "Description", currency: "Default currency", save: "Queue synchronization change", offline: "Changes will be queued and synchronized when connectivity returns.", offlineBlocked: "Offline edits require a valid organization authorization.", error: "The change could not be queued. Check failed outbox actions and try again.", saved: "Change queued for synchronization; the server has not accepted it yet." },
       membership: {
         heading: "Organization members",
         loading: "Loading organization members…",

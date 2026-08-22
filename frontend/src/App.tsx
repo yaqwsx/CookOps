@@ -17,6 +17,7 @@ import {
   OrganizationRequestError,
 } from "./api/organizations";
 import { CatalogAdministration } from "./catalog-administration";
+import { OrganizationMetadataSettings } from "./organization-metadata-settings";
 import { EventCostsPage } from "./event-costs-page";
 import { EventPlanner } from "./event-planner";
 import { EventReceipts } from "./event-receipts";
@@ -799,6 +800,7 @@ function AuthenticatedShell({
                 )
               ) : section === "settings" && organizationId && settingsOpen ? (
                 <>
+                  <OrganizationMetadataSettings organizationId={organizationId} userId={identity.id} />
                   <CatalogAdministration
                     locale={
                       (i18n.resolvedLanguage ?? "cs") === "en" ? "en" : "cs"

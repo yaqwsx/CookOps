@@ -278,8 +278,27 @@ export async function readOfflineAuthorization(userId: string, organizationId: s
 }
 
 export async function readCachedOrganizations(userId: string): Promise<{ id: string; name: string }[]> {
-  const records = await localDb.canonicalRecords.where("[userId+organizationId]").between([userId, Dexie.minKey], [userId, Dexie.maxKey]).toArray();
-  return records.filter((record) => record.entityType === "organization" && typeof record.fields.name === "string").map((record) => ({ id: record.organizationId, name: record.fields.name as string }));
+  const [canonical, overlays] = await Promise.all([
+    localDb.canonicalRecords
+      .where("[userId+organizationId]")
+      .between([userId, Dexie.minKey], [userId, Dexie.maxKey])
+      .toArray(),
+    localDb.optimisticOverlays
+      .where("[userId+organizationId]")
+      .between([userId, Dexie.minKey], [userId, Dexie.maxKey])
+      .toArray(),
+  ]);
+  const visible = new Map(
+    canonical
+      .filter((record) => record.entityType === "organization")
+      .map((record) => [record.organizationId, record] as const),
+  );
+  for (const record of overlays) {
+    if (record.entityType === "organization") visible.set(record.organizationId, record);
+  }
+  return [...visible.values()]
+    .filter((record) => typeof record.fields.name === "string")
+    .map((record) => ({ id: record.organizationId, name: record.fields.name as string }));
 }
 
 /** Append while holding the outbox transaction, preserving dependency order across equal timestamps. */

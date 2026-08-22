@@ -3,6 +3,7 @@
 import asyncio
 import hashlib
 import json
+import unicodedata
 from dataclasses import dataclass
 from datetime import date, datetime
 from decimal import Decimal
@@ -51,6 +52,7 @@ from cookops.application.ingredient_lifecycle import SetIngredientLifecycleComma
 from cookops.application.ingredient_prices import PublishIngredientPriceEstimateCommand
 from cookops.application.ingredient_versions import PublishIngredientVersionCommand
 from cookops.application.ingredients import CreateIngredientCommand, InitialPrice
+from cookops.application.organization_update import OrganizationUpdateCommand
 from cookops.application.receipts import (
     CreateReceiptCommand,
     SetReceiptLifecycleCommand,
@@ -923,6 +925,47 @@ class CatalogConfigurationPayload(BaseModel):
     built_in_translation_key: str | None = None
     logical_operation_id: UUID | None = None
 
+class OrganizationUpdatePayload(BaseModel):
+    model_config = ConfigDict(extra="forbid", strict=True)
+    organization_id: UUID
+    name: str
+    description: str | None
+    default_currency: str
+
+    @field_validator("name")
+    @classmethod
+    def valid_name(cls, value: str) -> str:
+        normalized = unicodedata.normalize("NFC", value).strip()
+        if (
+            normalized != value
+            or not normalized
+            or len(normalized) > 200
+            or "\0" in value
+            or any(0xD800 <= ord(ch) <= 0xDFFF for ch in value)
+        ):
+            raise ValueError("invalid organization name")
+        return value
+
+    @field_validator("description")
+    @classmethod
+    def valid_description(cls, value: str | None) -> str | None:
+        if value is not None and (
+            "\0" in value
+            or "\r" in value
+            or len(value) > 10000
+            or any(0xD800 <= ord(ch) <= 0xDFFF for ch in value)
+            or unicodedata.normalize("NFC", value) != value
+        ):
+            raise ValueError("invalid organization description")
+        return value.replace("\r\n", "\n").replace("\r", "\n") if value is not None else None
+
+    @field_validator("default_currency")
+    @classmethod
+    def valid_currency(cls, value: str) -> str:
+        if not value.isascii() or len(value) != 3 or not value.isupper() or not value.isalpha():
+            raise ValueError("invalid currency")
+        return value
+
 
 class PushCommandErrorResponse(BaseModel):
     code: str
@@ -1674,6 +1717,24 @@ def _push_command(command: PushCommandRequest, organization_id: UUID) -> SyncCom
                 allows_recipe_scaling=catalog_payload.allows_recipe_scaling,
                 built_in_translation_key=catalog_payload.built_in_translation_key,
                 logical_operation_id=catalog_payload.logical_operation_id,
+            )
+        if command.command_kind == "organization.update":
+            payload = OrganizationUpdatePayload.model_validate(command.payload)
+            if payload.organization_id != organization_id:
+                return UnsupportedSyncCommand(
+                    mutation_id=command.mutation_id,
+                    command_kind=command.command_kind,
+                    request_hash=_push_command_hash(command),
+                    client_wall_time=command.client_wall_time,
+                    rejection_code="validation_failed",
+                )
+            return OrganizationUpdateCommand(
+                mutation_id=command.mutation_id,
+                organization_id=payload.organization_id,
+                name=payload.name,
+                description=payload.description,
+                default_currency=payload.default_currency,
+                client_wall_time=command.client_wall_time,
             )
     except ValidationError:
         return UnsupportedSyncCommand(
