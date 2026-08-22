@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it } from "vitest";
+import { liveQuery } from "dexie";
 
 import {
   queueReceiptCreate,
@@ -132,6 +133,17 @@ describe("offline receipt metadata", () => {
       "receipt.lifecycle",
       "receipt.lifecycle",
     ]);
+  });
+
+  it("notifies a live receipt projection after an optimistic create", async () => {
+    await addEvent();
+    let subscription: { unsubscribe: () => void } | undefined;
+    const observed = new Promise<void>((resolve) => {
+      subscription = liveQuery(() => readEventReceipts(userId, organizationId, eventId)).subscribe({ next: (items) => { if (items.length === 1) resolve(); } });
+    });
+    await queueReceiptCreate(userId, organizationId, eventId, input);
+    await observed;
+    subscription?.unsubscribe();
   });
 
   it("does not leave a spoofed event or receipt update in the outbox", async () => {

@@ -158,7 +158,13 @@ test("opens the cached planner and schedules a recipe offline", async ({
       name: "Aktualizace odhadů čeká na synchronizaci",
     }),
   ).toBeDisabled();
+  if (await page.getByRole("button", { name: "Přidat do plánu" }).count() === 0)
+    await page.getByRole("button", { name: "Otevřít katalog receptů" }).click();
   await page.getByRole("button", { name: "Přidat do plánu" }).click();
+  await expect(page.getByText("Recept je uložen místně a bude synchronizován.")).toBeVisible();
+  if (await page.getByRole("dialog").count()) {
+    await page.getByRole("button", { name: "Zavřít katalog receptů" }).click();
+  }
   const scheduled = page.getByRole("listitem").filter({ hasText: "Chili · Strávníci: 12" });
   await expect(scheduled).toBeVisible();
   await scheduled.getByText("Upravit škálování", { exact: true }).click();
@@ -168,12 +174,10 @@ test("opens the cached planner and schedules a recipe offline", async ({
   await expect(scheduled.getByLabel("Měřítko")).toHaveValue("1");
   await scheduled.getByText("Podrobnosti receptu", { exact: true }).click();
   await expect(page.getByText("Paprika: 1 ks")).toBeVisible();
-  await expect(
-    page.getByText("Recept je uložen místně a bude synchronizován."),
-  ).toBeVisible();
-  await page.getByText("Přesunout", { exact: true }).click();
-  await page.getByLabel("Pořadí", { exact: true }).fill("z9");
-  await page.getByRole("button", { name: "Přesunout sem" }).click();
+  const moveDetails = page.locator("details").filter({ hasText: "Přesunout" });
+  await moveDetails.locator("summary").click();
+  await moveDetails.locator("select").nth(2).selectOption("end");
+  await moveDetails.getByRole("button", { name: "Přesunout sem" }).click();
   await page.getByText("Změnit množství suroviny", { exact: true }).click();
   await page.getByLabel("Množství").fill("2");
   await page.getByRole("button", { name: "Uložit změnu" }).click();
