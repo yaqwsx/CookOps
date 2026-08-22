@@ -1,5 +1,5 @@
 import { liveQuery } from "dexie";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { defaultValueCtx, Editor, rootCtx } from "@milkdown/kit/core";
 import { editorViewCtx, parserCtx, serializerCtx } from "@milkdown/kit/core";
@@ -354,9 +354,10 @@ function IngredientCombobox({
   );
 }
 
-function MarkdownVisualEditor({ value, onChange, onUnsupported, onSupported }: { value: string; onChange: (value: string) => void; onUnsupported: () => void; onSupported: () => void }) {
+function MarkdownVisualEditor({ value, onChange, onUnsupported, onSupported, flushRef }: { value: string; onChange: (value: string) => void; onUnsupported: () => void; onSupported: () => void; flushRef?: { current: (() => void) | null } }) {
   const onChangeRef = useRef(onChange);
   const lastMarkdownRef = useRef(value);
+  const ownFlushRef = useRef<(() => void) | null>(null);
   onChangeRef.current = onChange;
   const [loading, getEditor] = useInstance();
   useEditor((root) =>
@@ -367,8 +368,24 @@ function MarkdownVisualEditor({ value, onChange, onUnsupported, onSupported }: {
         const source = value;
         ctx.get(listenerCtx).mounted((mountedCtx) => {
           const serialized = mountedCtx.get(serializerCtx)(mountedCtx.get(parserCtx)(source));
-          if (serialized.trimEnd() !== source.trimEnd() || /<[^>]+>|^\s*\|.*\|/m.test(source)) onUnsupported();
-          else onSupported();
+          const unsupported = serialized.trimEnd() !== source.trimEnd() || /<[^>]+>|^\s*\|.*\|/m.test(source);
+          if (unsupported) {
+            if (flushRef) flushRef.current = null;
+            onUnsupported();
+          }
+          else {
+            onSupported();
+            if (flushRef) {
+              const flush = () => {
+                const markdown = mountedCtx.get(serializerCtx)(mountedCtx.get(editorViewCtx).state.doc);
+              if (markdown === lastMarkdownRef.current) return;
+              lastMarkdownRef.current = markdown;
+              onChangeRef.current(markdown);
+            };
+            ownFlushRef.current = flush;
+            flushRef.current = flush;
+            }
+          }
         });
         ctx.get(listenerCtx).markdownUpdated((_, markdown) => {
           lastMarkdownRef.current = markdown;
@@ -379,6 +396,9 @@ function MarkdownVisualEditor({ value, onChange, onUnsupported, onSupported }: {
       .use(commonmark)
       .use(listener),
   []);
+  useLayoutEffect(() => {
+    if (flushRef && value !== lastMarkdownRef.current) flushRef.current = null;
+  }, [flushRef, value]);
   useEffect(() => {
     if (loading || value === lastMarkdownRef.current) return;
     getEditor()?.action((ctx) => {
@@ -388,6 +408,12 @@ function MarkdownVisualEditor({ value, onChange, onUnsupported, onSupported }: {
     });
     lastMarkdownRef.current = value;
   }, [getEditor, loading, value]);
+  useEffect(() => () => {
+    const flush = ownFlushRef.current;
+    if (flushRef && flushRef.current === flush) {
+      flushRef.current = null;
+    }
+  }, [flushRef]);
   return <Milkdown />;
 }
 
@@ -431,6 +457,8 @@ function RecipeEditor({
   const [error, setError] = useState<string>();
   const [saved, setSaved] = useState(false);
   const [descriptionMode, setDescriptionMode] = useState<"visual" | "markdown">("visual");
+  const descriptionModeRef = useRef(descriptionMode);
+  const flushDescriptionRef = useRef<(() => void) | null>(null);
   const [unsupportedDescription, setUnsupportedDescription] = useState(false);
   const dialogRef = useRef<HTMLDialogElement>(null);
   const openerRef = useRef<HTMLButtonElement>(null);
@@ -520,7 +548,15 @@ function RecipeEditor({
     if (next < 0) return;
     event.preventDefault();
     tabs[next]?.focus();
-    setDescriptionMode(next === 0 ? "visual" : "markdown");
+    transitionDescriptionMode(next === 0 ? "visual" : "markdown");
+  }
+  function transitionDescriptionMode(next: "visual" | "markdown") {
+    const current = descriptionModeRef.current;
+    if (next === current) return;
+    if (current === "visual") flushDescriptionRef.current?.();
+    else flushDescriptionRef.current = null;
+    descriptionModeRef.current = next;
+    setDescriptionMode(next);
   }
   const compatibleUnits = (ingredientVersionId: string) => {
     const dimension = catalog.ingredients.find((item) => item.versionId === ingredientVersionId)?.canonicalUnitId;
@@ -573,10 +609,10 @@ function RecipeEditor({
       <label className="recipe-create__description">
         {t("recipesCatalog.description")}
         <div aria-label={t("recipesCatalog.descriptionMode")} className="recipe-description-mode" role="tablist">
-          <button aria-controls={`${descriptionId}-visual`} aria-selected={descriptionMode === "visual"} id={`${descriptionId}-visual-tab`} onClick={() => setDescriptionMode("visual")} onKeyDown={changeDescriptionMode} role="tab" tabIndex={descriptionMode === "visual" ? 0 : -1} type="button">
+          <button aria-controls={`${descriptionId}-visual`} aria-selected={descriptionMode === "visual"} id={`${descriptionId}-visual-tab`} onClick={() => transitionDescriptionMode("visual")} onKeyDown={changeDescriptionMode} role="tab" tabIndex={descriptionMode === "visual" ? 0 : -1} type="button">
             {t("recipesCatalog.descriptionVisual")}
           </button>
-          <button aria-controls={`${descriptionId}-markdown`} aria-selected={descriptionMode === "markdown"} id={`${descriptionId}-markdown-tab`} onClick={() => setDescriptionMode("markdown")} onKeyDown={changeDescriptionMode} role="tab" tabIndex={descriptionMode === "markdown" ? 0 : -1} type="button">
+          <button aria-controls={`${descriptionId}-markdown`} aria-selected={descriptionMode === "markdown"} id={`${descriptionId}-markdown-tab`} onClick={() => transitionDescriptionMode("markdown")} onKeyDown={changeDescriptionMode} role="tab" tabIndex={descriptionMode === "markdown" ? 0 : -1} type="button">
             {t("recipesCatalog.descriptionMarkdown")}
           </button>
         </div>
@@ -593,6 +629,7 @@ function RecipeEditor({
           <div aria-labelledby={`${descriptionId}-visual-tab`} className="recipe-description-preview" id={`${descriptionId}-visual`} role="tabpanel">
             <MilkdownProvider key={recipe.versionId}>
               <MarkdownVisualEditor
+                flushRef={flushDescriptionRef}
                 onChange={(description) => change("description", description)}
                 onUnsupported={() => {
                   setUnsupportedDescription(true);
