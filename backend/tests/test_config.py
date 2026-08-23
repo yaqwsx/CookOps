@@ -112,7 +112,7 @@ def production_settings(**overrides: str | None) -> Settings:
         "oauth_grants_api_credential_base64url": ("MDEyMzQ1Njc4OWFiY2RlZjAxMjM0NTY3ODlhYmNkZWc"),
     }
     values.update(overrides)
-    return Settings(**values)
+    return Settings.model_validate(values)
 
 
 def test_production_requires_browser_origin() -> None:
