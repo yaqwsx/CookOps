@@ -1,7 +1,6 @@
 # Disposable backend MCP interoperability evidence
 
-This phase-1 harness does not mount `/mcp` in production Apache or change the
-production application route table. It reuses the existing OAuth fixture and
+This disposable harness reuses the existing OAuth fixture and
 HTTPS path-preserving proxy, while replacing only the in-process spike resource
 with a separately started FastAPI process importing
 `cookops.mcp_resource.create_mcp_protected_resource`.
@@ -41,8 +40,9 @@ The command is intentionally not run with invented IDs or a shared database.
 The successful local run used `mcp==1.29.0`, a five-second disposable access
 token TTL, and ended with `live HTTPS proxy smoke: PASS`; Docker reported no
 remaining `cookops-mcp-postgres-*` container. `@modelcontextprotocol/conformance`
-was not substituted for this real MCP-client smoke. The official conformance
-wrapper remains a separate follow-up once this live URL is running:
+was not substituted for this real MCP-client smoke. The official wrapper
+remains a separate follow-up because its server CLI does not perform the OAuth
+PKCE/browser authorization needed by this protected endpoint:
 
 ```sh
 ./spikes/mcp-oauth/run-conformance.sh https://mcp.localtest.me:<port>/mcp
