@@ -55,10 +55,6 @@ from cookops.application.scheduled_recipe_context import (
     SetScheduledRecipeContextCommand,
     set_scheduled_recipe_context,
 )
-from cookops.application.scheduled_recipe_note import (
-    SetScheduledRecipeNoteCommand,
-    set_scheduled_recipe_note,
-)
 from cookops.application.scheduled_recipe_lifecycle import (
     SetScheduledRecipeLifecycleCommand,
     set_scheduled_recipe_lifecycle,
@@ -69,6 +65,10 @@ from cookops.application.scheduled_recipe_moves import (
     _between,
     _prepare,
     move_scheduled_recipe,
+)
+from cookops.application.scheduled_recipe_note import (
+    SetScheduledRecipeNoteCommand,
+    set_scheduled_recipe_note,
 )
 from cookops.application.scheduled_recipe_overrides import (
     SetScheduledIngredientOverrideCommand,
