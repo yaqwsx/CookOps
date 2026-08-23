@@ -21,7 +21,6 @@ export COOKOPS_BACKUP_ARCHIVE=cookops-roundtrip.zip
 export COOKOPS_RESTORE_MEDIA_SUBDIR=restored-media
 # Use syntactically valid disposable credentials; no service is exposed publicly by this test.
 export COOKOPS_GOOGLE_CLIENT_ID=backup-restore-test-client
-export COOKOPS_BROWSER_SESSION_HMAC_KEY=BwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwc
 export OAUTH_COOKIE_KEYS=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa,bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
 export OAUTH_RESOURCE_SERVER_SECRET=backup-restore-resource-secret-32-characters
 export OAUTH_JWKS='{"keys":[{}]}'
