@@ -21,6 +21,9 @@
     # API routes must precede the single-page application catch-all route.
     ProxyPass        /health/ http://127.0.0.1:8000/health/
     ProxyPassReverse /health/ http://127.0.0.1:8000/health/
+    # Streamable HTTP MCP is authenticated by FastAPI; preserve public Host/proto headers above.
+    ProxyPass        /mcp http://127.0.0.1:8000/mcp
+    ProxyPassReverse /mcp http://127.0.0.1:8000/mcp
     # Only the browser consent UI is public; grant management stays private.
     ProxyPass        /auth/mcp-interactions/ http://127.0.0.1:8000/auth/mcp-interactions/
     ProxyPassReverse /auth/mcp-interactions/ http://127.0.0.1:8000/auth/mcp-interactions/

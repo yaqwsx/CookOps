@@ -71,7 +71,7 @@ until curl --insecure --fail --silent --show-error "$origin/auth/dummy/identitie
     test "$attempt" -lt 20 || exit 1
     sleep 1
 done
-test "$(curl --insecure --silent --output /dev/null --write-out '%{http_code}' "$origin/mcp")" = 404
+test "$(curl --insecure --silent --output /dev/null --write-out '%{http_code}' "$origin/mcp")" = 401
 test "$(curl --insecure --silent --output /dev/null --write-out '%{http_code}' "$origin/mcp/probe")" = 404
 test "$(curl --insecure --silent --output /dev/null --write-out '%{http_code}' "$origin/auth/mcp-interactions/AAAAAAAAAAAAAAAA")" = 401
 test "$(curl --insecure --silent --output /dev/null --write-out '%{http_code}' "$origin/auth/mcp-grants/probe")" = 404

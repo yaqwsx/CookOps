@@ -46,8 +46,8 @@ if printf '%s\n' 'ProxyPass /api/ http://oauth-server:3000/health/' | prohibited
     echo 'OAuth/MCP proxy guard incorrectly inspected an upstream target' >&2
     exit 1
 fi
-if prohibited_proxy_route "$root/deploy/apache/cookops.conf.example"; then
-    echo 'MCP routes must stay unmounted until the resource verifier exists' >&2
+if ! awk '$1 == "ProxyPass" && $2 == "/mcp" && $3 == "http://127.0.0.1:8000/mcp" { found = 1 } END { exit found ? 0 : 1 }' "$root/deploy/apache/cookops.conf.example"; then
+    echo 'MCP must proxy exactly to the authenticated API resource' >&2
     exit 1
 fi
 if ! awk '$1 == "ProxyPass" && $2 == "/oauth/" && $3 == "http://127.0.0.1:3000/oauth/" { found = 1 } END { exit found ? 0 : 1 }' "$root/deploy/apache/cookops.conf.example"; then
@@ -59,6 +59,10 @@ if ! awk '$1 == "ProxyPass" && $2 == "/oauth/private" && $3 == "!" { found = 1 }
     exit 1
 fi
 for apache_config in cookops.conf.example oauth-consent-smoke.conf; do
+    if ! awk '$1 == "ProxyPass" && $2 == "/mcp" && $3 ~ /\/mcp$/ { found = 1 } END { exit found ? 0 : 1 }' "$root/deploy/apache/$apache_config"; then
+        echo "MCP resource proxy is missing: $apache_config" >&2
+        exit 1
+    fi
     if ! awk '$1 == "ProxyPass" && $2 == "/auth/mcp-interactions/" && $3 ~ /\/auth\/mcp-interactions\/$/ { found = NR } $1 == "ProxyPass" && $2 == "/auth/" { ordinary = NR } END { exit found && ordinary && found < ordinary ? 0 : 1 }' "$root/deploy/apache/$apache_config"; then
         echo "MCP consent UI must proxy to the API before ordinary auth proxy: $apache_config" >&2
         exit 1
