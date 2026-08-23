@@ -72,7 +72,7 @@ services:
       - /bin/sh
       - -c
       - >-
-        exec python /operator-scripts/backup_archive.py
+        check_status=0; /usr/local/bin/cookops-check-disk-space || check_status=$$?; [ "$$check_status" -lt 2 ] || exit "$$check_status"; exec python /operator-scripts/backup_archive.py
         --database-name "$${PGDATABASE}"
         --media-root /var/lib/cookops/receipts
         --output "/var/lib/cookops/backups/$${COOKOPS_BACKUP_ARCHIVE}"
@@ -80,6 +80,8 @@ services:
         --schema-version "$${COOKOPS_SCHEMA_VERSION}"
     volumes:
       - ../scripts:/operator-scripts:ro
+      - ./check-disk-space.sh:/usr/local/bin/cookops-check-disk-space:ro
+      - postgres-data:/var/lib/postgresql:ro
       - receipt-media:/var/lib/cookops/receipts:ro
       - ${COOKOPS_BACKUP_DIR:?set COOKOPS_BACKUP_DIR}:/var/lib/cookops/backups
     environment:
@@ -91,6 +93,9 @@ services:
       COOKOPS_BACKUP_ARCHIVE: ${COOKOPS_BACKUP_ARCHIVE:?set COOKOPS_BACKUP_ARCHIVE}
       COOKOPS_APPLICATION_REVISION: ${COOKOPS_APPLICATION_REVISION:?set COOKOPS_APPLICATION_REVISION}
       COOKOPS_SCHEMA_VERSION: ${COOKOPS_SCHEMA_VERSION:?set COOKOPS_SCHEMA_VERSION}
+      COOKOPS_POSTGRES_DATA_TARGET: /var/lib/postgresql
+      COOKOPS_RECEIPT_MEDIA_TARGET: /var/lib/cookops/receipts
+      COOKOPS_BACKUP_DIR_TARGET: /var/lib/cookops/backups
     logging: *logging
 
   restore:

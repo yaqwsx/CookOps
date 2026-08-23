@@ -69,6 +69,27 @@ docker compose --profile operations --env-file deploy/.env -f deploy/compose.yam
   run --rm backup
 ```
 
+The backup service performs a read-only disk and inode check for the PostgreSQL,
+receipt-media, and backup mounts immediately before creating the archive. It
+continues on a warning and stops on a critical or missing target. Configure
+`COOKOPS_DISK_WARNING_PERCENT` (default `80`) and
+`COOKOPS_DISK_CRITICAL_PERCENT` (default `90`) in `deploy/.env`.
+
+For host monitoring, run the same check with explicit host paths (for example
+from cron or a systemd timer):
+
+```sh
+COOKOPS_POSTGRES_DATA_TARGET=/var/lib/docker/volumes/cookops_postgres-data/_data \
+COOKOPS_RECEIPT_MEDIA_TARGET=/var/lib/docker/volumes/cookops_receipt-media/_data \
+COOKOPS_BACKUP_DIR_TARGET=/srv/cookops-backups \
+deploy/check-disk-space.sh
+```
+
+The command is read-only and returns `0` when healthy, `1` on warning, and `2`
+for critical or missing/unreadable targets. A cron entry can run it hourly;
+the same command is suitable as `ExecStart=` in a systemd service triggered by
+a timer. Keep the output in the operator log and alert on exit code `2`.
+
 Restore into the new subdirectory named by `COOKOPS_RESTORE_MEDIA_SUBDIR`:
 
 ```sh
