@@ -379,14 +379,15 @@ async def scenario(database_url: str) -> None:
                         json={},
                     )
                     assert wrong_host.status_code in (400, 421)
-                    wrong_origin = await client.post(
-                        resource,
-                        headers={
-                            "authorization": f"Bearer {access_token}",
-                            "origin": "https://evil.example",
-                        },
-                        json={},
-                    )
+                    async with httpx.AsyncClient() as wrong_origin_client:
+                        wrong_origin = await wrong_origin_client.post(
+                            resource,
+                            headers={
+                                "authorization": f"Bearer {access_token}",
+                                "origin": "https://evil.example",
+                            },
+                            json={},
+                        )
                     assert wrong_origin.status_code == 403
 
                 async with (
@@ -466,11 +467,12 @@ async def scenario(database_url: str) -> None:
                     assert fresh_token_response.status_code == 200
                     fresh_access_token = fresh_token_response.json()["access_token"]
                     assert fresh_access_token and "." not in fresh_access_token
-                    fresh_valid = await refresh_client.post(
-                        resource,
-                        headers={"authorization": f"Bearer {fresh_access_token}"},
-                        json={},
-                    )
+                    async with httpx.AsyncClient() as fresh_resource_client:
+                        fresh_valid = await fresh_resource_client.post(
+                            resource,
+                            headers={"authorization": f"Bearer {fresh_access_token}"},
+                            json={},
+                        )
                     assert fresh_valid.status_code == 200
                     mixed_up = await refresh_client.post(
                         f"{public_origin}/other-mcp",
