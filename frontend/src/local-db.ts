@@ -74,6 +74,16 @@ export interface PendingUpload {
   failureReason?: string;
 }
 
+export interface ReceiptImageCacheEntry {
+  userId: string;
+  organizationId: string;
+  attachmentId: string;
+  contentHash: string;
+  mediaType: "image/jpeg" | "image/webp";
+  blob: Blob;
+  updatedAt: string;
+}
+
 export interface OrganizationSyncMetadata {
   userId: string;
   organizationId: string;
@@ -109,6 +119,7 @@ export class CookOpsDatabase extends Dexie {
   >;
   readonly outbox!: EntityTable<OutboxCommand, "id">;
   readonly pendingUploads!: EntityTable<PendingUpload, "id">;
+  readonly receiptImageCache!: Table<ReceiptImageCacheEntry, [string, string, string, string]>;
   readonly bootstrapStaging!: Table<
     BootstrapStagingRecord,
     [string, string, string, string, string]
@@ -196,6 +207,9 @@ export class CookOpsDatabase extends Dexie {
     this.version(9).stores({
       archivedEventSummaries:
         "[userId+organizationId+id], [userId+organizationId]",
+    });
+    this.version(10).stores({
+      receiptImageCache: "[userId+organizationId+attachmentId+contentHash], [userId+organizationId]",
     });
   }
 }

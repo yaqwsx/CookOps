@@ -17,6 +17,7 @@ import {
   retryReceiptUpload,
   setReceiptAttachmentLifecycle,
 } from "./receipt-media";
+import { loadReceiptImage } from "./receipt-image-cache";
 import { localDb, type PendingUpload } from "./local-db";
 import {
   readEventReceipts,
@@ -142,6 +143,7 @@ function ReceiptItem({
   receipt,
   userId,
   readOnly,
+  offline,
 }: {
   eventId: string;
   organizationId: string;
@@ -150,12 +152,14 @@ function ReceiptItem({
   receipt: ReceiptProjection;
   userId: string;
   readOnly: boolean;
+  offline: boolean;
 }) {
   const { t } = useTranslation();
   const [editing, setEditing] = useState(false);
   const [error, setError] = useState<"unavailable" | "retakePhoto">();
   const [attaching, setAttaching] = useState(false);
   const [previewUrls, setPreviewUrls] = useState<Record<string, string>>({});
+  const [cachedImageUrls, setCachedImageUrls] = useState<Record<string, string>>({});
   const previewUrlEntries = useRef(
     new Map<string, { signature: string; url: string }>(),
   );
@@ -201,6 +205,18 @@ function ReceiptItem({
     },
     [],
   );
+  useEffect(() => {
+    let active = true;
+    const entries = receipt.attachments ?? [];
+    void Promise.all(entries.filter((attachment) => !attachment.retired).map(async (attachment) => [attachment.id, await loadReceiptImage(userId, organizationId, attachment)] as const)).then((loaded) => {
+      if (!active) return;
+      const urls: Record<string, string> = {};
+      for (const [id, blob] of loaded) if (blob && typeof URL.createObjectURL === "function") urls[id] = URL.createObjectURL(blob);
+      setCachedImageUrls(urls);
+    });
+    return () => { active = false; };
+  }, [organizationId, receipt.attachments, userId]);
+  useEffect(() => () => { Object.values(cachedImageUrls).forEach((url) => { URL.revokeObjectURL(url); }); }, [cachedImageUrls]);
   async function lifecycle() {
     if (busy.current) return;
     busy.current = true;
@@ -292,9 +308,10 @@ function ReceiptItem({
               <img
                 alt={t("receipts.photo")}
                 loading="lazy"
-                src={`/media/receipt-attachments/${attachment.id}?organization_id=${organizationId}`}
+                src={cachedImageUrls[attachment.id] ?? `/media/receipt-attachments/${attachment.id}?organization_id=${organizationId}`}
               />
             ) : null}
+            {offline && !cachedImageUrls[attachment.id] ? <p role="status">{t("receipts.photoUnavailableOffline")}</p> : null}
             {!readOnly ? (
               <button
                 onClick={() =>
@@ -588,6 +605,7 @@ export function EventReceipts({
                 );
               }}
               receipt={receipt}
+              offline={offline}
               userId={userId}
               readOnly={readOnly}
               uploads={uploadsByReceipt.get(receipt.id) ?? emptyUploads}
