@@ -50,6 +50,10 @@ if ! awk '$1 == "ProxyPass" && $2 == "/mcp" && $3 == "http://127.0.0.1:8000/mcp"
     echo 'MCP must proxy exactly to the authenticated API resource' >&2
     exit 1
 fi
+if ! awk '$1 == "ProxyPass" && $2 == "/.well-known/oauth-protected-resource/mcp" && $3 == "http://127.0.0.1:8000/.well-known/oauth-protected-resource/mcp" { found = 1 } END { exit found ? 0 : 1 }' "$root/deploy/apache/cookops.conf.example"; then
+    echo 'MCP protected-resource metadata must proxy to the API' >&2
+    exit 1
+fi
 if ! awk '$1 == "ProxyPass" && $2 == "/oauth/" && $3 == "http://127.0.0.1:3000/oauth/" { found = 1 } END { exit found ? 0 : 1 }' "$root/deploy/apache/cookops.conf.example"; then
     echo 'OAuth must proxy only its public source path to loopback oauth-server' >&2
     exit 1
@@ -61,6 +65,10 @@ fi
 for apache_config in cookops.conf.example oauth-consent-smoke.conf; do
     if ! awk '$1 == "ProxyPass" && $2 == "/mcp" && $3 ~ /\/mcp$/ { found = 1 } END { exit found ? 0 : 1 }' "$root/deploy/apache/$apache_config"; then
         echo "MCP resource proxy is missing: $apache_config" >&2
+        exit 1
+    fi
+    if ! awk '$1 == "ProxyPass" && $2 == "/.well-known/oauth-protected-resource/mcp" && $3 ~ /oauth-protected-resource\/mcp$/ { found = 1 } END { exit found ? 0 : 1 }' "$root/deploy/apache/$apache_config"; then
+        echo "MCP protected-resource metadata proxy is missing: $apache_config" >&2
         exit 1
     fi
     if ! awk '$1 == "ProxyPass" && $2 == "/auth/mcp-interactions/" && $3 ~ /\/auth\/mcp-interactions\/$/ { found = NR } $1 == "ProxyPass" && $2 == "/auth/" { ordinary = NR } END { exit found && ordinary && found < ordinary ? 0 : 1 }' "$root/deploy/apache/$apache_config"; then

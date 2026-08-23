@@ -50,6 +50,7 @@ jwks=$(node -e 'const c=require("node:crypto"); const pair=c.generateKeyPairSync
 mkdir "$temporary/backups"
 
 openssl req -x509 -newkey rsa:2048 -nodes -days 1 -subj '/CN=127.0.0.1' \
+    -addext 'subjectAltName=IP:127.0.0.1' \
     -keyout "$temporary/key.pem" -out "$temporary/certificate.pem" >/dev/null 2>&1
 sh -c "$compose up --build --detach postgres api oauth-server edge"
 
@@ -77,6 +78,9 @@ test "$(curl --insecure --silent --output /dev/null --write-out '%{http_code}' "
 test "$(curl --insecure --silent --output /dev/null --write-out '%{http_code}' "$origin/auth/mcp-grants/probe")" = 404
 test "$(curl --insecure --silent --output /dev/null --write-out '%{http_code}' "$origin/oauth/private/interactions/approval")" = 404
 test "$(curl --insecure --silent --output /dev/null --write-out '%{http_code}' "$origin/oauth/private/interactions/AAAAAAAAAAAAAAAA")" = 404
+COOKOPS_MCP_SMOKE_ORIGIN="$origin" \
+COOKOPS_MCP_SMOKE_CERT="$temporary/certificate.pem" \
+uv run --project "$root/backend" python "$root/deploy/production-mcp-smoke.py"
 for discovery_path in /.well-known/openid-configuration/oauth /.well-known/oauth-authorization-server/oauth; do
     metadata=$(curl --insecure --fail --silent --show-error "$origin$discovery_path")
     OAUTH_SMOKE_METADATA="$metadata" node -e 'process.exit(JSON.parse(process.env.OAUTH_SMOKE_METADATA).issuer === process.argv[1] ? 0 : 1)' "$origin/oauth"

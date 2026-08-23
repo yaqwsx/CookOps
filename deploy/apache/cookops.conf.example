@@ -24,6 +24,8 @@
     # Streamable HTTP MCP is authenticated by FastAPI; preserve public Host/proto headers above.
     ProxyPass        /mcp http://127.0.0.1:8000/mcp
     ProxyPassReverse /mcp http://127.0.0.1:8000/mcp
+    ProxyPass        /.well-known/oauth-protected-resource/mcp http://127.0.0.1:8000/.well-known/oauth-protected-resource/mcp
+    ProxyPassReverse /.well-known/oauth-protected-resource/mcp http://127.0.0.1:8000/.well-known/oauth-protected-resource/mcp
     # Only the browser consent UI is public; grant management stays private.
     ProxyPass        /auth/mcp-interactions/ http://127.0.0.1:8000/auth/mcp-interactions/
     ProxyPassReverse /auth/mcp-interactions/ http://127.0.0.1:8000/auth/mcp-interactions/
