@@ -43,6 +43,14 @@ function optionalPort(name: string, fallback: number): number {
   return value === undefined ? fallback : port(name);
 }
 
+function optionalSeconds(name: string, fallback: number): number {
+  const value = process.env[name];
+  if (value === undefined) return fallback;
+  const parsed = Number(value);
+  if (!Number.isInteger(parsed) || parsed < 1) throw new TypeError(`${name} must be positive`);
+  return parsed;
+}
+
 async function consentGrant(provider: Provider, interaction: Interaction) {
   const existing = interaction.grantId
     ? await provider.Grant.find(interaction.grantId)
@@ -209,7 +217,7 @@ async function main(): Promise<void> {
       redirectUri: `${publicOrigin}/callback`,
       cookieKeys: ["a".repeat(32), "b".repeat(32)],
       resourceServerSecret: RESOURCE_SERVER_SECRET,
-      accessTokenTtlSeconds: 1,
+      accessTokenTtlSeconds: optionalSeconds("COOKOPS_OAUTH_E2E_ACCESS_TOKEN_TTL_SECONDS", 1),
       jwks: {
         keys: [
           { ...privateJwk, alg: "RS256", kid: "authenticated-mcp", use: "sig" },

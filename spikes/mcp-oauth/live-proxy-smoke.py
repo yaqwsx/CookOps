@@ -10,7 +10,6 @@ import tempfile
 from pathlib import Path
 
 import httpx
-import httpx2
 from mcp.client.session import ClientSession
 from mcp.client.streamable_http import streamable_http_client
 
@@ -33,7 +32,7 @@ def free_port() -> int:
 
 def require_loopback_dns() -> None:
     addresses = {item[4][0] for item in socket.getaddrinfo(PUBLIC_HOST, None)}
-    if addresses != {"127.0.0.1"}:
+    if not addresses or not addresses <= {"127.0.0.1", "::1"}:
         raise RuntimeError(f"{PUBLIC_HOST} must resolve only to loopback; got {sorted(addresses)}")
 
 
@@ -166,28 +165,125 @@ async def main() -> None:
                     assert discovery.json()["issuer"] == issuer
                     assert (await client.post(resource, json={})).status_code == 401
                     code = await authorization_code(client, issuer, resource)
-                    token = (await client.post(f"{issuer}/token", data={
+                    token_response = await client.post(f"{issuer}/token", data={
                         "client_id": "cookops-spike-client", "code": code,
                         "code_verifier": CODE_VERIFIER,
                         "grant_type": "authorization_code",
                         "redirect_uri": f"{public_origin}/callback",
                         "resource": resource,
-                    })).json()["access_token"]
+                    })
+                    assert token_response.status_code == 200
+                    token = token_response.json()["access_token"]
+                async with httpx.AsyncClient(
+                    verify=str(cert), follow_redirects=False
+                ) as negative_client:
+                    assert (
+                        await negative_client.post(
+                            resource,
+                            headers={"authorization": "Bearer malformed"},
+                            json={},
+                        )
+                    ).status_code == 401
+                    wrong_audience = await negative_client.post(
+                        f"{public_origin}/other-mcp/mcp",
+                        headers={"authorization": f"Bearer {token}"},
+                        json={},
+                    )
+                    assert wrong_audience.status_code == 401
+                    wrong_host = await negative_client.post(
+                        resource,
+                        headers={
+                            "authorization": f"Bearer {token}",
+                            "host": "evil.example",
+                        },
+                        json={},
+                    )
+                    assert wrong_host.status_code == 421
+                    wrong_origin = await negative_client.post(
+                        resource,
+                        headers={
+                            "authorization": f"Bearer {token}",
+                            "origin": "https://evil.example",
+                        },
+                        json={},
+                    )
+                    assert wrong_origin.status_code == 403
                 async with (
-                    httpx2.AsyncClient(
+                    httpx.AsyncClient(
                         headers={"authorization": f"Bearer {token}"}, verify=str(cert)
                     ) as mcp_http,
-                    streamable_http_client(resource, http_client=mcp_http) as (read, write),
-                    ClientSession(read, write) as session,
+                    streamable_http_client(
+                        resource, http_client=mcp_http, terminate_on_close=False
+                    ) as streams,
+                    ClientSession(streams[0], streams[1]) as session,
                 ):
                     await session.initialize()
-                    result = await session.call_tool("authenticated_identity")
-                assert result.is_error is False
-                assert result.structured_content == {
-                    "client_id": "cookops-spike-client",
-                    "resource": resource,
-                    "subject": subject,
-                }
+                    if os.environ.get("COOKOPS_BACKEND_MCP") == "1":
+                        organization_id = os.environ["MCP_E2E_ORGANIZATION_ID"]
+                        event_id = os.environ["MCP_E2E_EVENT_ID"]
+                        result = await session.call_tool(
+                            "get_event_summary",
+                            {
+                                "organization_id": organization_id,
+                                "event_id": event_id,
+                            },
+                        )
+                        structured = getattr(result, "structuredContent", None)
+                        if structured is None:
+                            structured = result.structured_content
+                        assert structured["id"] == event_id
+                        assert structured["organization_id"] == organization_id
+                        denied = await session.call_tool(
+                            "get_event_summary",
+                            {
+                                "organization_id": os.environ[
+                                    "MCP_E2E_FOREIGN_ORGANIZATION_ID"
+                                ],
+                                "event_id": os.environ["MCP_E2E_FOREIGN_EVENT_ID"],
+                            },
+                        )
+                        denied_error = getattr(
+                            denied, "isError", getattr(denied, "is_error", None)
+                        )
+                        assert denied_error is True
+                    else:
+                        result = await session.call_tool("authenticated_identity")
+                is_error = getattr(result, "isError", getattr(result, "is_error", None))
+                assert is_error is False
+                if os.environ.get("COOKOPS_BACKEND_MCP") != "1":
+                    structured = getattr(result, "structuredContent", None)
+                    if structured is None:
+                        structured = result.structured_content
+                    assert structured == {
+                        "client_id": "cookops-spike-client",
+                        "resource": resource,
+                        "subject": subject,
+                    }
+                async with httpx.AsyncClient(
+                    verify=str(cert), follow_redirects=False
+                ) as post_client:
+                    await asyncio.sleep(6)
+                    expired = await post_client.post(
+                        resource,
+                        headers={"authorization": f"Bearer {token}"},
+                        json={},
+                    )
+                    assert expired.status_code == 401
+                    revoked = await post_client.post(
+                        f"{issuer}/revoke",
+                        data={
+                            "client_id": "cookops-spike-client",
+                            "token": token,
+                            "token_type_hint": "access_token",
+                        },
+                    )
+                    assert revoked.status_code == 200
+                    after_revoke = await post_client.post(
+                        resource,
+                        headers={"authorization": f"Bearer {token}"},
+                        json={},
+                    )
+                    assert after_revoke.status_code == 401
         print("live HTTPS proxy smoke: PASS")
     except BaseException:
         failed = True

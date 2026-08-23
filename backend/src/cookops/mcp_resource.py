@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from time import time
 from typing import Any, cast
+from urllib.parse import urlsplit
 from uuid import UUID
 
 import httpx
@@ -11,6 +12,7 @@ from mcp.server.auth.middleware.auth_context import get_access_token
 from mcp.server.auth.provider import AccessToken, TokenVerifier
 from mcp.server.auth.settings import AuthSettings
 from mcp.server.fastmcp import FastMCP
+from mcp.server.transport_security import TransportSecuritySettings
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from cookops.application.events import EventQueryDenied, EventSummary, get_event_summary
@@ -131,6 +133,7 @@ def create_mcp_protected_resource(
     session_factory: async_sessionmaker[AsyncSession],
 ) -> object:
     """Build, but do not mount, the Streamable HTTP ASGI protected resource."""
+    resource_url = urlsplit(resource)
     server = FastMCP(
         "CookOps",
         token_verifier=verifier,
@@ -141,6 +144,10 @@ def create_mcp_protected_resource(
         ),
         stateless_http=True,
         streamable_http_path="/mcp",
+        transport_security=TransportSecuritySettings(
+            allowed_hosts=[resource_url.netloc],
+            allowed_origins=[f"{resource_url.scheme}://{resource_url.netloc}"],
+        ),
     )
 
     @server.tool(
@@ -148,9 +155,7 @@ def create_mcp_protected_resource(
         description="Read one authorized event summary using explicit organization and event IDs.",
         structured_output=True,
     )
-    async def read_event_summary(
-        organization_id: str, event_id: str
-    ) -> dict[str, object]:
+    async def read_event_summary(organization_id: str, event_id: str) -> dict[str, object]:
         organization = _parse_uuid(organization_id)
         event = _parse_uuid(event_id)
         token = get_access_token()
