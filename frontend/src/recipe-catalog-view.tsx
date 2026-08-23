@@ -899,6 +899,7 @@ export function RecipeCatalog({
   onBackToCatalog,
   selectedRecipeId,
   editRecipeId,
+  pinnedVersionId,
   onDirtyChange,
   discardToken,
 }: {
@@ -908,6 +909,7 @@ export function RecipeCatalog({
   onBackToCatalog?: () => void;
   selectedRecipeId?: string;
   editRecipeId?: string;
+  pinnedVersionId?: string;
   onDirtyChange?: (dirty: boolean) => void;
   discardToken?: number;
 }) {
@@ -933,7 +935,7 @@ export function RecipeCatalog({
 
   useEffect(() => {
     const subscription = liveQuery(() =>
-      readRecipeCatalog(userId, organizationId, true),
+      readRecipeCatalog(userId, organizationId, true, true, editRecipeId, pinnedVersionId),
     ).subscribe({
       next: (catalog) =>
         setState((current) => ({
@@ -943,7 +945,7 @@ export function RecipeCatalog({
       error: () => setState({ status: "error" }),
     });
     return () => subscription.unsubscribe();
-  }, [organizationId, userId]);
+  }, [editRecipeId, organizationId, pinnedVersionId, userId]);
 
   const refresh = useCallback(async () => {
     try {

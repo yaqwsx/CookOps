@@ -67,7 +67,7 @@ beforeEach(async () => {
       entityId: versionId,
       recordSchemaVersion: 1,
       lifecycle: "active",
-      fields: { id: versionId, recipe_id: recipeId },
+      fields: { id: versionId, organization_id: organizationId, recipe_id: recipeId },
       fieldClocks: {},
       immutable: true,
       updatedAt: "2026-01-01T00:00:00Z",

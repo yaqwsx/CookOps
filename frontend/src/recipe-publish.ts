@@ -119,18 +119,18 @@ async function writeRecipePublication(
     "recipe",
     recipeId,
   );
-  if (
-    current?.lifecycle !== "active" ||
-    current.fields.current_version_id !== basedOn
-  )
+  if (current?.lifecycle !== "active" || current.fields.organization_id !== organizationId || current.fields.id !== recipeId)
     throw new Error("recipe");
+  const currentVersionId = current.fields.current_version_id;
+  const currentVersion = typeof currentVersionId === "string" ? await readVisibleCanonicalRecord(userId, organizationId, "recipe_version", currentVersionId) : undefined;
+  if (currentVersion?.immutable !== true || currentVersion.fields.organization_id !== organizationId || currentVersion.fields.recipe_id !== recipeId || currentVersion.fields.id !== currentVersionId) throw new Error("recipe");
   const version = await readVisibleCanonicalRecord(
     userId,
     organizationId,
     "recipe_version",
     basedOn,
   );
-  if (!version || version.fields.recipe_id !== recipeId)
+  if (version?.immutable !== true || version.fields.organization_id !== organizationId || version.fields.recipe_id !== recipeId || version.fields.id !== basedOn)
     throw new Error("recipe");
   const unit = await localDb.canonicalRecords.get([
     userId,

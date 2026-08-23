@@ -955,12 +955,14 @@ export function EventPlanner({
   userId,
   onUnauthenticated,
   onShoppingListCreated,
+  onOpenRecipe,
 }: {
   eventId: string;
   organizationId: string;
   userId: string;
   onUnauthenticated: () => void;
   onShoppingListCreated?: (shoppingListId: string) => void;
+  onOpenRecipe?: (recipeId: string, recipeVersionId: string) => void;
 }) {
   const { t, i18n } = useTranslation();
   const [state, setState] = useState<PlannerState>("loading");
@@ -1171,6 +1173,7 @@ export function EventPlanner({
                             </ul>
                           ) : null}
                           <CatalogUpdateChoice item={item} planner={planner} eventId={eventId} organizationId={organizationId} userId={userId} />
+                          {planner.lifecycle === "active" && !item.retired && onOpenRecipe && uuid.test(item.recipeId) && uuid.test(item.recipeVersionId) && item.recipeVersionName && planner.recipes.some((recipe) => recipe.id === item.recipeId) ? <button type="button" onClick={() => onOpenRecipe(item.recipeId, item.recipeVersionId)}>{t("planner.editCatalogRecipe")}</button> : null}
                           {planner.lifecycle === "active" ? <button onClick={() => void queueScheduledRecipeLifecycle(userId, organizationId, { scheduledRecipeId: item.id, eventId, operation: item.retired ? "restore" : "retire" })} type="button">{t(item.retired ? "planner.restoreRecipe" : "planner.retireRecipe")}</button> : null}
                           {!item.retired && <>
                           <MoveRecipe

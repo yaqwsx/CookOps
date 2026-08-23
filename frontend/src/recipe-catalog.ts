@@ -199,6 +199,8 @@ export async function readRecipeCatalog(
   organizationId: string,
   includeRetired = false,
   includeOptimisticOverlays = true,
+  pinnedRecipeId?: string,
+  pinnedVersionId?: string,
 ): Promise<RecipeCatalogProjection> {
   if (!uuid.test(userId) || !uuid.test(organizationId))
     return { recipes: [], scalingUnits: [], ingredients: [], units: [], storeSections: [], tags: [], costs: {} };
@@ -289,8 +291,8 @@ export async function readRecipeCatalog(
         text(record, "organization_id") === organizationId,
     )
     .map((record) => {
-      const versionId =
-        text(record, "current_version_id") ?? text(record, "recipe_version_id");
+      const pinned = record.entityId === pinnedRecipeId;
+      const versionId = pinned ? (pinnedVersionId && uuid.test(pinnedVersionId) ? pinnedVersionId : "") : text(record, "current_version_id") ?? text(record, "recipe_version_id");
       const candidateVersion = versionId ? versions.get(versionId) : undefined;
       const version =
         candidateVersion &&
