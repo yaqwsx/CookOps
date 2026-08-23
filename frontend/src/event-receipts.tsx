@@ -29,6 +29,7 @@ import { readEventCosts, type EventCostsProjection } from "./event-cost-projecti
 import { EventSummary, useEventPendingSync } from "./event-summary";
 import { EventSectionNavigation } from "./event-section-navigation";
 import { ensureArchivedEventCached } from "./archive-cache";
+import { formatReceiptAmount, formatReceiptDate, isReceiptDate } from "./receipt-display";
 
 const blank: ReceiptInput = {
   title: "",
@@ -154,7 +155,8 @@ function ReceiptItem({
   readOnly: boolean;
   offline: boolean;
 }) {
-  const { t } = useTranslation();
+  const { i18n, t } = useTranslation();
+  const locale = i18n.resolvedLanguage ?? "cs";
   const [editing, setEditing] = useState(false);
   const [error, setError] = useState<"unavailable" | "retakePhoto">();
   const [attaching, setAttaching] = useState(false);
@@ -295,12 +297,19 @@ function ReceiptItem({
       <div aria-disabled={receipt.retired}>
         <h3>{receipt.title}</h3>
         <p>
-          {t("receipts.amount", {
-            amount: receipt.totalAmount,
-            currency: receipt.currency,
-          })}
+          {formatReceiptAmount(receipt.totalAmount, receipt.currency, locale)}
         </p>
-        {receipt.receiptDate ? <p>{receipt.receiptDate}</p> : null}
+        {receipt.receiptDate ? (
+          <p>
+            {isReceiptDate(receipt.receiptDate) ? (
+              <time dateTime={receipt.receiptDate}>
+                {formatReceiptDate(receipt.receiptDate, locale)}
+              </time>
+            ) : (
+              receipt.receiptDate
+            )}
+          </p>
+        ) : null}
         {receipt.note ? <p>{receipt.note}</p> : null}
         {receipt.attachments?.map((attachment) => (
           <div key={attachment.id}>

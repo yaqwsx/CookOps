@@ -3,7 +3,7 @@ import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { EventReceipts } from "./event-receipts";
-import "./i18n";
+import i18n from "./i18n";
 import { localDb } from "./local-db";
 import * as plannerProjections from "./planner-projections";
 import * as costProjections from "./event-cost-projections";
@@ -172,6 +172,22 @@ describe("event receipt metadata screen", () => {
       planner.mockRestore();
       costs.mockRestore();
     }
+  });
+
+  it("formats receipt details when the application locale changes", async () => {
+    await localDb.canonicalRecords.bulkPut([
+      { userId, organizationId, entityType: "event", entityId: eventId, recordSchemaVersion: 1, lifecycle: "active", fields: { id: eventId, organization_id: organizationId, lifecycle: "active", current_archive_snapshot_id: null }, fieldClocks: {}, immutable: false, updatedAt: new Date().toISOString() },
+      { userId, organizationId, entityType: "receipt", entityId: "receipt-locale", recordSchemaVersion: 1, lifecycle: "active", fields: { id: "receipt-locale", organization_id: organizationId, event_id: eventId, title: "Bakery", total_amount: "12.50", currency: "CZK", receipt_date: "2026-08-07", note: null }, fieldClocks: {}, immutable: false, updatedAt: new Date().toISOString() },
+    ]);
+    await i18n.changeLanguage("cs");
+    const view = render(<EventReceipts eventId={eventId} onBack={vi.fn()} onUnauthenticated={vi.fn()} organizationId={organizationId} userId={userId} />);
+    expect(await screen.findByText((_, element) => element?.textContent === "12,50 Kč")).toBeInTheDocument();
+    expect(screen.getByText(/srpna/)).toBeInTheDocument();
+    await i18n.changeLanguage("en");
+    expect(await screen.findByText((_, element) => element?.textContent === "CZK 12.50")).toBeInTheDocument();
+    expect(screen.getByText(/August/)).toBeInTheDocument();
+    view.unmount();
+    await i18n.changeLanguage("cs");
   });
 
   it("does not render the previous summary while switching event identity", async () => {
