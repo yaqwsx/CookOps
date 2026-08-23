@@ -1,3 +1,4 @@
+import re
 from unittest.mock import AsyncMock
 
 from fastapi import FastAPI
@@ -59,6 +60,12 @@ def test_consent_page_displays_only_private_validated_details() -> None:
 
 def test_consent_post_requires_origin_session_and_records_decision() -> None:
     approvals = AsyncMock()
+    approvals.details.return_value = OAuthInteractionDetails(
+        interaction_uid=UID,
+        client_name="Trusted agent",
+        resource="https://cookops.example/mcp",
+        scopes=("cookops:mcp",),
+    )
     approvals.submit.return_value = True
     client = _client(approvals)
 
@@ -74,9 +81,20 @@ def test_consent_post_requires_origin_session_and_records_decision() -> None:
         ).status_code
         == 403
     )
+    page = client.get(f"/auth/mcp-interactions/{UID}")
+    csrf_token = re.search(r"csrfToken:'([0-9a-f]{64})'", page.text)
+    assert csrf_token is not None
+    assert (
+        client.post(
+            f"/auth/mcp-interactions/{UID}",
+            json={"decision": "approve", "csrfToken": "0" * 64},
+            headers={"origin": "https://testserver"},
+        ).status_code
+        == 403
+    )
     response = client.post(
         f"/auth/mcp-interactions/{UID}",
-        json={"decision": "deny"},
+        json={"decision": "deny", "csrfToken": csrf_token.group(1)},
         headers={"origin": "https://testserver"},
     )
 

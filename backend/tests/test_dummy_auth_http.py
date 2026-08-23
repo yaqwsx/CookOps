@@ -1,5 +1,6 @@
 import base64
 import os
+import re
 from collections.abc import Iterator
 from dataclasses import dataclass
 from datetime import UTC, datetime
@@ -437,11 +438,14 @@ def test_identity_http_sessions_reach_cookie_bound_interaction_bridge(
             )
         )
         uid = "N9E_oxk7dD9t7rR10dj-3"
-        assert client.get(f"/auth/mcp-interactions/{uid}").status_code == 200
+        consent_page = client.get(f"/auth/mcp-interactions/{uid}")
+        assert consent_page.status_code == 200
+        csrf_token = re.search(r"csrfToken:'([0-9a-f]{64})'", consent_page.text)
+        assert csrf_token is not None
         assert (
             client.post(
                 f"/auth/mcp-interactions/{uid}",
-                json={"decision": "approve"},
+                json={"decision": "approve", "csrfToken": csrf_token.group(1)},
                 headers={"origin": "https://testserver"},
             ).status_code
             == 204
