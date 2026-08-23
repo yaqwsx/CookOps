@@ -1,4 +1,4 @@
-"""Private RFC 7662 verification for the deliberately unmounted MCP resource."""
+"""Authenticated Streamable HTTP MCP resource and RFC 7662 verification."""
 
 from __future__ import annotations
 
@@ -14,6 +14,7 @@ from mcp.server.auth.settings import AuthSettings
 from mcp.server.fastmcp import FastMCP
 from mcp.server.transport_security import TransportSecuritySettings
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
+from starlette.types import ASGIApp
 
 from cookops.application.events import EventQueryDenied, EventSummary, get_event_summary
 from cookops.config import Settings
@@ -131,8 +132,8 @@ def create_mcp_protected_resource(
     issuer: str,
     resource: str,
     session_factory: async_sessionmaker[AsyncSession],
-) -> object:
-    """Build, but do not mount, the Streamable HTTP ASGI protected resource."""
+) -> ASGIApp:
+    """Build the Streamable HTTP ASGI protected resource."""
     resource_url = urlsplit(resource)
     server = FastMCP(
         "CookOps",
@@ -177,9 +178,10 @@ def create_mcp_protected_resource(
 
 
 def create_mcp_protected_resource_from_settings(
-    settings: Settings, session_factory: async_sessionmaker[AsyncSession]
-) -> object | None:
-    """Return no app only when MCP is entirely disabled; callers must mount deliberately."""
+    settings: Settings,
+    session_factory: async_sessionmaker[AsyncSession],
+) -> ASGIApp | None:
+    """Return no app only when MCP is entirely disabled; callers mount it explicitly."""
     values = (
         settings.oauth_issuer,
         settings.mcp_resource,

@@ -209,12 +209,12 @@ def test_mcp_client_lists_and_calls_event_summary_with_verified_subject(
             http = await stack.enter_async_context(
                 httpx.AsyncClient(
                     transport=transport,
-                    base_url="http://localhost:8000",
+                    base_url="https://cookops.example",
                     headers={"Authorization": "Bearer verified-token"},
                 )
             )
             streams = await stack.enter_async_context(
-                streamable_http_client("http://localhost:8000/mcp", http_client=http)
+                streamable_http_client("https://cookops.example/mcp", http_client=http)
             )
             client = await stack.enter_async_context(ClientSession(streams[0], streams[1]))
             await client.initialize()

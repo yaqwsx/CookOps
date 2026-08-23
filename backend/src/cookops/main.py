@@ -37,6 +37,7 @@ from cookops.http_oauth_interactions import (
 from cookops.http_recipe_copy import RecipeCopyHttpServices, create_recipe_copy_router
 from cookops.http_shopping import ShoppingHttpServices, create_shopping_router
 from cookops.http_sync import SynchronizationHttpServices, create_sync_router
+from cookops.mcp_resource import create_mcp_protected_resource_from_settings
 from cookops.media_storage import LocalReceiptMediaStorage
 from cookops.oauth_interaction_client import OAuthPrivateInteractionClient
 
@@ -157,6 +158,11 @@ def create_app(
         session_factory = cast(
             async_sessionmaker[AsyncSession], getattr(runtime, "session_factory", None)
         )
+        mcp_resource = create_mcp_protected_resource_from_settings(
+            app_settings, session_factory
+        )
+        if mcp_resource is not None:
+            application.mount("/", mcp_resource)
         application.state.browser_authentication = browser_authentication_factory(
             app_settings, session_factory
         )
@@ -221,7 +227,15 @@ def create_app(
         )
         application.state.readiness_probe = runtime.is_ready
         try:
-            yield
+            if mcp_resource is None:
+                yield
+            else:
+                mcp_router = getattr(mcp_resource, "router", None)
+                mcp_lifespan = getattr(mcp_router, "lifespan_context", None)
+                if not callable(mcp_lifespan):
+                    raise RuntimeError("MCP resource lifespan is unavailable")
+                async with mcp_lifespan(mcp_resource):
+                    yield
         finally:
             await runtime.close()
 

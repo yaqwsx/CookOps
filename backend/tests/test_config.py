@@ -109,6 +109,9 @@ def production_settings(**overrides: str | None) -> Settings:
         ),
         "oauth_interaction_origin": "https://cookops.example",
         "browser_origin": "https://cookops.example",
+        "oauth_grants_api_credential_base64url": (
+            "MDEyMzQ1Njc4OWFiY2RlZjAxMjM0NTY3ODlhYmNkZWc"
+        ),
     }
     values.update(overrides)
     return Settings(**values)
@@ -156,6 +159,38 @@ def test_matching_oauth_interaction_origin_succeeds() -> None:
     settings = production_settings()
 
     assert settings.oauth_interaction_origin == settings.browser_origin
+
+
+@pytest.mark.parametrize(
+    "mcp_resource",
+    [
+        "http://cookops.example/mcp",
+        "https://cookops.example/other",
+        "https://cookops.example/mcp/",
+        "https://user:pass@cookops.example/mcp",
+        "https://cookops.example/mcp?query=value",
+        "https://cookops.example/mcp#fragment",
+        "https://cookops.example:invalid/mcp",
+    ],
+)
+def test_mcp_resource_requires_canonical_public_https_url(mcp_resource: str) -> None:
+    with pytest.raises(ValidationError, match="MCP resource"):
+        production_settings(
+            mcp_resource=mcp_resource,
+            oauth_issuer="https://cookops.example/oauth",
+            oauth_introspection_url="http://oauth-server:3000/oauth/introspect",
+            oauth_resource_server_secret="secret",
+        )
+
+
+def test_mcp_resource_accepts_canonical_public_https_url() -> None:
+    settings = production_settings(
+        mcp_resource="https://cookops.example/mcp",
+        oauth_issuer="https://cookops.example/oauth",
+        oauth_introspection_url="http://oauth-server:3000/oauth/introspect",
+        oauth_resource_server_secret="secret",
+    )
+    assert settings.mcp_resource == "https://cookops.example/mcp"
 
 
 def test_development_has_a_deterministic_nonproduction_session_key() -> None:
