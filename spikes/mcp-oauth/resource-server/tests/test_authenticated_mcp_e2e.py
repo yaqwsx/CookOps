@@ -409,7 +409,7 @@ async def scenario(database_url: str) -> None:
                     "subject": subject,
                 }
 
-                await asyncio.sleep(1.2)
+                await asyncio.sleep(5.2)
                 async with httpx.AsyncClient() as expiry_client:
                     expired = await expiry_client.post(
                         resource,
