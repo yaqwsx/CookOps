@@ -206,8 +206,9 @@ def test_allowed_preview_is_scoped_and_does_not_mutate(copy_database):
     }
     with db.engine.connect() as connection:
         assert (
-                connection.execute(select(Ingredient.id).where(Ingredient.id == db.ingredient))
-            .scalar_one()
+            connection.execute(
+                select(Ingredient.id).where(Ingredient.id == db.ingredient)
+            ).scalar_one()
             == before
         )
         assert connection.execute(select(OrganizationChange)).first() is None
@@ -642,9 +643,10 @@ def test_authenticated_http_copy_route_and_replay(copy_database):
                 OrganizationChange.mutation_id == UUID(payload["mutation_id"])
             )
         ).all()
-        assert len(changes) == first_body["last_change_sequence"] - first_body[
-            "first_change_sequence"
-        ] + 1
+        assert (
+            len(changes)
+            == first_body["last_change_sequence"] - first_body["first_change_sequence"] + 1
+        )
 
 
 def test_http_copy_requires_session_and_exact_origin_without_mutation(copy_database):
@@ -653,18 +655,14 @@ def test_http_copy_requires_session_and_exact_origin_without_mutation(copy_datab
     app = _copy_http_app(db)
     route = f"/api/v1/organizations/{db.destination}/ingredient-copy"
     with TestClient(app) as client:
-        missing_session = client.post(
-            route, json=payload, headers={"origin": "https://testserver"}
-        )
+        missing_session = client.post(route, json=payload, headers={"origin": "https://testserver"})
         wrong_origin = client.post(
             route,
             json=payload,
             cookies={"cookops_session": "session"},
             headers={"origin": "https://attacker.example"},
         )
-        absent_origin = client.post(
-            route, json=payload, cookies={"cookops_session": "session"}
-        )
+        absent_origin = client.post(route, json=payload, cookies={"cookops_session": "session"})
     assert missing_session.status_code == 401
     assert wrong_origin.status_code == absent_origin.status_code == 403
     assert wrong_origin.json() == absent_origin.json() == {"detail": {"code": "forbidden"}}
@@ -961,17 +959,20 @@ def test_copy_multiversion_graph_has_only_destination_references(copy_database):
             .scalars()
             .all()
         )
-        copied_tag_rows = connection.execute(
-            select(DietaryTag.organization_id).where(DietaryTag.id.in_(copied_tags))
-        ).scalars().all()
+        copied_tag_rows = (
+            connection.execute(
+                select(DietaryTag.organization_id).where(DietaryTag.id.in_(copied_tags))
+            )
+            .scalars()
+            .all()
+        )
         assert set(copied_tag_rows) == {db.destination}
         copied_tag_id = copied_tags[0]
         assert copied_tag_id != setup.destination_tag
         assert (
             connection.execute(
                 select(DietaryTag.organization_id).where(DietaryTag.id == copied_tag_id)
-            )
-            .scalar_one()
+            ).scalar_one()
             == db.destination
         )
         changes = connection.execute(
@@ -985,9 +986,16 @@ def test_copy_multiversion_graph_has_only_destination_references(copy_database):
             if item.entity_kind != "ingredient_version"
         }
         ingredient_record = change_records["ingredient"]
-        assert ingredient_record["created_at"] == connection.execute(
-            select(Ingredient.created_at).where(Ingredient.id == result.destination_ingredient_id)
-        ).scalar_one().isoformat()
+        assert (
+            ingredient_record["created_at"]
+            == connection.execute(
+                select(Ingredient.created_at).where(
+                    Ingredient.id == result.destination_ingredient_id
+                )
+            )
+            .scalar_one()
+            .isoformat()
+        )
         assert set(ingredient_record["field_clocks"]) == {
             "lifecycle",
             "current_version_id",
@@ -999,9 +1007,14 @@ def test_copy_multiversion_graph_has_only_destination_references(copy_database):
         assert len(version_records) == 2
         assert all(record["published_at"] for record in version_records)
         tag_record = change_records["dietary_tag"]
-        assert tag_record["created_at"] == connection.execute(
-            select(DietaryTag.created_at).where(DietaryTag.id == copied_tag_id)
-        ).scalar_one().isoformat()
+        assert (
+            tag_record["created_at"]
+            == connection.execute(
+                select(DietaryTag.created_at).where(DietaryTag.id == copied_tag_id)
+            )
+            .scalar_one()
+            .isoformat()
+        )
         assert set(tag_record["field_clocks"]) == {"name", "color", "lifecycle"}
         assert {item.entity_kind for item in changes} >= {
             "ingredient",
@@ -1063,13 +1076,18 @@ def test_copy_allows_many_to_one_explicit_dietary_tag_mapping(copy_database):
     assert sum(item.kind == "dietary_tag" for item in command.mappings) == 2
     result = asyncio.run(copy_ingredient_to_organization(db.sessions, context(db), command))
     with db.engine.connect() as connection:
-        copied_tag_ids = connection.execute(
-            select(IngredientVersionDietaryTag.dietary_tag_id).join(
-                IngredientVersion,
-                IngredientVersion.id
-                == IngredientVersionDietaryTag.ingredient_version_id,
-            ).where(IngredientVersion.ingredient_id == result.destination_ingredient_id)
-        ).scalars().all()
+        copied_tag_ids = (
+            connection.execute(
+                select(IngredientVersionDietaryTag.dietary_tag_id)
+                .join(
+                    IngredientVersion,
+                    IngredientVersion.id == IngredientVersionDietaryTag.ingredient_version_id,
+                )
+                .where(IngredientVersion.ingredient_id == result.destination_ingredient_id)
+            )
+            .scalars()
+            .all()
+        )
     assert len(copied_tag_ids) == 3
     assert set(copied_tag_ids) == {setup.destination_tag}
 

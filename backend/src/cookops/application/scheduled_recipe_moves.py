@@ -39,11 +39,7 @@ def _between(left: str, right: str) -> str | None:
     prefix = ""
     for index in range(255):
         low = _ORDER_ALPHABET.index(left[index]) if index < len(left) else -1
-        high = (
-            _ORDER_ALPHABET.index(right[index])
-            if index < len(right)
-            else len(_ORDER_ALPHABET)
-        )
+        high = _ORDER_ALPHABET.index(right[index]) if index < len(right) else len(_ORDER_ALPHABET)
         if high - low > 1:
             candidate = prefix + _ORDER_ALPHABET[low + 1]
             return candidate if left < candidate and (not right or candidate < right) else None
@@ -619,8 +615,7 @@ async def move_scheduled_recipe(
                         changed = (
                             []
                             if stale_relative
-                            else
-                            rekeyed
+                            else rekeyed
                             if prepared.placement is not None and deferred is None and rekeyed
                             else [scheduled]
                         )
@@ -669,14 +664,14 @@ async def move_scheduled_recipe(
                             assert result is not None
                             session.add(
                                 _mutation(
-                                prepared,
-                                context,
-                                role,
-                                request_hash,
-                                outcome,
-                                _payload(result),
-                                None if stale_relative else first,
-                                None if stale_relative else last,
+                                    prepared,
+                                    context,
+                                    role,
+                                    request_hash,
+                                    outcome,
+                                    _payload(result),
+                                    None if stale_relative else first,
+                                    None if stale_relative else last,
                                 )
                             )
         if deferred is not None and retained is None:

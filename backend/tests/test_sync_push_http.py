@@ -48,9 +48,16 @@ from cookops.persistence.models import (
 
 def test_organization_update_payload_is_exact_and_typed() -> None:
     organization_id = uuid4()
-    valid = {"organization_id": organization_id, "name": "Kitchen", "description": None, "default_currency": "CZK"}
+    valid = {
+        "organization_id": organization_id,
+        "name": "Kitchen",
+        "description": None,
+        "default_currency": "CZK",
+    }
     assert OrganizationUpdatePayload.model_validate(valid).organization_id == organization_id
-    assert OrganizationUpdatePayload.model_validate({**valid, "name": "Žluťoučká"}).name == "Žluťoučká"
+    assert (
+        OrganizationUpdatePayload.model_validate({**valid, "name": "Žluťoučká"}).name == "Žluťoučká"
+    )
     with pytest.raises(ValueError):
         OrganizationUpdatePayload.model_validate({**valid, "name": "Kitchen\0"})
     with pytest.raises(ValueError):
@@ -100,8 +107,12 @@ def _installation(database: SyncDatabase) -> UUID:
 
 def test_publish_price_payload_is_strict_and_decimal_string_only() -> None:
     values = {
-        "ingredient_id": uuid4(), "ingredient_price_estimate_id": uuid4(),
-        "amount": "12.50", "priced_quantity": "1", "unit_id": uuid4(), "currency": "CZK",
+        "ingredient_id": uuid4(),
+        "ingredient_price_estimate_id": uuid4(),
+        "amount": "12.50",
+        "priced_quantity": "1",
+        "unit_id": uuid4(),
+        "currency": "CZK",
     }
     parsed = PublishIngredientPriceEstimatePayload.model_validate(values)
     assert parsed.amount == Decimal("12.50")
@@ -134,19 +145,67 @@ def test_push_publishes_price_and_replays_same_mutation(sync_database: SyncDatab
     installation_id = _installation(sync_database)
     ingredient_id, version_id, estimate_id, mutation_id = (uuid4() for _ in range(4))
     with sync_database.engine.begin() as connection:
-        actor_id = connection.scalar(select(OrganizationMembership.user_id).where(OrganizationMembership.organization_id == sync_database.organization_id))
-        unit_id = connection.scalar(select(UnitDefinition.id).where(UnitDefinition.organization_id.is_(None), UnitDefinition.code == "g"))
+        actor_id = connection.scalar(
+            select(OrganizationMembership.user_id).where(
+                OrganizationMembership.organization_id == sync_database.organization_id
+            )
+        )
+        unit_id = connection.scalar(
+            select(UnitDefinition.id).where(
+                UnitDefinition.organization_id.is_(None), UnitDefinition.code == "g"
+            )
+        )
         assert isinstance(actor_id, UUID) and isinstance(unit_id, UUID)
-        connection.execute(insert(Ingredient).values(id=ingredient_id, organization_id=sync_database.organization_id, current_version_id=version_id, created_by_user_id=actor_id))
-        connection.execute(insert(IngredientVersion).values(id=version_id, organization_id=sync_database.organization_id, ingredient_id=ingredient_id, name="Tomatoes", normalized_name="tomatoes", canonical_unit_id=unit_id, mass_per_canonical_quantity=Decimal("1"), published_by_user_id=actor_id))
-    command = _command(mutation_id=mutation_id, event_id=uuid4(), kind="ingredient.publish_price_estimate", ingredient_id=str(ingredient_id), ingredient_price_estimate_id=str(estimate_id), amount="12.50", priced_quantity="1", unit_id=str(unit_id), currency="CZK")
+        connection.execute(
+            insert(Ingredient).values(
+                id=ingredient_id,
+                organization_id=sync_database.organization_id,
+                current_version_id=version_id,
+                created_by_user_id=actor_id,
+            )
+        )
+        connection.execute(
+            insert(IngredientVersion).values(
+                id=version_id,
+                organization_id=sync_database.organization_id,
+                ingredient_id=ingredient_id,
+                name="Tomatoes",
+                normalized_name="tomatoes",
+                canonical_unit_id=unit_id,
+                mass_per_canonical_quantity=Decimal("1"),
+                published_by_user_id=actor_id,
+            )
+        )
+    command = _command(
+        mutation_id=mutation_id,
+        event_id=uuid4(),
+        kind="ingredient.publish_price_estimate",
+        ingredient_id=str(ingredient_id),
+        ingredient_price_estimate_id=str(estimate_id),
+        amount="12.50",
+        priced_quantity="1",
+        unit_id=str(unit_id),
+        currency="CZK",
+    )
     with TestClient(create_app(_settings()), base_url="https://testserver") as client:
         _sign_in(client, "dummy-member")
         body = _body(sync_database, installation_id, [command])
-        assert client.post("/api/v1/sync/push", json=body).json()["outcomes"][0]["status"] == "accepted"
+        assert (
+            client.post("/api/v1/sync/push", json=body).json()["outcomes"][0]["status"]
+            == "accepted"
+        )
         assert client.post("/api/v1/sync/push", json=body).json()["outcomes"][0]["replayed"]
-        huge = {**command, "mutation_id": str(uuid4()), "payload": {**command["payload"], "amount": "1e999"}}
-        assert client.post("/api/v1/sync/push", json=_body(sync_database, installation_id, [huge])).json()["outcomes"][0]["status"] == "rejected"
+        huge = {
+            **command,
+            "mutation_id": str(uuid4()),
+            "payload": {**command["payload"], "amount": "1e999"},
+        }
+        assert (
+            client.post(
+                "/api/v1/sync/push", json=_body(sync_database, installation_id, [huge])
+            ).json()["outcomes"][0]["status"]
+            == "rejected"
+        )
 
 
 def test_push_organization_update_accepts_replays_and_rejects_strict_payload(
@@ -207,90 +266,312 @@ def test_dietary_exception_create_replays_and_bootstraps_clocks(
             )
         )
         assert actor_id is not None
-        connection.execute(insert(Event).values(
-            id=event_id, organization_id=sync_database.organization_id, name="Dietary event",
-            start_date=date(2026, 8, 1), end_date=date(2026, 8, 1),
-            base_expected_attendance=1, budget_amount=0, currency="CZK",
-            created_by_user_id=actor_id,
-        ))
-        connection.execute(insert(DietaryTag).values(
-            id=tag_id, organization_id=sync_database.organization_id, name="Vegan",
-            normalized_name="vegan", color=None, created_by_user_id=actor_id,
-        ))
+        connection.execute(
+            insert(Event).values(
+                id=event_id,
+                organization_id=sync_database.organization_id,
+                name="Dietary event",
+                start_date=date(2026, 8, 1),
+                end_date=date(2026, 8, 1),
+                base_expected_attendance=1,
+                budget_amount=0,
+                currency="CZK",
+                created_by_user_id=actor_id,
+            )
+        )
+        connection.execute(
+            insert(DietaryTag).values(
+                id=tag_id,
+                organization_id=sync_database.organization_id,
+                name="Vegan",
+                normalized_name="vegan",
+                color=None,
+                created_by_user_id=actor_id,
+            )
+        )
     installation_id = _installation(sync_database)
     with TestClient(create_app(_settings()), base_url="https://testserver") as client:
         _sign_in(client, "dummy-member")
         command = _command(
-            mutation_id=mutation_id, event_id=event_id,
-            kind="event_dietary_exception.create", exception_id=str(exception_id),
-            name="Alex", note="café", tag_ids=[str(tag_id)],
+            mutation_id=mutation_id,
+            event_id=event_id,
+            kind="event_dietary_exception.create",
+            exception_id=str(exception_id),
+            name="Alex",
+            note="café",
+            tag_ids=[str(tag_id)],
         )
         command["payload"]["event_id"] = str(event_id)
         body = _body(sync_database, installation_id, [command])
         first = client.post("/api/v1/sync/push", json=body).json()["outcomes"][0]
         assert first["status"] == "accepted"
         assert client.post("/api/v1/sync/push", json=body).json()["outcomes"][0]["replayed"]
-        update_command = _command(mutation_id=uuid4(), event_id=event_id, kind="event_dietary_exception.update", exception_id=str(exception_id), name="Updated", note="new", tag_ids=[str(tag_id)])
-        updated = client.post("/api/v1/sync/push", json=_body(sync_database, installation_id, [update_command])).json()["outcomes"][0]
+        update_command = _command(
+            mutation_id=uuid4(),
+            event_id=event_id,
+            kind="event_dietary_exception.update",
+            exception_id=str(exception_id),
+            name="Updated",
+            note="new",
+            tag_ids=[str(tag_id)],
+        )
+        updated = client.post(
+            "/api/v1/sync/push", json=_body(sync_database, installation_id, [update_command])
+        ).json()["outcomes"][0]
         assert updated["status"] == "accepted"
-        assert client.post("/api/v1/sync/push", json=_body(sync_database, installation_id, [update_command])).json()["outcomes"][0]["replayed"]
+        assert client.post(
+            "/api/v1/sync/push", json=_body(sync_database, installation_id, [update_command])
+        ).json()["outcomes"][0]["replayed"]
         mismatch = {**update_command, "payload": {**update_command["payload"], "name": "Different"}}
-        assert client.post("/api/v1/sync/push", json=_body(sync_database, installation_id, [mismatch])).json()["outcomes"][0]["error"]["code"] == "idempotency_mismatch"
-        rejected = _command(mutation_id=uuid4(), event_id=event_id, kind="event_dietary_exception.update", exception_id=str(exception_id), name="", note=None, tag_ids=[])
-        rejected_first = client.post("/api/v1/sync/push", json=_body(sync_database, installation_id, [rejected])).json()["outcomes"][0]
+        assert (
+            client.post(
+                "/api/v1/sync/push", json=_body(sync_database, installation_id, [mismatch])
+            ).json()["outcomes"][0]["error"]["code"]
+            == "idempotency_mismatch"
+        )
+        rejected = _command(
+            mutation_id=uuid4(),
+            event_id=event_id,
+            kind="event_dietary_exception.update",
+            exception_id=str(exception_id),
+            name="",
+            note=None,
+            tag_ids=[],
+        )
+        rejected_first = client.post(
+            "/api/v1/sync/push", json=_body(sync_database, installation_id, [rejected])
+        ).json()["outcomes"][0]
         assert rejected_first["status"] == "rejected"
-        rejected_again = client.post("/api/v1/sync/push", json=_body(sync_database, installation_id, [rejected])).json()["outcomes"][0]
-        assert rejected_again["status"] == "rejected" and rejected_again["error"]["code"] == rejected_first["error"]["code"]
-        stale = _command(mutation_id=uuid4(), event_id=event_id, kind="event_dietary_exception.update", exception_id=str(exception_id), name="Stale", note="stale", tag_ids=[])
+        rejected_again = client.post(
+            "/api/v1/sync/push", json=_body(sync_database, installation_id, [rejected])
+        ).json()["outcomes"][0]
+        assert (
+            rejected_again["status"] == "rejected"
+            and rejected_again["error"]["code"] == rejected_first["error"]["code"]
+        )
+        stale = _command(
+            mutation_id=uuid4(),
+            event_id=event_id,
+            kind="event_dietary_exception.update",
+            exception_id=str(exception_id),
+            name="Stale",
+            note="stale",
+            tag_ids=[],
+        )
         stale["client_wall_time"] = "2020-01-01T00:00:00+00:00"
-        stale_outcome = client.post("/api/v1/sync/push", json=_body(sync_database, installation_id, [stale])).json()["outcomes"][0]
+        stale_outcome = client.post(
+            "/api/v1/sync/push", json=_body(sync_database, installation_id, [stale])
+        ).json()["outcomes"][0]
         assert stale_outcome["status"] == "partially_superseded"
-        assert client.post("/api/v1/sync/push", json=_body(sync_database, installation_id, [stale])).json()["outcomes"][0]["replayed"]
-        remove = _command(mutation_id=uuid4(), event_id=event_id, kind="event_dietary_exception.update", exception_id=str(exception_id), name="Updated", note="new", tag_ids=[])
-        assert client.post("/api/v1/sync/push", json=_body(sync_database, installation_id, [remove])).json()["outcomes"][0]["status"] == "accepted"
-        add = _command(mutation_id=uuid4(), event_id=event_id, kind="event_dietary_exception.update", exception_id=str(exception_id), name="Updated", note="new", tag_ids=[str(tag_id)])
-        assert client.post("/api/v1/sync/push", json=_body(sync_database, installation_id, [add])).json()["outcomes"][0]["status"] == "accepted"
-        association_ids = [row[0] for row in sync_database.engine.connect().execute(select(EventDietaryExceptionTag.id).where(EventDietaryExceptionTag.exception_id == exception_id)).all()]
+        assert client.post(
+            "/api/v1/sync/push", json=_body(sync_database, installation_id, [stale])
+        ).json()["outcomes"][0]["replayed"]
+        remove = _command(
+            mutation_id=uuid4(),
+            event_id=event_id,
+            kind="event_dietary_exception.update",
+            exception_id=str(exception_id),
+            name="Updated",
+            note="new",
+            tag_ids=[],
+        )
+        assert (
+            client.post(
+                "/api/v1/sync/push", json=_body(sync_database, installation_id, [remove])
+            ).json()["outcomes"][0]["status"]
+            == "accepted"
+        )
+        add = _command(
+            mutation_id=uuid4(),
+            event_id=event_id,
+            kind="event_dietary_exception.update",
+            exception_id=str(exception_id),
+            name="Updated",
+            note="new",
+            tag_ids=[str(tag_id)],
+        )
+        assert (
+            client.post(
+                "/api/v1/sync/push", json=_body(sync_database, installation_id, [add])
+            ).json()["outcomes"][0]["status"]
+            == "accepted"
+        )
+        association_ids = [
+            row[0]
+            for row in sync_database.engine.connect()
+            .execute(
+                select(EventDietaryExceptionTag.id).where(
+                    EventDietaryExceptionTag.exception_id == exception_id
+                )
+            )
+            .all()
+        ]
         assert len(association_ids) == 1
         with sync_database.engine.begin() as connection:
-            connection.execute(update(DietaryTag).where(DietaryTag.id == tag_id).values(retired_at=datetime.now(UTC), retired_by_user_id=actor_id))
-        retain = _command(mutation_id=uuid4(), event_id=event_id, kind="event_dietary_exception.update", exception_id=str(exception_id), name="Retained", note="new", tag_ids=[str(tag_id)])
-        retain_first = client.post("/api/v1/sync/push", json=_body(sync_database, installation_id, [retain])).json()["outcomes"][0]
+            connection.execute(
+                update(DietaryTag)
+                .where(DietaryTag.id == tag_id)
+                .values(retired_at=datetime.now(UTC), retired_by_user_id=actor_id)
+            )
+        retain = _command(
+            mutation_id=uuid4(),
+            event_id=event_id,
+            kind="event_dietary_exception.update",
+            exception_id=str(exception_id),
+            name="Retained",
+            note="new",
+            tag_ids=[str(tag_id)],
+        )
+        retain_first = client.post(
+            "/api/v1/sync/push", json=_body(sync_database, installation_id, [retain])
+        ).json()["outcomes"][0]
         assert retain_first["status"] == "accepted"
-        retain_again = client.post("/api/v1/sync/push", json=_body(sync_database, installation_id, [retain])).json()["outcomes"][0]
+        retain_again = client.post(
+            "/api/v1/sync/push", json=_body(sync_database, installation_id, [retain])
+        ).json()["outcomes"][0]
         assert retain_again["status"] == "accepted"
-        remove_retired = _command(mutation_id=uuid4(), event_id=event_id, kind="event_dietary_exception.update", exception_id=str(exception_id), name="Retained", note="new", tag_ids=[])
-        assert client.post("/api/v1/sync/push", json=_body(sync_database, installation_id, [remove_retired])).json()["outcomes"][0]["status"] == "accepted"
-        readd_retired = _command(mutation_id=uuid4(), event_id=event_id, kind="event_dietary_exception.update", exception_id=str(exception_id), name="Retained", note="new", tag_ids=[str(tag_id)])
-        assert client.post("/api/v1/sync/push", json=_body(sync_database, installation_id, [readd_retired])).json()["outcomes"][0]["status"] == "rejected"
+        remove_retired = _command(
+            mutation_id=uuid4(),
+            event_id=event_id,
+            kind="event_dietary_exception.update",
+            exception_id=str(exception_id),
+            name="Retained",
+            note="new",
+            tag_ids=[],
+        )
+        assert (
+            client.post(
+                "/api/v1/sync/push", json=_body(sync_database, installation_id, [remove_retired])
+            ).json()["outcomes"][0]["status"]
+            == "accepted"
+        )
+        readd_retired = _command(
+            mutation_id=uuid4(),
+            event_id=event_id,
+            kind="event_dietary_exception.update",
+            exception_id=str(exception_id),
+            name="Retained",
+            note="new",
+            tag_ids=[str(tag_id)],
+        )
+        assert (
+            client.post(
+                "/api/v1/sync/push", json=_body(sync_database, installation_id, [readd_retired])
+            ).json()["outcomes"][0]["status"]
+            == "rejected"
+        )
         retired_tag = uuid4()
         with sync_database.engine.begin() as connection:
-            connection.execute(insert(DietaryTag).values(id=retired_tag, organization_id=sync_database.organization_id, name="Retired", normalized_name="retired", color=None, created_by_user_id=actor_id, retired_at=datetime.now(UTC), retired_by_user_id=actor_id))
+            connection.execute(
+                insert(DietaryTag).values(
+                    id=retired_tag,
+                    organization_id=sync_database.organization_id,
+                    name="Retired",
+                    normalized_name="retired",
+                    color=None,
+                    created_by_user_id=actor_id,
+                    retired_at=datetime.now(UTC),
+                    retired_by_user_id=actor_id,
+                )
+            )
         foreign_tag = uuid4()
         with sync_database.engine.begin() as connection:
-            connection.execute(insert(DietaryTag).values(id=foreign_tag, organization_id=sync_database.other_organization_id, name="Foreign", normalized_name="foreign", color=None, created_by_user_id=actor_id))
-        retired_update = _command(mutation_id=uuid4(), event_id=event_id, kind="event_dietary_exception.update", exception_id=str(exception_id), name="Updated", note="new", tag_ids=[str(retired_tag)])
-        retired_outcome = client.post("/api/v1/sync/push", json=_body(sync_database, installation_id, [retired_update])).json()["outcomes"][0]
+            connection.execute(
+                insert(DietaryTag).values(
+                    id=foreign_tag,
+                    organization_id=sync_database.other_organization_id,
+                    name="Foreign",
+                    normalized_name="foreign",
+                    color=None,
+                    created_by_user_id=actor_id,
+                )
+            )
+        retired_update = _command(
+            mutation_id=uuid4(),
+            event_id=event_id,
+            kind="event_dietary_exception.update",
+            exception_id=str(exception_id),
+            name="Updated",
+            note="new",
+            tag_ids=[str(retired_tag)],
+        )
+        retired_outcome = client.post(
+            "/api/v1/sync/push", json=_body(sync_database, installation_id, [retired_update])
+        ).json()["outcomes"][0]
         assert retired_outcome["status"] == "rejected"
-        foreign_update = _command(mutation_id=uuid4(), event_id=event_id, kind="event_dietary_exception.update", exception_id=str(exception_id), name="Updated", note="new", tag_ids=[str(foreign_tag)])
-        foreign_outcome = client.post("/api/v1/sync/push", json=_body(sync_database, installation_id, [foreign_update])).json()["outcomes"][0]
+        foreign_update = _command(
+            mutation_id=uuid4(),
+            event_id=event_id,
+            kind="event_dietary_exception.update",
+            exception_id=str(exception_id),
+            name="Updated",
+            note="new",
+            tag_ids=[str(foreign_tag)],
+        )
+        foreign_outcome = client.post(
+            "/api/v1/sync/push", json=_body(sync_database, installation_id, [foreign_update])
+        ).json()["outcomes"][0]
         assert foreign_outcome["status"] == "rejected"
         bootstrap = client.post(
             "/api/v1/sync/bootstrap",
             json={"organization_id": str(sync_database.organization_id)},
         ).json()
-        record = next(item for item in bootstrap["records"] if item["entity_id"] == str(exception_id))
-        assert set(record["payload"]["record"]["field_clocks"]) == {"name", "note", "tag_ids", "lifecycle"}
-        assert record["payload"]["record"]["field_clocks"]["tag_ids"]["winning_mutation_id"] == remove_retired["mutation_id"]
+        record = next(
+            item for item in bootstrap["records"] if item["entity_id"] == str(exception_id)
+        )
+        assert set(record["payload"]["record"]["field_clocks"]) == {
+            "name",
+            "note",
+            "tag_ids",
+            "lifecycle",
+        }
+        assert (
+            record["payload"]["record"]["field_clocks"]["tag_ids"]["winning_mutation_id"]
+            == remove_retired["mutation_id"]
+        )
         with sync_database.engine.begin() as connection:
             archive_id = uuid4()
-            connection.execute(insert(EventArchiveSnapshot).values(id=archive_id, event_id=event_id, archive_schema_version=1, payload={}, content_hash=b"0" * 32, attachment_manifest=[], created_by_user_id=actor_id))
-            connection.execute(update(Event).where(Event.id == event_id).values(lifecycle="archived", current_archive_snapshot_id=archive_id, archived_at=datetime.now(UTC), archived_by_user_id=actor_id))
-        archived_update = _command(mutation_id=uuid4(), event_id=event_id, kind="event_dietary_exception.update", exception_id=str(exception_id), name="Blocked", note=None, tag_ids=[])
-        archived_first = client.post("/api/v1/sync/push", json=_body(sync_database, installation_id, [archived_update])).json()["outcomes"][0]
+            connection.execute(
+                insert(EventArchiveSnapshot).values(
+                    id=archive_id,
+                    event_id=event_id,
+                    archive_schema_version=1,
+                    payload={},
+                    content_hash=b"0" * 32,
+                    attachment_manifest=[],
+                    created_by_user_id=actor_id,
+                )
+            )
+            connection.execute(
+                update(Event)
+                .where(Event.id == event_id)
+                .values(
+                    lifecycle="archived",
+                    current_archive_snapshot_id=archive_id,
+                    archived_at=datetime.now(UTC),
+                    archived_by_user_id=actor_id,
+                )
+            )
+        archived_update = _command(
+            mutation_id=uuid4(),
+            event_id=event_id,
+            kind="event_dietary_exception.update",
+            exception_id=str(exception_id),
+            name="Blocked",
+            note=None,
+            tag_ids=[],
+        )
+        archived_first = client.post(
+            "/api/v1/sync/push", json=_body(sync_database, installation_id, [archived_update])
+        ).json()["outcomes"][0]
         assert archived_first["status"] == "rejected"
-        archived_again = client.post("/api/v1/sync/push", json=_body(sync_database, installation_id, [archived_update])).json()["outcomes"][0]
-        assert archived_again["status"] == "rejected" and archived_again["error"] == archived_first["error"]
+        archived_again = client.post(
+            "/api/v1/sync/push", json=_body(sync_database, installation_id, [archived_update])
+        ).json()["outcomes"][0]
+        assert (
+            archived_again["status"] == "rejected"
+            and archived_again["error"] == archived_first["error"]
+        )
 
 
 def test_dietary_exception_lifecycle_retire_restore_lww_and_retained_rejection(
@@ -298,30 +579,126 @@ def test_dietary_exception_lifecycle_retire_restore_lww_and_retained_rejection(
 ) -> None:
     event_id, tag_id, exception_id = (uuid4() for _ in range(3))
     with sync_database.engine.begin() as connection:
-        actor_id = connection.scalar(select(OrganizationMembership.user_id).where(OrganizationMembership.organization_id == sync_database.organization_id))
+        actor_id = connection.scalar(
+            select(OrganizationMembership.user_id).where(
+                OrganizationMembership.organization_id == sync_database.organization_id
+            )
+        )
         assert isinstance(actor_id, UUID)
-        connection.execute(insert(Event).values(id=event_id, organization_id=sync_database.organization_id, name="Lifecycle event", start_date=date(2026, 8, 1), end_date=date(2026, 8, 1), base_expected_attendance=1, budget_amount=0, currency="CZK", created_by_user_id=actor_id))
-        connection.execute(insert(DietaryTag).values(id=tag_id, organization_id=sync_database.organization_id, name="Vegan", normalized_name="vegan", created_by_user_id=actor_id))
+        connection.execute(
+            insert(Event).values(
+                id=event_id,
+                organization_id=sync_database.organization_id,
+                name="Lifecycle event",
+                start_date=date(2026, 8, 1),
+                end_date=date(2026, 8, 1),
+                base_expected_attendance=1,
+                budget_amount=0,
+                currency="CZK",
+                created_by_user_id=actor_id,
+            )
+        )
+        connection.execute(
+            insert(DietaryTag).values(
+                id=tag_id,
+                organization_id=sync_database.organization_id,
+                name="Vegan",
+                normalized_name="vegan",
+                created_by_user_id=actor_id,
+            )
+        )
     installation_id = _installation(sync_database)
     with TestClient(create_app(_settings()), base_url="https://testserver") as client:
         _sign_in(client, "dummy-member")
-        create = _command(mutation_id=uuid4(), event_id=event_id, kind="event_dietary_exception.create", exception_id=str(exception_id), name="Vegan", tag_ids=[str(tag_id)])
-        assert client.post("/api/v1/sync/push", json=_body(sync_database, installation_id, [create])).json()["outcomes"][0]["status"] == "accepted"
-        association_ids = [row[0] for row in sync_database.engine.connect().execute(select(EventDietaryExceptionTag.id).where(EventDietaryExceptionTag.exception_id == exception_id)).all()]
-        retire = _command(mutation_id=uuid4(), event_id=event_id, kind="event_dietary_exception.lifecycle", exception_id=str(exception_id), operation="retire")
-        retired = client.post("/api/v1/sync/push", json=_body(sync_database, installation_id, [retire])).json()["outcomes"][0]
+        create = _command(
+            mutation_id=uuid4(),
+            event_id=event_id,
+            kind="event_dietary_exception.create",
+            exception_id=str(exception_id),
+            name="Vegan",
+            tag_ids=[str(tag_id)],
+        )
+        assert (
+            client.post(
+                "/api/v1/sync/push", json=_body(sync_database, installation_id, [create])
+            ).json()["outcomes"][0]["status"]
+            == "accepted"
+        )
+        association_ids = [
+            row[0]
+            for row in sync_database.engine.connect()
+            .execute(
+                select(EventDietaryExceptionTag.id).where(
+                    EventDietaryExceptionTag.exception_id == exception_id
+                )
+            )
+            .all()
+        ]
+        retire = _command(
+            mutation_id=uuid4(),
+            event_id=event_id,
+            kind="event_dietary_exception.lifecycle",
+            exception_id=str(exception_id),
+            operation="retire",
+        )
+        retired = client.post(
+            "/api/v1/sync/push", json=_body(sync_database, installation_id, [retire])
+        ).json()["outcomes"][0]
         assert retired["status"] == "accepted"
-        assert client.post("/api/v1/sync/push", json=_body(sync_database, installation_id, [retire])).json()["outcomes"][0]["replayed"]
-        stale = _command(mutation_id=uuid4(), event_id=event_id, kind="event_dietary_exception.lifecycle", exception_id=str(exception_id), operation="restore")
+        assert client.post(
+            "/api/v1/sync/push", json=_body(sync_database, installation_id, [retire])
+        ).json()["outcomes"][0]["replayed"]
+        stale = _command(
+            mutation_id=uuid4(),
+            event_id=event_id,
+            kind="event_dietary_exception.lifecycle",
+            exception_id=str(exception_id),
+            operation="restore",
+        )
         stale["client_wall_time"] = "2020-01-01T00:00:00+00:00"
-        assert client.post("/api/v1/sync/push", json=_body(sync_database, installation_id, [stale])).json()["outcomes"][0]["status"] == "partially_superseded"
-        restore = _command(mutation_id=uuid4(), event_id=event_id, kind="event_dietary_exception.lifecycle", exception_id=str(exception_id), operation="restore")
-        assert client.post("/api/v1/sync/push", json=_body(sync_database, installation_id, [restore])).json()["outcomes"][0]["status"] == "accepted"
-        rejected = _command(mutation_id=uuid4(), event_id=event_id, kind="event_dietary_exception.lifecycle", exception_id=str(uuid4()), operation="retire")
-        first = client.post("/api/v1/sync/push", json=_body(sync_database, installation_id, [rejected])).json()["outcomes"][0]
-        again = client.post("/api/v1/sync/push", json=_body(sync_database, installation_id, [rejected])).json()["outcomes"][0]
+        assert (
+            client.post(
+                "/api/v1/sync/push", json=_body(sync_database, installation_id, [stale])
+            ).json()["outcomes"][0]["status"]
+            == "partially_superseded"
+        )
+        restore = _command(
+            mutation_id=uuid4(),
+            event_id=event_id,
+            kind="event_dietary_exception.lifecycle",
+            exception_id=str(exception_id),
+            operation="restore",
+        )
+        assert (
+            client.post(
+                "/api/v1/sync/push", json=_body(sync_database, installation_id, [restore])
+            ).json()["outcomes"][0]["status"]
+            == "accepted"
+        )
+        rejected = _command(
+            mutation_id=uuid4(),
+            event_id=event_id,
+            kind="event_dietary_exception.lifecycle",
+            exception_id=str(uuid4()),
+            operation="retire",
+        )
+        first = client.post(
+            "/api/v1/sync/push", json=_body(sync_database, installation_id, [rejected])
+        ).json()["outcomes"][0]
+        again = client.post(
+            "/api/v1/sync/push", json=_body(sync_database, installation_id, [rejected])
+        ).json()["outcomes"][0]
         assert first["status"] == again["status"] == "rejected" and first["error"] == again["error"]
-        assert [row[0] for row in sync_database.engine.connect().execute(select(EventDietaryExceptionTag.id).where(EventDietaryExceptionTag.exception_id == exception_id)).all()] == association_ids
+        assert [
+            row[0]
+            for row in sync_database.engine.connect()
+            .execute(
+                select(EventDietaryExceptionTag.id).where(
+                    EventDietaryExceptionTag.exception_id == exception_id
+                )
+            )
+            .all()
+        ] == association_ids
 
 
 def _command(
@@ -351,11 +728,30 @@ def _command(
             **payload,
         }
     elif kind == "event_dietary_exception.update":
-        payload = {"event_id": str(event_id), "exception_id": str(uuid4()), "name": "Updated", "note": None, "tag_ids": [], **payload}
+        payload = {
+            "event_id": str(event_id),
+            "exception_id": str(uuid4()),
+            "name": "Updated",
+            "note": None,
+            "tag_ids": [],
+            **payload,
+        }
     elif kind == "event_dietary_exception.create":
-        payload = {"event_id": str(event_id), "exception_id": str(uuid4()), "name": "Vegan", "note": None, "tag_ids": [], **payload}
+        payload = {
+            "event_id": str(event_id),
+            "exception_id": str(uuid4()),
+            "name": "Vegan",
+            "note": None,
+            "tag_ids": [],
+            **payload,
+        }
     elif kind == "event_dietary_exception.lifecycle":
-        payload = {"event_id": str(event_id), "exception_id": str(uuid4()), "operation": "retire", **payload}
+        payload = {
+            "event_id": str(event_id),
+            "exception_id": str(uuid4()),
+            "operation": "retire",
+            **payload,
+        }
     elif kind == "shopping_list.create":
         payload = {
             "shopping_list_id": str(uuid4()),
@@ -600,55 +996,102 @@ def test_push_accepts_and_replays_relative_move_and_retains_invalid_targets(
         )
         assert isinstance(actor_id, UUID) and isinstance(unit_id, UUID)
         assert isinstance(ingredient_unit_id, UUID)
-        connection.execute(insert(Event).values(
-            id=event_id, organization_id=sync_database.organization_id, name="Move event",
-            start_date=date(2026, 8, 20), end_date=date(2026, 8, 20),
-            base_expected_attendance=1, budget_amount=Decimal("0"), currency="CZK",
-            created_by_user_id=actor_id,
-        ))
-        connection.execute(insert(EventDay).values(
-            id=event_day_id, event_id=event_id, calendar_date=date(2026, 8, 20),
-            is_visible=True, provenance="range_generated", created_by_user_id=actor_id,
-        ))
-        connection.execute(insert(EventMealRole).values(
-            id=event_meal_role_id, event_id=event_id,
-            built_in_translation_key="meal_role.dinner", position_key="a",
-            created_by_user_id=actor_id,
-        ))
-        connection.execute(insert(Recipe).values(
-            id=recipe_id, organization_id=sync_database.organization_id,
-            current_version_id=recipe_version_id, created_by_user_id=actor_id,
-        ))
-        connection.execute(insert(Ingredient).values(
-            id=ingredient_id, organization_id=sync_database.organization_id,
-            current_version_id=ingredient_version_id, created_by_user_id=actor_id,
-        ))
-        connection.execute(insert(IngredientVersion).values(
-            id=ingredient_version_id, organization_id=sync_database.organization_id,
-            ingredient_id=ingredient_id, name="Move ingredient", normalized_name="move ingredient",
-            canonical_unit_id=ingredient_unit_id, mass_per_canonical_quantity=Decimal("1"),
-            published_by_user_id=actor_id,
-        ))
-        connection.execute(insert(RecipeVersionIngredientLine).values(
-            id=uuid4(), organization_id=sync_database.organization_id, recipe_id=recipe_id,
-            recipe_version_id=recipe_version_id, line_key=uuid4(),
-            ingredient_version_id=ingredient_version_id, base_quantity=Decimal("1"),
-            position_key="a",
-        ))
-        connection.execute(insert(RecipeVersion).values(
-            id=recipe_version_id, organization_id=sync_database.organization_id,
-            recipe_id=recipe_id, name="Move recipe", scaling_unit_id=unit_id,
-            base_scaling_amount=Decimal("1"), round_suggestions_up=False,
-            published_by_user_id=actor_id,
-        ))
+        connection.execute(
+            insert(Event).values(
+                id=event_id,
+                organization_id=sync_database.organization_id,
+                name="Move event",
+                start_date=date(2026, 8, 20),
+                end_date=date(2026, 8, 20),
+                base_expected_attendance=1,
+                budget_amount=Decimal("0"),
+                currency="CZK",
+                created_by_user_id=actor_id,
+            )
+        )
+        connection.execute(
+            insert(EventDay).values(
+                id=event_day_id,
+                event_id=event_id,
+                calendar_date=date(2026, 8, 20),
+                is_visible=True,
+                provenance="range_generated",
+                created_by_user_id=actor_id,
+            )
+        )
+        connection.execute(
+            insert(EventMealRole).values(
+                id=event_meal_role_id,
+                event_id=event_id,
+                built_in_translation_key="meal_role.dinner",
+                position_key="a",
+                created_by_user_id=actor_id,
+            )
+        )
+        connection.execute(
+            insert(Recipe).values(
+                id=recipe_id,
+                organization_id=sync_database.organization_id,
+                current_version_id=recipe_version_id,
+                created_by_user_id=actor_id,
+            )
+        )
+        connection.execute(
+            insert(Ingredient).values(
+                id=ingredient_id,
+                organization_id=sync_database.organization_id,
+                current_version_id=ingredient_version_id,
+                created_by_user_id=actor_id,
+            )
+        )
+        connection.execute(
+            insert(IngredientVersion).values(
+                id=ingredient_version_id,
+                organization_id=sync_database.organization_id,
+                ingredient_id=ingredient_id,
+                name="Move ingredient",
+                normalized_name="move ingredient",
+                canonical_unit_id=ingredient_unit_id,
+                mass_per_canonical_quantity=Decimal("1"),
+                published_by_user_id=actor_id,
+            )
+        )
+        connection.execute(
+            insert(RecipeVersionIngredientLine).values(
+                id=uuid4(),
+                organization_id=sync_database.organization_id,
+                recipe_id=recipe_id,
+                recipe_version_id=recipe_version_id,
+                line_key=uuid4(),
+                ingredient_version_id=ingredient_version_id,
+                base_quantity=Decimal("1"),
+                position_key="a",
+            )
+        )
+        connection.execute(
+            insert(RecipeVersion).values(
+                id=recipe_version_id,
+                organization_id=sync_database.organization_id,
+                recipe_id=recipe_id,
+                name="Move recipe",
+                scaling_unit_id=unit_id,
+                base_scaling_amount=Decimal("1"),
+                round_suggestions_up=False,
+                published_by_user_id=actor_id,
+            )
+        )
     cards = [uuid4(), uuid4()]
     with TestClient(create_app(_settings()), base_url="https://testserver") as client:
         _sign_in(client, "dummy-member")
         for card in cards:
             command = _schedule_recipe_command(
-                mutation_id=uuid4(), scheduled_recipe_id=card, event_id=event_id,
-                event_day_id=event_day_id, event_meal_role_id=event_meal_role_id,
-                recipe_id=recipe_id, recipe_version_id=recipe_version_id,
+                mutation_id=uuid4(),
+                scheduled_recipe_id=card,
+                event_id=event_id,
+                event_day_id=event_day_id,
+                event_meal_role_id=event_meal_role_id,
+                recipe_id=recipe_id,
+                recipe_version_id=recipe_version_id,
                 position_key="a",
             )
             assert (
@@ -659,9 +1102,14 @@ def test_push_accepts_and_replays_relative_move_and_retains_invalid_targets(
                 == "accepted"
             )
         move = _move_scheduled_recipe_command(
-            mutation_id=uuid4(), scheduled_recipe_id=cards[1], event_id=event_id,
-            event_day_id=event_day_id, event_meal_role_id=event_meal_role_id,
-            position_key=None, placement="before", target_scheduled_recipe_id=cards[0],
+            mutation_id=uuid4(),
+            scheduled_recipe_id=cards[1],
+            event_id=event_id,
+            event_day_id=event_day_id,
+            event_meal_role_id=event_meal_role_id,
+            position_key=None,
+            placement="before",
+            target_scheduled_recipe_id=cards[0],
         )
         body = _body(sync_database, installation_id, [move])
         outcome = client.post("/api/v1/sync/push", json=body).json()["outcomes"][0]
@@ -724,8 +1172,11 @@ def _scheduled_recipe_lifecycle_command(
     *, mutation_id: UUID, event_id: UUID, scheduled_recipe_id: UUID, operation: str = "retire"
 ) -> dict[str, object]:
     command = _command(
-        mutation_id=mutation_id, event_id=event_id, kind="scheduled_recipe.lifecycle",
-        scheduled_recipe_id=str(scheduled_recipe_id), operation=operation,
+        mutation_id=mutation_id,
+        event_id=event_id,
+        kind="scheduled_recipe.lifecycle",
+        scheduled_recipe_id=str(scheduled_recipe_id),
+        operation=operation,
     )
     cast(dict[str, object], command["payload"])["event_id"] = str(event_id)
     return command
@@ -909,16 +1360,22 @@ def test_scheduled_recipe_note_push_replays_and_rejects_malformed_values(
     with TestClient(create_app(_settings()), base_url="https://testserver") as client:
         _sign_in(client, "dummy-member")
         schedule = _schedule_recipe_command(
-            mutation_id=uuid4(), scheduled_recipe_id=scheduled_recipe_id, event_id=event_id,
-            event_day_id=event_day_id, event_meal_role_id=event_meal_role_id,
-            recipe_id=recipe_id, recipe_version_id=recipe_version_id,
+            mutation_id=uuid4(),
+            scheduled_recipe_id=scheduled_recipe_id,
+            event_id=event_id,
+            event_day_id=event_day_id,
+            event_meal_role_id=event_meal_role_id,
+            recipe_id=recipe_id,
+            recipe_version_id=recipe_version_id,
         )
         schedule_response = client.post(
             "/api/v1/sync/push", json=_body(sync_database, installation_id, [schedule])
         )
         assert schedule_response.json()["outcomes"][0]["status"] == "accepted"
         note = _scheduled_recipe_note_command(
-            mutation_id=uuid4(), event_id=event_id, scheduled_recipe_id=scheduled_recipe_id,
+            mutation_id=uuid4(),
+            event_id=event_id,
+            scheduled_recipe_id=scheduled_recipe_id,
             note="  Friday menu  ",
         )
         body = _body(sync_database, installation_id, [note])
@@ -928,12 +1385,17 @@ def test_scheduled_recipe_note_push_replays_and_rejects_malformed_values(
         assert client.post("/api/v1/sync/push", json=body).json()["outcomes"][0]["replayed"]
         for invalid_note in (123, "bad\x00note", "x" * 4001):
             malformed = _scheduled_recipe_note_command(
-                mutation_id=uuid4(), event_id=event_id,
-                scheduled_recipe_id=scheduled_recipe_id, note=invalid_note,
+                mutation_id=uuid4(),
+                event_id=event_id,
+                scheduled_recipe_id=scheduled_recipe_id,
+                note=invalid_note,
             )
-            assert client.post(
-                "/api/v1/sync/push", json=_body(sync_database, installation_id, [malformed])
-            ).json()["outcomes"][0]["status"] == "rejected"
+            assert (
+                client.post(
+                    "/api/v1/sync/push", json=_body(sync_database, installation_id, [malformed])
+                ).json()["outcomes"][0]["status"]
+                == "rejected"
+            )
 
 
 def _scheduled_ingredient_override_command(
@@ -1095,7 +1557,9 @@ def test_push_replicates_meal_role_preset_with_strict_payload_and_position_clock
             "/api/v1/sync/push", json=_body(sync_database, installation_id, [command])
         ).json()["outcomes"][0]
         assert accepted["status"] == "accepted"
-        bootstrap = client.post("/api/v1/sync/bootstrap", json={"organization_id": str(sync_database.organization_id)}).json()
+        bootstrap = client.post(
+            "/api/v1/sync/bootstrap", json={"organization_id": str(sync_database.organization_id)}
+        ).json()
         record = next(
             item["payload"]["record"]
             for item in bootstrap["records"]
@@ -1116,24 +1580,32 @@ def test_push_replicates_meal_role_preset_with_strict_payload_and_position_clock
             "mutation_id": str(uuid4()),
             "payload": {**command["payload"], "operation": "update", "position_key": "aa"},
         }
-        assert client.post(
-            "/api/v1/sync/push", json=_body(sync_database, installation_id, [updated])
-        ).json()["outcomes"][0]["status"] == "accepted"
+        assert (
+            client.post(
+                "/api/v1/sync/push", json=_body(sync_database, installation_id, [updated])
+            ).json()["outcomes"][0]["status"]
+            == "accepted"
+        )
         oversized = {
             **command,
             "mutation_id": str(uuid4()),
             "payload": {**command["payload"], "position_key": "a" * 256},
         }
-        assert client.post(
-            "/api/v1/sync/push", json=_body(sync_database, installation_id, [oversized])
-        ).json()["outcomes"][0]["error"]["code"] == "validation_failed"
+        assert (
+            client.post(
+                "/api/v1/sync/push", json=_body(sync_database, installation_id, [oversized])
+            ).json()["outcomes"][0]["error"]["code"]
+            == "validation_failed"
+        )
 
         malformed = {
             **command,
             "mutation_id": str(uuid4()),
             "payload": {**command["payload"], "unexpected": True},
         }
-        rejected = client.post("/api/v1/sync/push", json=_body(sync_database, installation_id, [malformed])).json()["outcomes"][0]
+        rejected = client.post(
+            "/api/v1/sync/push", json=_body(sync_database, installation_id, [malformed])
+        ).json()["outcomes"][0]
         assert rejected["status"] == "rejected"
 
 
@@ -1454,6 +1926,7 @@ def test_push_sets_clears_and_rejects_scoped_store_section_overrides(
                     created_by_user_id=actor_id,
                 )
             )
+
         def command(section_id: UUID | None) -> dict[str, object]:
             return _shopping_operation_command(
                 mutation_id=uuid4(),
@@ -1469,12 +1942,18 @@ def test_push_sets_clears_and_rejects_scoped_store_section_overrides(
         )
         assert getattr(parsed_valid, "store_section_id", None) == valid_section_id
         valid_body = _body(sync_database, installation_id, [valid])
-        assert client.post("/api/v1/sync/push", json=valid_body).json()["outcomes"][0]["status"] == "accepted"
+        assert (
+            client.post("/api/v1/sync/push", json=valid_body).json()["outcomes"][0]["status"]
+            == "accepted"
+        )
         assert client.post("/api/v1/sync/push", json=valid_body).json()["outcomes"][0]["replayed"]
         clear = command(None)
-        assert client.post(
-            "/api/v1/sync/push", json=_body(sync_database, installation_id, [clear])
-        ).json()["outcomes"][0]["status"] == "accepted"
+        assert (
+            client.post(
+                "/api/v1/sync/push", json=_body(sync_database, installation_id, [clear])
+            ).json()["outcomes"][0]["status"]
+            == "accepted"
+        )
         for rejected in (command(foreign_section_id), command(retired_section_id)):
             outcome = client.post(
                 "/api/v1/sync/push", json=_body(sync_database, installation_id, [rejected])
@@ -1482,11 +1961,15 @@ def test_push_sets_clears_and_rejects_scoped_store_section_overrides(
             assert outcome["status"] == "rejected"
             assert outcome["error"]["code"] == "validation_failed"
         archive = _command(mutation_id=uuid4(), event_id=event_id, kind="event.lifecycle")
-        assert client.post(
-            "/api/v1/sync/push", json=_body(sync_database, installation_id, [archive])
-        ).json()["outcomes"][0]["status"] == "accepted"
+        assert (
+            client.post(
+                "/api/v1/sync/push", json=_body(sync_database, installation_id, [archive])
+            ).json()["outcomes"][0]["status"]
+            == "accepted"
+        )
         archived = client.post(
-            "/api/v1/sync/push", json=_body(sync_database, installation_id, [command(valid_section_id)])
+            "/api/v1/sync/push",
+            json=_body(sync_database, installation_id, [command(valid_section_id)]),
         ).json()["outcomes"][0]
     assert archived["status"] == "rejected"
     assert archived["error"]["code"] == "archived_event"
@@ -1600,13 +2083,19 @@ def test_push_sets_clears_and_rejects_scoped_row_notes(
         ).json()["outcomes"][0]
         assert replayed["replayed"] is True
         clear = command("   ")
-        assert client.post(
-            "/api/v1/sync/push", json=_body(sync_database, installation_id, [clear])
-        ).json()["outcomes"][0]["status"] == "accepted"
+        assert (
+            client.post(
+                "/api/v1/sync/push", json=_body(sync_database, installation_id, [clear])
+            ).json()["outcomes"][0]["status"]
+            == "accepted"
+        )
         null_clear = command(None)
-        assert client.post(
-            "/api/v1/sync/push", json=_body(sync_database, installation_id, [null_clear])
-        ).json()["outcomes"][0]["status"] == "accepted"
+        assert (
+            client.post(
+                "/api/v1/sync/push", json=_body(sync_database, installation_id, [null_clear])
+            ).json()["outcomes"][0]["status"]
+            == "accepted"
+        )
         for invalid_note in ("bad\x00note", "x" * 4001):
             rejected_command = command(invalid_note)
             rejected = client.post(
@@ -1630,8 +2119,7 @@ def test_push_sets_clears_and_rejects_scoped_row_notes(
         record = next(
             item["payload"]["record"]
             for item in bootstrap["records"]
-            if item["entity_kind"] == "shopping_ingredient_row"
-            and item["entity_id"] == str(row_id)
+            if item["entity_kind"] == "shopping_ingredient_row" and item["entity_id"] == str(row_id)
         )
         assert record["note"] is None
         assert record["field_clocks"]["note"]["winning_mutation_id"] == null_clear["mutation_id"]
@@ -1648,9 +2136,12 @@ def test_push_sets_clears_and_rejects_scoped_row_notes(
         assert missing["status"] == "rejected"
         assert missing["error"]["code"] == "validation_failed"
         archive = _command(mutation_id=uuid4(), event_id=event_id, kind="event.lifecycle")
-        assert client.post(
-            "/api/v1/sync/push", json=_body(sync_database, installation_id, [archive])
-        ).json()["outcomes"][0]["status"] == "accepted"
+        assert (
+            client.post(
+                "/api/v1/sync/push", json=_body(sync_database, installation_id, [archive])
+            ).json()["outcomes"][0]["status"]
+            == "accepted"
+        )
         archived = client.post(
             "/api/v1/sync/push",
             json=_body(sync_database, installation_id, [command("archived")]),
@@ -1852,10 +2343,17 @@ def test_push_creates_an_ad_hoc_item_with_scoped_dependencies_and_replays(
         ).json()["outcomes"][0]
         assert updated["command_kind"] == "shopping_list.update_ad_hoc_item"
         assert updated["status"] == "accepted" and not updated["replayed"]
-        assert client.post(
-            "/api/v1/sync/push", json=_body(sync_database, installation_id, [update])
-        ).json()["outcomes"][0]["replayed"] is True
-        malformed_update = {**update, "mutation_id": str(uuid4()), "payload": {**update["payload"], "target_amount": 4}}
+        assert (
+            client.post(
+                "/api/v1/sync/push", json=_body(sync_database, installation_id, [update])
+            ).json()["outcomes"][0]["replayed"]
+            is True
+        )
+        malformed_update = {
+            **update,
+            "mutation_id": str(uuid4()),
+            "payload": {**update["payload"], "target_amount": 4},
+        }
         malformed_outcome = client.post(
             "/api/v1/sync/push", json=_body(sync_database, installation_id, [malformed_update])
         ).json()["outcomes"][0]
@@ -1872,9 +2370,12 @@ def test_push_creates_an_ad_hoc_item_with_scoped_dependencies_and_replays(
             "/api/v1/sync/push", json=_body(sync_database, installation_id, [fulfilment])
         ).json()["outcomes"][0]
         assert outcome["status"] == "accepted" and not outcome["replayed"]
-        assert client.post(
-            "/api/v1/sync/push", json=_body(sync_database, installation_id, [fulfilment])
-        ).json()["outcomes"][0]["replayed"] is True
+        assert (
+            client.post(
+                "/api/v1/sync/push", json=_body(sync_database, installation_id, [fulfilment])
+            ).json()["outcomes"][0]["replayed"]
+            is True
+        )
         retire = _command(
             mutation_id=uuid4(),
             event_id=event_id,
@@ -1887,9 +2388,12 @@ def test_push_creates_an_ad_hoc_item_with_scoped_dependencies_and_replays(
             "/api/v1/sync/push", json=_body(sync_database, installation_id, [retire])
         ).json()["outcomes"][0]
         assert retired["status"] == "accepted"
-        assert client.post(
-            "/api/v1/sync/push", json=_body(sync_database, installation_id, [retire])
-        ).json()["outcomes"][0]["replayed"] is True
+        assert (
+            client.post(
+                "/api/v1/sync/push", json=_body(sync_database, installation_id, [retire])
+            ).json()["outcomes"][0]["replayed"]
+            is True
+        )
         retired_fulfilment = _command(
             mutation_id=uuid4(),
             event_id=event_id,
@@ -1898,10 +2402,13 @@ def test_push_creates_an_ad_hoc_item_with_scoped_dependencies_and_replays(
             ad_hoc_shopping_item_id=str(item_id),
             fulfilled=False,
         )
-        assert client.post(
-            "/api/v1/sync/push",
-            json=_body(sync_database, installation_id, [retired_fulfilment]),
-        ).json()["outcomes"][0]["status"] == "rejected"
+        assert (
+            client.post(
+                "/api/v1/sync/push",
+                json=_body(sync_database, installation_id, [retired_fulfilment]),
+            ).json()["outcomes"][0]["status"]
+            == "rejected"
+        )
         restore = _command(
             mutation_id=uuid4(),
             event_id=event_id,
@@ -1910,9 +2417,12 @@ def test_push_creates_an_ad_hoc_item_with_scoped_dependencies_and_replays(
             ad_hoc_shopping_item_id=str(item_id),
             operation="restore",
         )
-        assert client.post(
-            "/api/v1/sync/push", json=_body(sync_database, installation_id, [restore])
-        ).json()["outcomes"][0]["status"] == "accepted"
+        assert (
+            client.post(
+                "/api/v1/sync/push", json=_body(sync_database, installation_id, [restore])
+            ).json()["outcomes"][0]["status"]
+            == "accepted"
+        )
         missing_fulfilment = _command(
             mutation_id=uuid4(),
             event_id=event_id,
@@ -1938,12 +2448,12 @@ def test_push_creates_an_ad_hoc_item_with_scoped_dependencies_and_replays(
         record = next(
             item["payload"]["record"]
             for item in bootstrap["records"]
-            if item["entity_kind"] == "ad_hoc_shopping_item"
-            and item["entity_id"] == str(item_id)
+            if item["entity_kind"] == "ad_hoc_shopping_item" and item["entity_id"] == str(item_id)
         )
-        assert record["field_clocks"]["fulfilment_credit"]["winning_mutation_id"] == fulfilment[
-            "mutation_id"
-        ]
+        assert (
+            record["field_clocks"]["fulfilment_credit"]["winning_mutation_id"]
+            == fulfilment["mutation_id"]
+        )
         wrong_scope = _command(
             mutation_id=uuid4(),
             event_id=event_id,
@@ -1967,17 +2477,20 @@ def test_push_creates_an_ad_hoc_item_with_scoped_dependencies_and_replays(
         )
         assert isinstance(retired_record, dict)
         assert isinstance(retired_record["record"].get("retired_at"), str)
-        assert connection.scalar(
-            select(Mutation.outcome).where(Mutation.id == UUID(missing_fulfilment["mutation_id"]))
-        ) == "rejected"
+        assert (
+            connection.scalar(
+                select(Mutation.outcome).where(
+                    Mutation.id == UUID(missing_fulfilment["mutation_id"])
+                )
+            )
+            == "rejected"
+        )
         assert connection.execute(
             select(
                 AdHocShoppingItem.name,
                 AdHocShoppingItem.target_amount,
                 AdHocShoppingItem.fulfilment_credit,
-            ).where(
-                AdHocShoppingItem.id == item_id
-            )
+            ).where(AdHocShoppingItem.id == item_id)
         ).one() == ("Limes", Decimal("4"), Decimal("4"))
 
 
@@ -2007,19 +2520,25 @@ def test_push_refreshes_shopping_list_through_the_typed_shared_command(
     )
     with TestClient(create_app(_settings()), base_url="https://testserver") as client:
         _sign_in(client, "dummy-member")
-        assert [item["status"] for item in client.post(
-            "/api/v1/sync/push", json=_body(sync_database, installation_id, setup)
-        ).json()["outcomes"]] == ["accepted", "accepted"]
+        assert [
+            item["status"]
+            for item in client.post(
+                "/api/v1/sync/push", json=_body(sync_database, installation_id, setup)
+            ).json()["outcomes"]
+        ] == ["accepted", "accepted"]
         accepted = client.post(
             "/api/v1/sync/push",
             json=_body(sync_database, installation_id, [refresh]),
         ).json()["outcomes"][0]
         assert accepted["command_kind"] == "shopping_list.refresh"
         assert accepted["status"] == "accepted" and not accepted["replayed"]
-        assert client.post(
-            "/api/v1/sync/push",
-            json=_body(sync_database, installation_id, [refresh]),
-        ).json()["outcomes"][0]["replayed"] is True
+        assert (
+            client.post(
+                "/api/v1/sync/push",
+                json=_body(sync_database, installation_id, [refresh]),
+            ).json()["outcomes"][0]["replayed"]
+            is True
+        )
         stale = _command(
             mutation_id=uuid4(),
             event_id=event_id,
@@ -2027,10 +2546,13 @@ def test_push_refreshes_shopping_list_through_the_typed_shared_command(
             shopping_list_id=str(shopping_list_id),
             parent_generation_revision_id=str(uuid4()),
         )
-        assert client.post(
-            "/api/v1/sync/push",
-            json=_body(sync_database, installation_id, [stale]),
-        ).json()["outcomes"][0]["error"]["code"] == "stale_precondition"
+        assert (
+            client.post(
+                "/api/v1/sync/push",
+                json=_body(sync_database, installation_id, [stale]),
+            ).json()["outcomes"][0]["error"]["code"]
+            == "stale_precondition"
+        )
         malformed = _command(
             mutation_id=uuid4(),
             event_id=event_id,
@@ -2039,10 +2561,13 @@ def test_push_refreshes_shopping_list_through_the_typed_shared_command(
             parent_generation_revision_id=str(refresh_revision_id),
             unexpected="value",
         )
-        assert client.post(
-            "/api/v1/sync/push",
-            json=_body(sync_database, installation_id, [malformed]),
-        ).json()["outcomes"][0]["error"]["code"] == "validation_failed"
+        assert (
+            client.post(
+                "/api/v1/sync/push",
+                json=_body(sync_database, installation_id, [malformed]),
+            ).json()["outcomes"][0]["error"]["code"]
+            == "validation_failed"
+        )
         duplicate_sources = _command(
             mutation_id=uuid4(),
             event_id=event_id,
@@ -2051,10 +2576,13 @@ def test_push_refreshes_shopping_list_through_the_typed_shared_command(
             parent_generation_revision_id=str(refresh_revision_id),
             scheduled_recipe_ids=[str(uuid4())] * 2,
         )
-        assert client.post(
-            "/api/v1/sync/push",
-            json=_body(sync_database, installation_id, [duplicate_sources]),
-        ).json()["outcomes"][0]["error"]["code"] == "validation_failed"
+        assert (
+            client.post(
+                "/api/v1/sync/push",
+                json=_body(sync_database, installation_id, [duplicate_sources]),
+            ).json()["outcomes"][0]["error"]["code"]
+            == "validation_failed"
+        )
 
 
 def test_push_renames_shopping_list_through_typed_command_and_rejects_invalid_scope(
@@ -2080,17 +2608,23 @@ def test_push_renames_shopping_list_through_typed_command_and_rejects_invalid_sc
     )
     with TestClient(create_app(_settings()), base_url="https://testserver") as client:
         _sign_in(client, "dummy-member")
-        assert [item["status"] for item in client.post(
-            "/api/v1/sync/push", json=_body(sync_database, installation_id, create)
-        ).json()["outcomes"]] == ["accepted", "accepted"]
+        assert [
+            item["status"]
+            for item in client.post(
+                "/api/v1/sync/push", json=_body(sync_database, installation_id, create)
+            ).json()["outcomes"]
+        ] == ["accepted", "accepted"]
         accepted = client.post(
             "/api/v1/sync/push", json=_body(sync_database, installation_id, [rename])
         ).json()["outcomes"][0]
         assert accepted["command_kind"] == "shopping_list.rename"
         assert accepted["status"] == "accepted" and not accepted["replayed"]
-        assert client.post(
-            "/api/v1/sync/push", json=_body(sync_database, installation_id, [rename])
-        ).json()["outcomes"][0]["replayed"] is True
+        assert (
+            client.post(
+                "/api/v1/sync/push", json=_body(sync_database, installation_id, [rename])
+            ).json()["outcomes"][0]["replayed"]
+            is True
+        )
         malformed = _command(
             mutation_id=uuid4(),
             event_id=event_id,
@@ -2098,9 +2632,12 @@ def test_push_renames_shopping_list_through_typed_command_and_rejects_invalid_sc
             shopping_list_id=str(shopping_list_id),
             name="x" * 201,
         )
-        assert client.post(
-            "/api/v1/sync/push", json=_body(sync_database, installation_id, [malformed])
-        ).json()["outcomes"][0]["error"]["code"] == "validation_failed"
+        assert (
+            client.post(
+                "/api/v1/sync/push", json=_body(sync_database, installation_id, [malformed])
+            ).json()["outcomes"][0]["error"]["code"]
+            == "validation_failed"
+        )
         bootstrap = client.post(
             "/api/v1/sync/bootstrap",
             json={"organization_id": str(sync_database.organization_id)},
@@ -2108,24 +2645,29 @@ def test_push_renames_shopping_list_through_typed_command_and_rejects_invalid_sc
         record = next(
             item["payload"]["record"]
             for item in bootstrap["records"]
-            if item["entity_kind"] == "shopping_list"
-            and item["entity_id"] == str(shopping_list_id)
+            if item["entity_kind"] == "shopping_list" and item["entity_id"] == str(shopping_list_id)
         )
         assert record["name"] == "Café"
         assert set(record["field_clocks"]) == {"name", "current_generation_revision_id"}
         archive = _command(mutation_id=uuid4(), event_id=event_id, kind="event.lifecycle")
-        assert client.post(
-            "/api/v1/sync/push", json=_body(sync_database, installation_id, [archive])
-        ).json()["outcomes"][0]["status"] == "accepted"
+        assert (
+            client.post(
+                "/api/v1/sync/push", json=_body(sync_database, installation_id, [archive])
+            ).json()["outcomes"][0]["status"]
+            == "accepted"
+        )
         archived = _command(
             mutation_id=uuid4(),
             event_id=event_id,
             kind="shopping_list.rename",
             shopping_list_id=str(shopping_list_id),
         )
-        assert client.post(
-            "/api/v1/sync/push", json=_body(sync_database, installation_id, [archived])
-        ).json()["outcomes"][0]["error"]["code"] == "archived_event"
+        assert (
+            client.post(
+                "/api/v1/sync/push", json=_body(sync_database, installation_id, [archived])
+            ).json()["outcomes"][0]["error"]["code"]
+            == "archived_event"
+        )
 
 
 def test_push_creates_a_recipe_through_the_typed_shared_command(
@@ -2221,12 +2763,14 @@ def test_push_creates_a_recipe_through_the_typed_shared_command(
                 )
             ],
         )
-        assert client.post("/api/v1/sync/push", json=restored).json()["outcomes"][0][
-            "status"
-        ] == "accepted"
-        assert client.post("/api/v1/sync/push", json=restored).json()["outcomes"][0][
-            "replayed"
-        ] is True
+        assert (
+            client.post("/api/v1/sync/push", json=restored).json()["outcomes"][0]["status"]
+            == "accepted"
+        )
+        assert (
+            client.post("/api/v1/sync/push", json=restored).json()["outcomes"][0]["replayed"]
+            is True
+        )
         changed = _body(
             sync_database,
             installation_id,
@@ -2282,9 +2826,7 @@ def test_push_rejects_malformed_guarded_recipe_update_map(
     sync_database: SyncDatabase,
 ) -> None:
     installation_id = _installation(sync_database)
-    ingredient_id, base_version_id, next_version_id, latest_version_id = (
-        uuid4() for _ in range(4)
-    )
+    ingredient_id, base_version_id, next_version_id, latest_version_id = (uuid4() for _ in range(4))
     recipe_id, recipe_version_id, line_key = (uuid4() for _ in range(3))
     with sync_database.engine.begin() as connection:
         scaling_unit_id = connection.scalar(
@@ -2323,21 +2865,29 @@ def test_push_rejects_malformed_guarded_recipe_update_map(
                 )
             )
     line = {
-        "id": str(uuid4()), "line_key": str(line_key),
-        "ingredient_version_id": str(base_version_id), "base_quantity": "2",
-        "position_key": "a", "scaling_behavior": "fixed",
+        "id": str(uuid4()),
+        "line_key": str(line_key),
+        "ingredient_version_id": str(base_version_id),
+        "base_quantity": "2",
+        "position_key": "a",
+        "scaling_behavior": "fixed",
         "include_in_portion_weight": False,
     }
     create = _recipe_command(
-        mutation_id=uuid4(), scaling_unit_id=scaling_unit_id,
-        recipe_id=str(recipe_id), recipe_version_id=str(recipe_version_id),
+        mutation_id=uuid4(),
+        scaling_unit_id=scaling_unit_id,
+        recipe_id=str(recipe_id),
+        recipe_version_id=str(recipe_version_id),
         ingredient_lines=[line],
     )
     with TestClient(create_app(_settings()), base_url="https://testserver") as client:
         _sign_in(client, "dummy-member")
-        assert client.post(
-            "/api/v1/sync/push", json=_body(sync_database, installation_id, [create])
-        ).json()["outcomes"][0]["status"] == "accepted"
+        assert (
+            client.post(
+                "/api/v1/sync/push", json=_body(sync_database, installation_id, [create])
+            ).json()["outcomes"][0]["status"]
+            == "accepted"
+        )
         with sync_database.engine.begin() as connection:
             connection.execute(
                 update(Ingredient)
@@ -2345,43 +2895,59 @@ def test_push_rejects_malformed_guarded_recipe_update_map(
                 .values(current_version_id=next_version_id)
             )
         accepted_payload = {
-            "recipe_id": str(recipe_id), "recipe_version_id": str(uuid4()),
-            "based_on_version_id": str(recipe_version_id), "name": "Updated",
-            "scaling_unit_id": str(scaling_unit_id), "base_scaling_amount": "10",
-            "ingredient_lines": [{**line, "id": str(uuid4()),
-                                   "ingredient_version_id": str(next_version_id)}],
+            "recipe_id": str(recipe_id),
+            "recipe_version_id": str(uuid4()),
+            "based_on_version_id": str(recipe_version_id),
+            "name": "Updated",
+            "scaling_unit_id": str(scaling_unit_id),
+            "base_scaling_amount": "10",
+            "ingredient_lines": [
+                {**line, "id": str(uuid4()), "ingredient_version_id": str(next_version_id)}
+            ],
             "catalog_update": True,
             "expected_current_ingredient_versions": [[str(ingredient_id), str(next_version_id)]],
         }
         accepted = _command(
-            mutation_id=uuid4(), event_id=uuid4(),
-            kind="recipe.publish_version", **accepted_payload,
+            mutation_id=uuid4(),
+            event_id=uuid4(),
+            kind="recipe.publish_version",
+            **accepted_payload,
         )
         accepted_body = _body(sync_database, installation_id, [accepted])
         first = client.post("/api/v1/sync/push", json=accepted_body).json()["outcomes"][0]
         replay = client.post("/api/v1/sync/push", json=accepted_body).json()["outcomes"][0]
         assert first["status"] == "accepted" and replay["replayed"] is True
         with sync_database.engine.connect() as connection:
-            assert len(
-                connection.scalars(
-                    select(RecipeVersion.id).where(RecipeVersion.recipe_id == recipe_id)
-                ).all()
-            ) == 2
+            assert (
+                len(
+                    connection.scalars(
+                        select(RecipeVersion.id).where(RecipeVersion.recipe_id == recipe_id)
+                    ).all()
+                )
+                == 2
+            )
         with sync_database.engine.begin() as connection:
             connection.execute(
                 insert(IngredientVersion).values(
-                    id=latest_version_id, organization_id=sync_database.organization_id,
-                    ingredient_id=ingredient_id, name="Latest", normalized_name="latest",
-                    canonical_unit_id=grams_id, mass_per_canonical_quantity=Decimal("1"),
+                    id=latest_version_id,
+                    organization_id=sync_database.organization_id,
+                    ingredient_id=ingredient_id,
+                    name="Latest",
+                    normalized_name="latest",
+                    canonical_unit_id=grams_id,
+                    mass_per_canonical_quantity=Decimal("1"),
                     published_by_user_id=actor_id,
                 )
             )
             connection.execute(
-                update(Ingredient).where(Ingredient.id == ingredient_id)
+                update(Ingredient)
+                .where(Ingredient.id == ingredient_id)
                 .values(current_version_id=latest_version_id)
             )
         stale = _command(
-            mutation_id=uuid4(), event_id=uuid4(), kind="recipe.publish_version",
+            mutation_id=uuid4(),
+            event_id=uuid4(),
+            kind="recipe.publish_version",
             **{**accepted_payload, "recipe_version_id": str(uuid4())},
         )
         stale_body = _body(sync_database, installation_id, [stale])
@@ -2392,12 +2958,15 @@ def test_push_rejects_malformed_guarded_recipe_update_map(
         assert stale_replay["replayed"] is True
         assert stale_replay["error"]["code"] == stale_first["error"]["code"]
         malformed_payload = {
-            **accepted_payload, "recipe_version_id": str(uuid4()),
+            **accepted_payload,
+            "recipe_version_id": str(uuid4()),
             "expected_current_ingredient_versions": [str(ingredient_id)],
         }
         malformed = _command(
-            mutation_id=uuid4(), event_id=uuid4(),
-            kind="recipe.publish_version", **malformed_payload,
+            mutation_id=uuid4(),
+            event_id=uuid4(),
+            kind="recipe.publish_version",
+            **malformed_payload,
         )
         outcome = client.post(
             "/api/v1/sync/push", json=_body(sync_database, installation_id, [malformed])
@@ -2420,21 +2989,20 @@ def test_push_rejects_malformed_guarded_recipe_update_map(
     empty_body = _body(sync_database, installation_id, [empty])
     with TestClient(create_app(_settings()), base_url="https://testserver") as client:
         _sign_in(client, "dummy-member")
-        empty_outcome = client.post(
-            "/api/v1/sync/push", json=empty_body
-        ).json()["outcomes"][0]
-        empty_replay = client.post(
-            "/api/v1/sync/push", json=empty_body
-        ).json()["outcomes"][0]
+        empty_outcome = client.post("/api/v1/sync/push", json=empty_body).json()["outcomes"][0]
+        empty_replay = client.post("/api/v1/sync/push", json=empty_body).json()["outcomes"][0]
     assert empty_outcome["status"] == "rejected"
     assert empty_outcome["error"]["code"] == "validation_failed"
     assert empty_replay["error"] == empty_outcome["error"]
     with sync_database.engine.connect() as connection:
-        assert len(
-            connection.scalars(
-                select(RecipeVersion.id).where(RecipeVersion.recipe_id == recipe_id)
-            ).all()
-        ) == 2
+        assert (
+            len(
+                connection.scalars(
+                    select(RecipeVersion.id).where(RecipeVersion.recipe_id == recipe_id)
+                ).all()
+            )
+            == 2
+        )
 
 
 def test_push_schedules_a_recipe_through_the_typed_shared_command(
@@ -2568,9 +3136,9 @@ def test_push_schedules_a_recipe_through_the_typed_shared_command(
         ]
         metadata = _command(mutation_id=uuid4(), event_id=event_id, kind="event.metadata")
         metadata_body = _body(sync_database, installation_id, [metadata])
-        metadata_outcome = client.post(
-            "/api/v1/sync/push", json=metadata_body
-        ).json()["outcomes"][0]
+        metadata_outcome = client.post("/api/v1/sync/push", json=metadata_body).json()["outcomes"][
+            0
+        ]
         assert metadata_outcome["status"] == "accepted"
         assert metadata_outcome["command_kind"] == "event.metadata"
         assert client.post("/api/v1/sync/push", json=metadata_body).json()["outcomes"][0][
@@ -2604,9 +3172,9 @@ def test_push_schedules_a_recipe_through_the_typed_shared_command(
             is_visible=False,
         )
         visibility_body = _body(sync_database, installation_id, [visibility])
-        visibility_outcome = client.post(
-            "/api/v1/sync/push", json=visibility_body
-        ).json()["outcomes"][0]
+        visibility_outcome = client.post("/api/v1/sync/push", json=visibility_body).json()[
+            "outcomes"
+        ][0]
         assert visibility_outcome["status"] == "accepted"
         assert visibility_outcome["command_kind"] == "event_day.visibility"
         assert client.post("/api/v1/sync/push", json=visibility_body).json()["outcomes"][0][
@@ -2635,9 +3203,12 @@ def test_push_schedules_a_recipe_through_the_typed_shared_command(
         nul_note = _event_day_note_command(
             mutation_id=uuid4(), event_id=event_id, event_day_id=event_day_id, note="bad\0note"
         )
-        assert client.post(
-            "/api/v1/sync/push", json=_body(sync_database, installation_id, [nul_note])
-        ).json()["outcomes"][0]["status"] == "rejected"
+        assert (
+            client.post(
+                "/api/v1/sync/push", json=_body(sync_database, installation_id, [nul_note])
+            ).json()["outcomes"][0]["status"]
+            == "rejected"
+        )
         meal_role = _event_meal_role_command(
             mutation_id=uuid4(),
             event_id=event_id,
@@ -2645,9 +3216,9 @@ def test_push_schedules_a_recipe_through_the_typed_shared_command(
             custom_name="Late supper",
         )
         meal_role_body = _body(sync_database, installation_id, [meal_role])
-        meal_role_outcome = client.post(
-            "/api/v1/sync/push", json=meal_role_body
-        ).json()["outcomes"][0]
+        meal_role_outcome = client.post("/api/v1/sync/push", json=meal_role_body).json()[
+            "outcomes"
+        ][0]
         assert meal_role_outcome["status"] == "accepted"
         assert meal_role_outcome["command_kind"] == "event_meal_role.create"
         assert client.post("/api/v1/sync/push", json=meal_role_body).json()["outcomes"][0][
@@ -2660,9 +3231,9 @@ def test_push_schedules_a_recipe_through_the_typed_shared_command(
             custom_name="Late dinner",
         )
         role_name_body = _body(sync_database, installation_id, [role_name])
-        role_name_outcome = client.post(
-            "/api/v1/sync/push", json=role_name_body
-        ).json()["outcomes"][0]
+        role_name_outcome = client.post("/api/v1/sync/push", json=role_name_body).json()[
+            "outcomes"
+        ][0]
         assert role_name_outcome["status"] == "accepted"
         assert role_name_outcome["command_kind"] == "event_meal_role.name"
         assert client.post("/api/v1/sync/push", json=role_name_body).json()["outcomes"][0][
@@ -2677,9 +3248,12 @@ def test_push_schedules_a_recipe_through_the_typed_shared_command(
         )
         cast(dict[str, object], role_position["payload"])["event_id"] = str(event_id)
         role_position_body = _body(sync_database, installation_id, [role_position])
-        assert client.post("/api/v1/sync/push", json=role_position_body).json()["outcomes"][0][
-            "status"
-        ] == "accepted"
+        assert (
+            client.post("/api/v1/sync/push", json=role_position_body).json()["outcomes"][0][
+                "status"
+            ]
+            == "accepted"
+        )
         assert client.post("/api/v1/sync/push", json=role_position_body).json()["outcomes"][0][
             "replayed"
         ]
@@ -2692,11 +3266,13 @@ def test_push_schedules_a_recipe_through_the_typed_shared_command(
         )
         cast(dict[str, object], role_lifecycle["payload"])["event_id"] = str(event_id)
         role_lifecycle_body = _body(sync_database, installation_id, [role_lifecycle])
-        assert client.post(
-            "/api/v1/sync/push", json=role_lifecycle_body
-        ).json()["outcomes"][0]["status"] == "accepted"
-        assert client.post(
-            "/api/v1/sync/push", json=role_lifecycle_body).json()["outcomes"][0][
+        assert (
+            client.post("/api/v1/sync/push", json=role_lifecycle_body).json()["outcomes"][0][
+                "status"
+            ]
+            == "accepted"
+        )
+        assert client.post("/api/v1/sync/push", json=role_lifecycle_body).json()["outcomes"][0][
             "replayed"
         ]
         malformed_position = _command(
@@ -2707,9 +3283,13 @@ def test_push_schedules_a_recipe_through_the_typed_shared_command(
             position_key="!",
         )
         cast(dict[str, object], malformed_position["payload"])["event_id"] = str(event_id)
-        assert client.post(
-            "/api/v1/sync/push", json=_body(sync_database, installation_id, [malformed_position])
-        ).json()["outcomes"][0]["error"]["code"] == "validation_failed"
+        assert (
+            client.post(
+                "/api/v1/sync/push",
+                json=_body(sync_database, installation_id, [malformed_position]),
+            ).json()["outcomes"][0]["error"]["code"]
+            == "validation_failed"
+        )
         bootstrap = client.post(
             "/api/v1/sync/bootstrap",
             json={"organization_id": str(sync_database.organization_id)},
@@ -2722,42 +3302,54 @@ def test_push_schedules_a_recipe_through_the_typed_shared_command(
         )
         assert role_record["position_key"] == "z9"
         assert role_record["custom_name"] == "Late dinner"
-        assert role_record["field_clocks"]["custom_name"]["winning_mutation_id"] == role_name[
-            "mutation_id"
-        ]
-        assert role_record["field_clocks"]["position_key"]["winning_mutation_id"] == role_position[
-            "mutation_id"
-        ]
+        assert (
+            role_record["field_clocks"]["custom_name"]["winning_mutation_id"]
+            == role_name["mutation_id"]
+        )
+        assert (
+            role_record["field_clocks"]["position_key"]["winning_mutation_id"]
+            == role_position["mutation_id"]
+        )
         assert role_record["retired_at"] is not None
-        assert role_record["field_clocks"]["lifecycle"]["winning_mutation_id"] == role_lifecycle[
-            "mutation_id"
-        ]
+        assert (
+            role_record["field_clocks"]["lifecycle"]["winning_mutation_id"]
+            == role_lifecycle["mutation_id"]
+        )
         malformed_role = _event_meal_role_command(
             mutation_id=uuid4(), event_id=event_id, event_meal_role_id=uuid4(), custom_name=""
         )
-        assert client.post(
-            "/api/v1/sync/push", json=_body(sync_database, installation_id, [malformed_role])
-        ).json()["outcomes"][0]["error"]["code"] == "validation_failed"
+        assert (
+            client.post(
+                "/api/v1/sync/push", json=_body(sync_database, installation_id, [malformed_role])
+            ).json()["outcomes"][0]["error"]["code"]
+            == "validation_failed"
+        )
         malformed_role_name = _event_meal_role_name_command(
             mutation_id=uuid4(),
             event_id=event_id,
             event_meal_role_id=UUID(meal_role["payload"]["event_meal_role_id"]),
             custom_name="bad\0name",
         )
-        assert client.post(
-            "/api/v1/sync/push",
-            json=_body(sync_database, installation_id, [malformed_role_name]),
-        ).json()["outcomes"][0]["error"]["code"] == "validation_failed"
+        assert (
+            client.post(
+                "/api/v1/sync/push",
+                json=_body(sync_database, installation_id, [malformed_role_name]),
+            ).json()["outcomes"][0]["error"]["code"]
+            == "validation_failed"
+        )
         malformed_visibility = _event_day_visibility_command(
             mutation_id=uuid4(),
             event_id=event_id,
             event_day_id=event_day_id,
             is_visible="false",
         )
-        assert client.post(
-            "/api/v1/sync/push",
-            json=_body(sync_database, installation_id, [malformed_visibility]),
-        ).json()["outcomes"][0]["error"]["code"] == "validation_failed"
+        assert (
+            client.post(
+                "/api/v1/sync/push",
+                json=_body(sync_database, installation_id, [malformed_visibility]),
+            ).json()["outcomes"][0]["error"]["code"]
+            == "validation_failed"
+        )
         created_day = _event_day_create_command(
             mutation_id=uuid4(),
             event_id=event_id,
@@ -2781,9 +3373,10 @@ def test_push_schedules_a_recipe_through_the_typed_shared_command(
         )
         cast(dict[str, object], day_lifecycle["payload"])["event_id"] = str(event_id)
         lifecycle_body = _body(sync_database, installation_id, [day_lifecycle])
-        assert client.post("/api/v1/sync/push", json=lifecycle_body).json()["outcomes"][0][
-            "status"
-        ] == "accepted"
+        assert (
+            client.post("/api/v1/sync/push", json=lifecycle_body).json()["outcomes"][0]["status"]
+            == "accepted"
+        )
         assert client.post("/api/v1/sync/push", json=lifecycle_body).json()["outcomes"][0][
             "replayed"
         ]
@@ -2792,9 +3385,12 @@ def test_push_schedules_a_recipe_through_the_typed_shared_command(
             "mutation_id": str(uuid4()),
             "payload": {**day_lifecycle["payload"], "operation": "hide"},
         }
-        assert client.post(
-            "/api/v1/sync/push", json=_body(sync_database, installation_id, [invalid_lifecycle])
-        ).json()["outcomes"][0]["error"]["code"] == "validation_failed"
+        assert (
+            client.post(
+                "/api/v1/sync/push", json=_body(sync_database, installation_id, [invalid_lifecycle])
+            ).json()["outcomes"][0]["error"]["code"]
+            == "validation_failed"
+        )
         malformed_day = _event_day_create_command(
             mutation_id=uuid4(),
             event_id=event_id,
@@ -2907,9 +3503,7 @@ def test_push_schedules_a_recipe_through_the_typed_shared_command(
         added_body = _body(sync_database, installation_id, [added_override])
         added_outcome = client.post("/api/v1/sync/push", json=added_body).json()["outcomes"][0]
         assert added_outcome["status"] == "accepted"
-        assert client.post("/api/v1/sync/push", json=added_body).json()["outcomes"][0][
-            "replayed"
-        ]
+        assert client.post("/api/v1/sync/push", json=added_body).json()["outcomes"][0]["replayed"]
         clear_added = _scheduled_ingredient_override_command(
             mutation_id=uuid4(),
             event_id=event_id,
@@ -2927,10 +3521,9 @@ def test_push_schedules_a_recipe_through_the_typed_shared_command(
             client.post("/api/v1/sync/push", json=clear_added_body).json()["outcomes"][0]["status"]
             == "accepted"
         )
-        assert (
-            client.post("/api/v1/sync/push", json=clear_added_body)
-            .json()["outcomes"][0]["replayed"]
-        )
+        assert client.post("/api/v1/sync/push", json=clear_added_body).json()["outcomes"][0][
+            "replayed"
+        ]
         clear_added_extra = {
             **clear_added,
             "mutation_id": str(uuid4()),
@@ -3074,9 +3667,9 @@ def test_push_schedules_a_recipe_through_the_typed_shared_command(
             mutation_id=uuid4(), event_id=event_id, scheduled_recipe_id=scheduled_recipe_id
         )
         lifecycle_body = _body(sync_database, installation_id, [lifecycle])
-        lifecycle_outcome = client.post(
-            "/api/v1/sync/push", json=lifecycle_body
-        ).json()["outcomes"][0]
+        lifecycle_outcome = client.post("/api/v1/sync/push", json=lifecycle_body).json()[
+            "outcomes"
+        ][0]
         assert lifecycle_outcome["command_kind"] == "scheduled_recipe.lifecycle"
         assert lifecycle_outcome["status"] == "accepted"
         assert client.post("/api/v1/sync/push", json=lifecycle_body).json()["outcomes"][0][
@@ -3086,10 +3679,13 @@ def test_push_schedules_a_recipe_through_the_typed_shared_command(
             mutation_id=uuid4(), event_id=event_id, scheduled_recipe_id=scheduled_recipe_id
         )
         cast(dict[str, object], malformed_lifecycle["payload"])["operation"] = "delete"
-        assert client.post(
-            "/api/v1/sync/push",
-            json=_body(sync_database, installation_id, [malformed_lifecycle]),
-        ).json()["outcomes"][0]["error"]["code"] == "validation_failed"
+        assert (
+            client.post(
+                "/api/v1/sync/push",
+                json=_body(sync_database, installation_id, [malformed_lifecycle]),
+            ).json()["outcomes"][0]["error"]["code"]
+            == "validation_failed"
+        )
         changed = _schedule_recipe_command(
             mutation_id=mutation_id,
             scheduled_recipe_id=scheduled_recipe_id,
@@ -3352,36 +3948,52 @@ def test_push_publishes_ingredient_version_strictly_and_replays(
         body = _body(sync_database, installation_id, [publish])
         outcome = client.post("/api/v1/sync/push", json=body).json()["outcomes"][0]
         assert (outcome["command_kind"], outcome["status"]) == (
-            "ingredient.publish_version", "accepted"
+            "ingredient.publish_version",
+            "accepted",
         )
         assert client.post("/api/v1/sync/push", json=body).json()["outcomes"][0]["replayed"]
         malformed_number = _ingredient_publish_command(
-            mutation_id=uuid4(), ingredient_id=UUID(str(payload["ingredient_id"])),
-            based_on_version_id=UUID(str(payload["ingredient_version_id"])), unit_id=unit_id,
+            mutation_id=uuid4(),
+            ingredient_id=UUID(str(payload["ingredient_id"])),
+            based_on_version_id=UUID(str(payload["ingredient_version_id"])),
+            unit_id=unit_id,
             mass_per_canonical_quantity=1,
         )
-        assert client.post(
-            "/api/v1/sync/push",
-            json=_body(sync_database, installation_id, [malformed_number]),
-        ).json()["outcomes"][0]["status"] == "rejected"
+        assert (
+            client.post(
+                "/api/v1/sync/push",
+                json=_body(sync_database, installation_id, [malformed_number]),
+            ).json()["outcomes"][0]["status"]
+            == "rejected"
+        )
         malformed_boolean = _ingredient_publish_command(
-            mutation_id=uuid4(), ingredient_id=UUID(str(payload["ingredient_id"])),
-            based_on_version_id=UUID(str(payload["ingredient_version_id"])), unit_id=unit_id,
+            mutation_id=uuid4(),
+            ingredient_id=UUID(str(payload["ingredient_id"])),
+            based_on_version_id=UUID(str(payload["ingredient_version_id"])),
+            unit_id=unit_id,
             dietary_tag_ids=True,
         )
-        assert client.post(
-            "/api/v1/sync/push",
-            json=_body(sync_database, installation_id, [malformed_boolean]),
-        ).json()["outcomes"][0]["status"] == "rejected"
+        assert (
+            client.post(
+                "/api/v1/sync/push",
+                json=_body(sync_database, installation_id, [malformed_boolean]),
+            ).json()["outcomes"][0]["status"]
+            == "rejected"
+        )
         malformed_extra = _ingredient_publish_command(
-            mutation_id=uuid4(), ingredient_id=UUID(str(payload["ingredient_id"])),
-            based_on_version_id=UUID(str(payload["ingredient_version_id"])), unit_id=unit_id,
+            mutation_id=uuid4(),
+            ingredient_id=UUID(str(payload["ingredient_id"])),
+            based_on_version_id=UUID(str(payload["ingredient_version_id"])),
+            unit_id=unit_id,
         )
         cast(dict[str, object], malformed_extra["payload"])["unexpected"] = True
-        assert client.post(
-            "/api/v1/sync/push",
-            json=_body(sync_database, installation_id, [malformed_extra]),
-        ).json()["outcomes"][0]["status"] == "rejected"
+        assert (
+            client.post(
+                "/api/v1/sync/push",
+                json=_body(sync_database, installation_id, [malformed_extra]),
+            ).json()["outcomes"][0]["status"]
+            == "rejected"
+        )
 
 
 def test_push_applies_idempotent_receipt_metadata_commands(
@@ -3462,9 +4074,7 @@ def test_push_clock_and_timestamp_boundaries_are_safe(
     body = _body(sync_database, installation_id, [])
     server_now = datetime(2026, 8, 18, 12, 0, tzinfo=UTC)
     body["request_sent_at"] = (
-        (server_now + offset).isoformat()
-        if offset is not None
-        else "2026-08-10T12:00:00"
+        (server_now + offset).isoformat() if offset is not None else "2026-08-10T12:00:00"
     )
     with TestClient(create_app(_settings()), base_url="https://testserver") as client:
         _sign_in(client, "dummy-member")

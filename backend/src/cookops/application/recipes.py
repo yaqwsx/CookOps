@@ -893,16 +893,20 @@ async def _prepare_guarded_catalog_update(
     """Verify and normalize the trusted server-side recipe catalog update."""
 
     base_lines = (
-        await session.execute(
-            select(RecipeVersionIngredientLine)
-            .where(
-                RecipeVersionIngredientLine.organization_id == command.organization_id,
-                RecipeVersionIngredientLine.recipe_version_id == based_on_version_id,
+        (
+            await session.execute(
+                select(RecipeVersionIngredientLine)
+                .where(
+                    RecipeVersionIngredientLine.organization_id == command.organization_id,
+                    RecipeVersionIngredientLine.recipe_version_id == based_on_version_id,
+                )
+                .order_by(RecipeVersionIngredientLine.line_key)
+                .with_for_update()
             )
-            .order_by(RecipeVersionIngredientLine.line_key)
-            .with_for_update()
         )
-    ).scalars().all()
+        .scalars()
+        .all()
+    )
     base_by_key = {line.line_key: line for line in base_lines}
     submitted_by_key = {line.line_key: line for line in command.ingredient_lines}
     if set(base_by_key) != set(submitted_by_key):
@@ -959,17 +963,17 @@ async def _prepare_guarded_catalog_update(
     if expected != stale_by_ingredient:
         return command, "stale_precondition"
 
-    unit_ids = tuple(sorted(
-        {
-            version.canonical_unit_id
-            for version in version_by_id.values()
-        }
-        | {
-            line.preferred_display_unit_id
-            for line in command.ingredient_lines
-            if line.preferred_display_unit_id is not None
-        }
-    , key=str))
+    unit_ids = tuple(
+        sorted(
+            {version.canonical_unit_id for version in version_by_id.values()}
+            | {
+                line.preferred_display_unit_id
+                for line in command.ingredient_lines
+                if line.preferred_display_unit_id is not None
+            },
+            key=str,
+        )
+    )
     units = (
         await session.execute(
             select(

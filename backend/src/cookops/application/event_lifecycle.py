@@ -293,7 +293,9 @@ async def _archive_payload(
         select(IngredientVersionDietaryTag).where(
             IngredientVersionDietaryTag.ingredient_version_id.in_(ingredient_version_ids),
             IngredientVersionDietaryTag.organization_id == event.organization_id,
-        ) if ingredient_version_ids else select(IngredientVersionDietaryTag).where(false()),
+        )
+        if ingredient_version_ids
+        else select(IngredientVersionDietaryTag).where(false()),
     ):
         version_tags.setdefault(item.ingredient_version_id, set()).add(item.dietary_tag_id)
     version_by_id = {item.id: item for item in ingredient_versions}
@@ -304,12 +306,14 @@ async def _archive_payload(
     overrides_by_schedule: dict[UUID, list[ScheduledIngredientOverride]] = {}
     for item in overrides:
         overrides_by_schedule.setdefault(item.scheduled_recipe_id, []).append(item)
+
     def valid_decimal(value: object) -> Decimal | None:
         try:
             parsed = Decimal(str(value))
         except Exception:
             return None
         return parsed if parsed.is_finite() else None
+
     resolved_warnings: list[dict[str, object]] = []
     for schedule in schedules:
         recipe_version = next(
@@ -334,15 +338,12 @@ async def _archive_payload(
             )
             if quantity is None or quantity == 0 or ingredient_version_id not in version_by_id:
                 continue
-            if (
-                line.scaling_behavior != "fixed"
-                and (
-                    selected is None
-                    or base is None
-                    or base == 0
-                    or selected == 0
-                    or quantity * selected / base == 0
-                )
+            if line.scaling_behavior != "fixed" and (
+                selected is None
+                or base is None
+                or base == 0
+                or selected == 0
+                or quantity * selected / base == 0
             ):
                 continue
             resolved_ids.add(ingredient_version_id)
@@ -365,22 +366,26 @@ async def _archive_payload(
                     for tag_id in matching:
                         matches.setdefault(tag_id, set()).add(ingredient_names[version_id])
             if matches:
-                warnings.append({
-                    "exception_name": exception.name,
-                    "tag_descriptors": [tag_descriptors[tag_id] for tag_id in sorted(matches)],
-                    "ingredient_names": sorted(
-                        {name for names in matches.values() for name in names}
-                    ),
-                })
+                warnings.append(
+                    {
+                        "exception_name": exception.name,
+                        "tag_descriptors": [tag_descriptors[tag_id] for tag_id in sorted(matches)],
+                        "ingredient_names": sorted(
+                            {name for names in matches.values() for name in names}
+                        ),
+                    }
+                )
         if warnings:
-            resolved_warnings.append({
-                "id": str(schedule.id),
-                "event_id": str(event.id),
-                "organization_id": str(event.organization_id),
-                "scheduled_recipe_id": str(schedule.id),
-                "warnings": sorted(warnings, key=lambda item: str(item["exception_name"])),
-                "retired_at": None,
-            })
+            resolved_warnings.append(
+                {
+                    "id": str(schedule.id),
+                    "event_id": str(event.id),
+                    "organization_id": str(event.organization_id),
+                    "scheduled_recipe_id": str(schedule.id),
+                    "warnings": sorted(warnings, key=lambda item: str(item["exception_name"])),
+                    "retired_at": None,
+                }
+            )
     user_ids = {event.created_by_user_id, archive_actor_id}
     for group in (
         schedules,

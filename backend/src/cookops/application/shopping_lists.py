@@ -1097,9 +1097,7 @@ async def rename_shopping_list(
     error: ApplicationServiceError | None = None
     result: RenameShoppingListResult | None = None
     async with session_factory() as session, session.begin():
-        role = await _authorize_member_and_lock_organization(
-            session, context, organization_id
-        )
+        role = await _authorize_member_and_lock_organization(session, context, organization_id)
         await session.execute(
             text("SELECT pg_advisory_xact_lock(:key)"),
             {"key": _advisory_lock_key("mutation", mutation_id)},
@@ -3628,9 +3626,7 @@ async def set_ad_hoc_shopping_item_fulfilment(
         organization_id = (
             command.organization_id if isinstance(command.organization_id, UUID) else UUID(int=0)
         )
-        role = await _authorize_member_and_lock_organization(
-            session, context, organization_id
-        )
+        role = await _authorize_member_and_lock_organization(session, context, organization_id)
         mutation_id = command.mutation_id if isinstance(command.mutation_id, UUID) else UUID(int=0)
         await session.execute(
             text("SELECT pg_advisory_xact_lock(:key)"),

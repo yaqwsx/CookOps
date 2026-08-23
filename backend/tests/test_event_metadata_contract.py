@@ -35,9 +35,12 @@ def test_metadata_accepts_legacy_and_new_payload_shapes() -> None:
         "general_note": None,
     }
     assert UpdateEventMetadataPayload.model_validate(common).start_date is None
-    assert UpdateEventMetadataPayload.model_validate(
-        {**common, "start_date": "2026-01-01", "end_date": "2026-01-02"}
-    ).end_date.isoformat() == "2026-01-02"
+    assert (
+        UpdateEventMetadataPayload.model_validate(
+            {**common, "start_date": "2026-01-01", "end_date": "2026-01-02"}
+        ).end_date.isoformat()
+        == "2026-01-02"
+    )
     with pytest.raises(ValidationError):
         UpdateEventMetadataPayload.model_validate({**common, "start_date": "2026-01-01"})
 

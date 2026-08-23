@@ -103,8 +103,7 @@ def test_0018_upgrades_from_0017_without_losing_existing_rows(
         "ck_event_dietary_exceptions_retirement",
     }
     assert {
-        check["name"]
-        for check in inspector.get_check_constraints("event_dietary_exception_tags")
+        check["name"] for check in inspector.get_check_constraints("event_dietary_exception_tags")
     } >= {"ck_event_dietary_exception_tags_retirement"}
     exception_indexes = {
         index["name"]: index for index in inspector.get_indexes("event_dietary_exceptions")
@@ -117,8 +116,7 @@ def test_0018_upgrades_from_0017_without_losing_existing_rows(
     assert exception_indexes["ix_event_dietary_exceptions_event_active"]["unique"] is False
 
     tag_indexes = {
-        index["name"]: index
-        for index in inspector.get_indexes("event_dietary_exception_tags")
+        index["name"]: index for index in inspector.get_indexes("event_dietary_exception_tags")
     }
     active_pair = tag_indexes["uq_event_dietary_exception_tags_active_pair"]
     assert active_pair["column_names"] == ["exception_id", "dietary_tag_id"]

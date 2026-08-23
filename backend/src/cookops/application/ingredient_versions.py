@@ -175,9 +175,7 @@ async def publish_ingredient_version(
                     if isinstance(raw_code, str) and raw_code in allowed_codes
                     else "validation_failed"
                 )
-                deferred = ApplicationServiceError(
-                    code, retry_same_identity=False
-                )
+                deferred = ApplicationServiceError(code, retry_same_identity=False)
             else:
                 deferred = _retained_error(retained)
         elif violations:
@@ -256,9 +254,7 @@ async def publish_ingredient_version(
                 )
                 if old_unit is None or new_unit is None or old_unit.dimension != new_unit.dimension:
                     errors.append(
-                        FieldViolation(
-                            "canonical_unit_id", "must_match_current_unit_dimension"
-                        )
+                        FieldViolation("canonical_unit_id", "must_match_current_unit_dimension")
                     )
             if errors and deferred is None:
                 deferred = _validation_error(tuple(errors))

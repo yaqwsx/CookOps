@@ -193,7 +193,7 @@ async def set_scheduled_recipe_note(
                 {"key": _advisory_lock_key("scheduled_recipe", command.scheduled_recipe_id)},
             )
             scheduled = await session.scalar(
-                select( ScheduledRecipe)
+                select(ScheduledRecipe)
                 .join(Event)
                 .where(
                     ScheduledRecipe.id == command.scheduled_recipe_id,
@@ -202,7 +202,7 @@ async def set_scheduled_recipe_note(
                     Event.organization_id == command.organization_id,
                     Event.lifecycle == "active",
                 )
-                .with_for_update(of=( ScheduledRecipe, Event))
+                .with_for_update(of=(ScheduledRecipe, Event))
             )
             if scheduled is None:
                 deferred = ApplicationServiceError(

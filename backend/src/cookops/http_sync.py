@@ -686,6 +686,7 @@ class MoveScheduledRecipePayload(BaseModel):
         if self.placement in ("start", "end") and self.target_scheduled_recipe_id is not None:
             raise ValueError("target_scheduled_recipe_id is not valid")
         return self
+
     logical_operation_id: UUID | None = None
 
 
@@ -844,6 +845,8 @@ _SetScheduledIngredientOverridePayload = Annotated[
     ReplacementScheduledIngredientOverridePayload | AddedScheduledIngredientOverridePayload,
     Field(discriminator="override_kind"),
 ]
+
+
 class ClearReplacementScheduledIngredientOverridePayload(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -870,10 +873,8 @@ ScheduledIngredientOverridePayload = (
     | ClearReplacementScheduledIngredientOverridePayload
     | ClearAddedScheduledIngredientOverridePayload
 )
-scheduled_ingredient_override_payload_adapter: TypeAdapter[
-    ScheduledIngredientOverridePayload
-] = TypeAdapter(
-    ScheduledIngredientOverridePayload
+scheduled_ingredient_override_payload_adapter: TypeAdapter[ScheduledIngredientOverridePayload] = (
+    TypeAdapter(ScheduledIngredientOverridePayload)
 )
 
 
@@ -924,6 +925,7 @@ class CatalogConfigurationPayload(BaseModel):
     allows_recipe_scaling: StrictBool | None = None
     built_in_translation_key: str | None = None
     logical_operation_id: UUID | None = None
+
 
 class OrganizationUpdatePayload(BaseModel):
     model_config = ConfigDict(extra="forbid", strict=True)

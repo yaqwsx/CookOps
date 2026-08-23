@@ -328,21 +328,27 @@ async def update_scheduled_recipe_catalog(
                         scheduled.selected_scale_amount = suggestion
                         scheduled.scale_mode = "suggested"
                         for field_name in ("selected_scale_amount", "scale_mode"):
-                            scale_clock = await session.scalar(select(FieldClock).where(
-                                FieldClock.organization_id == organization_id,
-                                FieldClock.entity_kind == "scheduled_recipe",
-                                FieldClock.entity_id == scheduled.id,
-                                FieldClock.field_name == field_name,
-                            ).with_for_update())
+                            scale_clock = await session.scalar(
+                                select(FieldClock)
+                                .where(
+                                    FieldClock.organization_id == organization_id,
+                                    FieldClock.entity_kind == "scheduled_recipe",
+                                    FieldClock.entity_id == scheduled.id,
+                                    FieldClock.field_name == field_name,
+                                )
+                                .with_for_update()
+                            )
                             if scale_clock is None:
-                                session.add(FieldClock(
-                                    organization_id=organization_id,
-                                    entity_kind="scheduled_recipe",
-                                    entity_id=scheduled.id,
-                                    field_name=field_name,
-                                    winning_client_wall_time=when,
-                                    winning_mutation_id=command.mutation_id,
-                                ))
+                                session.add(
+                                    FieldClock(
+                                        organization_id=organization_id,
+                                        entity_kind="scheduled_recipe",
+                                        entity_id=scheduled.id,
+                                        field_name=field_name,
+                                        winning_client_wall_time=when,
+                                        winning_mutation_id=command.mutation_id,
+                                    )
+                                )
                             else:
                                 scale_clock.winning_client_wall_time = when
                                 scale_clock.winning_mutation_id = command.mutation_id
@@ -386,11 +392,15 @@ async def update_scheduled_recipe_catalog(
                             "winning_client_wall_time": clock.winning_client_wall_time.isoformat(),
                             "winning_mutation_id": str(clock.winning_mutation_id),
                         }
-                        for clock in (await session.scalars(select(FieldClock).where(
-                            FieldClock.organization_id == organization_id,
-                            FieldClock.entity_kind == "scheduled_recipe",
-                            FieldClock.entity_id == scheduled.id,
-                        ))).all()
+                        for clock in (
+                            await session.scalars(
+                                select(FieldClock).where(
+                                    FieldClock.organization_id == organization_id,
+                                    FieldClock.entity_kind == "scheduled_recipe",
+                                    FieldClock.entity_id == scheduled.id,
+                                )
+                            )
+                        ).all()
                     }
                     existing_clocks = record.get("field_clocks")
                     if isinstance(existing_clocks, dict):

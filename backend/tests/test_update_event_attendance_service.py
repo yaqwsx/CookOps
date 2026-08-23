@@ -404,17 +404,24 @@ def test_metadata_date_range_lww_rejection_and_day_reconciliation(
         assert connection.execute(
             select(Event.start_date, Event.end_date).where(Event.id == event_id)
         ).one() == (date(2026, 7, 1), date(2026, 7, 1))
-        assert connection.scalar(
-            select(Mutation.outcome).where(Mutation.id == invalid.mutation_id)
-        ) == "rejected"
-        assert connection.scalar(
-            select(func.count()).select_from(EventDay).where(EventDay.event_id == event_id)
-        ) == 3
-        assert connection.scalar(
-            select(func.count())
-            .select_from(OrganizationChange)
-            .where(OrganizationChange.mutation_id == invalid.mutation_id)
-        ) == 0
+        assert (
+            connection.scalar(select(Mutation.outcome).where(Mutation.id == invalid.mutation_id))
+            == "rejected"
+        )
+        assert (
+            connection.scalar(
+                select(func.count()).select_from(EventDay).where(EventDay.event_id == event_id)
+            )
+            == 3
+        )
+        assert (
+            connection.scalar(
+                select(func.count())
+                .select_from(OrganizationChange)
+                .where(OrganizationChange.mutation_id == invalid.mutation_id)
+            )
+            == 0
+        )
 
     widened = UpdateEventMetadataCommand(
         mutation_id=uuid4(),
@@ -455,8 +462,7 @@ def test_metadata_date_range_lww_rejection_and_day_reconciliation(
             "event_day",
         ]
         assert all(
-            row.payload["record"]["provenance"] == "range_generated"
-            for row in generated[1:]
+            row.payload["record"]["provenance"] == "range_generated" for row in generated[1:]
         )
         assert all(
             row.payload["record"]["field_clocks"] == {"note": None, "is_visible": None}
@@ -479,13 +485,19 @@ def test_metadata_date_range_lww_rejection_and_day_reconciliation(
         end_date=date(2026, 7, 2),
         client_wall_time=wall_time + timedelta(seconds=4),
     )
-    assert asyncio.run(
-        update_event_metadata(service_database.sessions, context(service_database), narrowed)
-    ).outcome == "accepted"
+    assert (
+        asyncio.run(
+            update_event_metadata(service_database.sessions, context(service_database), narrowed)
+        ).outcome
+        == "accepted"
+    )
     with service_database.sync_engine.connect() as connection:
-        assert connection.scalar(
-            select(func.count()).select_from(EventDay).where(EventDay.event_id == event_id)
-        ) == 6
+        assert (
+            connection.scalar(
+                select(func.count()).select_from(EventDay).where(EventDay.event_id == event_id)
+            )
+            == 6
+        )
 
 
 def test_concurrent_attendance_updates_are_lww_and_create_complete_groups(

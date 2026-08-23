@@ -119,9 +119,12 @@ def test_provisioning_is_idempotent_and_covers_all_required_dummy_authorities(
         assert connection.scalar(select(func.count()).select_from(Organization)) == 2
         assert connection.scalar(select(func.count()).select_from(OrganizationMembership)) == 4
         assert connection.scalar(select(func.count()).select_from(SystemRoleAssignment)) == 1
-        assert connection.scalar(
-            select(func.count()).select_from(Event).where(Event.id == DEVELOPMENT_EVENT_ID)
-        ) == 1
+        assert (
+            connection.scalar(
+                select(func.count()).select_from(Event).where(Event.id == DEVELOPMENT_EVENT_ID)
+            )
+            == 1
+        )
         event_day_id = connection.scalar(
             select(EventDay.id).where(EventDay.event_id == DEVELOPMENT_EVENT_ID)
         )
@@ -142,43 +145,64 @@ def test_provisioning_is_idempotent_and_covers_all_required_dummy_authorities(
         )
         assert None not in (event_day_id, meal_role_id, ingredient_id, ingredient_version_id)
         assert None not in (recipe_id, recipe_version_id)
-        assert connection.scalar(
-            select(func.count()).select_from(ScheduledRecipe).where(
-                ScheduledRecipe.event_id == DEVELOPMENT_EVENT_ID,
-                ScheduledRecipe.event_day_id == event_day_id,
-                ScheduledRecipe.event_meal_role_id == meal_role_id,
-                ScheduledRecipe.recipe_id == recipe_id,
-                ScheduledRecipe.recipe_version_id == recipe_version_id,
+        assert (
+            connection.scalar(
+                select(func.count())
+                .select_from(ScheduledRecipe)
+                .where(
+                    ScheduledRecipe.event_id == DEVELOPMENT_EVENT_ID,
+                    ScheduledRecipe.event_day_id == event_day_id,
+                    ScheduledRecipe.event_meal_role_id == meal_role_id,
+                    ScheduledRecipe.recipe_id == recipe_id,
+                    ScheduledRecipe.recipe_version_id == recipe_version_id,
+                )
             )
-        ) == 1
+            == 1
+        )
         scheduled_recipe_id = connection.scalar(
             select(ScheduledRecipe.id).where(ScheduledRecipe.event_id == DEVELOPMENT_EVENT_ID)
         )
         assert scheduled_recipe_id is not None
-        assert connection.scalar(
-            select(func.count()).select_from(RecipeVersionIngredientLine).where(
-                RecipeVersionIngredientLine.recipe_version_id == recipe_version_id,
-                RecipeVersionIngredientLine.recipe_id == recipe_id,
-                RecipeVersionIngredientLine.ingredient_version_id == ingredient_version_id,
+        assert (
+            connection.scalar(
+                select(func.count())
+                .select_from(RecipeVersionIngredientLine)
+                .where(
+                    RecipeVersionIngredientLine.recipe_version_id == recipe_version_id,
+                    RecipeVersionIngredientLine.recipe_id == recipe_id,
+                    RecipeVersionIngredientLine.ingredient_version_id == ingredient_version_id,
+                )
             )
-        ) == 1
-        assert connection.scalar(
-            select(func.count()).select_from(StoreSection).where(
-                StoreSection.organization_id == PRIMARY_ORGANIZATION_ID
+            == 1
+        )
+        assert (
+            connection.scalar(
+                select(func.count())
+                .select_from(StoreSection)
+                .where(StoreSection.organization_id == PRIMARY_ORGANIZATION_ID)
             )
-        ) == 1
-        assert connection.scalar(
-            select(func.count()).select_from(UnitDefinition).where(
-                UnitDefinition.code == "portion",
-                UnitDefinition.organization_id == PRIMARY_ORGANIZATION_ID,
+            == 1
+        )
+        assert (
+            connection.scalar(
+                select(func.count())
+                .select_from(UnitDefinition)
+                .where(
+                    UnitDefinition.code == "portion",
+                    UnitDefinition.organization_id == PRIMARY_ORGANIZATION_ID,
+                )
             )
-        ) == 1
+            == 1
+        )
         scaling_unit_id = connection.scalar(
             select(RecipeVersion.scaling_unit_id).where(RecipeVersion.id == recipe_version_id)
         )
-        assert connection.scalar(
-            select(UnitDefinition.organization_id).where(UnitDefinition.id == scaling_unit_id)
-        ) == PRIMARY_ORGANIZATION_ID
+        assert (
+            connection.scalar(
+                select(UnitDefinition.organization_id).where(UnitDefinition.id == scaling_unit_id)
+            )
+            == PRIMARY_ORGANIZATION_ID
+        )
         shopping_list_id = connection.scalar(
             select(ShoppingList.id).where(ShoppingList.event_id == DEVELOPMENT_EVENT_ID)
         )
@@ -189,42 +213,61 @@ def test_provisioning_is_idempotent_and_covers_all_required_dummy_authorities(
             )
         )
         assert revision_id is not None
-        assert connection.scalar(
-            select(func.count()).select_from(ShoppingGenerationRevision).where(
-                ShoppingGenerationRevision.id == revision_id,
-                ShoppingGenerationRevision.shopping_list_id == shopping_list_id,
-                ShoppingGenerationRevision.event_id == DEVELOPMENT_EVENT_ID,
+        assert (
+            connection.scalar(
+                select(func.count())
+                .select_from(ShoppingGenerationRevision)
+                .where(
+                    ShoppingGenerationRevision.id == revision_id,
+                    ShoppingGenerationRevision.shopping_list_id == shopping_list_id,
+                    ShoppingGenerationRevision.event_id == DEVELOPMENT_EVENT_ID,
+                )
             )
-        ) == 1
-        assert connection.scalar(
-            select(func.count()).select_from(ShoppingRevisionSource).where(
-                ShoppingRevisionSource.generation_revision_id == revision_id,
-                ShoppingRevisionSource.shopping_list_id == shopping_list_id,
-                ShoppingRevisionSource.event_id == DEVELOPMENT_EVENT_ID,
-                ShoppingRevisionSource.scheduled_recipe_id == scheduled_recipe_id,
+            == 1
+        )
+        assert (
+            connection.scalar(
+                select(func.count())
+                .select_from(ShoppingRevisionSource)
+                .where(
+                    ShoppingRevisionSource.generation_revision_id == revision_id,
+                    ShoppingRevisionSource.shopping_list_id == shopping_list_id,
+                    ShoppingRevisionSource.event_id == DEVELOPMENT_EVENT_ID,
+                    ShoppingRevisionSource.scheduled_recipe_id == scheduled_recipe_id,
+                )
             )
-        ) == 1
-        assert connection.scalar(
-            select(func.count()).select_from(ShoppingIngredientRow).where(
-                ShoppingIngredientRow.shopping_list_id == shopping_list_id
+            == 1
+        )
+        assert (
+            connection.scalar(
+                select(func.count())
+                .select_from(ShoppingIngredientRow)
+                .where(ShoppingIngredientRow.shopping_list_id == shopping_list_id)
             )
-        ) == 1
+            == 1
+        )
         contribution_id = connection.scalar(
             select(ShoppingContribution.id).where(
                 ShoppingContribution.shopping_list_id == shopping_list_id
             )
         )
         assert contribution_id is not None
-        assert connection.scalar(
-            select(func.count()).select_from(ShoppingContributionSnapshot).where(
-                ShoppingContributionSnapshot.shopping_contribution_id == contribution_id
+        assert (
+            connection.scalar(
+                select(func.count())
+                .select_from(ShoppingContributionSnapshot)
+                .where(ShoppingContributionSnapshot.shopping_contribution_id == contribution_id)
             )
-        ) == 1
-        assert connection.scalar(
-            select(func.count()).select_from(ShoppingList).where(
-                ShoppingList.organization_id == SECONDARY_ORGANIZATION_ID
+            == 1
+        )
+        assert (
+            connection.scalar(
+                select(func.count())
+                .select_from(ShoppingList)
+                .where(ShoppingList.organization_id == SECONDARY_ORGANIZATION_ID)
             )
-        ) == 0
+            == 0
+        )
 
         system_role = connection.execute(
             select(SystemRoleAssignment.user_id, SystemRoleAssignment.invited_email).where(

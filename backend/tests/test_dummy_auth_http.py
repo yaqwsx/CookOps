@@ -372,9 +372,7 @@ def test_identity_http_sessions_reach_cookie_bound_interaction_bridge(
     app_settings = settings().model_copy(
         update={
             "environment": (
-                Environment.PRODUCTION
-                if provider is HumanAuthProvider.GOOGLE
-                else Environment.TEST
+                Environment.PRODUCTION if provider is HumanAuthProvider.GOOGLE else Environment.TEST
             ),
             "human_auth_provider": provider,
             "google_client_id": "test-client.apps.googleusercontent.com",
@@ -397,15 +395,17 @@ def test_identity_http_sessions_reach_cookie_bound_interaction_bridge(
                 google_identities=GoogleIdentityProvider(
                     services.human_authentication,
                     configured.google_client_id or "",
-                    token_verifier=lambda raw, audience: {
-                        "iss": "https://accounts.google.com",
-                        "aud": audience,
-                        "email_verified": True,
-                        "sub": "google-alice",
-                        "email": "alice@example.test",
-                    }
-                    if raw == "opaque-google-token"
-                    else {},
+                    token_verifier=lambda raw, audience: (
+                        {
+                            "iss": "https://accounts.google.com",
+                            "aud": audience,
+                            "email_verified": True,
+                            "sub": "google-alice",
+                            "email": "alice@example.test",
+                        }
+                        if raw == "opaque-google-token"
+                        else {}
+                    ),
                 ),
             )
         return services

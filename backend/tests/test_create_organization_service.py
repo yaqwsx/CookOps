@@ -921,22 +921,22 @@ def test_edit_accepts_nfc_equivalent_retry_and_rejects_oversized_description(
         oauth_grant_id="mcp-grant",
     )
     with pytest.raises(ApplicationServiceError) as first_error:
-        asyncio.run(
-            edit_organization(service_database.sessions, invalid_context, oversized)
-        )
+        asyncio.run(edit_organization(service_database.sessions, invalid_context, oversized))
     with pytest.raises(ApplicationServiceError) as replay_error:
-        asyncio.run(
-            edit_organization(service_database.sessions, invalid_context, oversized)
-        )
+        asyncio.run(edit_organization(service_database.sessions, invalid_context, oversized))
     assert first_error.value.field_violations == replay_error.value.field_violations
     assert first_error.value.field_violations[0].path == "description"
     with service_database.sync_engine.connect() as connection:
-        assert connection.scalar(
-            select(ClientInstallation.id).where(ClientInstallation.id == fresh_installation_id)
-        ) is None
-        assert connection.scalar(
-            select(Mutation.id).where(Mutation.id == oversized.mutation_id)
-        ) is None
+        assert (
+            connection.scalar(
+                select(ClientInstallation.id).where(ClientInstallation.id == fresh_installation_id)
+            )
+            is None
+        )
+        assert (
+            connection.scalar(select(Mutation.id).where(Mutation.id == oversized.mutation_id))
+            is None
+        )
 
     with pytest.raises(ApplicationServiceError) as existing_error:
         asyncio.run(
@@ -1035,8 +1035,7 @@ def test_scoped_organization_update_replays_and_preserves_newer_field_clock(
             select(Organization).where(Organization.id == organization_id)
         ).one()
         change = connection.execute(
-            select(OrganizationChange)
-            .where(
+            select(OrganizationChange).where(
                 OrganizationChange.organization_id == organization_id,
                 OrganizationChange.mutation_id == stale.mutation_id,
             )
@@ -1127,9 +1126,7 @@ def test_scoped_organization_update_allows_active_target_members(
         update_organization(
             service_database.sessions,
             member_context,
-            OrganizationUpdateCommand(
-                uuid4(), organization_id, "Member update", None, "CZK", now
-            ),
+            OrganizationUpdateCommand(uuid4(), organization_id, "Member update", None, "CZK", now),
         )
     )
     assert result.outcome == "accepted"

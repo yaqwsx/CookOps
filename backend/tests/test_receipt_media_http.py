@@ -46,7 +46,7 @@ def test_attachment_status_requires_current_authorized_browser_session(
                 verified_email="admin@example.test",
                 normalized_verified_email="admin@example.test",
             )
-    )
+        )
     receipt_id = _receipt(service_database, _event(service_database))
     attachment_id, installation_id = uuid4(), uuid4()
     path = f"/media/receipt-attachments/{attachment_id}/status"

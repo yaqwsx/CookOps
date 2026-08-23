@@ -55,13 +55,16 @@ def test_membership_command_validation_keeps_remove_and_role_fields_safe() -> No
     with pytest.raises(ApplicationServiceError, match="validation_failed"):
         _validate_command(
             OrganizationAdminRoleCommand(
-                **base, client_wall_time=datetime.now(UTC), role="invalid"  # type: ignore[arg-type]
+                **base,
+                client_wall_time=datetime.now(UTC),
+                role="invalid",  # type: ignore[arg-type]
             )
         )
     with pytest.raises(ApplicationServiceError, match="validation_failed"):
         _validate_command(
             OrganizationAdminRoleCommand(
-                **base, client_wall_time="invalid"  # type: ignore[arg-type]
+                **base,
+                client_wall_time="invalid",  # type: ignore[arg-type]
             )
         )
 
@@ -371,9 +374,12 @@ def test_system_admin_can_change_active_membership_role_idempotently(
         )
         assert changed.status_code == 200
         assert changed.json()["role"] == expected_role
-        assert client.post(
-            f"{path}/{membership_database.ordinary_membership_id}/{suffix}", json=body
-        ).json()["replayed"] is True
+        assert (
+            client.post(
+                f"{path}/{membership_database.ordinary_membership_id}/{suffix}", json=body
+            ).json()["replayed"]
+            is True
+        )
         mismatch = client.post(
             f"{path}/{membership_database.ordinary_membership_id}/{suffix}",
             json={
@@ -403,10 +409,13 @@ def test_non_system_actor_and_inactive_or_foreign_membership_are_not_enumerated(
         )
     with TestClient(create_app(_settings()), base_url="https://testserver") as client:
         _sign_in(client, "membership-ordinary")
-        assert client.post(
-            f"{path}/{membership_database.ordinary_membership_id}/assign-organization-admin",
-            json=_body(),
-        ).status_code == 404
+        assert (
+            client.post(
+                f"{path}/{membership_database.ordinary_membership_id}/assign-organization-admin",
+                json=_body(),
+            ).status_code
+            == 404
+        )
         _sign_in(client, "membership-admin")
         with membership_database.engine.begin() as connection:
             connection.execute(
@@ -419,20 +428,26 @@ def test_non_system_actor_and_inactive_or_foreign_membership_are_not_enumerated(
                 )
             )
         rejected_body = _body()
-        assert client.post(
-            f"{path}/{membership_database.ordinary_membership_id}/assign-organization-admin",
-            json=rejected_body,
-        ).status_code == 404
+        assert (
+            client.post(
+                f"{path}/{membership_database.ordinary_membership_id}/assign-organization-admin",
+                json=rejected_body,
+            ).status_code
+            == 404
+        )
         with membership_database.engine.begin() as connection:
             connection.execute(
                 OrganizationMembership.__table__.update()
                 .where(OrganizationMembership.id == membership_database.ordinary_membership_id)
                 .values(state="active", removed_at=None, removed_by_user_id=None)
             )
-        assert client.post(
-            f"{path}/{membership_database.ordinary_membership_id}/assign-organization-admin",
-            json=rejected_body,
-        ).status_code == 404
+        assert (
+            client.post(
+                f"{path}/{membership_database.ordinary_membership_id}/assign-organization-admin",
+                json=rejected_body,
+            ).status_code
+            == 404
+        )
 
 
 def test_future_role_mutation_rejection_replays(
@@ -445,11 +460,17 @@ def test_future_role_mutation_rejection_replays(
     }
     with TestClient(create_app(_settings()), base_url="https://testserver") as client:
         _sign_in(client, "membership-admin")
-        assert client.post(
-            f"{path}/{membership_database.ordinary_membership_id}/assign-organization-admin",
-            json=body,
-        ).status_code == 422
-        assert client.post(
-            f"{path}/{membership_database.ordinary_membership_id}/assign-organization-admin",
-            json=body,
-        ).status_code == 422
+        assert (
+            client.post(
+                f"{path}/{membership_database.ordinary_membership_id}/assign-organization-admin",
+                json=body,
+            ).status_code
+            == 422
+        )
+        assert (
+            client.post(
+                f"{path}/{membership_database.ordinary_membership_id}/assign-organization-admin",
+                json=body,
+            ).status_code
+            == 422
+        )

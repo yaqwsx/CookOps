@@ -158,9 +158,7 @@ def create_app(
         session_factory = cast(
             async_sessionmaker[AsyncSession], getattr(runtime, "session_factory", None)
         )
-        mcp_resource = create_mcp_protected_resource_from_settings(
-            app_settings, session_factory
-        )
+        mcp_resource = create_mcp_protected_resource_from_settings(app_settings, session_factory)
         if mcp_resource is not None:
             application.mount("/", mcp_resource)
         application.state.browser_authentication = browser_authentication_factory(

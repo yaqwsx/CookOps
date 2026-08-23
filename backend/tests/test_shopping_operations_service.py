@@ -502,9 +502,7 @@ def test_lone_surrogate_row_note_is_retained_as_validation_rejection(
         )
         with pytest.raises(ApplicationServiceError) as first_error:
             asyncio.run(
-                set_shopping_row_note(
-                    service_database.sessions, _context(service_database), first
-                )
+                set_shopping_row_note(service_database.sessions, _context(service_database), first)
             )
         assert first_error.value.code == "validation_failed"
         second = SetShoppingRowNoteCommand(
@@ -517,8 +515,6 @@ def test_lone_surrogate_row_note_is_retained_as_validation_rejection(
         )
         with pytest.raises(ApplicationServiceError) as mismatch:
             asyncio.run(
-                set_shopping_row_note(
-                    service_database.sessions, _context(service_database), second
-                )
+                set_shopping_row_note(service_database.sessions, _context(service_database), second)
             )
         assert mismatch.value.code == "idempotency_mismatch"

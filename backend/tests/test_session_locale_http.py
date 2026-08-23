@@ -45,42 +45,57 @@ def test_session_locale_http_contract_is_strict_and_origin_bound() -> None:
         assert updated.status_code == 200
         assert updated.json()["preferred_locale"] == "en"
         human_authentication.set_current_identity_locale.assert_awaited_once_with(user_id, "en")
-        assert client.patch(
-            "/auth/session/locale", json={"preferred_locale": "en"}
-        ).status_code == 403
-        assert client.patch(
-            "/auth/session/locale",
-            headers={"Origin": "https://foreign.test"},
-            json={"preferred_locale": "en"},
-        ).status_code == 403
+        assert (
+            client.patch("/auth/session/locale", json={"preferred_locale": "en"}).status_code == 403
+        )
+        assert (
+            client.patch(
+                "/auth/session/locale",
+                headers={"Origin": "https://foreign.test"},
+                json={"preferred_locale": "en"},
+            ).status_code
+            == 403
+        )
         for payload in (
             {},
             {"preferred_locale": "de"},
             {"preferred_locale": "en", "extra": 1},
             {"preferred_locale": 1},
         ):
-            assert client.patch(
+            assert (
+                client.patch(
+                    "/auth/session/locale",
+                    headers={"Origin": "https://testserver"},
+                    json=payload,
+                ).status_code
+                == 422
+            )
+        client.cookies.delete(app_settings.browser_session_cookie_name)
+        assert (
+            client.patch(
                 "/auth/session/locale",
                 headers={"Origin": "https://testserver"},
-                json=payload,
-            ).status_code == 422
-        client.cookies.delete(app_settings.browser_session_cookie_name)
-        assert client.patch(
-            "/auth/session/locale",
-            headers={"Origin": "https://testserver"},
-            json={"preferred_locale": "en"},
-        ).status_code == 401
+                json={"preferred_locale": "en"},
+            ).status_code
+            == 401
+        )
         client.cookies.set(app_settings.browser_session_cookie_name, "invalid")
         browser_sessions.authenticate.return_value = None
-        assert client.patch(
-            "/auth/session/locale",
-            headers={"Origin": "https://testserver"},
-            json={"preferred_locale": "en"},
-        ).status_code == 401
+        assert (
+            client.patch(
+                "/auth/session/locale",
+                headers={"Origin": "https://testserver"},
+                json={"preferred_locale": "en"},
+            ).status_code
+            == 401
+        )
         browser_sessions.authenticate.return_value = MagicMock(user_id=user_id)
         human_authentication.set_current_identity_locale.return_value = None
-        assert client.patch(
-            "/auth/session/locale",
-            headers={"Origin": "https://testserver"},
-            json={"preferred_locale": "en"},
-        ).status_code == 401
+        assert (
+            client.patch(
+                "/auth/session/locale",
+                headers={"Origin": "https://testserver"},
+                json={"preferred_locale": "en"},
+            ).status_code
+            == 401
+        )

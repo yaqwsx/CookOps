@@ -76,9 +76,10 @@ def test_private_introspection_posts_form_token_with_basic_credentials() -> None
     assert request.method == "POST"
     assert str(request.url) == "http://oauth-server:3000/oauth/introspect"
     assert request.content == b"token=opaque"
-    assert request.headers["authorization"] == "Basic " + base64.b64encode(
-        b"cookops-resource-server:secret"
-    ).decode()
+    assert (
+        request.headers["authorization"]
+        == "Basic " + base64.b64encode(b"cookops-resource-server:secret").decode()
+    )
 
 
 def test_private_introspection_does_not_follow_redirects() -> None:

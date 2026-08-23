@@ -292,10 +292,7 @@ def test_finalization_only_accepts_server_measured_staged_bytes_and_replays(
         assert attachment_record["storage_state"] == "ready"
         assert "storage_object_key" not in attachment_record
         assert "thumbnail_object_key" not in attachment_record
-        assert not any(
-            key in attachment_record
-            for key in ("bytes", "content", "binary", "data")
-        )
+        assert not any(key in attachment_record for key in ("bytes", "content", "binary", "data"))
         assert attachment_record["id"] == str(created_command.attachment_id)
         assert attachment_record["organization_id"] == str(service_database.organization_id)
         assert attachment_record["receipt_id"] == str(receipt_id)

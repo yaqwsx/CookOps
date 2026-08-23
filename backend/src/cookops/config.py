@@ -214,10 +214,14 @@ class Settings(BaseSettings):
             or grants_url.fragment
         ):
             raise ValueError("OAuth grants private API URL is invalid")
-        if self.environment is Environment.PRODUCTION and self.oauth_grants_private_url != "http://oauth-server:3000/oauth/private/grants":
+        if (
+            self.environment is Environment.PRODUCTION
+            and self.oauth_grants_private_url != "http://oauth-server:3000/oauth/private/grants"
+        ):
             raise ValueError("OAuth grants private API must use the Compose oauth-server authority")
         if self.oauth_grants_api_credential_base64url is not None:
             from cookops.application.browser_sessions import decode_browser_session_hmac_key
+
             decode_browser_session_hmac_key(self.oauth_grants_api_credential_base64url)
             if self.oauth_grants_api_credential_base64url in {
                 self.oauth_interaction_details_api_credential_base64url,

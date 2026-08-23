@@ -140,8 +140,7 @@ async def update_organization(
 ) -> OrganizationUpdateResult:
     violations, values = _prepared(command)
     if violations and any(
-        item.path in {"mutation_id", "organization_id", "client_wall_time"}
-        for item in violations
+        item.path in {"mutation_id", "organization_id", "client_wall_time"} for item in violations
     ):
         raise _error(violations)
     request_hash = hashlib.sha256(
@@ -206,8 +205,7 @@ async def update_organization(
                         "error": {
                             "code": "validation_failed",
                             "field_violations": [
-                                {"path": item.path, "code": item.code}
-                                for item in violations
+                                {"path": item.path, "code": item.code} for item in violations
                             ],
                         }
                     },
@@ -337,6 +335,10 @@ async def update_organization(
             )
         )
         return OrganizationUpdateResult(
-            command.mutation_id, command.organization_id, first, last, False,
+            command.mutation_id,
+            command.organization_id,
+            first,
+            last,
+            False,
             "accepted" if applied == 3 else "partially_superseded",
         )

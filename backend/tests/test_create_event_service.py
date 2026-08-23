@@ -249,12 +249,8 @@ def test_create_event_copies_current_presets_and_range_days(
             "start_date",
             "end_date",
         }
-        assert {
-            row.winning_mutation_id for row in event_clocks
-        } == {command.mutation_id}
-        assert {
-            row.winning_client_wall_time for row in event_clocks
-        } == {command.client_wall_time}
+        assert {row.winning_mutation_id for row in event_clocks} == {command.mutation_id}
+        assert {row.winning_client_wall_time for row in event_clocks} == {command.client_wall_time}
         days = connection.execute(
             select(EventDay.calendar_date, EventDay.provenance, EventDay.is_visible)
             .where(EventDay.event_id == command.event_id)

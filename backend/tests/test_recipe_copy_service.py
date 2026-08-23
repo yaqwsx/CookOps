@@ -66,7 +66,7 @@ def test_copy_current_recipe_to_destination_admin(
             )
         )
         connection.execute(
-        insert(IngredientVersion).values(
+            insert(IngredientVersion).values(
                 id=destination_version_id,
                 organization_id=database.other_organization_id,
                 ingredient_id=destination_ingredient_id,
@@ -94,20 +94,22 @@ def test_copy_current_recipe_to_destination_admin(
         preferred_display_unit_mappings={database.grams_id: database.grams_id},
         client_wall_time=datetime.now(UTC),
     )
-    result = asyncio.run(
-        copy_recipe_to_organization(database.sessions, context(database), command)
-    )
+    result = asyncio.run(copy_recipe_to_organization(database.sessions, context(database), command))
     assert result.replayed is False
     with database.sync_engine.connect() as connection:
         assert (
             connection.scalar(select(Recipe.id).where(Recipe.id == destination_recipe_id))
             == destination_recipe_id
         )
-        copied_line = connection.execute(
-            select(RecipeVersionIngredientLine.ingredient_version_id).where(
-                RecipeVersionIngredientLine.recipe_version_id == destination_recipe_version_id
+        copied_line = (
+            connection.execute(
+                select(RecipeVersionIngredientLine.ingredient_version_id).where(
+                    RecipeVersionIngredientLine.recipe_version_id == destination_recipe_version_id
+                )
             )
-        ).scalars().all()
+            .scalars()
+            .all()
+        )
         assert copied_line == [destination_version_id, destination_version_id]
     replay = asyncio.run(copy_recipe_to_organization(database.sessions, context(database), command))
     assert replay.replayed is True
@@ -238,21 +240,30 @@ def test_stale_source_current_version_rejects_without_target_graph(
             )
             is None
         )
-        assert connection.scalar(
-            select(RecipeVersionIngredientLine.id).where(
-                RecipeVersionIngredientLine.recipe_version_id == destination_version_id
+        assert (
+            connection.scalar(
+                select(RecipeVersionIngredientLine.id).where(
+                    RecipeVersionIngredientLine.recipe_version_id == destination_version_id
+                )
             )
-        ) is None
-        assert connection.scalar(
-            select(RecipeVersionTag.recipe_version_id).where(
-                RecipeVersionTag.recipe_version_id == destination_version_id
+            is None
+        )
+        assert (
+            connection.scalar(
+                select(RecipeVersionTag.recipe_version_id).where(
+                    RecipeVersionTag.recipe_version_id == destination_version_id
+                )
             )
-        ) is None
-        assert connection.scalar(
-            select(OrganizationChange.sequence).where(
-                OrganizationChange.mutation_id == command.mutation_id
+            is None
+        )
+        assert (
+            connection.scalar(
+                select(OrganizationChange.sequence).where(
+                    OrganizationChange.mutation_id == command.mutation_id
+                )
             )
-        ) is None
+            is None
+        )
 
 
 def test_missing_mapping_rejects_replays_without_target_rows(
@@ -293,9 +304,7 @@ def test_missing_mapping_rejects_replays_without_target_rows(
     assert replay.value.code == "validation_failed"
     with database.sync_engine.connect() as connection:
         assert (
-            connection.scalar(
-                select(Recipe.id).where(Recipe.id == command.destination_recipe_id)
-            )
+            connection.scalar(select(Recipe.id).where(Recipe.id == command.destination_recipe_id))
             is None
         )
         assert (
@@ -306,18 +315,27 @@ def test_missing_mapping_rejects_replays_without_target_rows(
             )
             is None
         )
-        assert connection.scalar(
-            select(RecipeVersionIngredientLine.id).where(
-                RecipeVersionIngredientLine.recipe_id == command.destination_recipe_id
+        assert (
+            connection.scalar(
+                select(RecipeVersionIngredientLine.id).where(
+                    RecipeVersionIngredientLine.recipe_id == command.destination_recipe_id
+                )
             )
-        ) is None
-        assert connection.scalar(
-            select(RecipeVersionTag.recipe_version_id).where(
-                RecipeVersionTag.recipe_version_id == command.destination_recipe_version_id
+            is None
+        )
+        assert (
+            connection.scalar(
+                select(RecipeVersionTag.recipe_version_id).where(
+                    RecipeVersionTag.recipe_version_id == command.destination_recipe_version_id
+                )
             )
-        ) is None
-        assert connection.scalar(
-            select(OrganizationChange.sequence).where(
-                OrganizationChange.mutation_id == command.mutation_id
+            is None
+        )
+        assert (
+            connection.scalar(
+                select(OrganizationChange.sequence).where(
+                    OrganizationChange.mutation_id == command.mutation_id
+                )
             )
-        ) is None
+            is None
+        )

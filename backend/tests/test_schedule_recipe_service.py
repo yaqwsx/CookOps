@@ -668,9 +668,12 @@ def test_member_hides_an_event_day_with_lww_replay(
         is_visible=True,
         client_wall_time=command.client_wall_time - timedelta(seconds=1),
     )
-    assert asyncio.run(
-        set_event_day_visibility(service_database.sessions, context(service_database), stale)
-    ).outcome == "partially_superseded"
+    assert (
+        asyncio.run(
+            set_event_day_visibility(service_database.sessions, context(service_database), stale)
+        ).outcome
+        == "partially_superseded"
+    )
     with service_database.sync_engine.connect() as connection:
         payload = connection.scalar(
             select(OrganizationChange.payload).where(
@@ -778,9 +781,14 @@ def test_member_reorders_an_event_meal_role_once(service_database: ServiceDataba
         set_event_meal_role_position(service_database.sessions, context(service_database), command)
     ).replayed
     with service_database.sync_engine.connect() as connection:
-        assert connection.scalar(
-            select(EventMealRole.position_key).where(EventMealRole.id == command.event_meal_role_id)
-        ) == "z9"
+        assert (
+            connection.scalar(
+                select(EventMealRole.position_key).where(
+                    EventMealRole.id == command.event_meal_role_id
+                )
+            )
+            == "z9"
+        )
     assert accepted.outcome == "accepted"
 
 
@@ -817,13 +825,21 @@ def test_member_renames_a_custom_event_meal_role_once(service_database: ServiceD
         custom_name="Older supper",
         client_wall_time=datetime(2026, 8, 8, 13, tzinfo=UTC),
     )
-    assert asyncio.run(
-        set_event_meal_role_name(service_database.sessions, context(service_database), stale)
-    ).outcome == "partially_superseded"
+    assert (
+        asyncio.run(
+            set_event_meal_role_name(service_database.sessions, context(service_database), stale)
+        ).outcome
+        == "partially_superseded"
+    )
     with service_database.sync_engine.connect() as connection:
-        assert connection.scalar(
-            select(EventMealRole.custom_name).where(EventMealRole.id == created.event_meal_role_id)
-        ) == "Late supper"
+        assert (
+            connection.scalar(
+                select(EventMealRole.custom_name).where(
+                    EventMealRole.id == created.event_meal_role_id
+                )
+            )
+            == "Late supper"
+        )
         payload = connection.scalar(
             select(OrganizationChange.payload).where(
                 OrganizationChange.mutation_id == stale.mutation_id
@@ -859,20 +875,28 @@ def test_member_retires_and_restores_an_event_meal_role(service_database: Servic
         operation="retire",
         client_wall_time=datetime.now(UTC),
     )
-    assert asyncio.run(
-        set_event_meal_role_lifecycle(service_database.sessions, context(service_database), retired)
-    ).outcome == "accepted"
+    assert (
+        asyncio.run(
+            set_event_meal_role_lifecycle(
+                service_database.sessions, context(service_database), retired
+            )
+        ).outcome
+        == "accepted"
+    )
     assert asyncio.run(
         set_event_meal_role_lifecycle(service_database.sessions, context(service_database), retired)
     ).replayed
     restored = replace(
         retired, mutation_id=uuid4(), operation="restore", client_wall_time=datetime.now(UTC)
     )
-    assert asyncio.run(
-        set_event_meal_role_lifecycle(
-            service_database.sessions, context(service_database), restored
-        )
-    ).outcome == "accepted"
+    assert (
+        asyncio.run(
+            set_event_meal_role_lifecycle(
+                service_database.sessions, context(service_database), restored
+            )
+        ).outcome
+        == "accepted"
+    )
     with service_database.sync_engine.connect() as connection:
         payload = connection.scalar(
             select(OrganizationChange.payload).where(
@@ -888,8 +912,11 @@ def test_member_retires_and_restores_an_event_meal_role(service_database: Servic
 
 def test_member_creates_a_manual_event_day_once(service_database: ServiceDatabase) -> None:
     command = CreateEventDayCommand(
-        mutation_id=uuid4(), event_day_id=uuid4(), organization_id=service_database.organization_id,
-        event_id=service_database.event_id, calendar_date=date(2026, 7, 3),
+        mutation_id=uuid4(),
+        event_day_id=uuid4(),
+        organization_id=service_database.organization_id,
+        event_id=service_database.event_id,
+        calendar_date=date(2026, 7, 3),
         client_wall_time=datetime.now(UTC),
     )
     accepted = asyncio.run(
@@ -996,20 +1023,19 @@ def test_member_retires_and_restores_a_scheduled_recipe_with_replay(
 ) -> None:
     scheduled_recipe_id = schedule_then_override(service_database)
     retire = SetScheduledRecipeLifecycleCommand(
-        mutation_id=uuid4(), scheduled_recipe_id=scheduled_recipe_id,
-        organization_id=service_database.organization_id, event_id=service_database.event_id,
-        operation="retire", client_wall_time=datetime.now(UTC),
+        mutation_id=uuid4(),
+        scheduled_recipe_id=scheduled_recipe_id,
+        organization_id=service_database.organization_id,
+        event_id=service_database.event_id,
+        operation="retire",
+        client_wall_time=datetime.now(UTC),
     )
     accepted = asyncio.run(
-        set_scheduled_recipe_lifecycle(
-            service_database.sessions, context(service_database), retire
-        )
+        set_scheduled_recipe_lifecycle(service_database.sessions, context(service_database), retire)
     )
     assert accepted.outcome == "accepted"
     assert asyncio.run(
-        set_scheduled_recipe_lifecycle(
-            service_database.sessions, context(service_database), retire
-        )
+        set_scheduled_recipe_lifecycle(service_database.sessions, context(service_database), retire)
     ).replayed
     restore = replace(
         retire,
@@ -1017,11 +1043,14 @@ def test_member_retires_and_restores_a_scheduled_recipe_with_replay(
         operation="restore",
         client_wall_time=retire.client_wall_time + timedelta(seconds=1),
     )
-    assert asyncio.run(
-        set_scheduled_recipe_lifecycle(
-            service_database.sessions, context(service_database), restore
-        )
-    ).outcome == "accepted"
+    assert (
+        asyncio.run(
+            set_scheduled_recipe_lifecycle(
+                service_database.sessions, context(service_database), restore
+            )
+        ).outcome
+        == "accepted"
+    )
 
 
 def test_context_sets_manual_or_suggested_scale_with_lww_replay(
@@ -1095,17 +1124,36 @@ def test_note_is_canonicalized_cleared_and_lww_rejected(service_database: Servic
     scheduled_recipe_id = schedule_then_override(service_database)
     now = datetime.now(UTC)
     command = SetScheduledRecipeNoteCommand(
-        mutation_id=uuid4(), scheduled_recipe_id=scheduled_recipe_id,
-        organization_id=service_database.organization_id, event_id=service_database.event_id,
-        note="Cafe\u0301\r\nsecond", client_wall_time=now,
+        mutation_id=uuid4(),
+        scheduled_recipe_id=scheduled_recipe_id,
+        organization_id=service_database.organization_id,
+        event_id=service_database.event_id,
+        note="Cafe\u0301\r\nsecond",
+        client_wall_time=now,
     )
-    result = asyncio.run(set_scheduled_recipe_note(service_database.sessions, context(service_database), command))
+    result = asyncio.run(
+        set_scheduled_recipe_note(service_database.sessions, context(service_database), command)
+    )
     assert result.outcome == "accepted" and result.note == "Café\nsecond"
-    assert asyncio.run(set_scheduled_recipe_note(service_database.sessions, context(service_database), command)).replayed
-    clear = replace(command, mutation_id=uuid4(), note=None, client_wall_time=now + timedelta(seconds=1))
-    assert asyncio.run(set_scheduled_recipe_note(service_database.sessions, context(service_database), clear)).note is None
+    assert asyncio.run(
+        set_scheduled_recipe_note(service_database.sessions, context(service_database), command)
+    ).replayed
+    clear = replace(
+        command, mutation_id=uuid4(), note=None, client_wall_time=now + timedelta(seconds=1)
+    )
+    assert (
+        asyncio.run(
+            set_scheduled_recipe_note(service_database.sessions, context(service_database), clear)
+        ).note
+        is None
+    )
     stale = replace(command, mutation_id=uuid4(), client_wall_time=now)
-    assert asyncio.run(set_scheduled_recipe_note(service_database.sessions, context(service_database), stale)).outcome == "partially_superseded"
+    assert (
+        asyncio.run(
+            set_scheduled_recipe_note(service_database.sessions, context(service_database), stale)
+        ).outcome
+        == "partially_superseded"
+    )
 
 
 def test_member_sets_replaces_and_clears_pinned_recipe_ingredient(
@@ -1144,9 +1192,9 @@ def test_member_sets_replaces_and_clears_pinned_recipe_ingredient(
     with service_database.sync_engine.connect() as connection:
         stored = connection.execute(
             select(
-                        ScheduledIngredientOverride.quantity,
-                        ScheduledIngredientOverride.include_in_portion_weight,
-                        ScheduledIngredientOverride.position_key,
+                ScheduledIngredientOverride.quantity,
+                ScheduledIngredientOverride.include_in_portion_weight,
+                ScheduledIngredientOverride.position_key,
                 ScheduledIngredientOverride.retired_at,
                 Mutation.outcome,
                 OrganizationChange.entity_kind,
@@ -1774,11 +1822,15 @@ def test_relative_move_rekeys_default_positions_and_records_each_change(
 ) -> None:
     scheduled = [schedule_then_override(service_database, position_key="a") for _ in range(3)]
     with service_database.sync_engine.connect() as connection:
-        ordered = connection.execute(
-            select(ScheduledRecipe.id)
-            .where(ScheduledRecipe.id.in_(scheduled))
-            .order_by(ScheduledRecipe.position_key, ScheduledRecipe.id)
-        ).scalars().all()
+        ordered = (
+            connection.execute(
+                select(ScheduledRecipe.id)
+                .where(ScheduledRecipe.id.in_(scheduled))
+                .order_by(ScheduledRecipe.position_key, ScheduledRecipe.id)
+            )
+            .scalars()
+            .all()
+        )
     first, middle, source = ordered
     command = move_command(
         service_database,
@@ -1800,13 +1852,13 @@ def test_relative_move_rekeys_default_positions_and_records_each_change(
         assert [row[0] for row in rows] == [first, source, middle]
         assert [row[1] for row in rows] == ["0", "1", "2"]
         changes = connection.execute(
-            select(OrganizationChange.entity_id, OrganizationChange.payload)
-            .where(OrganizationChange.mutation_id == command.mutation_id)
+            select(OrganizationChange.entity_id, OrganizationChange.payload).where(
+                OrganizationChange.mutation_id == command.mutation_id
+            )
         ).all()
         assert {row[0] for row in changes} == {first, middle, source}
         assert all(
-            isinstance(row[1]["record"]["field_clocks"].get("placement"), dict)
-            for row in changes
+            isinstance(row[1]["record"]["field_clocks"].get("placement"), dict) for row in changes
         )
 
 
@@ -1881,8 +1933,7 @@ def test_relative_move_replay_and_stale_outcome_are_retained(
                 ScheduledRecipe.event_day_id,
                 ScheduledRecipe.event_meal_role_id,
                 ScheduledRecipe.position_key,
-            )
-            .where(ScheduledRecipe.id.in_((source, target)))
+            ).where(ScheduledRecipe.id.in_((source, target)))
         ).all()
         before_clock = connection.scalar(
             select(FieldClock.winning_mutation_id).where(
@@ -1904,20 +1955,25 @@ def test_relative_move_replay_and_stale_outcome_are_retained(
         == next(row.position_key for row in before_rows if row.id == source)
     )
     with service_database.sync_engine.connect() as connection:
-        assert connection.execute(
-            select(
-                ScheduledRecipe.id,
-                ScheduledRecipe.event_day_id,
-                ScheduledRecipe.event_meal_role_id,
-                ScheduledRecipe.position_key,
+        assert (
+            connection.execute(
+                select(
+                    ScheduledRecipe.id,
+                    ScheduledRecipe.event_day_id,
+                    ScheduledRecipe.event_meal_role_id,
+                    ScheduledRecipe.position_key,
+                ).where(ScheduledRecipe.id.in_((source, target)))
+            ).all()
+            == before_rows
+        )
+        assert (
+            connection.scalar(
+                select(FieldClock.winning_mutation_id).where(
+                    FieldClock.entity_id == source, FieldClock.field_name == "placement"
+                )
             )
-            .where(ScheduledRecipe.id.in_((source, target)))
-        ).all() == before_rows
-        assert connection.scalar(
-            select(FieldClock.winning_mutation_id).where(
-                FieldClock.entity_id == source, FieldClock.field_name == "placement"
-            )
-        ) == before_clock
+            == before_clock
+        )
         assert (
             connection.scalar(select(func.count()).select_from(OrganizationChange))
             == before_changes
@@ -2115,22 +2171,24 @@ def test_catalog_update_preserve_and_discard_commands_are_explicit(  # noqa: E50
     )
     target_version_id = uuid4()
     with service_database.sync_engine.begin() as connection:
-        connection.execute(insert(RecipeVersion).values(
-            id=target_version_id,
-            organization_id=service_database.organization_id,
-            recipe_id=service_database.recipe_id,
-            based_on_version_id=service_database.recipe_version_id,
-            name="Updated recipe",
-            scaling_unit_id=connection.scalar(
-                select(UnitDefinition.id).where(
-                    UnitDefinition.code == "person", UnitDefinition.organization_id.is_(None)
-                )
-            ),
-            base_scaling_amount=Decimal("2"),
-            estimated_diners_per_scaling_unit=Decimal("3"),
-            round_suggestions_up=False,
-            published_by_user_id=service_database.actor_id,
-        ))
+        connection.execute(
+            insert(RecipeVersion).values(
+                id=target_version_id,
+                organization_id=service_database.organization_id,
+                recipe_id=service_database.recipe_id,
+                based_on_version_id=service_database.recipe_version_id,
+                name="Updated recipe",
+                scaling_unit_id=connection.scalar(
+                    select(UnitDefinition.id).where(
+                        UnitDefinition.code == "person", UnitDefinition.organization_id.is_(None)
+                    )
+                ),
+                base_scaling_amount=Decimal("2"),
+                estimated_diners_per_scaling_unit=Decimal("3"),
+                round_suggestions_up=False,
+                published_by_user_id=service_database.actor_id,
+            )
+        )
         connection.execute(
             update(ScheduledRecipe)
             .where(ScheduledRecipe.id == scheduled_recipe_id)
@@ -2221,7 +2279,9 @@ def test_catalog_update_preserve_and_discard_commands_are_explicit(  # noqa: E50
                     )
                 ).scalar_one()
                 scheduled_clocks = scheduled_change["record"]["field_clocks"]
-                assert {"recipe_version_id", "selected_scale_amount", "scale_mode"} <= set(scheduled_clocks)
+                assert {"recipe_version_id", "selected_scale_amount", "scale_mode"} <= set(
+                    scheduled_clocks
+                )
             else:
                 assert changed.retired_at is not None
                 assert changed.retired_by_user_id == service_database.actor_id

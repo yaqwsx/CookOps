@@ -276,15 +276,15 @@ async def _record(
             )
         else:
             base.update(
-            code=row.code,
-            custom_name=row.custom_name,
-            normalized_custom_name=row.normalized_custom_name,
-            dimension=row.dimension,
-            base_unit_factor=None,
-            rounds_up_to_whole_unit=row.rounds_up_to_whole_unit,
-            allows_ingredient_quantity=row.allows_ingredient_quantity,
-            allows_recipe_scaling=row.allows_recipe_scaling,
-        )
+                code=row.code,
+                custom_name=row.custom_name,
+                normalized_custom_name=row.normalized_custom_name,
+                dimension=row.dimension,
+                base_unit_factor=None,
+                rounds_up_to_whole_unit=row.rounds_up_to_whole_unit,
+                allows_ingredient_quantity=row.allows_ingredient_quantity,
+                allows_recipe_scaling=row.allows_recipe_scaling,
+            )
     base["field_clocks"] = await _clock_metadata(session, command)
     return base
 
@@ -421,10 +421,12 @@ async def mutate_catalog_configuration(
                         )
                         await session.execute(
                             text("SELECT pg_advisory_xact_lock(:key)"),
-                            {"key": _advisory_lock_key(
-                                f"catalog-preset:{natural_key[0]}:{natural_key[1]}",
-                                command.organization_id,
-                            )},
+                            {
+                                "key": _advisory_lock_key(
+                                    f"catalog-preset:{natural_key[0]}:{natural_key[1]}",
+                                    command.organization_id,
+                                )
+                            },
                         )
                         duplicate = await session.scalar(
                             select(OrganizationMealRolePreset.id).where(
@@ -457,7 +459,7 @@ async def mutate_catalog_configuration(
                             )
                     if command.entity_kind != "organization_meal_role_preset":
                         name_field = (
-                        "custom_name" if command.entity_kind == "unit_definition" else "name"
+                            "custom_name" if command.entity_kind == "unit_definition" else "name"
                         )
                         normalized_field = (
                             "normalized_custom_name"
@@ -466,24 +468,24 @@ async def mutate_catalog_configuration(
                         )
                         normalized = cast(str, values[name_field]).lower()
                         await session.execute(
-                        text("SELECT pg_advisory_xact_lock(:key)"),
-                        {
-                            "key": _advisory_lock_key(
-                                f"catalog-name:{command.entity_kind}:{normalized}",
-                                command.organization_id,
-                            )
-                        },
+                            text("SELECT pg_advisory_xact_lock(:key)"),
+                            {
+                                "key": _advisory_lock_key(
+                                    f"catalog-name:{command.entity_kind}:{normalized}",
+                                    command.organization_id,
+                                )
+                            },
                         )
                         duplicate = await session.scalar(
-                        select(model.id).where(
-                            model.organization_id == command.organization_id,
-                            (
-                                model.normalized_custom_name
-                                if normalized_field == "normalized_custom_name"
-                                else model.normalized_name
+                            select(model.id).where(
+                                model.organization_id == command.organization_id,
+                                (
+                                    model.normalized_custom_name
+                                    if normalized_field == "normalized_custom_name"
+                                    else model.normalized_name
+                                )
+                                == normalized,
                             )
-                            == normalized,
-                        )
                         )
                     if duplicate is not None:
                         deferred = _error((FieldViolation("name", "already_exists"),))
@@ -557,8 +559,7 @@ async def mutate_catalog_configuration(
                         (
                             row.built_in_translation_key is not None
                             and (
-                                values["built_in_translation_key"]
-                                != row.built_in_translation_key
+                                values["built_in_translation_key"] != row.built_in_translation_key
                                 or values["custom_name"] is not None
                             )
                         )
@@ -578,10 +579,12 @@ async def mutate_catalog_configuration(
                         )
                         await session.execute(
                             text("SELECT pg_advisory_xact_lock(:key)"),
-                            {"key": _advisory_lock_key(
-                                f"catalog-preset:{natural_key[0]}:{natural_key[1]}",
-                                command.organization_id,
-                            )},
+                            {
+                                "key": _advisory_lock_key(
+                                    f"catalog-preset:{natural_key[0]}:{natural_key[1]}",
+                                    command.organization_id,
+                                )
+                            },
                         )
                         duplicate = await session.scalar(
                             select(OrganizationMealRolePreset.id).where(
@@ -609,10 +612,12 @@ async def mutate_catalog_configuration(
                         normalized = cast(str, values[name_field]).lower()
                         await session.execute(
                             text("SELECT pg_advisory_xact_lock(:key)"),
-                            {"key": _advisory_lock_key(
-                                f"catalog-name:{command.entity_kind}:{normalized}",
-                                command.organization_id,
-                            )},
+                            {
+                                "key": _advisory_lock_key(
+                                    f"catalog-name:{command.entity_kind}:{normalized}",
+                                    command.organization_id,
+                                )
+                            },
                         )
                         duplicate = await session.scalar(
                             select(model.id).where(

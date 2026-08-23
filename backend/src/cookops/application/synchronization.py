@@ -947,7 +947,9 @@ class SynchronizationCommandService:
                     self._session_factory, context, command
                 )
             elif isinstance(command, UpdateEventDietaryExceptionCommand):
-                result = await update_event_dietary_exception(self._session_factory, context, command)
+                result = await update_event_dietary_exception(
+                    self._session_factory, context, command
+                )
             elif isinstance(command, SetEventDietaryExceptionLifecycleCommand):
                 result = await set_event_dietary_exception_lifecycle(
                     self._session_factory, context, command
@@ -1932,8 +1934,8 @@ async def _bootstrap_records(
                 "retired_at": _time(item.retired_at),
                 "retired_by_user_id": _uuid(item.retired_by_user_id),
                 "lifecycle": "retired" if item.retired_at else "active",
-                    "field_clocks": {
-                        "lifecycle": (
+                "field_clocks": {
+                    "lifecycle": (
                         {
                             "winning_client_wall_time": clock.winning_client_wall_time.isoformat(),
                             "winning_mutation_id": str(clock.winning_mutation_id),

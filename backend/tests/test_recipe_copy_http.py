@@ -17,7 +17,9 @@ from cookops.main import create_app
 
 def _app(monkeypatch: Any, handler: Any, *, user_id: UUID | None = None) -> Any:
     actor = user_id or uuid4()
-    settings = Settings(browser_session_cookie_name="cookops_session", browser_origin="https://testserver")
+    settings = Settings(
+        browser_session_cookie_name="cookops_session", browser_origin="https://testserver"
+    )
     app = create_app(settings, readiness_probe=lambda: _ready())
 
     async def authenticate(secret: str) -> Any:
@@ -126,18 +128,14 @@ def test_recipe_copy_http_auth_and_payload_validation(monkeypatch: Any) -> None:
     route = f"/api/v1/organizations/{uuid4()}/recipe-copy"
     payload = _payload()
     with TestClient(app) as client:
-        unauthenticated = client.post(
-            route, json=payload, headers={"origin": "https://testserver"}
-        )
+        unauthenticated = client.post(route, json=payload, headers={"origin": "https://testserver"})
         options = {
             "cookies": {"cookops_session": "session"},
             "headers": {"origin": "https://testserver"},
         }
         extra = client.post(route, json={**payload, "extra": True}, **options)
         malformed = client.post(route, json={**payload, "mutation_id": 42}, **options)
-        zero = client.post(
-            route, json={**payload, "mutation_id": str(UUID(int=0))}, **options
-        )
+        zero = client.post(route, json={**payload, "mutation_id": str(UUID(int=0))}, **options)
     assert unauthenticated.status_code == 401
     assert extra.status_code == malformed.status_code == zero.status_code == 422
     assert calls == 0
@@ -147,9 +145,7 @@ def test_recipe_copy_http_auth_and_payload_validation(monkeypatch: Any) -> None:
     "code,status",
     [("forbidden", 404), ("stale_precondition", 409), ("validation_failed", 422)],
 )
-def test_recipe_copy_http_maps_application_errors(
-    monkeypatch: Any, code: str, status: int
-) -> None:
+def test_recipe_copy_http_maps_application_errors(monkeypatch: Any, code: str, status: int) -> None:
     async def handler(_: Any, __: Any, command: Any) -> CopyRecipeToOrganizationResult:
         raise ApplicationServiceError(cast(Any, code), retry_same_identity=False)
 

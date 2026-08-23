@@ -69,9 +69,7 @@ async def _approve_once(adapter: object, credential: str) -> UUID:
     )
     private_client = AsyncMock()
     private_client.record_approval.return_value = True
-    bridge = OAuthInteractionApprovalService(
-        browser_sessions, human_authentication, private_client
-    )
+    bridge = OAuthInteractionApprovalService(browser_sessions, human_authentication, private_client)
     assert await bridge.submit(
         browser_session_secret=issued.secret,
         interaction_uid="N9E_oxk7dD9t7rR10dj-3",
@@ -97,15 +95,17 @@ async def test_dummy_and_google_adapters_use_the_same_subject_bound_bridge() -> 
     google_provider = GoogleIdentityProvider(
         google_human_authentication,
         "google-client",
-        token_verifier=lambda raw, audience: {
-            "iss": "https://accounts.google.com",
-            "aud": audience,
-            "email_verified": True,
-            "sub": "google-subject",
-            "email": "member@example.test",
-        }
-        if raw == "opaque-google-token"
-        else {},
+        token_verifier=lambda raw, audience: (
+            {
+                "iss": "https://accounts.google.com",
+                "aud": audience,
+                "email_verified": True,
+                "sub": "google-subject",
+                "email": "member@example.test",
+            }
+            if raw == "opaque-google-token"
+            else {}
+        ),
     )
 
     assert await _approve_once(dummy, "dummy-alice") == dummy_user
@@ -142,9 +142,7 @@ async def test_bridge_rejects_a_session_without_current_identity() -> None:
     human_authentication = AsyncMock()
     human_authentication.current_identity.return_value = None
     private_client = AsyncMock()
-    bridge = OAuthInteractionApprovalService(
-        browser_sessions, human_authentication, private_client
-    )
+    bridge = OAuthInteractionApprovalService(browser_sessions, human_authentication, private_client)
 
     assert not await bridge.submit(
         browser_session_secret="opaque-session",
@@ -173,9 +171,7 @@ async def test_bridge_uses_current_identity_not_an_arbitrary_adapter_subject() -
     )
     private_client = AsyncMock()
     private_client.record_approval.return_value = True
-    bridge = OAuthInteractionApprovalService(
-        browser_sessions, human_authentication, private_client
-    )
+    bridge = OAuthInteractionApprovalService(browser_sessions, human_authentication, private_client)
 
     assert await bridge.submit(
         browser_session_secret=issued.secret,

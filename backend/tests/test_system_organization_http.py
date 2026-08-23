@@ -80,9 +80,7 @@ def test_system_admin_can_create_and_non_admin_cannot(
         assert client.get("/api/v1/system/organizations/access").status_code == 401
         assert client.post("/api/v1/system/organizations", json=_body()).status_code == 401
 
-        signed_in = client.post(
-            "/auth/dummy/session", json={"subject": "dummy-system-admin"}
-        )
+        signed_in = client.post("/auth/dummy/session", json={"subject": "dummy-system-admin"})
         assert signed_in.status_code == 204
         body = _body()
         created = client.post("/api/v1/system/organizations", json=body)
@@ -118,8 +116,7 @@ def test_system_admin_can_create_and_non_admin_cannot(
 
         client.post("/auth/session/logout")
         assert (
-            client.post("/auth/dummy/session", json={"subject": "dummy-alice"}).status_code
-            == 204
+            client.post("/auth/dummy/session", json={"subject": "dummy-alice"}).status_code == 204
         )
         assert client.get("/api/v1/system/organizations/access").status_code == 403
         denied_body = _body()
@@ -172,13 +169,19 @@ def test_system_admin_can_list_retire_and_restore_organizations(
 
     with TestClient(create_app(settings()), base_url="https://testserver") as client:
         assert client.get("/api/v1/system/organizations").status_code == 401
-        assert client.post(
-            f"/api/v1/system/organizations/{retired_id}/lifecycle",
-            json=_lifecycle_body("retire"),
-        ).status_code == 401
-        assert client.post(
-            "/auth/dummy/session", json={"subject": "dummy-system-admin-lifecycle"}
-        ).status_code == 204
+        assert (
+            client.post(
+                f"/api/v1/system/organizations/{retired_id}/lifecycle",
+                json=_lifecycle_body("retire"),
+            ).status_code
+            == 401
+        )
+        assert (
+            client.post(
+                "/auth/dummy/session", json={"subject": "dummy-system-admin-lifecycle"}
+            ).status_code
+            == 204
+        )
 
         listed = client.get("/api/v1/system/organizations")
         assert listed.status_code == 200
@@ -220,8 +223,7 @@ def test_system_admin_can_list_retire_and_restore_organizations(
                     Mutation.outcome,
                     Mutation.organization_id,
                     Mutation.is_system_administration_scope,
-                )
-                .where(Mutation.id == retire_body["mutation_id"])
+                ).where(Mutation.id == retire_body["mutation_id"])
             ).one()
         assert mutation.outcome == "accepted"
         assert mutation.organization_id is None
@@ -243,10 +245,13 @@ def test_system_admin_can_list_retire_and_restore_organizations(
         assert edited.status_code == 200
         assert edited.json()["name"] == "Updated kitchen"
         assert edited.json()["retired_at"] is None
-        assert client.patch(
-            f"/api/v1/system/organizations/{dummy_auth_database.organization_id}",
-            json=edit_body,
-        ).json() == edited.json()
+        assert (
+            client.patch(
+                f"/api/v1/system/organizations/{dummy_auth_database.organization_id}",
+                json=edit_body,
+            ).json()
+            == edited.json()
+        )
         unknown = client.post(
             f"/api/v1/system/organizations/{uuid4()}/lifecycle",
             json=_lifecycle_body("retire"),
@@ -255,24 +260,35 @@ def test_system_admin_can_list_retire_and_restore_organizations(
 
         assert client.post("/auth/session/logout").status_code == 204
         assert client.get("/api/v1/system/organizations").status_code == 401
-        assert client.patch(
-            f"/api/v1/system/organizations/{dummy_auth_database.organization_id}",
-            json=_edit_body("Unauthenticated edit"),
-        ).status_code == 401
-        assert client.post(
-            f"/api/v1/system/organizations/{dummy_auth_database.organization_id}/lifecycle",
-            json=_lifecycle_body("retire"),
-        ).status_code == 401
         assert (
-            client.post("/auth/dummy/session", json={"subject": "dummy-alice"}).status_code
-            == 204
+            client.patch(
+                f"/api/v1/system/organizations/{dummy_auth_database.organization_id}",
+                json=_edit_body("Unauthenticated edit"),
+            ).status_code
+            == 401
+        )
+        assert (
+            client.post(
+                f"/api/v1/system/organizations/{dummy_auth_database.organization_id}/lifecycle",
+                json=_lifecycle_body("retire"),
+            ).status_code
+            == 401
+        )
+        assert (
+            client.post("/auth/dummy/session", json={"subject": "dummy-alice"}).status_code == 204
         )
         assert client.get("/api/v1/system/organizations").status_code == 403
-        assert client.post(
-            f"/api/v1/system/organizations/{dummy_auth_database.organization_id}/lifecycle",
-            json=_lifecycle_body("retire"),
-        ).status_code == 403
-        assert client.patch(
-            f"/api/v1/system/organizations/{dummy_auth_database.organization_id}",
-            json=_edit_body("Unauthorized edit"),
-        ).status_code == 403
+        assert (
+            client.post(
+                f"/api/v1/system/organizations/{dummy_auth_database.organization_id}/lifecycle",
+                json=_lifecycle_body("retire"),
+            ).status_code
+            == 403
+        )
+        assert (
+            client.patch(
+                f"/api/v1/system/organizations/{dummy_auth_database.organization_id}",
+                json=_edit_body("Unauthorized edit"),
+            ).status_code
+            == 403
+        )

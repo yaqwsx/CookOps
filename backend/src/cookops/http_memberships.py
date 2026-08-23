@@ -216,9 +216,7 @@ def create_memberships_router(settings: Settings) -> APIRouter:
             client_wall_time=body.client_wall_time,
         )
         try:
-            result = await (
-                assign_organization_admin if assign else revoke_organization_admin
-            )(
+            result = await (assign_organization_admin if assign else revoke_organization_admin)(
                 services.session_factory,
                 _context(actor_user_id, body.client_installation_id),
                 command,

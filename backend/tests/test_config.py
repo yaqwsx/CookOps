@@ -109,9 +109,7 @@ def production_settings(**overrides: str | None) -> Settings:
         ),
         "oauth_interaction_origin": "https://cookops.example",
         "browser_origin": "https://cookops.example",
-        "oauth_grants_api_credential_base64url": (
-            "MDEyMzQ1Njc4OWFiY2RlZjAxMjM0NTY3ODlhYmNkZWc"
-        ),
+        "oauth_grants_api_credential_base64url": ("MDEyMzQ1Njc4OWFiY2RlZjAxMjM0NTY3ODlhYmNkZWc"),
     }
     values.update(overrides)
     return Settings(**values)
