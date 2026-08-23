@@ -87,6 +87,15 @@ describe("event costs route", () => {
     expect(archiveCache.ensureArchivedEventCached).not.toHaveBeenCalled();
   });
 
+  it("opens receipts from active costs", async () => {
+    const onOpenReceipts = vi.fn();
+    const user = (await import("@testing-library/user-event")).default.setup();
+    render(<EventCostsPage eventId={eventA} organizationId={organizationId} userId={userId} onOpenReceipts={onOpenReceipts} />);
+    await screen.findByRole("heading", { name: "Event A" });
+    await user.click(screen.getByRole("button", { name: "Otevřít účtenky" }));
+    expect(onOpenReceipts).toHaveBeenCalledOnce();
+  });
+
   it("calls unauthenticated callback when costs archive hydration returns 401", async () => {
     const archivedEvent = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
     vi.mocked(syncBootstrap.pullOrganization).mockImplementation(async () => {
@@ -162,5 +171,6 @@ describe("event costs route", () => {
     expect(screen.getByRole("heading", { name: "Event B" })).toBeInTheDocument();
     expect((await screen.findAllByText("30.00 CZK")).length).toBeGreaterThan(0);
     expect(screen.queryByRole("button", { name: "Aktualizovat odhady cen" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "Otevřít účtenky" })).toBeNull();
   });
 });

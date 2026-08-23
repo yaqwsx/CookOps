@@ -587,6 +587,7 @@ const resources = {
       },
       costs: {
         heading: "Odhad nákladů",
+        openReceipts: "Otevřít účtenky",
         loading: "Načítáme náklady…",
         unavailable: "Náklady akce nejsou v místní projekci k dispozici.",
         budget: "Rozpočet",
@@ -1276,6 +1277,7 @@ const resources = {
       },
       costs: {
         heading: "Estimated costs",
+        openReceipts: "Open receipts",
         loading: "Loading costs…",
         unavailable: "Event costs are not available in the cached projection.",
         budget: "Budget",

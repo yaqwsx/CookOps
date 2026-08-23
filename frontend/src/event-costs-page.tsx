@@ -19,6 +19,7 @@ export function EventCostsPage({
   organizationId,
   userId,
   onUnauthenticated,
+  onOpenReceipts,
 }: {
   eventId: string;
   organizationId: string;
@@ -96,6 +97,11 @@ export function EventCostsPage({
         userId={userId}
         providedCosts={costsState?.identity === identity ? costsState.costs : undefined}
       />
+      {planner.lifecycle !== "archived" && onOpenReceipts ? (
+        <button onClick={onOpenReceipts} type="button">
+          {t("costs.openReceipts")}
+        </button>
+      ) : null}
       {planner.lifecycle === "archived" ? (
         <p className="planner-archived" role="status">
           {t("planner.archived")}
