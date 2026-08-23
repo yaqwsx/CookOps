@@ -9,7 +9,12 @@ type RowInput = { shoppingListId: string; shoppingIngredientRowId: string };
 type ContributionInput = RowInput & { shoppingContributionId: string };
 let lastActionMilliseconds = 0;
 
-function wins(record: { fieldClocks: Record<string, unknown> }, field: string, id: string, actionAt: string) {
+function wins(
+  record: { fieldClocks: Record<string, unknown> },
+  field: string,
+  id: string,
+  actionAt: string,
+) {
   const clock = record.fieldClocks[field];
   if (clock === undefined || clock === null) return true;
   if (typeof clock !== "object" || Array.isArray(clock)) return false;
@@ -18,8 +23,12 @@ function wins(record: { fieldClocks: Record<string, unknown> }, field: string, i
   const mutation = value.mutationId ?? value.winning_mutation_id;
   const candidate = timestampMicros(actionAt);
   const current = typeof at === "string" ? timestampMicros(at) : undefined;
-  return typeof mutation === "string" && candidate !== undefined && current !== undefined &&
-    (candidate > current || (candidate === current && id > mutation));
+  return (
+    typeof mutation === "string" &&
+    candidate !== undefined &&
+    current !== undefined &&
+    (candidate > current || (candidate === current && id > mutation))
+  );
 }
 
 async function nextActionAt(): Promise<string> {
@@ -41,13 +50,18 @@ function checkedInput(input: RowInput) {
     throw new Error("shopping_operation");
 }
 function canonicalRowNote(value: unknown): string | null {
-  if (value !== null && typeof value !== "string") throw new Error("shopping_operation");
+  if (value !== null && typeof value !== "string")
+    throw new Error("shopping_operation");
   if (value === null) return null;
   const note = value.normalize("NFC").replace(/\r\n?/g, "\n").trim();
-  if ([...note].length > 4000 || note.includes("\0") || [...note].some((char) => {
-    const code = char.charCodeAt(0);
-    return code >= 0xd800 && code <= 0xdfff;
-  }))
+  if (
+    [...note].length > 4000 ||
+    note.includes("\0") ||
+    [...note].some((char) => {
+      const code = char.charCodeAt(0);
+      return code >= 0xd800 && code <= 0xdfff;
+    })
+  )
     throw new Error("shopping_operation");
   return note || null;
 }
@@ -79,7 +93,12 @@ async function activeRow(
     typeof list?.fields.event_id === "string"
       ? events.find((record) => record.entityId === list.fields.event_id)
       : undefined;
-  if (!list || !row || event?.lifecycle !== "active" || event.fields.lifecycle !== "active")
+  if (
+    !list ||
+    !row ||
+    event?.lifecycle !== "active" ||
+    event.fields.lifecycle !== "active"
+  )
     throw new Error("shopping_operation");
   return { row, list };
 }
@@ -116,9 +135,20 @@ async function queueRow(
           : commandType === "shopping_list.set_manual_purchase_target"
             ? "manual_purchase_target"
             : "store_section_override_id";
-      if (!wins(row, field, mutationId, actionAt)) throw new Error("shopping_operation");
-      if (commandType === "shopping_list.set_store_section_override" && quantityValue !== null) {
-        const section = (await readVisibleRecords(userId, organizationId, "store_section", true)).find(
+      if (!wins(row, field, mutationId, actionAt))
+        throw new Error("shopping_operation");
+      if (
+        commandType === "shopping_list.set_store_section_override" &&
+        quantityValue !== null
+      ) {
+        const section = (
+          await readVisibleRecords(
+            userId,
+            organizationId,
+            "store_section",
+            true,
+          )
+        ).find(
           (record) =>
             record.entityId === quantityValue &&
             record.lifecycle === "active" &&
@@ -137,17 +167,18 @@ async function queueRow(
         userId,
         organizationId,
         commandType,
-        payload: commandType === "shopping_list.set_store_section_override"
-          ? {
-              shopping_list_id: input.shoppingListId,
-              shopping_ingredient_row_id: input.shoppingIngredientRowId,
-              store_section_id: quantityValue,
-            }
-          : {
-              shopping_list_id: input.shoppingListId,
-              shopping_ingredient_row_id: input.shoppingIngredientRowId,
-              quantity: quantityValue,
-            },
+        payload:
+          commandType === "shopping_list.set_store_section_override"
+            ? {
+                shopping_list_id: input.shoppingListId,
+                shopping_ingredient_row_id: input.shoppingIngredientRowId,
+                store_section_id: quantityValue,
+              }
+            : {
+                shopping_list_id: input.shoppingListId,
+                shopping_ingredient_row_id: input.shoppingIngredientRowId,
+                quantity: quantityValue,
+              },
         actionAt,
         createdAt: actionAt,
         state: "pending",
@@ -214,7 +245,8 @@ export async function queueShoppingRowNote(
     async () => {
       const actionAt = await nextActionAt();
       const { row } = await activeRow(userId, organizationId, input);
-      if (!wins(row, "note", mutationId, actionAt)) throw new Error("shopping_operation");
+      if (!wins(row, "note", mutationId, actionAt))
+        throw new Error("shopping_operation");
       await localDb.optimisticOverlays.put({
         ...row,
         fields: { ...row.fields, note },
@@ -401,7 +433,12 @@ export async function queueShoppingRowFulfilment(
           : "0";
         await localDb.optimisticOverlays.put({
           ...contribution,
-          fields: { ...contribution.fields, fulfilment_credit: credit, fulfilment_updated_at: actionAt, fulfilment_updated_by_user_id: userId },
+          fields: {
+            ...contribution.fields,
+            fulfilment_credit: credit,
+            fulfilment_updated_at: actionAt,
+            fulfilment_updated_by_user_id: userId,
+          },
           fieldClocks: {
             ...contribution.fieldClocks,
             fulfilment_credit: { mutationId, actionAt },
@@ -515,7 +552,8 @@ export async function replayShoppingOperation(
     command.commandType === "shopping_list.set_store_section_override" &&
     Object.keys(payload).length === 3 &&
     (payload.store_section_id === null ||
-      (typeof payload.store_section_id === "string" && uuid.test(payload.store_section_id)));
+      (typeof payload.store_section_id === "string" &&
+        uuid.test(payload.store_section_id)));
   const quantityOperation =
     (command.commandType === "shopping_list.set_available_supply" ||
       command.commandType === "shopping_list.set_manual_purchase_target") &&
@@ -532,13 +570,18 @@ export async function replayShoppingOperation(
     await localDb.optimisticOverlays.put({
       ...row,
       fields: { ...row.fields, note },
-      fieldClocks: { ...row.fieldClocks, note: { mutationId: command.id, actionAt: command.actionAt } },
+      fieldClocks: {
+        ...row.fieldClocks,
+        note: { mutationId: command.id, actionAt: command.actionAt },
+      },
       updatedAt: command.actionAt,
     });
     return;
   }
   if (sectionOverride && payload.store_section_id !== null) {
-    const section = (await readVisibleRecords(userId, organizationId, "store_section", true)).find(
+    const section = (
+      await readVisibleRecords(userId, organizationId, "store_section", true)
+    ).find(
       (record) =>
         record.entityId === payload.store_section_id &&
         record.lifecycle === "active" &&
@@ -615,7 +658,7 @@ export async function replayShoppingOperation(
               ? print(amount)
               : payload.fulfilled
                 ? entry.fields.fulfilment_credit
-              : "0",
+                : "0",
           fulfilment_updated_at: command.actionAt,
           fulfilment_updated_by_user_id: userId,
         },

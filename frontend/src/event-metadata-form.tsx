@@ -15,21 +15,52 @@ type Props = {
   generalNote: string | null;
 };
 
-export function EventMetadata({ eventId, organizationId, userId, name, startDate, endDate, location, budgetAmount, generalNote }: Props) {
+export function EventMetadata({
+  eventId,
+  organizationId,
+  userId,
+  name,
+  startDate,
+  endDate,
+  location,
+  budgetAmount,
+  generalNote,
+}: Props) {
   const { t } = useTranslation();
-  const [input, setInput] = useState({ name, startDate, endDate, location: location ?? "", budgetAmount, generalNote: generalNote ?? "" });
+  const [input, setInput] = useState({
+    name,
+    startDate,
+    endDate,
+    location: location ?? "",
+    budgetAmount,
+    generalNote: generalNote ?? "",
+  });
   const [error, setError] = useState(false);
   const [saved, setSaved] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const inFlight = useRef(false);
-  useEffect(() => setInput({ name, startDate, endDate, location: location ?? "", budgetAmount, generalNote: generalNote ?? "" }), [budgetAmount, endDate, generalNote, location, name, startDate]);
+  useEffect(
+    () =>
+      setInput({
+        name,
+        startDate,
+        endDate,
+        location: location ?? "",
+        budgetAmount,
+        generalNote: generalNote ?? "",
+      }),
+    [budgetAmount, endDate, generalNote, location, name, startDate],
+  );
   async function submit(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
     if (inFlight.current) return;
     inFlight.current = true;
     setSubmitting(true);
     try {
-      await queueEventMetadataUpdate(userId, organizationId, { eventId, ...input });
+      await queueEventMetadataUpdate(userId, organizationId, {
+        eventId,
+        ...input,
+      });
       setSaved(true);
       setError(false);
     } catch {
@@ -40,15 +71,107 @@ export function EventMetadata({ eventId, organizationId, userId, name, startDate
       setSubmitting(false);
     }
   }
-  return <form className="event-metadata" onSubmit={(event) => void submit(event)}>
-    <label>{t("eventsEdit.name")}<input maxLength={200} onChange={(event) => { setInput((current) => ({ ...current, name: event.target.value })); setSaved(false); }} required value={input.name} /></label>
-    <label>{t("eventsEdit.startDate")}<input aria-describedby="event-metadata-feedback" type="date" onChange={(event) => { setInput((current) => ({ ...current, startDate: event.target.value })); setSaved(false); }} required value={input.startDate} /></label>
-    <label>{t("eventsEdit.endDate")}<input aria-describedby="event-metadata-feedback" type="date" onChange={(event) => { setInput((current) => ({ ...current, endDate: event.target.value })); setSaved(false); }} required value={input.endDate} /></label>
-    <label>{t("eventsEdit.location")}<input maxLength={300} onChange={(event) => { setInput((current) => ({ ...current, location: event.target.value })); setSaved(false); }} value={input.location} /></label>
-    <label>{t("eventsEdit.budget")}<input inputMode="decimal" pattern="(?:0|[1-9][0-9]*)(?:\.[0-9]+)?" onChange={(event) => { setInput((current) => ({ ...current, budgetAmount: event.target.value })); setSaved(false); }} required value={input.budgetAmount} /></label>
-    <label>{t("eventsEdit.note")}<textarea maxLength={4000} onChange={(event) => { setInput((current) => ({ ...current, generalNote: event.target.value })); setSaved(false); }} value={input.generalNote} /></label>
-    <button disabled={submitting} type="submit">{t("eventsEdit.saveMetadata")}</button>
-    {error ? <p id="event-metadata-feedback" role="alert">{t("eventsEdit.errors.metadata")}</p> : <span id="event-metadata-feedback" />}
-    {saved ? <p role="status">{t("eventsEdit.metadataSaved")}</p> : null}
-  </form>;
+  return (
+    <form className="event-metadata" onSubmit={(event) => void submit(event)}>
+      <label>
+        {t("eventsEdit.name")}
+        <input
+          maxLength={200}
+          onChange={(event) => {
+            setInput((current) => ({ ...current, name: event.target.value }));
+            setSaved(false);
+          }}
+          required
+          value={input.name}
+        />
+      </label>
+      <label>
+        {t("eventsEdit.startDate")}
+        <input
+          aria-describedby="event-metadata-feedback"
+          type="date"
+          onChange={(event) => {
+            setInput((current) => ({
+              ...current,
+              startDate: event.target.value,
+            }));
+            setSaved(false);
+          }}
+          required
+          value={input.startDate}
+        />
+      </label>
+      <label>
+        {t("eventsEdit.endDate")}
+        <input
+          aria-describedby="event-metadata-feedback"
+          type="date"
+          onChange={(event) => {
+            setInput((current) => ({
+              ...current,
+              endDate: event.target.value,
+            }));
+            setSaved(false);
+          }}
+          required
+          value={input.endDate}
+        />
+      </label>
+      <label>
+        {t("eventsEdit.location")}
+        <input
+          maxLength={300}
+          onChange={(event) => {
+            setInput((current) => ({
+              ...current,
+              location: event.target.value,
+            }));
+            setSaved(false);
+          }}
+          value={input.location}
+        />
+      </label>
+      <label>
+        {t("eventsEdit.budget")}
+        <input
+          inputMode="decimal"
+          pattern="(?:0|[1-9][0-9]*)(?:\.[0-9]+)?"
+          onChange={(event) => {
+            setInput((current) => ({
+              ...current,
+              budgetAmount: event.target.value,
+            }));
+            setSaved(false);
+          }}
+          required
+          value={input.budgetAmount}
+        />
+      </label>
+      <label>
+        {t("eventsEdit.note")}
+        <textarea
+          maxLength={4000}
+          onChange={(event) => {
+            setInput((current) => ({
+              ...current,
+              generalNote: event.target.value,
+            }));
+            setSaved(false);
+          }}
+          value={input.generalNote}
+        />
+      </label>
+      <button disabled={submitting} type="submit">
+        {t("eventsEdit.saveMetadata")}
+      </button>
+      {error ? (
+        <p id="event-metadata-feedback" role="alert">
+          {t("eventsEdit.errors.metadata")}
+        </p>
+      ) : (
+        <span id="event-metadata-feedback" />
+      )}
+      {saved ? <p role="status">{t("eventsEdit.metadataSaved")}</p> : null}
+    </form>
+  );
 }

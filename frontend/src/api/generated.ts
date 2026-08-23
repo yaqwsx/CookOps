@@ -3,7 +3,6 @@
  * Do not make direct changes to the file.
  */
 
-
 export type paths = {
   "/api/v1/organizations": {
     /** Available Organizations */
@@ -789,7 +788,9 @@ export type components = {
     PushChangesResponse: {
       /** Change Cursor */
       change_cursor: string;
-      clock_skew_warning: components["schemas"]["ClockSkewWarningResponse"] | null;
+      clock_skew_warning:
+        | components["schemas"]["ClockSkewWarningResponse"]
+        | null;
       /** Outcomes */
       outcomes: components["schemas"]["PushCommandOutcomeResponse"][];
       /**
@@ -809,8 +810,8 @@ export type components = {
       code: string;
       /** Field Violations */
       field_violations: {
-          [key: string]: string;
-        }[];
+        [key: string]: string;
+      }[];
       /** Retry Same Identity */
       retry_same_identity: boolean;
     };
@@ -1121,7 +1122,6 @@ export type $defs = Record<string, never>;
 export type external = Record<string, never>;
 
 export type operations = {
-
   /** Available Organizations */
   available_organizations_api_v1_organizations_get: {
     responses: {

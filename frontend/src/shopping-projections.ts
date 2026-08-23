@@ -32,7 +32,10 @@ export type ShoppingRow = {
   fulfilmentAttribution: FulfilmentAttribution | null;
 };
 
-export type FulfilmentAttribution = { updatedAt: string; updatedByUserId: string };
+export type FulfilmentAttribution = {
+  updatedAt: string;
+  updatedByUserId: string;
+};
 
 export type ShoppingContribution = {
   id: string;
@@ -84,10 +87,15 @@ function value(record: CanonicalRecord, key: string): string | undefined {
   return typeof item === "string" ? item : undefined;
 }
 
-export function fulfilmentAttribution(record: CanonicalRecord): FulfilmentAttribution | null {
+export function fulfilmentAttribution(
+  record: CanonicalRecord,
+): FulfilmentAttribution | null {
   const updatedAt = value(record, "fulfilment_updated_at");
   const updatedByUserId = value(record, "fulfilment_updated_by_user_id");
-  return updatedAt && updatedByUserId && timestampNanoseconds(updatedAt) !== undefined && uuid.test(updatedByUserId)
+  return updatedAt &&
+    updatedByUserId &&
+    timestampNanoseconds(updatedAt) !== undefined &&
+    uuid.test(updatedByUserId)
     ? { updatedAt, updatedByUserId }
     : null;
 }
@@ -144,7 +152,8 @@ function detailTexts(
     else if (Array.isArray(value))
       result.push(
         ...value.filter(
-          (item): item is string => typeof item === "string" && item.trim().length > 0,
+          (item): item is string =>
+            typeof item === "string" && item.trim().length > 0,
         ),
       );
   }
@@ -259,10 +268,7 @@ function priceDetails(
     fraction(targetUnit.factor),
   );
   const cost = converted
-    ? divide(
-        multiply(fraction(amount), converted),
-        fraction(pricedQuantity),
-      )
+    ? divide(multiply(fraction(amount), converted), fraction(pricedQuantity))
     : undefined;
   if (!cost) return undefined;
   return {
@@ -576,9 +582,7 @@ export async function readShoppingList(
             sectionName:
               sectionNames.get(value(item, "store_section_id") ?? "") ?? null,
             note: value(item, "note") ?? null,
-            fulfilled:
-              target.value > 0n &&
-              compare(credit, target) >= 0,
+            fulfilled: target.value > 0n && compare(credit, target) >= 0,
             partial:
               target.value > 0n &&
               compare(credit, add([])) > 0 &&
@@ -606,16 +610,15 @@ export async function readShoppingList(
           unitNames.has(value(row, "calculation_unit_id") ?? ""),
       )
       .map((row) => {
-        const rowContributions = contributions.filter(
-          (contribution) =>
-            validContribution(
-              contribution,
-              row.entityId,
-              value(row, "ingredient_id"),
-              shoppingListId,
-              organizationId,
-              eventId,
-            ),
+        const rowContributions = contributions.filter((contribution) =>
+          validContribution(
+            contribution,
+            row.entityId,
+            value(row, "ingredient_id"),
+            shoppingListId,
+            organizationId,
+            eventId,
+          ),
         );
         const validSnapshots = snapshots.filter((snapshot) =>
           rowContributions.some((contribution) =>
@@ -632,10 +635,7 @@ export async function readShoppingList(
         );
         const generated = add(
           validSnapshots
-            .filter(
-              (snapshot) =>
-                snapshot.fields.active_in_revision === true,
-            )
+            .filter((snapshot) => snapshot.fields.active_in_revision === true)
             .map((snapshot) => decimal(snapshot.fields.generated_quantity))
             .filter((amount): amount is Decimal => amount !== undefined),
         );
@@ -672,7 +672,8 @@ export async function readShoppingList(
           target: print(target),
           remaining: print(remaining),
           unit,
-          fulfilled: compare(target, add([])) > 0 && compare(remaining, add([])) === 0,
+          fulfilled:
+            compare(target, add([])) > 0 && compare(remaining, add([])) === 0,
           partial:
             compare(target, add([])) > 0 &&
             compare(remaining, add([])) > 0 &&
@@ -713,12 +714,21 @@ export async function readShoppingList(
               fulfilled:
                 amount !== undefined &&
                 compare(amount, add([])) > 0 &&
-                compare(decimal(contribution.fields.fulfilment_credit) ?? add([]), amount) >= 0,
+                compare(
+                  decimal(contribution.fields.fulfilment_credit) ?? add([]),
+                  amount,
+                ) >= 0,
               partial:
                 amount !== undefined &&
                 compare(amount, add([])) > 0 &&
-                compare(decimal(contribution.fields.fulfilment_credit) ?? add([]), add([])) > 0 &&
-                compare(decimal(contribution.fields.fulfilment_credit) ?? add([]), amount) < 0,
+                compare(
+                  decimal(contribution.fields.fulfilment_credit) ?? add([]),
+                  add([]),
+                ) > 0 &&
+                compare(
+                  decimal(contribution.fields.fulfilment_credit) ?? add([]),
+                  amount,
+                ) < 0,
               retired:
                 contribution.lifecycle === "retired" ||
                 snapshot?.fields.active_in_revision !== true,

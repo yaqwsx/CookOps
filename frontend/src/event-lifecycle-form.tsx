@@ -54,7 +54,11 @@ export function EventLifecycle({
       <p id={`event-lifecycle-${eventId}`}>
         {t(`eventLifecycle.confirm.${operation}`)}
       </p>
-      <button aria-describedby={`event-lifecycle-${eventId}`} ref={confirmButton} type="submit">
+      <button
+        aria-describedby={`event-lifecycle-${eventId}`}
+        ref={confirmButton}
+        type="submit"
+      >
         {t(`eventLifecycle.confirmAction.${operation}`)}
       </button>
       <button onClick={() => setConfirming(false)} type="button">

@@ -136,7 +136,13 @@ describe("bootstrapOrganization", () => {
       userId,
       organizationId,
       commandType: "event_dietary_exception.update",
-      payload: { event_id: eventId, exception_id: exceptionId, name: "Updated", note: "Changed", tag_ids: [tagId] },
+      payload: {
+        event_id: eventId,
+        exception_id: exceptionId,
+        name: "Updated",
+        note: "Changed",
+        tag_ids: [tagId],
+      },
       actionAt: "2026-08-07T11:01:00.000Z",
       createdAt: "2026-08-07T11:01:00.000Z",
       state: "pending",
@@ -206,7 +212,9 @@ describe("bootstrapOrganization", () => {
         "event_dietary_exception",
         exceptionId,
       ]),
-    ).resolves.toMatchObject({ fields: { name: "Updated", note: "Changed", tag_ids: [tagId] } });
+    ).resolves.toMatchObject({
+      fields: { name: "Updated", note: "Changed", tag_ids: [tagId] },
+    });
   });
 
   it("replays a pending recipe create as both root and immutable initial version", async () => {
@@ -480,7 +488,12 @@ describe("bootstrapOrganization", () => {
       readVisibleCanonicalRecord(userId, organizationId, "event", eventId),
     ).resolves.toMatchObject({ fields: { name: "Canonical name" } });
     await expect(
-      localDb.optimisticOverlays.get([userId, organizationId, "event", eventId]),
+      localDb.optimisticOverlays.get([
+        userId,
+        organizationId,
+        "event",
+        eventId,
+      ]),
     ).resolves.toBeUndefined();
   });
 
@@ -504,7 +517,11 @@ describe("bootstrapOrganization", () => {
         userId,
         organizationId,
         commandType: "event_day.create",
-        payload: { event_day_id: dayId, event_id: eventId, calendar_date: "2026-08-11" },
+        payload: {
+          event_day_id: dayId,
+          event_id: eventId,
+          calendar_date: "2026-08-11",
+        },
         actionAt: "2026-08-07T11:00:00.000Z",
         createdAt: "2026-08-07T11:00:00.000Z",
         sequence: 2,
@@ -627,9 +644,18 @@ describe("bootstrapOrganization", () => {
     });
 
     await expect(
-      readVisibleCanonicalRecord(userId, organizationId, "receipt_attachment", "attachment"),
-    ).resolves.toMatchObject({ fields: { storage_state: "ready", byte_size: 5 } });
-    await expect(localDb.pendingUploads.get("receipt-upload")).resolves.toMatchObject({
+      readVisibleCanonicalRecord(
+        userId,
+        organizationId,
+        "receipt_attachment",
+        "attachment",
+      ),
+    ).resolves.toMatchObject({
+      fields: { storage_state: "ready", byte_size: 5 },
+    });
+    await expect(
+      localDb.pendingUploads.get("receipt-upload"),
+    ).resolves.toMatchObject({
       state: "pending",
       blob,
     });
@@ -804,7 +830,9 @@ describe("bootstrapOrganization", () => {
         entry.entityId === "event",
     );
     expect(records).toHaveLength(1);
-    await expect(localDb.syncMetadata.get([userId, organizationId])).resolves.toMatchObject({
+    await expect(
+      localDb.syncMetadata.get([userId, organizationId]),
+    ).resolves.toMatchObject({
       cursor: "new-cursor",
       activity: "caughtUp",
     });
@@ -1080,10 +1108,20 @@ describe("bootstrapOrganization", () => {
       ),
     });
     await expect(
-      localDb.optimisticOverlays.get([userId, organizationId, "scheduled_recipe", ids.scheduled]),
+      localDb.optimisticOverlays.get([
+        userId,
+        organizationId,
+        "scheduled_recipe",
+        ids.scheduled,
+      ]),
     ).resolves.toMatchObject({ fields: { note: "Pending note" } });
     await expect(
-      localDb.optimisticOverlays.get([userId, organizationId, "scheduled_recipe", ids.malformed]),
+      localDb.optimisticOverlays.get([
+        userId,
+        organizationId,
+        "scheduled_recipe",
+        ids.malformed,
+      ]),
     ).resolves.toBeUndefined();
   });
 
@@ -1177,16 +1215,75 @@ describe("bootstrapOrganization", () => {
   });
 
   it("does not create an overlay for a relative scheduled-recipe move", async () => {
-    const ids = { event: "3d8b2b21-c378-4574-9e46-9338c81305ef", day: "4d8b2b21-c378-4574-9e46-9338c81305ef", role: "5d8b2b21-c378-4574-9e46-9338c81305ef", scheduled: "8d8b2b21-c378-4574-9e46-9338c81305ef" };
+    const ids = {
+      event: "3d8b2b21-c378-4574-9e46-9338c81305ef",
+      day: "4d8b2b21-c378-4574-9e46-9338c81305ef",
+      role: "5d8b2b21-c378-4574-9e46-9338c81305ef",
+      scheduled: "8d8b2b21-c378-4574-9e46-9338c81305ef",
+    };
     for (const [entityType, entityId, fields] of [
       ["event", ids.event, { id: ids.event, lifecycle: "active" }],
-      ["event_day", ids.day, { id: ids.day, event_id: ids.event, lifecycle: "active" }],
-      ["event_meal_role", ids.role, { id: ids.role, event_id: ids.event, lifecycle: "active" }],
-      ["scheduled_recipe", ids.scheduled, { id: ids.scheduled, event_id: ids.event, event_day_id: ids.day, event_meal_role_id: ids.role, position_key: "a" }],
-    ] as const) await localDb.canonicalRecords.put({ userId, organizationId, recordSchemaVersion: 1, entityType, entityId, fields, lifecycle: "active", fieldClocks: {}, immutable: false, updatedAt: "2026-08-07T12:00:00.000Z" });
-    await localDb.outbox.put({ id: "relative", userId, organizationId, commandType: "scheduled_recipe.move", payload: { scheduled_recipe_id: ids.scheduled, event_id: ids.event, event_day_id: ids.day, event_meal_role_id: ids.role, placement: "start" }, actionAt: "2026-08-07T12:01:00.000Z", createdAt: "2026-08-07T12:01:00.000Z", state: "pending" });
-    await bootstrapOrganization(userId, organizationId, { fetch: vi.fn<typeof fetch>(async () => response([])) });
-    await expect(localDb.optimisticOverlays.get([userId, organizationId, "scheduled_recipe", ids.scheduled])).resolves.toBeUndefined();
+      [
+        "event_day",
+        ids.day,
+        { id: ids.day, event_id: ids.event, lifecycle: "active" },
+      ],
+      [
+        "event_meal_role",
+        ids.role,
+        { id: ids.role, event_id: ids.event, lifecycle: "active" },
+      ],
+      [
+        "scheduled_recipe",
+        ids.scheduled,
+        {
+          id: ids.scheduled,
+          event_id: ids.event,
+          event_day_id: ids.day,
+          event_meal_role_id: ids.role,
+          position_key: "a",
+        },
+      ],
+    ] as const)
+      await localDb.canonicalRecords.put({
+        userId,
+        organizationId,
+        recordSchemaVersion: 1,
+        entityType,
+        entityId,
+        fields,
+        lifecycle: "active",
+        fieldClocks: {},
+        immutable: false,
+        updatedAt: "2026-08-07T12:00:00.000Z",
+      });
+    await localDb.outbox.put({
+      id: "relative",
+      userId,
+      organizationId,
+      commandType: "scheduled_recipe.move",
+      payload: {
+        scheduled_recipe_id: ids.scheduled,
+        event_id: ids.event,
+        event_day_id: ids.day,
+        event_meal_role_id: ids.role,
+        placement: "start",
+      },
+      actionAt: "2026-08-07T12:01:00.000Z",
+      createdAt: "2026-08-07T12:01:00.000Z",
+      state: "pending",
+    });
+    await bootstrapOrganization(userId, organizationId, {
+      fetch: vi.fn<typeof fetch>(async () => response([])),
+    });
+    await expect(
+      localDb.optimisticOverlays.get([
+        userId,
+        organizationId,
+        "scheduled_recipe",
+        ids.scheduled,
+      ]),
+    ).resolves.toBeUndefined();
   });
 
   it("does not replay a move whose bootstrap target is retired or from another event", async () => {
@@ -1394,66 +1491,82 @@ describe("bootstrapOrganization", () => {
   it("retains override clocks when bootstrapping a catalog-update feed record", async () => {
     const overrideId = "44444444-4444-4444-8444-444444444444";
     await bootstrapOrganization(userId, organizationId, {
-      fetch: vi.fn<typeof fetch>(async () => response([
-        organizationRecord(),
-        {
-          organization_id: organizationId,
-          entity_id: "11111111-1111-4111-8111-111111111111",
-          entity_kind: "scheduled_recipe",
-          operation: "upsert",
-          payload: {
-            record_schema_version: 1,
-            record: {
-              id: "11111111-1111-4111-8111-111111111111",
-              event_id: "22222222-2222-4222-8222-222222222222",
-              recipe_version_id: "33333333-3333-4333-8333-333333333333",
-              selected_scale_amount: "34",
-              scale_mode: "suggested",
-              field_clocks: {
-                placement: { winning_mutation_id: "placement" },
-                recipe_version_id: { winning_mutation_id: "catalog" },
-                selected_scale_amount: { winning_mutation_id: "catalog" },
-                scale_mode: { winning_mutation_id: "catalog" },
+      fetch: vi.fn<typeof fetch>(async () =>
+        response([
+          organizationRecord(),
+          {
+            organization_id: organizationId,
+            entity_id: "11111111-1111-4111-8111-111111111111",
+            entity_kind: "scheduled_recipe",
+            operation: "upsert",
+            payload: {
+              record_schema_version: 1,
+              record: {
+                id: "11111111-1111-4111-8111-111111111111",
+                event_id: "22222222-2222-4222-8222-222222222222",
+                recipe_version_id: "33333333-3333-4333-8333-333333333333",
+                selected_scale_amount: "34",
+                scale_mode: "suggested",
+                field_clocks: {
+                  placement: { winning_mutation_id: "placement" },
+                  recipe_version_id: { winning_mutation_id: "catalog" },
+                  selected_scale_amount: { winning_mutation_id: "catalog" },
+                  scale_mode: { winning_mutation_id: "catalog" },
+                },
               },
             },
           },
-        },
-        {
-          organization_id: organizationId,
-          entity_id: overrideId,
-          entity_kind: "scheduled_ingredient_override",
-          operation: "upsert",
-          payload: {
-            record_schema_version: 1,
-            record: {
-              id: overrideId,
-              organization_id: organizationId,
-              event_id: "22222222-2222-4222-8222-222222222222",
-              scheduled_recipe_id: "11111111-1111-4111-8111-111111111111",
-              override_kind: "add",
-              ingredient_id: "55555555-5555-4555-8555-555555555555",
-              ingredient_version_id: "66666666-6666-4666-8666-666666666666",
-              quantity: "2",
-              include_in_portion_weight: true,
-              note: "local",
-              position_key: "q",
-              field_clocks: {
-                "replace.line-catalog": { winning_mutation_id: "old" },
-                catalog_update: { winning_mutation_id: "catalog" },
+          {
+            organization_id: organizationId,
+            entity_id: overrideId,
+            entity_kind: "scheduled_ingredient_override",
+            operation: "upsert",
+            payload: {
+              record_schema_version: 1,
+              record: {
+                id: overrideId,
+                organization_id: organizationId,
+                event_id: "22222222-2222-4222-8222-222222222222",
+                scheduled_recipe_id: "11111111-1111-4111-8111-111111111111",
+                override_kind: "add",
+                ingredient_id: "55555555-5555-4555-8555-555555555555",
+                ingredient_version_id: "66666666-6666-4666-8666-666666666666",
+                quantity: "2",
+                include_in_portion_weight: true,
+                note: "local",
+                position_key: "q",
+                field_clocks: {
+                  "replace.line-catalog": { winning_mutation_id: "old" },
+                  catalog_update: { winning_mutation_id: "catalog" },
+                },
               },
             },
           },
-        },
-      ])),
+        ]),
+      ),
     });
-    await expect(readVisibleCanonicalRecord(userId, organizationId, "scheduled_ingredient_override", overrideId)).resolves.toMatchObject({
+    await expect(
+      readVisibleCanonicalRecord(
+        userId,
+        organizationId,
+        "scheduled_ingredient_override",
+        overrideId,
+      ),
+    ).resolves.toMatchObject({
       fields: { override_kind: "add", quantity: "2" },
       fieldClocks: {
         "replace.line-catalog": { winning_mutation_id: "old" },
         catalog_update: { winning_mutation_id: "catalog" },
       },
     });
-    await expect(readVisibleCanonicalRecord(userId, organizationId, "scheduled_recipe", "11111111-1111-4111-8111-111111111111")).resolves.toMatchObject({
+    await expect(
+      readVisibleCanonicalRecord(
+        userId,
+        organizationId,
+        "scheduled_recipe",
+        "11111111-1111-4111-8111-111111111111",
+      ),
+    ).resolves.toMatchObject({
       fields: { selected_scale_amount: "34", scale_mode: "suggested" },
       fieldClocks: {
         placement: { winning_mutation_id: "placement" },
@@ -1497,19 +1610,53 @@ describe("bootstrapOrganization", () => {
     const unknownEntity = vi.fn<typeof fetch>(async () =>
       response([{ ...record("unknown"), entity_kind: "future_entity" }]),
     );
-    await expect(bootstrapOrganization(userId, organizationId, { fetch: unknownEntity }))
-      .rejects.toMatchObject({ name: "UpgradeRequiredError", reason: "entity_kind" });
-    await expect(localDb.canonicalRecords.get([userId, organizationId, "event", "existing-event"])).resolves.toEqual(existing);
-    await expect(localDb.outbox.get("pending-upgrade")).resolves.toMatchObject({ state: "pending" });
-    await expect(localDb.syncMetadata.get([userId, organizationId])).resolves.toMatchObject({ cursor: "old-cursor", activity: "upgradeRequired" });
+    await expect(
+      bootstrapOrganization(userId, organizationId, { fetch: unknownEntity }),
+    ).rejects.toMatchObject({
+      name: "UpgradeRequiredError",
+      reason: "entity_kind",
+    });
+    await expect(
+      localDb.canonicalRecords.get([
+        userId,
+        organizationId,
+        "event",
+        "existing-event",
+      ]),
+    ).resolves.toEqual(existing);
+    await expect(localDb.outbox.get("pending-upgrade")).resolves.toMatchObject({
+      state: "pending",
+    });
+    await expect(
+      localDb.syncMetadata.get([userId, organizationId]),
+    ).resolves.toMatchObject({
+      cursor: "old-cursor",
+      activity: "upgradeRequired",
+    });
 
-    const futureSchema = vi.fn<typeof fetch>(async () =>
-      new Response(JSON.stringify({ sync_schema_version: 2 }), { status: 200 }),
+    const futureSchema = vi.fn<typeof fetch>(
+      async () =>
+        new Response(JSON.stringify({ sync_schema_version: 2 }), {
+          status: 200,
+        }),
     );
-    await expect(bootstrapOrganization(userId, organizationId, { fetch: futureSchema }))
-      .rejects.toMatchObject({ name: "UpgradeRequiredError", reason: "sync_schema_version" });
-    await expect(localDb.canonicalRecords.get([userId, organizationId, "event", "existing-event"])).resolves.toEqual(existing);
-    await expect(localDb.outbox.get("pending-upgrade")).resolves.toMatchObject({ state: "pending" });
+    await expect(
+      bootstrapOrganization(userId, organizationId, { fetch: futureSchema }),
+    ).rejects.toMatchObject({
+      name: "UpgradeRequiredError",
+      reason: "sync_schema_version",
+    });
+    await expect(
+      localDb.canonicalRecords.get([
+        userId,
+        organizationId,
+        "event",
+        "existing-event",
+      ]),
+    ).resolves.toEqual(existing);
+    await expect(localDb.outbox.get("pending-upgrade")).resolves.toMatchObject({
+      state: "pending",
+    });
   });
 
   it("does not advance pull state for an unsupported record schema", async () => {
@@ -1526,14 +1673,37 @@ describe("bootstrapOrganization", () => {
       updatedAt: "2026-08-07T10:00:00.000Z",
     };
     await localDb.canonicalRecords.put(existing);
-    await localDb.syncMetadata.put({ userId, organizationId, cursor: "old-cursor", activity: "caughtUp" });
+    await localDb.syncMetadata.put({
+      userId,
+      organizationId,
+      cursor: "old-cursor",
+      activity: "caughtUp",
+    });
     const unsupported = {
       ...record("future-record"),
       payload: { record_schema_version: 2, record: { id: "future-record" } },
     };
-    await expect(pullOrganization(userId, organizationId, { fetch: vi.fn<typeof fetch>(async () => pullResponse([unsupported])) }))
-      .rejects.toMatchObject({ name: "UpgradeRequiredError", reason: "record_schema_version" });
-    await expect(localDb.canonicalRecords.get([userId, organizationId, "event", "existing-event"])).resolves.toEqual(existing);
-    await expect(localDb.syncMetadata.get([userId, organizationId])).resolves.toMatchObject({ cursor: "old-cursor", activity: "upgradeRequired" });
+    await expect(
+      pullOrganization(userId, organizationId, {
+        fetch: vi.fn<typeof fetch>(async () => pullResponse([unsupported])),
+      }),
+    ).rejects.toMatchObject({
+      name: "UpgradeRequiredError",
+      reason: "record_schema_version",
+    });
+    await expect(
+      localDb.canonicalRecords.get([
+        userId,
+        organizationId,
+        "event",
+        "existing-event",
+      ]),
+    ).resolves.toEqual(existing);
+    await expect(
+      localDb.syncMetadata.get([userId, organizationId]),
+    ).resolves.toMatchObject({
+      cursor: "old-cursor",
+      activity: "upgradeRequired",
+    });
   });
 });
