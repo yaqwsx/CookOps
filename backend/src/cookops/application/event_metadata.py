@@ -48,6 +48,8 @@ def _bounded_decimal(value: object) -> bool:
     if not isinstance(value, Decimal) or not value.is_finite():
         return False
     _, digits, exponent = value.as_tuple()
+    if not isinstance(exponent, int):
+        return False
     expanded_length = (
         len(digits) + exponent if exponent >= 0 else max(0, len(digits) + exponent) + -exponent
     )
@@ -221,14 +223,17 @@ async def update_event_metadata(
     valid_end_date = isinstance(command.end_date, date) and not isinstance(
         command.end_date, datetime
     )
+    start_date = command.start_date if valid_start_date else None
+    end_date = command.end_date if valid_end_date else None
     if supplied_dates and not valid_start_date:
         violations.append(FieldViolation("start_date", "must_be_calendar_date"))
     if supplied_dates and not valid_end_date:
         violations.append(FieldViolation("end_date", "must_be_calendar_date"))
     if supplied_dates and valid_start_date and valid_end_date:
-        if command.end_date < command.start_date:
+        assert start_date is not None and end_date is not None
+        if end_date < start_date:
             violations.append(FieldViolation("end_date", "must_not_precede_start_date"))
-        elif (command.end_date - command.start_date).days >= MAX_EVENT_DAY_COUNT:
+        elif (end_date - start_date).days >= MAX_EVENT_DAY_COUNT:
             violations.append(
                 FieldViolation("end_date", f"must_not_exceed_{MAX_EVENT_DAY_COUNT}_days")
             )
@@ -343,7 +348,7 @@ async def update_event_metadata(
                     "start_date": command.start_date,
                     "end_date": command.end_date,
                 }
-                fields = _FIELDS if supplied_dates else _FIELDS[:-2]
+                fields: tuple[str, ...] = _FIELDS if supplied_dates else _FIELDS[:-2]
                 date_wins = {
                     field: (
                         by_field.get(field) is None
@@ -356,11 +361,11 @@ async def update_event_metadata(
                     for field in ("start_date", "end_date")
                 }
                 candidate_dates = (
-                    command.start_date
-                    if valid_start_date and date_wins["start_date"]
+                    start_date
+                    if valid_start_date and start_date is not None and date_wins["start_date"]
                     else event.start_date,
-                    command.end_date
-                    if valid_end_date and date_wins["end_date"]
+                    end_date
+                    if valid_end_date and end_date is not None and date_wins["end_date"]
                     else event.end_date,
                 )
                 if candidate_dates[1] < candidate_dates[0]:
