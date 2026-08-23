@@ -1,5 +1,6 @@
+import { formatLocalizedDecimal } from "./localized-decimal";
+
 const calendarDate = /^(\d{4})-(\d{2})-(\d{2})$/;
-const decimal = /^(?:0|[1-9]\d*)(?:\.\d+)?$/;
 const currency = /^[A-Z]{3}$/;
 
 export function isReceiptDate(value: string): boolean {
@@ -20,34 +21,11 @@ export function formatReceiptDate(value: string, locale: string): string {
 }
 
 export function formatReceiptAmount(amount: string, currencyCode: string, locale: string): string {
-  if (!decimal.test(amount) || !currency.test(currencyCode))
+  if (!currency.test(currencyCode))
     return `${amount} ${currencyCode}`;
-  try {
-    const formatter = new Intl.NumberFormat(locale, {
-      style: "currency",
-      currency: currencyCode,
-      maximumFractionDigits: 0,
-    });
-    const [integer, fraction] = amount.split(".");
-    const parts = formatter.formatToParts(BigInt(integer));
-    if (fraction) {
-      const fractionFormatter = new Intl.NumberFormat(locale, {
-        style: "currency",
-        currency: currencyCode,
-        minimumFractionDigits: 1,
-        maximumFractionDigits: 1,
-      });
-      const decimal = fractionFormatter.formatToParts(1.1).find((part) => part.type === "decimal")?.value;
-      if (!decimal) return `${amount} ${currencyCode}`;
-      const localizedFraction = [...fraction].map((digit) =>
-        fractionFormatter.formatToParts(BigInt(digit)).find((part) => part.type === "integer")?.value ?? digit,
-      ).join("");
-      let integerEnd = -1;
-      parts.forEach((part, index) => { if (part.type === "integer") integerEnd = index; });
-      parts.splice(integerEnd + 1, 0, { type: "decimal", value: decimal }, { type: "fraction", value: localizedFraction });
-    }
-    return parts.map((part) => part.value).join("");
-  } catch {
-    return `${amount} ${currencyCode}`;
-  }
+  const formatted = formatLocalizedDecimal(amount, locale, {
+    style: "currency",
+    currency: currencyCode,
+  });
+  return formatted ?? `${amount} ${currencyCode}`;
 }

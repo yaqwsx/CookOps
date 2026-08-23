@@ -348,6 +348,33 @@ describe("EventShopping", () => {
     );
   });
 
+  it("reformats read-only row and contribution quantities after a locale switch", async () => {
+    await i18n.changeLanguage(defaultLocale);
+    readEventPlanner.mockResolvedValue({ name: "Letní vaření", lifecycle: "active", scheduled: [] });
+    readShoppingLists.mockResolvedValue([]);
+    readShoppingList.mockResolvedValue({
+      id: "9d8b2b21-c378-4574-9e46-9338c81305ef",
+      name: "Sobota",
+      sourceCount: 1,
+      sourceRecipeIds: [],
+      createdAt: "2026-08-07T12:00:00Z",
+      currentGenerationRevisionId: "0e8b2b21-c378-4574-9e46-9338c81305ef",
+      rows: [{ id: "1e8b2b21-c378-4574-9e46-9338c81305ef", ingredientName: "Rajčata", sectionName: null, availableSupply: "0", manualPurchaseTarget: null, generatedRequirement: "4.50", target: "3.25", remaining: "2.50", unit: "kg", fulfilled: false, partial: false, notRequired: false, contributions: [{ id: "2e8b2b21-c378-4574-9e46-9338c81305ef", generated: "1.25", requiredQuantity: "1.25", fulfilled: false, partial: false, retired: false, source: "Chili" }] }],
+      adHocItems: [],
+      quantityUnits: [],
+      storeSections: [],
+    });
+    pullOrganization.mockResolvedValue(false);
+    render(<EventShopping eventId={ids.event} onBack={vi.fn()} onOpenList={vi.fn()} onUnauthenticated={vi.fn()} organizationId={ids.organization} shoppingListId="9d8b2b21-c378-4574-9e46-9338c81305ef" userId={ids.user} />);
+    expect(await screen.findByText("2,50 kg")).toBeInTheDocument();
+    await userEvent.setup().click(screen.getByText("Příspěvky receptů"));
+    expect(screen.getByText("1,25 kg")).toBeInTheDocument();
+    await i18n.changeLanguage("en");
+    expect(await screen.findByText("2.50 kg")).toBeInTheDocument();
+    expect(screen.getByText("1.25 kg")).toBeInTheDocument();
+    await i18n.changeLanguage(defaultLocale);
+  });
+
   it("filters completed and unnecessary aggregate rows without empty sections", async () => {
     await i18n.changeLanguage(defaultLocale);
     readEventPlanner.mockResolvedValue({ name: "Letní vaření", lifecycle: "active", scheduled: [] });

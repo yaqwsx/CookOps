@@ -39,6 +39,7 @@ import { ensureArchivedEventCached } from "./archive-cache";
 import { SynchronizationStatus } from "./synchronization-status";
 import { EventSummary, useEventPendingSync } from "./event-summary";
 import { EventSectionNavigation } from "./event-section-navigation";
+import { formatShoppingQuantity } from "./shopping-quantity";
 
 type ShoppingState = "loading" | "ready" | "offline" | "error";
 
@@ -93,7 +94,8 @@ function ShoppingDetail({
   planner: EventPlannerProjection;
   refreshPending: boolean;
 }) {
-  const { t } = useTranslation();
+  const { i18n, t } = useTranslation();
+  const locale = i18n.resolvedLanguage ?? "cs";
   const [hideCompleted, setHideCompleted] = useState(false);
   const visibleRows = hideCompleted
     ? shoppingList.rows.filter((row) => !row.fulfilled && !row.notRequired)
@@ -197,10 +199,7 @@ function ShoppingDetail({
                   </label>
                 ) : null}
                 <strong>{item.name}</strong> ·{" "}
-                {t("shopping.quantity", {
-                  amount: item.target,
-                  unit: item.unit,
-                })}
+                {formatShoppingQuantity(item.target, item.unit, locale)}
                 {item.sectionName ? ` · ${item.sectionName}` : null}
                 {item.retired ? ` · ${t("shopping.retired")}` : null}
                 {item.note ? <p>{item.note}</p> : null}
@@ -548,7 +547,8 @@ function ShoppingRowControls({
   shoppingListId: string;
   userId: string;
 }) {
-  const { t } = useTranslation();
+  const { i18n, t } = useTranslation();
+  const locale = i18n.resolvedLanguage ?? "cs";
   const [error, setError] = useState(false);
   const [availableSupply, setAvailableSupply] = useState(row.availableSupply);
   const [manualTarget, setManualTarget] = useState(
@@ -587,16 +587,13 @@ function ShoppingRowControls({
           <div>
             <dt>{t("shopping.remaining")}</dt>
             <dd>
-              {t("shopping.quantity", {
-                amount: row.remaining,
-                unit: row.unit,
-              })}
+              {formatShoppingQuantity(row.remaining, row.unit, locale)}
             </dd>
           </div>
           <div>
             <dt>{t("shopping.target")}</dt>
             <dd>
-              {t("shopping.quantity", { amount: row.target, unit: row.unit })}
+              {formatShoppingQuantity(row.target, row.unit, locale)}
             </dd>
           </div>
         </dl>
@@ -753,16 +750,13 @@ function ShoppingRowControls({
             <div>
               <dt>{t("shopping.generatedRequirement")}</dt>
               <dd>
-                {t("shopping.quantity", {
-                  amount: row.generatedRequirement,
-                  unit: row.unit,
-                })}
+                {formatShoppingQuantity(row.generatedRequirement, row.unit, locale)}
               </dd>
             </div>
             <div>
               <dt>{t("shopping.purchaseTarget")}</dt>
               <dd>
-                {t("shopping.quantity", { amount: row.target, unit: row.unit })}
+                {formatShoppingQuantity(row.target, row.unit, locale)}
               </dd>
             </div>
           </dl>
@@ -772,10 +766,7 @@ function ShoppingRowControls({
               const lineNotes = contribution.lineNotes ?? [];
               const recipeNotes = contribution.recipeNotes ?? [];
               const ingredientNotes = contribution.ingredientNotes ?? [];
-              const label = `${contribution.source ?? t("shopping.scheduledRecipe")} · ${t(
-                "shopping.quantity",
-                { amount: requiredQuantity, unit: row.unit },
-              )}${contribution.retired ? ` · ${t("shopping.retired")}` : ""}`;
+              const label = `${contribution.source ?? t("shopping.scheduledRecipe")} · ${formatShoppingQuantity(requiredQuantity, row.unit, locale)}${contribution.retired ? ` · ${t("shopping.retired")}` : ""}`;
               return (
                 <li key={contribution.id}>
                   {editable ? (
@@ -812,19 +803,13 @@ function ShoppingRowControls({
                     <div>
                       <dt>{t("shopping.generatedRequirement")}</dt>
                       <dd>
-                        {t("shopping.quantity", {
-                          amount: requiredQuantity,
-                          unit: row.unit,
-                        })}
+                        {formatShoppingQuantity(requiredQuantity, row.unit, locale)}
                       </dd>
                     </div>
                     <div>
                       <dt>{t("shopping.purchaseTarget")}</dt>
                       <dd>
-                        {t("shopping.quantity", {
-                          amount: row.target,
-                          unit: row.unit,
-                        })}
+                        {formatShoppingQuantity(row.target, row.unit, locale)}
                       </dd>
                     </div>
                     {contribution.day ? (
