@@ -94,14 +94,19 @@ function useFailedCommands(organizationId?: string, userId?: string) {
   const [commands, setCommands] = useState<OutboxCommand[]>([]);
   useEffect(() => {
     if (!organizationId || !userId) return setCommands([]);
-    const subscription = liveQuery(() => readFailedOutboxCommands(userId, organizationId)).subscribe({ next: setCommands, error: () => setCommands([]) });
+    const subscription = liveQuery(() =>
+      readFailedOutboxCommands(userId, organizationId),
+    ).subscribe({ next: setCommands, error: () => setCommands([]) });
     return () => subscription.unsubscribe();
   }, [organizationId, userId]);
   return commands;
 }
 
 function downloadIntent(command: OutboxCommand) {
-  const blob = new Blob([JSON.stringify(toRecoverableIntent(command), null, 2)], { type: "application/json" });
+  const blob = new Blob(
+    [JSON.stringify(toRecoverableIntent(command), null, 2)],
+    { type: "application/json" },
+  );
   const url = URL.createObjectURL(blob);
   const link = document.createElement("a");
   link.href = url;
@@ -205,8 +210,14 @@ export function SynchronizationStatus({
       ) : null}
       {failedCommands.length > 0 ? (
         <>
-          <button ref={opener} type="button" onClick={() => setDialogOpen(true)}>
-            {t("synchronization.reviewFailed", { count: failedCommands.length })}
+          <button
+            ref={opener}
+            type="button"
+            onClick={() => setDialogOpen(true)}
+          >
+            {t("synchronization.reviewFailed", {
+              count: failedCommands.length,
+            })}
           </button>
           {dialogOpen ? (
             <dialog
@@ -221,25 +232,54 @@ export function SynchronizationStatus({
               }}
               onClose={restoreDialogFocus}
             >
-              <h2 id="recoverable-work-title">{t("synchronization.recoverableTitle")}</h2>
+              <h2 id="recoverable-work-title">
+                {t("synchronization.recoverableTitle")}
+              </h2>
               <p>{t("synchronization.recoverableDescription")}</p>
               <ul>
                 {failedCommands.map((command) => (
                   <li key={command.id}>
-                    <strong>{t(`synchronization.commandTypes.${command.commandType}`, { defaultValue: t("synchronization.unknownCommand") })}</strong>
+                    <strong>
+                      {t(
+                        `synchronization.commandTypes.${command.commandType}`,
+                        { defaultValue: t("synchronization.unknownCommand") },
+                      )}
+                    </strong>
                     <span>{new Date(command.actionAt).toLocaleString()}</span>
                     <span>{command.failureReason ?? "unknown"}</span>
-                    <button type="button" onClick={() => downloadIntent(command)}>{t("synchronization.export")}</button>
-                    <button type="button" onClick={async () => {
-                      if (window.confirm(t("synchronization.discardConfirm"))) await discardFailedOutboxCommand(command.userId, command.organizationId, command.id);
-                    }}>{t("synchronization.discard")}</button>
+                    <button
+                      type="button"
+                      onClick={() => downloadIntent(command)}
+                    >
+                      {t("synchronization.export")}
+                    </button>
+                    <button
+                      type="button"
+                      onClick={async () => {
+                        if (window.confirm(t("synchronization.discardConfirm")))
+                          await discardFailedOutboxCommand(
+                            command.userId,
+                            command.organizationId,
+                            command.id,
+                          );
+                      }}
+                    >
+                      {t("synchronization.discard")}
+                    </button>
                   </li>
                 ))}
               </ul>
-              <button ref={closeButton} type="button" onClick={() => {
-                if (typeof dialog.current?.close === "function") dialog.current.close();
-                else restoreDialogFocus();
-              }}>{t("synchronization.close")}</button>
+              <button
+                ref={closeButton}
+                type="button"
+                onClick={() => {
+                  if (typeof dialog.current?.close === "function")
+                    dialog.current.close();
+                  else restoreDialogFocus();
+                }}
+              >
+                {t("synchronization.close")}
+              </button>
             </dialog>
           ) : null}
         </>

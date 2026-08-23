@@ -27,25 +27,160 @@ function record(entity_id: string, entity_kind: string, value: object) {
   };
 }
 
-test("edits and publishes a scheduled recipe from its pinned version", async ({ page }) => {
-  await page.addInitScript(() => { window.COOKOPS_RUNTIME_CONFIG = { authentication: { provider: "dummy" } }; });
-  await page.route("**/auth/session", async (r) => r.fulfill({ contentType: "application/json", body: JSON.stringify({ id: ids.user, display_name: "Alice", verified_email: "a@test" }) }));
-  await page.route("**/api/v1/organizations", async (r) => r.fulfill({ contentType: "application/json", body: JSON.stringify({ organizations: [{ id: ids.organization, name: "Kitchen" }] }) }));
-  await page.route("**/api/v1/sync/pull", async (r) => r.fulfill({ contentType: "application/json", body: JSON.stringify({ sync_schema_version: 1, server_time: "2026-08-07T12:00:00Z", status: "ok", next_cursor: "c", transaction_groups: [] }) }));
-  await page.route("**/api/v1/sync/bootstrap", async (r) => r.fulfill({ contentType: "application/json", body: JSON.stringify({ sync_schema_version: 1, server_time: "2026-08-07T12:00:00Z", cursor: "c", records: [
-    record(ids.organization, "organization", { id: ids.organization, default_currency: "CZK", retired_at: null }),
-    record(ids.event, "event", { id: ids.event, organization_id: ids.organization, name: "Event", start_date: "2026-08-10", end_date: "2026-08-10", base_expected_attendance: 12, budget_amount: "0", currency: "CZK", lifecycle: "active", archived_at: null }),
-    record(ids.day, "event_day", { id: ids.day, event_id: ids.event, calendar_date: "2026-08-10", note: null, retired_at: null }), record(ids.role, "event_meal_role", { id: ids.role, event_id: ids.event, custom_name: "Dinner", position_key: "a", retired_at: null }),
-    record(ids.recipe, "recipe", { id: ids.recipe, organization_id: ids.organization, current_version_id: ids.currentVersion, retired_at: null }), record(ids.currentVersion, "recipe_version", { id: ids.currentVersion, organization_id: ids.organization, recipe_id: ids.recipe, name: "Current", description: "Current description", scaling_unit_id: ids.unit, base_scaling_amount: "1", published_at: "2026-08-06T00:00:00Z", published_by_user_id: ids.user, immutable: true }), record(ids.pinnedVersion, "recipe_version", { id: ids.pinnedVersion, organization_id: ids.organization, recipe_id: ids.recipe, name: "Pinned", description: "Pinned description", scaling_unit_id: ids.unit, base_scaling_amount: "1", published_at: "2026-08-05T00:00:00Z", published_by_user_id: ids.user, immutable: true }), record(ids.unit, "unit_definition", { id: ids.unit, organization_id: null, code: "kg", custom_name: "kg", allows_recipe_scaling: true, retired_at: null }), record(ids.scheduled, "scheduled_recipe", { id: ids.scheduled, organization_id: ids.organization, event_id: ids.event, event_day_id: ids.day, event_meal_role_id: ids.role, recipe_id: ids.recipe, recipe_version_id: ids.pinnedVersion, diner_count: 12, consumption_percentage: "100", selected_scale_amount: "1", scale_mode: "suggested", position_key: "a", retired_at: null }),
-  ] }) }));
-  await page.goto(`/organizations/${ids.organization}/events/${ids.event}/planner`);
-  const card = page.locator(".planner-days").getByRole("listitem").filter({ hasText: "Pinned" });
-  await expect(card.getByRole("button", { name: "Upravit zdrojový recept" })).toBeVisible();
+test("edits and publishes a scheduled recipe from its pinned version", async ({
+  page,
+}) => {
+  await page.addInitScript(() => {
+    window.COOKOPS_RUNTIME_CONFIG = { authentication: { provider: "dummy" } };
+  });
+  await page.route("**/auth/session", async (r) =>
+    r.fulfill({
+      contentType: "application/json",
+      body: JSON.stringify({
+        id: ids.user,
+        display_name: "Alice",
+        verified_email: "a@test",
+      }),
+    }),
+  );
+  await page.route("**/api/v1/organizations", async (r) =>
+    r.fulfill({
+      contentType: "application/json",
+      body: JSON.stringify({
+        organizations: [{ id: ids.organization, name: "Kitchen" }],
+      }),
+    }),
+  );
+  await page.route("**/api/v1/sync/pull", async (r) =>
+    r.fulfill({
+      contentType: "application/json",
+      body: JSON.stringify({
+        sync_schema_version: 1,
+        server_time: "2026-08-07T12:00:00Z",
+        status: "ok",
+        next_cursor: "c",
+        transaction_groups: [],
+      }),
+    }),
+  );
+  await page.route("**/api/v1/sync/bootstrap", async (r) =>
+    r.fulfill({
+      contentType: "application/json",
+      body: JSON.stringify({
+        sync_schema_version: 1,
+        server_time: "2026-08-07T12:00:00Z",
+        cursor: "c",
+        records: [
+          record(ids.organization, "organization", {
+            id: ids.organization,
+            default_currency: "CZK",
+            retired_at: null,
+          }),
+          record(ids.event, "event", {
+            id: ids.event,
+            organization_id: ids.organization,
+            name: "Event",
+            start_date: "2026-08-10",
+            end_date: "2026-08-10",
+            base_expected_attendance: 12,
+            budget_amount: "0",
+            currency: "CZK",
+            lifecycle: "active",
+            archived_at: null,
+          }),
+          record(ids.day, "event_day", {
+            id: ids.day,
+            event_id: ids.event,
+            calendar_date: "2026-08-10",
+            note: null,
+            retired_at: null,
+          }),
+          record(ids.role, "event_meal_role", {
+            id: ids.role,
+            event_id: ids.event,
+            custom_name: "Dinner",
+            position_key: "a",
+            retired_at: null,
+          }),
+          record(ids.recipe, "recipe", {
+            id: ids.recipe,
+            organization_id: ids.organization,
+            current_version_id: ids.currentVersion,
+            retired_at: null,
+          }),
+          record(ids.currentVersion, "recipe_version", {
+            id: ids.currentVersion,
+            organization_id: ids.organization,
+            recipe_id: ids.recipe,
+            name: "Current",
+            description: "Current description",
+            scaling_unit_id: ids.unit,
+            base_scaling_amount: "1",
+            published_at: "2026-08-06T00:00:00Z",
+            published_by_user_id: ids.user,
+            immutable: true,
+          }),
+          record(ids.pinnedVersion, "recipe_version", {
+            id: ids.pinnedVersion,
+            organization_id: ids.organization,
+            recipe_id: ids.recipe,
+            name: "Pinned",
+            description: "Pinned description",
+            scaling_unit_id: ids.unit,
+            base_scaling_amount: "1",
+            published_at: "2026-08-05T00:00:00Z",
+            published_by_user_id: ids.user,
+            immutable: true,
+          }),
+          record(ids.unit, "unit_definition", {
+            id: ids.unit,
+            organization_id: null,
+            code: "kg",
+            custom_name: "kg",
+            allows_recipe_scaling: true,
+            retired_at: null,
+          }),
+          record(ids.scheduled, "scheduled_recipe", {
+            id: ids.scheduled,
+            organization_id: ids.organization,
+            event_id: ids.event,
+            event_day_id: ids.day,
+            event_meal_role_id: ids.role,
+            recipe_id: ids.recipe,
+            recipe_version_id: ids.pinnedVersion,
+            diner_count: 12,
+            consumption_percentage: "100",
+            selected_scale_amount: "1",
+            scale_mode: "suggested",
+            position_key: "a",
+            retired_at: null,
+          }),
+        ],
+      }),
+    }),
+  );
+  await page.goto(
+    `/organizations/${ids.organization}/events/${ids.event}/planner`,
+  );
+  const card = page
+    .locator(".planner-days")
+    .getByRole("listitem")
+    .filter({ hasText: "Pinned" });
+  await expect(
+    card.getByRole("button", { name: "Upravit zdrojový recept" }),
+  ).toBeVisible();
   await card.getByRole("button", { name: "Upravit zdrojový recept" }).click();
   await expect(page).toHaveURL(new RegExp(`version=${ids.pinnedVersion}`));
-  await expect(page.getByRole("dialog").getByLabel("Název")).toHaveValue("Pinned");
-  await page.getByRole("dialog").getByRole("button", { name: "Publikovat verzi" }).click();
-  await expect(page).toHaveURL(`/organizations/${ids.organization}/events/${ids.event}/planner`);
+  await expect(page.getByRole("dialog").getByLabel("Název")).toHaveValue(
+    "Pinned",
+  );
+  await page
+    .getByRole("dialog")
+    .getByRole("button", { name: "Publikovat verzi" })
+    .click();
+  await expect(page).toHaveURL(
+    `/organizations/${ids.organization}/events/${ids.event}/planner`,
+  );
 });
 
 test("opens the cached planner and schedules a recipe offline", async ({
@@ -133,9 +268,34 @@ test("opens the cached planner and schedules a recipe offline", async ({
             scaling_unit_id: ids.unit,
             base_scaling_amount: "1",
           }),
-          record(ids.unit, "unit_definition", { id: ids.unit, organization_id: null, code: "ks", custom_name: "ks", allows_ingredient_quantity: true, allows_recipe_scaling: true, dimension: "count", base_unit_factor: "1" }),
-          record(ids.ingredient, "ingredient", { id: ids.ingredient, organization_id: ids.organization, current_version_id: ids.ingredientVersion, retired_at: null, immutable: true }),
-          record(ids.ingredientVersion, "ingredient_version", { id: ids.ingredientVersion, organization_id: ids.organization, ingredient_id: ids.ingredient, based_on_version_id: null, name: "Paprika", normalized_name: "paprika", canonical_unit_id: ids.unit, mass_per_canonical_quantity: "1", immutable: true }),
+          record(ids.unit, "unit_definition", {
+            id: ids.unit,
+            organization_id: null,
+            code: "ks",
+            custom_name: "ks",
+            allows_ingredient_quantity: true,
+            allows_recipe_scaling: true,
+            dimension: "count",
+            base_unit_factor: "1",
+          }),
+          record(ids.ingredient, "ingredient", {
+            id: ids.ingredient,
+            organization_id: ids.organization,
+            current_version_id: ids.ingredientVersion,
+            retired_at: null,
+            immutable: true,
+          }),
+          record(ids.ingredientVersion, "ingredient_version", {
+            id: ids.ingredientVersion,
+            organization_id: ids.organization,
+            ingredient_id: ids.ingredient,
+            based_on_version_id: null,
+            name: "Paprika",
+            normalized_name: "paprika",
+            canonical_unit_id: ids.unit,
+            mass_per_canonical_quantity: "1",
+            immutable: true,
+          }),
           record(ids.line, "recipe_ingredient_line", {
             id: ids.line,
             line_key: ids.line,
@@ -173,7 +333,9 @@ test("opens the cached planner and schedules a recipe offline", async ({
   await expect(
     page.getByRole("heading", { name: "Odhad nákladů" }),
   ).toBeVisible();
-  await expect(page.getByRole("paragraph").filter({ hasText: "Připravit zeleninu" })).toBeVisible();
+  await expect(
+    page.getByRole("paragraph").filter({ hasText: "Připravit zeleninu" }),
+  ).toBeVisible();
   await page.context().setOffline(true);
   await page.evaluate(() => window.dispatchEvent(new Event("offline")));
   await page.getByRole("button", { name: "Aktualizovat odhady cen" }).click();
@@ -182,14 +344,20 @@ test("opens the cached planner and schedules a recipe offline", async ({
       name: "Aktualizace odhadů čeká na synchronizaci",
     }),
   ).toBeDisabled();
-  if (await page.getByRole("button", { name: "Přidat do plánu" }).count() === 0)
+  if (
+    (await page.getByRole("button", { name: "Přidat do plánu" }).count()) === 0
+  )
     await page.getByRole("button", { name: "Otevřít katalog receptů" }).click();
   await page.getByRole("button", { name: "Přidat do plánu" }).click();
-  await expect(page.getByText("Recept je uložen místně a bude synchronizován.")).toBeVisible();
+  await expect(
+    page.getByText("Recept je uložen místně a bude synchronizován."),
+  ).toBeVisible();
   if (await page.getByRole("dialog").count()) {
     await page.getByRole("button", { name: "Zavřít katalog receptů" }).click();
   }
-  const scheduled = page.getByRole("listitem").filter({ hasText: "Chili · Strávníci: 12" });
+  const scheduled = page
+    .getByRole("listitem")
+    .filter({ hasText: "Chili · Strávníci: 12" });
   await expect(scheduled).toBeVisible();
   await scheduled.getByText("Upravit škálování", { exact: true }).click();
   await scheduled.getByLabel("Měřítko").fill("1");

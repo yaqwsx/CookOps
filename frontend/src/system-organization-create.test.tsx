@@ -20,29 +20,47 @@ vi.mock("./api/system-organizations", () => ({
 describe("SystemOrganizationCreate editing", () => {
   beforeEach(() => {
     void i18n.changeLanguage("en");
-    getOrganizations.mockResolvedValue([{
-      id: "5ce17d2f-8365-4b1f-a80b-34d10425d51c",
-      name: "Kitchen",
-      description: "Old",
-      default_currency: "CZK",
-      retired_at: null,
-      retired_by_user_id: null,
-    }]);
+    getOrganizations.mockResolvedValue([
+      {
+        id: "5ce17d2f-8365-4b1f-a80b-34d10425d51c",
+        name: "Kitchen",
+        description: "Old",
+        default_currency: "CZK",
+        retired_at: null,
+        retired_by_user_id: null,
+      },
+    ]);
     editOrganization.mockResolvedValue({});
   });
 
   it("submits an inline edit and refreshes the administration list", async () => {
     render(<SystemOrganizationCreate userId="user-id" onCreated={vi.fn()} />);
-    expect(await screen.findByRole("button", { name: "Edit organization Kitchen" })).toBeInTheDocument();
-    fireEvent.click(screen.getByRole("button", { name: "Edit organization Kitchen" }));
-    fireEvent.change(screen.getByRole("textbox", { name: "Edit organization Kitchen" }), { target: { value: "Updated kitchen" } });
+    expect(
+      await screen.findByRole("button", { name: "Edit organization Kitchen" }),
+    ).toBeInTheDocument();
+    fireEvent.click(
+      screen.getByRole("button", { name: "Edit organization Kitchen" }),
+    );
+    fireEvent.change(
+      screen.getByRole("textbox", { name: "Edit organization Kitchen" }),
+      { target: { value: "Updated kitchen" } },
+    );
     fireEvent.click(screen.getByRole("button", { name: "Save changes" }));
-    await waitFor(() => expect(editOrganization).toHaveBeenCalledWith("user-id", "5ce17d2f-8365-4b1f-a80b-34d10425d51c", expect.objectContaining({ name: "Updated kitchen" })));
+    await waitFor(() =>
+      expect(editOrganization).toHaveBeenCalledWith(
+        "user-id",
+        "5ce17d2f-8365-4b1f-a80b-34d10425d51c",
+        expect.objectContaining({ name: "Updated kitchen" }),
+      ),
+    );
     expect(getOrganizations).toHaveBeenCalledTimes(2);
   });
 
   it("loads membership management for the selected active organization only", async () => {
-    const membershipFetch = vi.fn(async () => new Response(JSON.stringify({ memberships: [] }), { status: 200 }));
+    const membershipFetch = vi.fn(
+      async () =>
+        new Response(JSON.stringify({ memberships: [] }), { status: 200 }),
+    );
     vi.stubGlobal("fetch", membershipFetch);
     getOrganizations.mockResolvedValueOnce([
       {
@@ -64,13 +82,32 @@ describe("SystemOrganizationCreate editing", () => {
     ]);
     render(<SystemOrganizationCreate userId="user-id" onCreated={vi.fn()} />);
 
-    expect(await screen.findByRole("button", { name: "Manage administrators for Kitchen" })).toHaveAttribute("aria-pressed", "false");
-    expect(screen.queryByRole("button", { name: "Manage administrators for Retired kitchen" })).toBeNull();
+    expect(
+      await screen.findByRole("button", {
+        name: "Manage administrators for Kitchen",
+      }),
+    ).toHaveAttribute("aria-pressed", "false");
+    expect(
+      screen.queryByRole("button", {
+        name: "Manage administrators for Retired kitchen",
+      }),
+    ).toBeNull();
     expect(membershipFetch).not.toHaveBeenCalled();
 
-    await userEvent.click(screen.getByRole("button", { name: "Manage administrators for Kitchen" }));
-    expect(await screen.findByText("Managing organization: Kitchen")).toBeVisible();
-    expect(screen.getByRole("button", { name: "Manage administrators for Kitchen" })).toHaveAttribute("aria-pressed", "true");
-    await waitFor(() => expect(membershipFetch).toHaveBeenCalledWith(expect.stringContaining("/members"), expect.anything()));
+    await userEvent.click(
+      screen.getByRole("button", { name: "Manage administrators for Kitchen" }),
+    );
+    expect(
+      await screen.findByText("Managing organization: Kitchen"),
+    ).toBeVisible();
+    expect(
+      screen.getByRole("button", { name: "Manage administrators for Kitchen" }),
+    ).toHaveAttribute("aria-pressed", "true");
+    await waitFor(() =>
+      expect(membershipFetch).toHaveBeenCalledWith(
+        expect.stringContaining("/members"),
+        expect.anything(),
+      ),
+    );
   });
 });

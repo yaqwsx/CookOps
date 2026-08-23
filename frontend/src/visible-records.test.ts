@@ -8,7 +8,10 @@ const organizationId = "organization-a";
 const ingredientId = "00000000-0000-4000-8000-000000000001";
 
 beforeEach(async () => {
-  await Promise.all([localDb.canonicalRecords.clear(), localDb.optimisticOverlays.clear()]);
+  await Promise.all([
+    localDb.canonicalRecords.clear(),
+    localDb.optimisticOverlays.clear(),
+  ]);
 });
 
 it("keeps a canonical tombstone authoritative over an ingredient restore overlay", async () => {
@@ -42,5 +45,7 @@ it("keeps a canonical tombstone authoritative over an ingredient restore overlay
     updatedAt: "2026-08-07T13:00:00.000Z",
   });
 
-  await expect(readVisibleRecords(userId, organizationId, "ingredient")).resolves.toEqual([]);
+  await expect(
+    readVisibleRecords(userId, organizationId, "ingredient"),
+  ).resolves.toEqual([]);
 });

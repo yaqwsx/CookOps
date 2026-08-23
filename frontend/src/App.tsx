@@ -1,9 +1,29 @@
 import { createContext, useCallback, useEffect, useRef, useState } from "react";
-import { Link, Outlet, useBlocker, useNavigate, useParams, useRouterState } from "@tanstack/react-router";
+import {
+  Link,
+  Outlet,
+  useBlocker,
+  useNavigate,
+  useParams,
+  useRouterState,
+} from "@tanstack/react-router";
 import { useTranslation } from "react-i18next";
 
-import { type CurrentIdentity, createDevelopmentSession, createGoogleSession, type DevelopmentIdentity, getCurrentIdentity, setCurrentIdentityLocale, getDevelopmentIdentities, logout } from "./api/auth";
-import { type AvailableOrganization, getAvailableOrganizations, OrganizationRequestError } from "./api/organizations";
+import {
+  type CurrentIdentity,
+  createDevelopmentSession,
+  createGoogleSession,
+  type DevelopmentIdentity,
+  getCurrentIdentity,
+  setCurrentIdentityLocale,
+  getDevelopmentIdentities,
+  logout,
+} from "./api/auth";
+import {
+  type AvailableOrganization,
+  getAvailableOrganizations,
+  OrganizationRequestError,
+} from "./api/organizations";
 import { loadGoogleIdentityServices } from "./google-identity-services";
 import type { SupportedLocale } from "./i18n";
 import appI18n from "./i18n";
@@ -11,7 +31,11 @@ import { runtimeAuthentication } from "./runtime-config";
 import { useOutboxSynchronization } from "./sync-lifecycle";
 import { SynchronizationStatus } from "./synchronization-status";
 import { getSystemAdministrationAccess } from "./api/system-organizations";
-import { hasValidOfflineAuthorization, localDb, readCachedOrganizations } from "./local-db";
+import {
+  hasValidOfflineAuthorization,
+  localDb,
+  readCachedOrganizations,
+} from "./local-db";
 import "./app.css";
 
 type AuthenticationState =
@@ -45,7 +69,12 @@ function LocalePicker({ persist }: { persist: boolean }) {
   const { i18n, t } = useTranslation();
   const [error, setError] = useState(false);
   const mounted = useRef(true);
-  useEffect(() => () => { mounted.current = false; }, []);
+  useEffect(
+    () => () => {
+      mounted.current = false;
+    },
+    [],
+  );
   const locale = (i18n.resolvedLanguage ?? "cs") as SupportedLocale;
 
   return (
@@ -57,9 +86,10 @@ function LocalePicker({ persist }: { persist: boolean }) {
           const selected = event.target.value as SupportedLocale;
           setError(false);
           void i18n.changeLanguage(selected);
-          if (persist) void setCurrentIdentityLocale(selected).catch(() => {
-            if (mounted.current) setError(true);
-          });
+          if (persist)
+            void setCurrentIdentityLocale(selected).catch(() => {
+              if (mounted.current) setError(true);
+            });
         }}
       >
         <option value="cs">Čeština</option>
@@ -305,17 +335,33 @@ export type RouteShell = {
   refreshOrganizations: () => void;
   onUnauthenticated: () => void;
 };
-export const RouteShellContext = createContext<RouteShell>(null as unknown as RouteShell);
+export const RouteShellContext = createContext<RouteShell>(
+  null as unknown as RouteShell,
+);
 
-function AuthenticatedShell({ identity, onLogout, onUnauthenticated }: { identity: CurrentIdentity; onLogout: () => Promise<void>; onUnauthenticated: () => void }) {
+function AuthenticatedShell({
+  identity,
+  onLogout,
+  onUnauthenticated,
+}: {
+  identity: CurrentIdentity;
+  onLogout: () => Promise<void>;
+  onUnauthenticated: () => void;
+}) {
   const { t } = useTranslation();
   const navigate = useNavigate();
   const params = useParams({ strict: false }) as { organizationId?: string };
-  const routeIds = useRouterState({ select: (state) => state.matches.map((match) => match.routeId) });
-  const pathname = useRouterState({ select: (state) => state.location.pathname });
+  const routeIds = useRouterState({
+    select: (state) => state.matches.map((match) => match.routeId),
+  });
+  const pathname = useRouterState({
+    select: (state) => state.location.pathname,
+  });
   const [logoutError, setLogoutError] = useState(false);
   const [systemAdmin, setSystemAdmin] = useState(false);
-  const [organizations, setOrganizations] = useState<OrganizationState>({ status: "loading" });
+  const [organizations, setOrganizations] = useState<OrganizationState>({
+    status: "loading",
+  });
   const [recipeDirty, setRecipeDirty] = useState(false);
   const [ingredientDirty, setIngredientDirty] = useState(false);
   const [discardToken, setDiscardToken] = useState(0);
@@ -323,50 +369,258 @@ function AuthenticatedShell({ identity, onLogout, onUnauthenticated }: { identit
   const redirecting = useRef(false);
   const organizationId = params.organizationId?.toLowerCase();
   const routeAccess = organizationId
-    ? organizations.status === "ready" ? organizations.organizations.some(({ id }) => id === organizationId) ? "allowed" : "denied" : organizations.status === "offlineBlocked" ? "blocked" : "loading"
+    ? organizations.status === "ready"
+      ? organizations.organizations.some(({ id }) => id === organizationId)
+        ? "allowed"
+        : "denied"
+      : organizations.status === "offlineBlocked"
+        ? "blocked"
+        : "loading"
     : "allowed";
   useOutboxSynchronization(identity.id, onUnauthenticated);
   const loadOrganizations = useCallback(async () => {
     setOrganizations({ status: "loading" });
     try {
-      setOrganizations({ status: "ready", organizations: await getAvailableOrganizations() });
+      setOrganizations({
+        status: "ready",
+        organizations: await getAvailableOrganizations(),
+      });
     } catch (error) {
-      if (error instanceof OrganizationRequestError && error.status === 401) { onUnauthenticated(); return; }
+      if (error instanceof OrganizationRequestError && error.status === 401) {
+        onUnauthenticated();
+        return;
+      }
       if (!navigator.onLine) {
-        const [cached, metadata] = await Promise.all([readCachedOrganizations(identity.id), localDb.syncMetadata.where("userId").equals(identity.id).toArray()]);
-        const valid = cached.filter((organization) => metadata.some((entry) => entry.organizationId === organization.id && hasValidOfflineAuthorization(entry.lastAuthorizedAt)));
-        setOrganizations(valid.length ? { status: "ready", organizations: valid } : { status: "offlineBlocked" });
+        const [cached, metadata] = await Promise.all([
+          readCachedOrganizations(identity.id),
+          localDb.syncMetadata.where("userId").equals(identity.id).toArray(),
+        ]);
+        const valid = cached.filter((organization) =>
+          metadata.some(
+            (entry) =>
+              entry.organizationId === organization.id &&
+              hasValidOfflineAuthorization(entry.lastAuthorizedAt),
+          ),
+        );
+        setOrganizations(
+          valid.length
+            ? { status: "ready", organizations: valid }
+            : { status: "offlineBlocked" },
+        );
         return;
       }
       setOrganizations({ status: "error" });
     }
   }, [identity.id, onUnauthenticated]);
-  useEffect(() => { void loadOrganizations(); }, [loadOrganizations]);
-  useEffect(() => { void getSystemAdministrationAccess().then(setSystemAdmin).catch(() => setSystemAdmin(false)); }, []);
   useEffect(() => {
-    if (organizations.status !== "ready" || organizationId || pathname !== "/" || redirecting.current || routeIds.includes("/system/organizations") || routeIds.includes("/auth/mcp-grants")) return;
+    void loadOrganizations();
+  }, [loadOrganizations]);
+  useEffect(() => {
+    void getSystemAdministrationAccess()
+      .then(setSystemAdmin)
+      .catch(() => setSystemAdmin(false));
+  }, []);
+  useEffect(() => {
+    if (
+      organizations.status !== "ready" ||
+      organizationId ||
+      pathname !== "/" ||
+      redirecting.current ||
+      routeIds.includes("/system/organizations") ||
+      routeIds.includes("/auth/mcp-grants")
+    )
+      return;
     const first = organizations.organizations[0];
     if (first) {
       redirecting.current = true;
-      void navigate({ to: "/organizations/$organizationId/events", params: { organizationId: first.id }, replace: true });
+      void navigate({
+        to: "/organizations/$organizationId/events",
+        params: { organizationId: first.id },
+        replace: true,
+      });
     }
   }, [navigate, organizationId, organizations, pathname, routeIds]);
   const blocker = useBlocker({
     enableBeforeUnload: () => recipeDirty || ingredientDirty,
     shouldBlockFn: ({ current, next }) => {
-      if (current.routeId === next.routeId && JSON.stringify(current.params) === JSON.stringify(next.params) && JSON.stringify(current.search) === JSON.stringify(next.search)) return false;
+      if (
+        current.routeId === next.routeId &&
+        JSON.stringify(current.params) === JSON.stringify(next.params) &&
+        JSON.stringify(current.search) === JSON.stringify(next.search)
+      )
+        return false;
       return recipeDirty || ingredientDirty;
     },
     withResolver: true,
   });
   useEffect(() => {
     if (blocker.status !== "blocked") return;
-    if (window.confirm(t(ingredientDirty && !recipeDirty ? "ingredientsCatalog.discardChanges" : "recipesCatalog.discardChanges"))) {
-      setRecipeDirty(false); setIngredientDirty(false); setDiscardToken((token) => token + 1); setIngredientDiscardToken((token) => token + 1); blocker.proceed();
+    if (
+      window.confirm(
+        t(
+          ingredientDirty && !recipeDirty
+            ? "ingredientsCatalog.discardChanges"
+            : "recipesCatalog.discardChanges",
+        ),
+      )
+    ) {
+      setRecipeDirty(false);
+      setIngredientDirty(false);
+      setDiscardToken((token) => token + 1);
+      setIngredientDiscardToken((token) => token + 1);
+      blocker.proceed();
     } else blocker.reset();
   }, [blocker, ingredientDirty, recipeDirty, t]);
-  const shell: RouteShell = { identity, organizationId, organizations, routeAccess, systemAdmin, discardToken, ingredientDiscardToken, reportRecipeDirty: setRecipeDirty, reportIngredientDirty: setIngredientDirty, refreshOrganizations: () => void loadOrganizations(), onUnauthenticated };
-  return <RouteShellContext.Provider value={shell}><div className="app-shell"><header className="app-header"><Link className="brand" to="/">CookOps</Link><nav aria-label={t("shell.navigation")}>{organizationId ? <ul className="primary-navigation"><li><Link to="/organizations/$organizationId/events" params={{ organizationId }}>{t("shell.events")}</Link></li><li><Link to="/organizations/$organizationId/recipes" params={{ organizationId }}>{t("shell.recipes")}</Link></li><li><Link to="/organizations/$organizationId/ingredients" params={{ organizationId }}>{t("shell.ingredients")}</Link></li><li><Link to="/organizations/$organizationId/settings" params={{ organizationId }}>{t("shell.settings")}</Link></li></ul> : null}</nav><div className="header-actions">{organizations.status === "ready" ? <label className="organization-picker"><span>{t("shell.organization")}</span><select onChange={(event) => void navigate({ to: "/organizations/$organizationId/events", params: { organizationId: event.target.value } })} value={organizationId ?? ""}>{organizations.organizations.map((organization) => <option key={organization.id} value={organization.id}>{organization.name}</option>)}</select></label> : null}<SynchronizationStatus organizationId={organizationId} userId={identity.id} /><LocalePicker persist /><div className="user-menu"><span className="identity-name">{identity.display_name}</span><button onClick={() => void onLogout().catch(() => setLogoutError(true))} type="button">{t("shell.logout")}</button>{logoutError ? <span role="alert">{t("shell.logoutError")}</span> : null}{systemAdmin ? <Link to="/system/organizations">{t("systemOrganizations.navigation")}</Link> : null}<Link to="/auth/mcp-grants">{t("mcpGrants.navigation")}</Link></div></div></header><main id="main" className="app-main">{organizations.status === "loading" ? <p aria-live="polite" role="status">{t("shell.organizationsLoading")}</p> : null}{organizations.status === "error" ? <div role="alert"><p>{t("shell.organizationsError")}</p><button onClick={() => void loadOrganizations()} type="button">{t("authentication.retry")}</button></div> : null}{routeAccess === "blocked" ? <div role="alert" aria-live="assertive" className="connectivity-gate"><p>{t("shell.authorizationRequiredOffline")}</p><button onClick={() => void loadOrganizations()} type="button">{t("authentication.retry")}</button></div> : null}{organizations.status === "ready" && organizations.organizations.length === 0 ? <p role="status">{t("shell.noOrganizations")}</p> : null}<section className="introduction" aria-labelledby="app-heading" hidden={organizations.status === "offlineBlocked"}><p className="eyebrow">CookOps</p><h1 id="app-heading">{t("shell.heading")}</h1><p>{t("shell.introduction")}</p></section><Outlet /></main></div></RouteShellContext.Provider>;
+  const shell: RouteShell = {
+    identity,
+    organizationId,
+    organizations,
+    routeAccess,
+    systemAdmin,
+    discardToken,
+    ingredientDiscardToken,
+    reportRecipeDirty: setRecipeDirty,
+    reportIngredientDirty: setIngredientDirty,
+    refreshOrganizations: () => void loadOrganizations(),
+    onUnauthenticated,
+  };
+  return (
+    <RouteShellContext.Provider value={shell}>
+      <div className="app-shell">
+        <header className="app-header">
+          <Link className="brand" to="/">
+            CookOps
+          </Link>
+          <nav aria-label={t("shell.navigation")}>
+            {organizationId ? (
+              <ul className="primary-navigation">
+                <li>
+                  <Link
+                    to="/organizations/$organizationId/events"
+                    params={{ organizationId }}
+                  >
+                    {t("shell.events")}
+                  </Link>
+                </li>
+                <li>
+                  <Link
+                    to="/organizations/$organizationId/recipes"
+                    params={{ organizationId }}
+                  >
+                    {t("shell.recipes")}
+                  </Link>
+                </li>
+                <li>
+                  <Link
+                    to="/organizations/$organizationId/ingredients"
+                    params={{ organizationId }}
+                  >
+                    {t("shell.ingredients")}
+                  </Link>
+                </li>
+                <li>
+                  <Link
+                    to="/organizations/$organizationId/settings"
+                    params={{ organizationId }}
+                  >
+                    {t("shell.settings")}
+                  </Link>
+                </li>
+              </ul>
+            ) : null}
+          </nav>
+          <div className="header-actions">
+            {organizations.status === "ready" ? (
+              <label className="organization-picker">
+                <span>{t("shell.organization")}</span>
+                <select
+                  onChange={(event) =>
+                    void navigate({
+                      to: "/organizations/$organizationId/events",
+                      params: { organizationId: event.target.value },
+                    })
+                  }
+                  value={organizationId ?? ""}
+                >
+                  {organizations.organizations.map((organization) => (
+                    <option key={organization.id} value={organization.id}>
+                      {organization.name}
+                    </option>
+                  ))}
+                </select>
+              </label>
+            ) : null}
+            <SynchronizationStatus
+              organizationId={organizationId}
+              userId={identity.id}
+            />
+            <LocalePicker persist />
+            <div className="user-menu">
+              <span className="identity-name">{identity.display_name}</span>
+              <button
+                onClick={() =>
+                  void onLogout().catch(() => setLogoutError(true))
+                }
+                type="button"
+              >
+                {t("shell.logout")}
+              </button>
+              {logoutError ? (
+                <span role="alert">{t("shell.logoutError")}</span>
+              ) : null}
+              {systemAdmin ? (
+                <Link to="/system/organizations">
+                  {t("systemOrganizations.navigation")}
+                </Link>
+              ) : null}
+              <Link to="/auth/mcp-grants">{t("mcpGrants.navigation")}</Link>
+            </div>
+          </div>
+        </header>
+        <main id="main" className="app-main">
+          {organizations.status === "loading" ? (
+            <p aria-live="polite" role="status">
+              {t("shell.organizationsLoading")}
+            </p>
+          ) : null}
+          {organizations.status === "error" ? (
+            <div role="alert">
+              <p>{t("shell.organizationsError")}</p>
+              <button onClick={() => void loadOrganizations()} type="button">
+                {t("authentication.retry")}
+              </button>
+            </div>
+          ) : null}
+          {routeAccess === "blocked" ? (
+            <div
+              role="alert"
+              aria-live="assertive"
+              className="connectivity-gate"
+            >
+              <p>{t("shell.authorizationRequiredOffline")}</p>
+              <button onClick={() => void loadOrganizations()} type="button">
+                {t("authentication.retry")}
+              </button>
+            </div>
+          ) : null}
+          {organizations.status === "ready" &&
+          organizations.organizations.length === 0 ? (
+            <p role="status">{t("shell.noOrganizations")}</p>
+          ) : null}
+          <section
+            className="introduction"
+            aria-labelledby="app-heading"
+            hidden={organizations.status === "offlineBlocked"}
+          >
+            <p className="eyebrow">CookOps</p>
+            <h1 id="app-heading">{t("shell.heading")}</h1>
+            <p>{t("shell.introduction")}</p>
+          </section>
+          <Outlet />
+        </main>
+      </div>
+    </RouteShellContext.Provider>
+  );
 }
 
 export function App() {

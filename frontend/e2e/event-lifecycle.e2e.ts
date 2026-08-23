@@ -5,19 +5,20 @@ const eventId = "3d8b2b21-c378-4574-9e46-9338c81305ef";
 const userId = "a6a58bd6-214e-49af-8fae-e5f974bf8e08";
 
 const readOutbox = (page: Page) =>
-  page.evaluate(() =>
-    new Promise<unknown>((resolve, reject) => {
-      const request = indexedDB.open("cookops");
-      request.onerror = () => reject(request.error);
-      request.onsuccess = () => {
-        const get = request.result
-          .transaction("outbox")
-          .objectStore("outbox")
-          .getAll();
-        get.onerror = () => reject(get.error);
-        get.onsuccess = () => resolve(get.result);
-      };
-    }),
+  page.evaluate(
+    () =>
+      new Promise<unknown>((resolve, reject) => {
+        const request = indexedDB.open("cookops");
+        request.onerror = () => reject(request.error);
+        request.onsuccess = () => {
+          const get = request.result
+            .transaction("outbox")
+            .objectStore("outbox")
+            .getAll();
+          get.onerror = () => reject(get.error);
+          get.onsuccess = () => resolve(get.result);
+        };
+      }),
   );
 
 test("an administrator explicitly confirms a guarded online event archive", async ({
@@ -499,21 +500,31 @@ test("duplicates an archived event only after accepted snapshot-guarded sync", a
                     first_sequence: 1,
                     last_sequence: 2,
                     records: [
-                      { ...record(targetId, "event", {
-                        ...archived,
-                        id: targetId,
-                        name: "Nové menu",
-                        lifecycle: "active",
-                        archived_at: null,
-                        current_archive_snapshot_id: null,
-                      }), sequence: 1 },
-                      { ...record("7b6a5c4d-3e2f-4109-8abc-def012345678", "event_day", {
-                        id: "7b6a5c4d-3e2f-4109-8abc-def012345678",
-                        organization_id: organizationId,
-                        event_id: targetId,
-                        calendar_date: "2026-08-10",
-                        is_visible: true,
-                      }), sequence: 2 },
+                      {
+                        ...record(targetId, "event", {
+                          ...archived,
+                          id: targetId,
+                          name: "Nové menu",
+                          lifecycle: "active",
+                          archived_at: null,
+                          current_archive_snapshot_id: null,
+                        }),
+                        sequence: 1,
+                      },
+                      {
+                        ...record(
+                          "7b6a5c4d-3e2f-4109-8abc-def012345678",
+                          "event_day",
+                          {
+                            id: "7b6a5c4d-3e2f-4109-8abc-def012345678",
+                            organization_id: organizationId,
+                            event_id: targetId,
+                            calendar_date: "2026-08-10",
+                            is_visible: true,
+                          },
+                        ),
+                        sequence: 2,
+                      },
                     ],
                   },
                 ]
@@ -526,7 +537,9 @@ test("duplicates an archived event only after accepted snapshot-guarded sync", a
   );
   await page.goto(`/organizations/${organizationId}/events`);
   const source = page.getByRole("article");
-  await expect(page.getByRole("button", { name: "Duplikovat plán" })).toBeVisible();
+  await expect(
+    page.getByRole("button", { name: "Duplikovat plán" }),
+  ).toBeVisible();
   await expect(source.getByText("Archivovaná", { exact: true })).toBeVisible();
   await page.getByLabel("Název nové akce").fill("Nové menu");
   await page.getByRole("button", { name: "Duplikovat plán" }).click();
@@ -565,23 +578,33 @@ test("duplicates an archived event only after accepted snapshot-guarded sync", a
             .objectStore("canonicalRecords")
             .getAll();
           get.onerror = () => reject(get.error);
-          get.onsuccess = () => resolve(get.result as Array<{
-            entityId?: string;
-            entityType?: string;
-            fields?: Record<string, unknown>;
-          }>);
+          get.onsuccess = () =>
+            resolve(
+              get.result as Array<{
+                entityId?: string;
+                entityType?: string;
+                fields?: Record<string, unknown>;
+              }>,
+            );
         };
       }),
   );
-  expect(canonicalRecords).toContainEqual(expect.objectContaining({
-    entityId: targetId,
-    entityType: "event",
-    fields: expect.objectContaining({ name: "Nové menu", lifecycle: "active" }),
-  }));
-  expect(canonicalRecords).toContainEqual(expect.objectContaining({
-    entityType: "event_day",
-    fields: expect.objectContaining({ event_id: targetId }),
-  }));
+  expect(canonicalRecords).toContainEqual(
+    expect.objectContaining({
+      entityId: targetId,
+      entityType: "event",
+      fields: expect.objectContaining({
+        name: "Nové menu",
+        lifecycle: "active",
+      }),
+    }),
+  );
+  expect(canonicalRecords).toContainEqual(
+    expect.objectContaining({
+      entityType: "event_day",
+      fields: expect.objectContaining({ event_id: targetId }),
+    }),
+  );
   const remaining = await readOutbox(page);
   expect(
     (remaining as Array<Record<string, unknown>>).filter(
@@ -738,7 +761,10 @@ test("keeps a stale archived-event duplicate rejected", async ({ page }) => {
       return await new Promise<unknown>((resolve, reject) => {
         request.onerror = () => reject(request.error);
         request.onsuccess = () => {
-          const get = request.result.transaction("canonicalRecords").objectStore("canonicalRecords").get([userId, organizationId, "event", eventId]);
+          const get = request.result
+            .transaction("canonicalRecords")
+            .objectStore("canonicalRecords")
+            .get([userId, organizationId, "event", eventId]);
           get.onerror = () => reject(get.error);
           get.onsuccess = () => resolve(get.result);
         };
@@ -750,5 +776,11 @@ test("keeps a stale archived-event duplicate rejected", async ({ page }) => {
     entityId: eventId,
     fields: archived,
   });
-  await expect.poll(() => page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
+  await expect
+    .poll(() =>
+      page.evaluate(
+        () => document.documentElement.scrollWidth <= window.innerWidth,
+      ),
+    )
+    .toBe(true);
 });

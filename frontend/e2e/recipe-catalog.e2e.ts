@@ -109,25 +109,115 @@ test("creates and immediately reads a recipe from the cached catalog offline", a
     .toBe(true);
 });
 
-test("edits recipe Markdown through the visual editor without executing unsafe source", async ({ page }) => {
-  await page.addInitScript(() => { window.COOKOPS_RUNTIME_CONFIG = { authentication: { provider: "dummy" } }; });
-  await page.route("**/auth/session", async (route) => await route.fulfill({ contentType: "application/json", body: JSON.stringify({ id: ids.user, display_name: "Alice Member", verified_email: "alice@example.test" }) }));
-  await page.route("**/api/v1/organizations", async (route) => await route.fulfill({ contentType: "application/json", body: JSON.stringify({ organizations: [{ id: ids.organization, name: "Test kitchen" }] }) }));
-  await page.route("**/api/v1/sync/bootstrap", async (route) => await route.fulfill({ contentType: "application/json", body: JSON.stringify({ sync_schema_version: 1, server_time: "2026-08-07T12:00:00.000Z", cursor: "opaque-cursor", records: [
-    record(ids.organization, "organization", { id: ids.organization, default_currency: "CZK", retired_at: null }),
-    record(ids.unit, "unit_definition", { id: ids.unit, organization_id: null, code: "person", allows_recipe_scaling: true, retired_at: null }),
-    record(ids.recipe, "recipe", { id: ids.recipe, organization_id: ids.organization, current_version_id: ids.version, retired_at: null }),
-    record(ids.version, "recipe_version", { id: ids.version, organization_id: ids.organization, recipe_id: ids.recipe, name: "Soup", description: "Original", scaling_unit_id: ids.unit, base_scaling_amount: "1", published_at: "2026-02-01T00:00:00Z", published_by_user_id: ids.user, immutable: true }),
-    record(ids.historicalVersion, "recipe_version", { id: ids.historicalVersion, organization_id: ids.organization, recipe_id: ids.recipe, name: "Older soup", description: "Before", scaling_unit_id: ids.unit, base_scaling_amount: "1", published_at: "2026-01-01T00:00:00Z", published_by_user_id: ids.user, immutable: true }),
-  ] }) }));
-  await page.route("**/api/v1/sync/pull", async (route) => await route.fulfill({ contentType: "application/json", body: JSON.stringify({ sync_schema_version: 1, server_time: "2026-08-07T12:00:00.000Z", status: "ok", next_cursor: "opaque-cursor", transaction_groups: [] }) }));
+test("edits recipe Markdown through the visual editor without executing unsafe source", async ({
+  page,
+}) => {
+  await page.addInitScript(() => {
+    window.COOKOPS_RUNTIME_CONFIG = { authentication: { provider: "dummy" } };
+  });
+  await page.route(
+    "**/auth/session",
+    async (route) =>
+      await route.fulfill({
+        contentType: "application/json",
+        body: JSON.stringify({
+          id: ids.user,
+          display_name: "Alice Member",
+          verified_email: "alice@example.test",
+        }),
+      }),
+  );
+  await page.route(
+    "**/api/v1/organizations",
+    async (route) =>
+      await route.fulfill({
+        contentType: "application/json",
+        body: JSON.stringify({
+          organizations: [{ id: ids.organization, name: "Test kitchen" }],
+        }),
+      }),
+  );
+  await page.route(
+    "**/api/v1/sync/bootstrap",
+    async (route) =>
+      await route.fulfill({
+        contentType: "application/json",
+        body: JSON.stringify({
+          sync_schema_version: 1,
+          server_time: "2026-08-07T12:00:00.000Z",
+          cursor: "opaque-cursor",
+          records: [
+            record(ids.organization, "organization", {
+              id: ids.organization,
+              default_currency: "CZK",
+              retired_at: null,
+            }),
+            record(ids.unit, "unit_definition", {
+              id: ids.unit,
+              organization_id: null,
+              code: "person",
+              allows_recipe_scaling: true,
+              retired_at: null,
+            }),
+            record(ids.recipe, "recipe", {
+              id: ids.recipe,
+              organization_id: ids.organization,
+              current_version_id: ids.version,
+              retired_at: null,
+            }),
+            record(ids.version, "recipe_version", {
+              id: ids.version,
+              organization_id: ids.organization,
+              recipe_id: ids.recipe,
+              name: "Soup",
+              description: "Original",
+              scaling_unit_id: ids.unit,
+              base_scaling_amount: "1",
+              published_at: "2026-02-01T00:00:00Z",
+              published_by_user_id: ids.user,
+              immutable: true,
+            }),
+            record(ids.historicalVersion, "recipe_version", {
+              id: ids.historicalVersion,
+              organization_id: ids.organization,
+              recipe_id: ids.recipe,
+              name: "Older soup",
+              description: "Before",
+              scaling_unit_id: ids.unit,
+              base_scaling_amount: "1",
+              published_at: "2026-01-01T00:00:00Z",
+              published_by_user_id: ids.user,
+              immutable: true,
+            }),
+          ],
+        }),
+      }),
+  );
+  await page.route(
+    "**/api/v1/sync/pull",
+    async (route) =>
+      await route.fulfill({
+        contentType: "application/json",
+        body: JSON.stringify({
+          sync_schema_version: 1,
+          server_time: "2026-08-07T12:00:00.000Z",
+          status: "ok",
+          next_cursor: "opaque-cursor",
+          transaction_groups: [],
+        }),
+      }),
+  );
   await page.goto(`/organizations/${ids.organization}/recipes`);
   await page.getByText("Historie verzí").click();
   await expect(page.getByText("Aktuální verze:")).toBeVisible();
   await expect(page.getByText(/Soup · .*8ce17d2f/)).toBeVisible();
   await expect(page.getByText(/Older soup/)).toBeVisible();
-  await page.goto(`/organizations/${ids.organization}/recipes/${ids.recipe}/edit`);
-  await expect(page.getByRole("heading", { name: "Nová verze receptu" })).toBeVisible();
+  await page.goto(
+    `/organizations/${ids.organization}/recipes/${ids.recipe}/edit`,
+  );
+  await expect(
+    page.getByRole("heading", { name: "Nová verze receptu" }),
+  ).toBeVisible();
   const visual = page.locator("[contenteditable=true]");
   await expect(visual).toBeVisible();
   await visual.click();
@@ -136,21 +226,31 @@ test("edits recipe Markdown through the visual editor without executing unsafe s
   await visual.pressSequentially("Visual **edit**", { delay: 25 });
   await expect(visual).toContainText("Visual");
   await page.getByRole("tab").nth(1).click();
-  const raw = page.locator(`#recipe-description-${ids.recipe}-markdown textarea`);
+  const raw = page.locator(
+    `#recipe-description-${ids.recipe}-markdown textarea`,
+  );
   await expect(raw).toHaveValue("Visual **edit**\n");
   await raw.fill("[unsafe](javascript:alert(1))\n<script>alert(1)</script>");
   await page.getByRole("tab").nth(0).click();
   await expect(page.locator(".milkdown script")).toHaveCount(0);
   await expect(page.locator('.milkdown a[href^="javascript:"]')).toHaveCount(0);
   await page.getByRole("button", { name: "Publikovat verzi" }).click();
-  const payload = await page.evaluate(() => new Promise((resolve, reject) => {
-    const request = indexedDB.open("cookops");
-    request.onerror = () => reject(request.error);
-    request.onsuccess = () => {
-      const getAll = request.result.transaction("outbox").objectStore("outbox").getAll();
-      getAll.onsuccess = () => resolve(getAll.result.at(-1)?.payload);
-      getAll.onerror = () => reject(getAll.error);
-    };
-  }));
-  expect(payload).toMatchObject({ description: "[unsafe](javascript:alert(1))\n<script>alert(1)</script>" });
+  const payload = await page.evaluate(
+    () =>
+      new Promise((resolve, reject) => {
+        const request = indexedDB.open("cookops");
+        request.onerror = () => reject(request.error);
+        request.onsuccess = () => {
+          const getAll = request.result
+            .transaction("outbox")
+            .objectStore("outbox")
+            .getAll();
+          getAll.onsuccess = () => resolve(getAll.result.at(-1)?.payload);
+          getAll.onerror = () => reject(getAll.error);
+        };
+      }),
+  );
+  expect(payload).toMatchObject({
+    description: "[unsafe](javascript:alert(1))\n<script>alert(1)</script>",
+  });
 });
