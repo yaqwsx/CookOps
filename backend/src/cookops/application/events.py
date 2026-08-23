@@ -988,7 +988,7 @@ def _event_change_record(
     field_clocks: tuple[FieldClock, ...] | list[FieldClock] | None = None,
 ) -> tuple[str, UUID, dict[str, object]]:
     if field_clocks is not None:
-        clocks = {
+        clocks: dict[str, dict[str, str] | None] = {
             clock.field_name: {
                 "winning_client_wall_time": clock.winning_client_wall_time.isoformat(),
                 "winning_mutation_id": str(clock.winning_mutation_id),
