@@ -9,6 +9,9 @@ restore_dir="$work/restore"
 mkdir -m 700 "$archive_dir" "$restore_dir"
 
 cleanup() {
+    compose run --rm --no-deps --user 0:0 --entrypoint sh restore -c \
+        'rm -rf -- "/var/lib/cookops/restore/$COOKOPS_RESTORE_MEDIA_SUBDIR"' \
+        >/dev/null 2>&1 || true
     docker compose --project-name "$project" --env-file "$root/deploy/.env.example" \
         -f "$root/deploy/compose.yaml" down --volumes --remove-orphans >/dev/null 2>&1 || true
     rm -rf "$work"
