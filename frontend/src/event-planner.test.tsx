@@ -530,6 +530,7 @@ describe("EventPlanner", () => {
         localAddedIngredients: [],
         catalogUpdateAvailable: true,
         catalogUpdateChanges: { added: 1, removed: 0, changed: 1 },
+        catalogUpdateDetails: [{ kind: "changed", id: "line", oldName: "Rajčata", newName: "Rajčata", oldQuantity: "1", newQuantity: "2", oldUnitName: "ks", newUnitName: "kg", localOverride: true }],
         catalogScaleImpact: { currentUnitName: "porce", targetUnitName: "osoba", reset: true, suggestedAmount: "12", currentUnitId: "a", targetUnitId: "b", targetBase: "1" },
       }],
       ...emptyPlannerCollections,
@@ -540,6 +541,8 @@ describe("EventPlanner", () => {
     await user.click(await screen.findByText("Náhled aktualizace katalogu"));
     expect(screen.getByText(/porce.*osoba/)).toBeVisible();
     expect(screen.getByText(/návrh podle účasti 12/)).toBeVisible();
+    expect(screen.getByText(/Rajčata.*1 ks.*2 kg/)).toBeVisible();
+    expect(screen.getByText(/místní úprava/)).toBeVisible();
     await user.click(screen.getByRole("button", { name: "Zachovat úpravy" }));
     expect(queueScheduledRecipeCatalogUpdate).toHaveBeenCalledWith(
       "a6a58bd6-214e-49af-8fae-e5f974bf8e08",

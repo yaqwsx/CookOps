@@ -130,6 +130,21 @@ describe("readEventPlanner catalog update projection", () => {
     const planner = await readEventPlanner(userId, organizationId, ids.event);
     expect(planner?.scheduled[0]?.catalogUpdateAvailable).toBe(true);
     expect(planner?.scheduled[0]?.catalogUpdateChanges.changed).toBe(1);
+    expect(planner?.scheduled[0]?.catalogUpdateDetails).toEqual([
+      expect.objectContaining({ kind: "changed", id: ids.line, oldQuantity: "1", newQuantity: "2", oldUnitName: "portion", newUnitName: "portion" }),
+    ]);
+  });
+
+  it("marks a changed catalog line with a valid local replacement override", async () => {
+    const target = "dddddddd-dddd-4ddd-8ddd-dddddddddddd";
+    cache({
+      recipeCurrentVersionId: target,
+      overrides: [record("scheduled_ingredient_override", ids.replacement, { event_id: ids.event, scheduled_recipe_id: ids.scheduled, override_kind: "replace", target_line_key: ids.line, ingredient_version_id: ids.oldVersion, quantity: "3" })],
+    });
+    const planner = await readEventPlanner(userId, organizationId, ids.event);
+    expect(planner?.scheduled[0]?.catalogUpdateDetails).toEqual([
+      expect.objectContaining({ id: ids.line, localOverride: true }),
+    ]);
   });
 
   it("uses manual scheduled diners for the catalog scale suggestion", async () => {

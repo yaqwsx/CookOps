@@ -24,6 +24,7 @@ export type PlannedRecipe = {
   note: string | null;
   catalogUpdateAvailable: boolean;
   catalogUpdateChanges: { added: number; removed: number; changed: number };
+  catalogUpdateDetails?: { kind: "added" | "removed" | "changed" | "preserved"; id: string; oldName?: string; newName?: string; oldQuantity?: string; newQuantity?: string; oldUnitName?: string; newUnitName?: string; localOverride?: true }[];
   catalogScaleImpact: { currentUnitId: string | undefined; targetUnitId: string | undefined; currentUnitName: string | undefined; targetUnitName: string | undefined; reset: boolean; targetBase: string | undefined; suggestedAmount: string | undefined };
   lines: { id: string; quantity: string; ingredientId?: string }[];
   localAddedIngredients: { id: string; name: string; quantity: string }[];
@@ -554,6 +555,29 @@ export async function readEventPlanner(
       const pinnedBase = pinnedVersion && value(pinnedVersion, "base_scaling_amount");
       const parsedPinnedBase = parseDecimal(pinnedBase);
       const pinnedVersionValid = pinnedVersion?.immutable === true && hasId(pinnedVersion) && recipeRoot !== undefined && hasId(recipeRoot) && value(recipeRoot, "organization_id") === organizationId && value(pinnedVersion, "organization_id") === organizationId && value(pinnedVersion, "recipe_id") === value(record, "recipe_id") && typeof value(pinnedVersion, "name") === "string" && Boolean(value(pinnedVersion, "name")) && Boolean(parsedPinnedBase && parsedPinnedBase.value > 0n) && scalingUnitNames.has(value(pinnedVersion, "scaling_unit_id") ?? "");
+      const targetRecipe = recipes.find((recipe) => recipe.id === value(record, "recipe_id"));
+      const targetVersion = targetRecipe?.versionId ? versionRecordsById.get(targetRecipe.versionId) : undefined;
+      const targetRoot = targetRecipe ? recipeRecords.find((candidate) => candidate.entityId === targetRecipe.id) : undefined;
+      const targetBase = targetVersion ? parseDecimal(value(targetVersion, "base_scaling_amount")) : undefined;
+      const targetVersionValid = Boolean(targetRecipe && targetVersion?.immutable === true && hasId(targetVersion) && targetRoot && hasId(targetRoot) && value(targetRoot, "organization_id") === organizationId && value(targetVersion, "organization_id") === organizationId && value(targetVersion, "recipe_id") === targetRecipe.id && value(targetVersion, "name") && targetBase && targetBase.value > 0n && scalingUnitNames.has(value(targetVersion, "scaling_unit_id") ?? ""));
+      const catalogUpdateDetails = pinnedVersionValid && targetVersionValid && targetRecipe?.versionId && targetRecipe.versionId !== value(record, "recipe_version_id") ? (() => {
+        const oldLines = detailLines.get(value(record, "recipe_version_id") ?? "") ?? [];
+        const newLines = detailLines.get(targetRecipe.versionId) ?? [];
+        if ((lines.get(value(record, "recipe_version_id") ?? "")?.length ?? 0) !== oldLines.length || (lines.get(targetRecipe.versionId)?.length ?? 0) !== newLines.length) return undefined;
+        const oldById = new Map(oldLines.map((line) => [line.id, line]));
+        const newById = new Map(newLines.map((line) => [line.id, line]));
+        const localIds = new Set(overrideRecords.filter((override) => override.lifecycle === "active" && value(override, "organization_id") === organizationId && value(override, "event_id") === eventId && value(override, "scheduled_recipe_id") === record.entityId && override.fields.override_kind === "replace").map((override) => value(override, "target_line_key")).filter((id): id is string => Boolean(id)));
+        return [...new Set([...oldById.keys(), ...newById.keys()])].map((id) => {
+          const oldLine = oldById.get(id);
+          const newLine = newById.get(id);
+          const localOverride = localIds.has(id) ? { localOverride: true as const } : {};
+          if (!oldLine) return { kind: "added" as const, id, newName: newLine?.name, newQuantity: newLine?.quantity, newUnitName: newLine?.unitName, ...localOverride };
+          if (!newLine) return { kind: "removed" as const, id, oldName: oldLine.name, oldQuantity: oldLine.quantity, oldUnitName: oldLine.unitName, ...localOverride };
+          const changed = oldLine.name !== newLine.name || oldLine.quantity !== newLine.quantity || oldLine.unitName !== newLine.unitName;
+          if (!changed && !localOverride.localOverride) return undefined;
+          return { kind: changed ? "changed" as const : "preserved" as const, id, oldName: oldLine.name, newName: newLine.name, oldQuantity: oldLine.quantity, newQuantity: newLine.quantity, oldUnitName: oldLine.unitName, newUnitName: newLine.unitName, ...localOverride };
+        }).filter((line): line is NonNullable<typeof line> => Boolean(line));
+      })() : undefined;
       const pinnedUnitName = pinnedVersionValid ? scalingUnitNames.get(value(pinnedVersion, "scaling_unit_id") ?? "") : undefined;
       const pinnedUnit = pinnedVersionValid ? unitRecords.find((unit) => unit.entityId === value(pinnedVersion, "scaling_unit_id")) : undefined;
       const dinerCount = typeof record.fields.diner_count === "number" ? record.fields.diner_count : attendance;
@@ -615,6 +639,7 @@ export async function readEventPlanner(
           changed: target.filter((line) => currentById.get(line.id) !== undefined && currentById.get(line.id) !== line.quantity).length,
         };
       })(),
+      catalogUpdateDetails,
       catalogScaleImpact: (() => {
         const current = versionRecords.find((version) => version.entityId === value(record, "recipe_version_id"));
         const target = recipes.find((recipe) => recipe.id === value(record, "recipe_id"));
