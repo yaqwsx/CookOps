@@ -24,8 +24,18 @@ import { replayScheduledIngredientOverride } from "./scheduled-ingredient-overri
 import { replayReceiptCommand } from "./receipt-metadata";
 import { replayCatalogConfiguration } from "./catalog-configuration";
 import { replayOrganizationMetadata } from "./organization-metadata";
-import { replayEventDayCreate, replayEventDayLifecycle, replayEventDayNote, replayEventDayVisibility } from "./event-day";
-import { replayEventMealRoleCreate, replayEventMealRoleLifecycle, replayEventMealRoleName, replayEventMealRolePosition } from "./event-meal-role";
+import {
+  replayEventDayCreate,
+  replayEventDayLifecycle,
+  replayEventDayNote,
+  replayEventDayVisibility,
+} from "./event-day";
+import {
+  replayEventMealRoleCreate,
+  replayEventMealRoleLifecycle,
+  replayEventMealRoleName,
+  replayEventMealRolePosition,
+} from "./event-meal-role";
 import { replayEventMetadataUpdate } from "./event-metadata";
 import {
   replayAdHocShoppingItem,
@@ -34,7 +44,11 @@ import {
   replayAdHocShoppingItemUpdate,
 } from "./ad-hoc-shopping-item";
 import { replayShoppingListRename } from "./shopping-list";
-import { replayEventDietaryExceptionCreate, replayEventDietaryExceptionLifecycle, replayEventDietaryExceptionUpdate } from "./event-dietary-exception";
+import {
+  replayEventDietaryExceptionCreate,
+  replayEventDietaryExceptionLifecycle,
+  replayEventDietaryExceptionUpdate,
+} from "./event-dietary-exception";
 import { UpgradeRequiredError, isUpgradeRequiredError } from "./sync-errors";
 
 export { UpgradeRequiredError } from "./sync-errors";
@@ -112,8 +126,8 @@ function parseBootstrap(
 ): BootstrapWireResponse {
   if (
     !object(value) ||
-    (typeof value.sync_schema_version !== "number" ||
-      value.sync_schema_version !== 1) ||
+    typeof value.sync_schema_version !== "number" ||
+    value.sync_schema_version !== 1 ||
     typeof value.server_time !== "string" ||
     typeof value.cursor !== "string" ||
     value.cursor.length === 0 ||
@@ -124,7 +138,10 @@ function parseBootstrap(
       typeof value.sync_schema_version === "number" &&
       value.sync_schema_version !== 1
     )
-      throw new UpgradeRequiredError("sync_schema_version", value.sync_schema_version);
+      throw new UpgradeRequiredError(
+        "sync_schema_version",
+        value.sync_schema_version,
+      );
     throw new Error("Invalid bootstrap response.");
   }
   for (const record of value.records) {
@@ -151,7 +168,10 @@ function parseBootstrap(
         typeof record.payload.record_schema_version === "number" &&
         record.payload.record_schema_version !== 1
       )
-        throw new UpgradeRequiredError("record_schema_version", record.payload.record_schema_version);
+        throw new UpgradeRequiredError(
+          "record_schema_version",
+          record.payload.record_schema_version,
+        );
       throw new Error("Invalid bootstrap response.");
     }
   }
@@ -257,10 +277,26 @@ async function replayOptimisticCommands(
       }
     }
     if (command.commandType === "event_dietary_exception.update") {
-      try { await replayEventDietaryExceptionUpdate(userId, organizationId, command); } catch { /* rejected overlay absent */ }
+      try {
+        await replayEventDietaryExceptionUpdate(
+          userId,
+          organizationId,
+          command,
+        );
+      } catch {
+        /* rejected overlay absent */
+      }
     }
     if (command.commandType === "event_dietary_exception.lifecycle") {
-      try { await replayEventDietaryExceptionLifecycle(userId, organizationId, command); } catch { /* rejected intent remains in outbox */ }
+      try {
+        await replayEventDietaryExceptionLifecycle(
+          userId,
+          organizationId,
+          command,
+        );
+      } catch {
+        /* rejected intent remains in outbox */
+      }
     }
     if (
       command.commandType === "event.update_base_attendance" &&
@@ -332,7 +368,11 @@ async function replayOptimisticCommands(
     if (command.commandType === "scheduled_recipe.note")
       await replayScheduledRecipeNote(userId, organizationId, command);
     if (command.commandType === "scheduled_recipe.lifecycle") {
-      try { await replayScheduledRecipeLifecycle(userId, organizationId, command); } catch { /* remains recoverable */ }
+      try {
+        await replayScheduledRecipeLifecycle(userId, organizationId, command);
+      } catch {
+        /* remains recoverable */
+      }
     }
     if (command.commandType === "scheduled_recipe.catalog_update")
       await replayScheduledRecipeCatalogUpdate(userId, organizationId, command);
@@ -375,7 +415,11 @@ async function replayOptimisticCommands(
     }
     if (command.commandType === "shopping_list.set_ad_hoc_item_fulfilment") {
       try {
-        await replayAdHocShoppingItemFulfilment(userId, organizationId, command);
+        await replayAdHocShoppingItemFulfilment(
+          userId,
+          organizationId,
+          command,
+        );
       } catch {
         // A pending checkbox targeting a retired item stays recoverable.
       }
@@ -482,16 +526,28 @@ async function replayOptimisticCommands(
       typeof command.payload.event_id === "string" &&
       typeof command.payload.event_day_id === "string" &&
       typeof command.payload.event_meal_role_id === "string" &&
-      ((typeof command.payload.position_key === "string" && command.payload.placement === undefined && command.payload.target_scheduled_recipe_id === undefined) ||
-        (command.payload.position_key === undefined && ["before", "after", "start", "end"].includes(String(command.payload.placement)) &&
-          ((command.payload.placement === "before" || command.payload.placement === "after") ? typeof command.payload.target_scheduled_recipe_id === "string" && uuid.test(command.payload.target_scheduled_recipe_id) && command.payload.target_scheduled_recipe_id !== command.payload.scheduled_recipe_id : command.payload.target_scheduled_recipe_id === undefined))) &&
+      ((typeof command.payload.position_key === "string" &&
+        command.payload.placement === undefined &&
+        command.payload.target_scheduled_recipe_id === undefined) ||
+        (command.payload.position_key === undefined &&
+          ["before", "after", "start", "end"].includes(
+            String(command.payload.placement),
+          ) &&
+          (command.payload.placement === "before" ||
+          command.payload.placement === "after"
+            ? typeof command.payload.target_scheduled_recipe_id === "string" &&
+              uuid.test(command.payload.target_scheduled_recipe_id) &&
+              command.payload.target_scheduled_recipe_id !==
+                command.payload.scheduled_recipe_id
+            : command.payload.target_scheduled_recipe_id === undefined))) &&
       [
         command.payload.scheduled_recipe_id,
         command.payload.event_id,
         command.payload.event_day_id,
         command.payload.event_meal_role_id,
       ].every((id) => uuid.test(id)) &&
-      (command.payload.position_key === undefined || /^[0-9A-Za-z]{1,255}$/.test(command.payload.position_key))
+      (command.payload.position_key === undefined ||
+        /^[0-9A-Za-z]{1,255}$/.test(command.payload.position_key))
     ) {
       const canonicalEvent = await localDb.canonicalRecords.get([
         userId,
@@ -530,7 +586,14 @@ async function replayOptimisticCommands(
       if (typeof command.payload.position_key !== "string") continue;
       await localDb.optimisticOverlays.put({
         ...scheduled,
-        fields: { ...scheduled.fields, event_day_id: command.payload.event_day_id, event_meal_role_id: command.payload.event_meal_role_id, ...(command.payload.position_key ? { position_key: command.payload.position_key } : {}) },
+        fields: {
+          ...scheduled.fields,
+          event_day_id: command.payload.event_day_id,
+          event_meal_role_id: command.payload.event_meal_role_id,
+          ...(command.payload.position_key
+            ? { position_key: command.payload.position_key }
+            : {}),
+        },
         fieldClocks: {
           ...scheduled.fieldClocks,
           placement: { mutationId: command.id, actionAt: command.actionAt },
@@ -557,8 +620,8 @@ function parsePull(value: unknown, organizationId: string): PullWireResponse {
   if (
     !object(value) ||
     (value.status !== "ok" && value.status !== "bootstrap_required") ||
-    (typeof value.sync_schema_version !== "number" ||
-      value.sync_schema_version !== 1) ||
+    typeof value.sync_schema_version !== "number" ||
+    value.sync_schema_version !== 1 ||
     typeof value.server_time !== "string" ||
     !Array.isArray(value.transaction_groups)
   ) {
@@ -567,7 +630,10 @@ function parsePull(value: unknown, organizationId: string): PullWireResponse {
       typeof value.sync_schema_version === "number" &&
       value.sync_schema_version !== 1
     )
-      throw new UpgradeRequiredError("sync_schema_version", value.sync_schema_version);
+      throw new UpgradeRequiredError(
+        "sync_schema_version",
+        value.sync_schema_version,
+      );
     throw new Error("Invalid pull response.");
   }
   if (value.status === "ok" && typeof value.next_cursor !== "string") {
@@ -598,7 +664,10 @@ function parsePull(value: unknown, organizationId: string): PullWireResponse {
           typeof record.payload.record_schema_version === "number" &&
           record.payload.record_schema_version !== 1
         )
-          throw new UpgradeRequiredError("record_schema_version", record.payload.record_schema_version);
+          throw new UpgradeRequiredError(
+            "record_schema_version",
+            record.payload.record_schema_version,
+          );
         throw new Error("Invalid pull response.");
       }
     }

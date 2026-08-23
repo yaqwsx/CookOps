@@ -49,16 +49,22 @@ export type SystemOrganization = {
 };
 
 export async function getSystemOrganizations(): Promise<SystemOrganization[]> {
-  const response = await fetch("/api/v1/system/organizations", { credentials: "same-origin" });
+  const response = await fetch("/api/v1/system/organizations", {
+    credentials: "same-origin",
+  });
   if (!response.ok) throw new SystemOrganizationRequestError(response.status);
   return (await response.json()) as SystemOrganization[];
 }
 
 export async function changeSystemOrganizationLifecycle(
-  userId: string, id: string, operation: "retire" | "restore",
+  userId: string,
+  id: string,
+  operation: "retire" | "restore",
 ): Promise<SystemOrganization> {
   const response = await fetch(`/api/v1/system/organizations/${id}/lifecycle`, {
-    method: "POST", credentials: "same-origin", headers: { "content-type": "application/json" },
+    method: "POST",
+    credentials: "same-origin",
+    headers: { "content-type": "application/json" },
     body: JSON.stringify({
       operation,
       mutation_id: crypto.randomUUID(),
@@ -76,7 +82,9 @@ export async function editSystemOrganization(
   input: { name: string; description: string | null; defaultCurrency: string },
 ): Promise<SystemOrganization> {
   const response = await fetch(`/api/v1/system/organizations/${id}`, {
-    method: "PATCH", credentials: "same-origin", headers: { "content-type": "application/json" },
+    method: "PATCH",
+    credentials: "same-origin",
+    headers: { "content-type": "application/json" },
     body: JSON.stringify({
       mutation_id: crypto.randomUUID(),
       client_installation_id: await readOrCreateBrowserInstallationId(userId),

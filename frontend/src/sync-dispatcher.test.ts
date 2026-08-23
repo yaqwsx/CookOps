@@ -179,12 +179,14 @@ describe("dispatchOutbox", () => {
     const send = vi.fn<typeof fetch>(async (_input, init) => {
       const commands = JSON.parse(String(init?.body)).commands;
       return response(
-        commands.map((command: { mutation_id: string; command_kind: string }) => ({
-          mutation_id: command.mutation_id,
-          command_kind: command.command_kind,
-          status: "accepted",
-          error: null,
-        })),
+        commands.map(
+          (command: { mutation_id: string; command_kind: string }) => ({
+            mutation_id: command.mutation_id,
+            command_kind: command.command_kind,
+            status: "accepted",
+            error: null,
+          }),
+        ),
       );
     });
 
@@ -196,11 +198,19 @@ describe("dispatchOutbox", () => {
 
     expect(JSON.parse(String(send.mock.calls[0]?.[1]?.body))).toMatchObject({
       organization_id: organizationId,
-      commands: [expect.objectContaining({ mutation_id: "organization-a-command" })],
+      commands: [
+        expect.objectContaining({ mutation_id: "organization-a-command" }),
+      ],
     });
-    expect(JSON.parse(String(send.mock.calls[0]?.[1]?.body)).commands).toHaveLength(1);
-    await expect(localDb.outbox.get("organization-a-command")).resolves.toBeUndefined();
-    await expect(localDb.outbox.get("organization-b-command")).resolves.toEqual(originalB);
+    expect(
+      JSON.parse(String(send.mock.calls[0]?.[1]?.body)).commands,
+    ).toHaveLength(1);
+    await expect(
+      localDb.outbox.get("organization-a-command"),
+    ).resolves.toBeUndefined();
+    await expect(localDb.outbox.get("organization-b-command")).resolves.toEqual(
+      originalB,
+    );
   });
 
   it("keeps a rejected intent as recoverable work while accepting later commands", async () => {
@@ -293,9 +303,7 @@ describe("dispatchOutbox", () => {
         },
       ],
     });
-    const exactNote = "x".repeat(
-      MAX_PUSH_BYTES - wireBytes(fixedBody("")),
-    );
+    const exactNote = "x".repeat(MAX_PUSH_BYTES - wireBytes(fixedBody("")));
     await addCommand("boundary", "2026-08-07T10:00:00.000Z", {
       note: exactNote,
     });
@@ -323,8 +331,12 @@ describe("dispatchOutbox", () => {
     });
 
     expect(send).toHaveBeenCalledTimes(2);
-    const first = requestBody(send.mock.calls[0] as [RequestInfo | URL, RequestInit]);
-    const second = requestBody(send.mock.calls[1] as [RequestInfo | URL, RequestInit]);
+    const first = requestBody(
+      send.mock.calls[0] as [RequestInfo | URL, RequestInit],
+    );
+    const second = requestBody(
+      send.mock.calls[1] as [RequestInfo | URL, RequestInit],
+    );
     expect(wireBytes(first)).toBe(MAX_PUSH_BYTES);
     expect(wireBytes(second)).toBeLessThanOrEqual(MAX_PUSH_BYTES);
     expect(first.commands).toEqual([
@@ -373,8 +385,11 @@ describe("dispatchOutbox", () => {
       dispatchOutbox(organizationId, {
         userId,
         clientInstallationId: installationId,
-        fetch: vi.fn<typeof fetch>(async () =>
-          new Response(JSON.stringify({ sync_schema_version: 2 }), { status: 200 }),
+        fetch: vi.fn<typeof fetch>(
+          async () =>
+            new Response(JSON.stringify({ sync_schema_version: 2 }), {
+              status: 200,
+            }),
         ),
       }),
     ).rejects.toBeInstanceOf(UpgradeRequiredError);
@@ -382,7 +397,9 @@ describe("dispatchOutbox", () => {
       state: "pending",
       payload: {},
     });
-    await expect(localDb.syncMetadata.get([userId, organizationId])).resolves.toMatchObject({
+    await expect(
+      localDb.syncMetadata.get([userId, organizationId]),
+    ).resolves.toMatchObject({
       activity: "upgradeRequired",
     });
   });
@@ -393,7 +410,8 @@ describe("dispatchOutbox", () => {
       count: 2,
     });
     const send = vi.fn<typeof fetch>(async (_input, _init) => {
-      if (send.mock.calls.length === 1) return new Response(null, { status: 503 });
+      if (send.mock.calls.length === 1)
+        return new Response(null, { status: 503 });
       return response([
         {
           mutation_id: "retry-me",
@@ -415,8 +433,8 @@ describe("dispatchOutbox", () => {
     await dispatchOutbox(organizationId, options);
 
     expect(send).toHaveBeenCalledTimes(2);
-    const requests = send.mock.calls.map((call) =>
-      JSON.parse(String(call[1]?.body)).commands,
+    const requests = send.mock.calls.map(
+      (call) => JSON.parse(String(call[1]?.body)).commands,
     );
     expect(requests[0]).toEqual(requests[1]);
     expect(requests[1]).toEqual([

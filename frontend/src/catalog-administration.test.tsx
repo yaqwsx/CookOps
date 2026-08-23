@@ -16,22 +16,49 @@ vi.mock("dexie", async (importOriginal) => ({
 }));
 vi.mock("./catalog-configuration", () => ({ queueCatalogConfiguration }));
 vi.mock("./visible-records", () => ({
-  readVisibleRecords: vi.fn(async (_user: string, _organization: string, kind: string) =>
-    kind === "organization_meal_role_preset"
-      ? [{
-          userId: "user", organizationId: "organization", entityType: kind,
-          entityId: "preset-id", recordSchemaVersion: 1, lifecycle: "active",
-          immutable: false, updatedAt: "2026-08-08T00:00:00Z",
-          fields: { id: "preset-id", organization_id: "organization", custom_name: "Breakfast", built_in_translation_key: null, position_key: "b" },
-          fieldClocks: {},
-        }, {
-          userId: "user", organizationId: "organization", entityType: kind,
-          entityId: "morning-snack", recordSchemaVersion: 1, lifecycle: "active",
-          immutable: true, updatedAt: "2026-08-08T00:00:00Z",
-          fields: { id: "morning-snack", organization_id: "organization", custom_name: null, built_in_translation_key: "meal_role.morning_snack", position_key: "a" },
-          fieldClocks: {},
-        }]
-      : []),
+  readVisibleRecords: vi.fn(
+    async (_user: string, _organization: string, kind: string) =>
+      kind === "organization_meal_role_preset"
+        ? [
+            {
+              userId: "user",
+              organizationId: "organization",
+              entityType: kind,
+              entityId: "preset-id",
+              recordSchemaVersion: 1,
+              lifecycle: "active",
+              immutable: false,
+              updatedAt: "2026-08-08T00:00:00Z",
+              fields: {
+                id: "preset-id",
+                organization_id: "organization",
+                custom_name: "Breakfast",
+                built_in_translation_key: null,
+                position_key: "b",
+              },
+              fieldClocks: {},
+            },
+            {
+              userId: "user",
+              organizationId: "organization",
+              entityType: kind,
+              entityId: "morning-snack",
+              recordSchemaVersion: 1,
+              lifecycle: "active",
+              immutable: true,
+              updatedAt: "2026-08-08T00:00:00Z",
+              fields: {
+                id: "morning-snack",
+                organization_id: "organization",
+                custom_name: null,
+                built_in_translation_key: "meal_role.morning_snack",
+                position_key: "a",
+              },
+              fieldClocks: {},
+            },
+          ]
+        : [],
+  ),
 }));
 
 import { CatalogAdministration } from "./catalog-administration";
@@ -41,18 +68,35 @@ beforeEach(() => queueCatalogConfiguration.mockClear());
 it.each([
   ["cs", "Správa katalogu", "Role jídel", "Přidat", "Název"],
   ["en", "Catalog administration", "Meal roles", "Add", "Name"],
-])("localizes catalog administration in %s", async (locale, heading, mealRoles, add, name) => {
-  render(<CatalogAdministration userId="user" organizationId="organization" locale={locale as "cs" | "en"} />);
-  expect(await screen.findByRole("heading", { name: heading })).toBeVisible();
-  expect(screen.getByRole("heading", { name: mealRoles })).toBeVisible();
-  await screen.findByText(locale === "cs" ? "Dopolední svačina" : "Morning snack");
-  expect(screen.getAllByRole("button", { name: add })).toHaveLength(5);
-  expect(screen.getAllByLabelText(name)).toHaveLength(6);
-});
+])(
+  "localizes catalog administration in %s",
+  async (locale, heading, mealRoles, add, name) => {
+    render(
+      <CatalogAdministration
+        userId="user"
+        organizationId="organization"
+        locale={locale as "cs" | "en"}
+      />,
+    );
+    expect(await screen.findByRole("heading", { name: heading })).toBeVisible();
+    expect(screen.getByRole("heading", { name: mealRoles })).toBeVisible();
+    await screen.findByText(
+      locale === "cs" ? "Dopolední svačina" : "Morning snack",
+    );
+    expect(screen.getAllByRole("button", { name: add })).toHaveLength(5);
+    expect(screen.getAllByLabelText(name)).toHaveLength(6);
+  },
+);
 
 it("creates, edits/reorders, retires, and restores a meal-role preset", async () => {
   const user = userEvent.setup();
-  render(<CatalogAdministration userId="user" organizationId="organization" locale="en" />);
+  render(
+    <CatalogAdministration
+      userId="user"
+      organizationId="organization"
+      locale="en"
+    />,
+  );
 
   const group = await screen.findByRole("heading", { name: "Meal roles" });
   expect(group).toBeVisible();
@@ -66,7 +110,13 @@ it("creates, edits/reorders, retires, and restores a meal-role preset", async ()
   const addButton = screen.getAllByRole("button", { name: "Add" })[4];
   if (!addButton) throw new Error("Expected the custom meal-role add button");
   await user.click(addButton);
-  expect(queueCatalogConfiguration).toHaveBeenCalledWith("user", "organization", "organization_meal_role_preset", "create", { name: "Breakfast", position_key: "z" });
+  expect(queueCatalogConfiguration).toHaveBeenCalledWith(
+    "user",
+    "organization",
+    "organization_meal_role_preset",
+    "create",
+    { name: "Breakfast", position_key: "z" },
+  );
 
   const customPreset = screen.getByText("Breakfast").closest("li");
   if (!customPreset) throw new Error("Expected the created meal-role preset");
@@ -75,10 +125,40 @@ it("creates, edits/reorders, retires, and restores a meal-role preset", async ()
   await user.clear(editInput);
   await user.type(editInput, "Brunch");
   await user.click(within(customPreset).getByRole("button", { name: "Save" }));
-  expect(queueCatalogConfiguration).toHaveBeenCalledWith("user", "organization", "organization_meal_role_preset", "update", expect.objectContaining({ name: "Brunch", position_key: "b" }), "preset-id");
+  expect(queueCatalogConfiguration).toHaveBeenCalledWith(
+    "user",
+    "organization",
+    "organization_meal_role_preset",
+    "update",
+    expect.objectContaining({ name: "Brunch", position_key: "b" }),
+    "preset-id",
+  );
 
-  await user.click(within(customPreset).getByRole("button", { name: "Retire" }));
-  expect(queueCatalogConfiguration).toHaveBeenCalledWith("user", "organization", "organization_meal_role_preset", "retire", {}, "preset-id");
-  await queueCatalogConfiguration("user", "organization", "organization_meal_role_preset", "restore", {}, "preset-id");
-  expect(queueCatalogConfiguration).toHaveBeenCalledWith("user", "organization", "organization_meal_role_preset", "restore", {}, "preset-id");
+  await user.click(
+    within(customPreset).getByRole("button", { name: "Retire" }),
+  );
+  expect(queueCatalogConfiguration).toHaveBeenCalledWith(
+    "user",
+    "organization",
+    "organization_meal_role_preset",
+    "retire",
+    {},
+    "preset-id",
+  );
+  await queueCatalogConfiguration(
+    "user",
+    "organization",
+    "organization_meal_role_preset",
+    "restore",
+    {},
+    "preset-id",
+  );
+  expect(queueCatalogConfiguration).toHaveBeenCalledWith(
+    "user",
+    "organization",
+    "organization_meal_role_preset",
+    "restore",
+    {},
+    "preset-id",
+  );
 });

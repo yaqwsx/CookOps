@@ -18,8 +18,11 @@ const kinds: CatalogKind[] = [
   "organization_meal_role_preset",
 ];
 const labelKeys: Record<CatalogKind, string> = {
-  recipe_tag: "recipeTags", dietary_tag: "dietaryTags", store_section: "storeSections",
-  unit_definition: "customUnits", organization_meal_role_preset: "mealRoles",
+  recipe_tag: "recipeTags",
+  dietary_tag: "dietaryTags",
+  store_section: "storeSections",
+  unit_definition: "customUnits",
+  organization_meal_role_preset: "mealRoles",
 };
 export function CatalogAdministration({
   userId,
@@ -58,16 +61,23 @@ export function CatalogAdministration({
     return () => subscription.unsubscribe();
   }, [userId, organizationId]);
   return (
-    <section
-      aria-label={t("catalogAdministration.heading", { lng: locale })}
-    >
+    <section aria-label={t("catalogAdministration.heading", { lng: locale })}>
       <h3>{t("catalogAdministration.heading", { lng: locale })}</h3>
       {kinds.map((kind) => (
         <CatalogGroup
           key={kind}
           kind={kind}
           label={t(`catalogAdministration.${labelKeys[kind]}`, { lng: locale })}
-          records={(kind === "store_section" || kind === "organization_meal_role_preset" ? [...records[kind]].sort((a, b) => String(a.fields.position_key ?? "").localeCompare(String(b.fields.position_key ?? "")) || a.entityId.localeCompare(b.entityId)) : records[kind])}
+          records={
+            kind === "store_section" || kind === "organization_meal_role_preset"
+              ? [...records[kind]].sort(
+                  (a, b) =>
+                    String(a.fields.position_key ?? "").localeCompare(
+                      String(b.fields.position_key ?? ""),
+                    ) || a.entityId.localeCompare(b.entityId),
+                )
+              : records[kind]
+          }
           userId={userId}
           organizationId={organizationId}
           locale={locale}
@@ -102,7 +112,9 @@ function CatalogGroup({
       name,
       ...(kind === "recipe_tag" || kind === "dietary_tag" ? { color } : {}),
       ...(kind === "store_section" ? { position_key: "z" } : {}),
-      ...(kind === "organization_meal_role_preset" ? { position_key: "z" } : {}),
+      ...(kind === "organization_meal_role_preset"
+        ? { position_key: "z" }
+        : {}),
       ...(kind === "unit_definition"
         ? { allows_ingredient_quantity: true, allows_recipe_scaling: true }
         : {}),
@@ -132,7 +144,9 @@ function CatalogGroup({
             />
           </label>
         )}
-        <button type="submit">{t("catalogAdministration.add", { lng: locale })}</button>
+        <button type="submit">
+          {t("catalogAdministration.add", { lng: locale })}
+        </button>
       </form>
       <ul>
         {records.map((record) => (
@@ -171,12 +185,18 @@ function CatalogRow({
     String(record.fields.position_key ?? "z"),
   );
   const [color, setColor] = useState(String(record.fields.color ?? "#336699"));
-  const builtInKey = typeof record.fields.built_in_translation_key === "string"
-    ? record.fields.built_in_translation_key
-    : undefined;
+  const builtInKey =
+    typeof record.fields.built_in_translation_key === "string"
+      ? record.fields.built_in_translation_key
+      : undefined;
   const displayName = builtInKey
     ? (mealRoleLabels[builtInKey]?.[locale] ?? builtInKey)
-    : String(record.fields.name ?? record.fields.custom_name ?? record.fields.code ?? "");
+    : String(
+        record.fields.name ??
+          record.fields.custom_name ??
+          record.fields.code ??
+          "",
+      );
   const save = async (event: React.FormEvent) => {
     event.preventDefault();
     await queueCatalogConfiguration(
@@ -186,7 +206,9 @@ function CatalogRow({
       "update",
       {
         ...(builtInKey ? { built_in_translation_key: builtInKey } : { name }),
-        ...(kind === "store_section" || kind === "organization_meal_role_preset" ? { position_key: position } : {}),
+        ...(kind === "store_section" || kind === "organization_meal_role_preset"
+          ? { position_key: position }
+          : {}),
         ...(kind === "recipe_tag" || kind === "dietary_tag" ? { color } : {}),
       },
       record.entityId,
@@ -212,18 +234,26 @@ function CatalogRow({
         }
       >
         {record.lifecycle === "retired"
-            ? t("catalogAdministration.restore", { lng: locale })
-            : t("catalogAdministration.retire", { lng: locale })}
+          ? t("catalogAdministration.restore", { lng: locale })
+          : t("catalogAdministration.retire", { lng: locale })}
       </button>
       {record.lifecycle === "active" && (
         <details>
           <summary>{t("catalogAdministration.edit", { lng: locale })}</summary>
           <form onSubmit={(event) => void save(event)}>
-            {!builtInKey && <label>
-              {t("catalogAdministration.name", { lng: locale })}
-              <input maxLength={200} required value={name} onChange={(event) => setName(event.target.value)} />
-            </label>}
-            {(kind === "store_section" || kind === "organization_meal_role_preset") && (
+            {!builtInKey && (
+              <label>
+                {t("catalogAdministration.name", { lng: locale })}
+                <input
+                  maxLength={200}
+                  required
+                  value={name}
+                  onChange={(event) => setName(event.target.value)}
+                />
+              </label>
+            )}
+            {(kind === "store_section" ||
+              kind === "organization_meal_role_preset") && (
               <label>
                 {t("catalogAdministration.position", { lng: locale })}
                 <input
@@ -244,7 +274,9 @@ function CatalogRow({
                 />
               </label>
             )}
-            <button type="submit">{t("catalogAdministration.save", { lng: locale })}</button>
+            <button type="submit">
+              {t("catalogAdministration.save", { lng: locale })}
+            </button>
           </form>
         </details>
       )}

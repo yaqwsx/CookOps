@@ -14,7 +14,11 @@ const eventA = "6ce17d2f-8365-4b1f-a80b-34d10425d51c";
 const eventB = "7ce17d2f-8365-4b1f-a80b-34d10425d51c";
 const eventMissing = "9ce17d2f-8365-4b1f-a80b-34d10425d51c";
 
-async function record(eventId: string, budget: string, lifecycle: "active" | "archived" = "active") {
+async function record(
+  eventId: string,
+  budget: string,
+  lifecycle: "active" | "archived" = "active",
+) {
   await localDb.canonicalRecords.add({
     userId,
     organizationId,
@@ -67,22 +71,54 @@ describe("event costs route", () => {
     vi.mocked(syncBootstrap.pullOrganization).mockImplementation(async () => {
       order.push("pull");
       await record(archivedEvent, "30", "archived");
-      const canonical = await localDb.canonicalRecords.get([userId, organizationId, "event", archivedEvent]);
-      if (canonical) await localDb.canonicalRecords.put({ ...canonical, fields: { ...canonical.fields, current_archive_snapshot_id: "eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee" } });
+      const canonical = await localDb.canonicalRecords.get([
+        userId,
+        organizationId,
+        "event",
+        archivedEvent,
+      ]);
+      if (canonical)
+        await localDb.canonicalRecords.put({
+          ...canonical,
+          fields: {
+            ...canonical.fields,
+            current_archive_snapshot_id: "eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee",
+          },
+        });
       return false;
     });
-    vi.mocked(archiveCache.ensureArchivedEventCached).mockImplementation(async () => {
-      order.push("archive");
-      return true;
-    });
+    vi.mocked(archiveCache.ensureArchivedEventCached).mockImplementation(
+      async () => {
+        order.push("archive");
+        return true;
+      },
+    );
 
-    render(<EventCostsPage eventId={archivedEvent} organizationId={organizationId} userId={userId} onUnauthenticated={vi.fn()} />);
-    expect(await screen.findByText("Tato akce je archivovaná a plán je jen pro čtení.")).toBeInTheDocument();
+    render(
+      <EventCostsPage
+        eventId={archivedEvent}
+        organizationId={organizationId}
+        userId={userId}
+        onUnauthenticated={vi.fn()}
+      />,
+    );
+    expect(
+      await screen.findByText(
+        "Tato akce je archivovaná a plán je jen pro čtení.",
+      ),
+    ).toBeInTheDocument();
     await vi.waitFor(() => expect(order).toEqual(["pull", "archive"]));
   });
 
   it("keeps active costs local without fetching an archive", async () => {
-    render(<EventCostsPage eventId={eventA} organizationId={organizationId} userId={userId} onUnauthenticated={vi.fn()} />);
+    render(
+      <EventCostsPage
+        eventId={eventA}
+        organizationId={organizationId}
+        userId={userId}
+        onUnauthenticated={vi.fn()}
+      />,
+    );
     await screen.findByRole("heading", { name: "Event A" });
     expect(archiveCache.ensureArchivedEventCached).not.toHaveBeenCalled();
   });
@@ -90,7 +126,14 @@ describe("event costs route", () => {
   it("opens receipts from active costs", async () => {
     const onOpenReceipts = vi.fn();
     const user = (await import("@testing-library/user-event")).default.setup();
-    render(<EventCostsPage eventId={eventA} organizationId={organizationId} userId={userId} onOpenReceipts={onOpenReceipts} />);
+    render(
+      <EventCostsPage
+        eventId={eventA}
+        organizationId={organizationId}
+        userId={userId}
+        onOpenReceipts={onOpenReceipts}
+      />,
+    );
     await screen.findByRole("heading", { name: "Event A" });
     await user.click(screen.getByRole("button", { name: "Otevřít účtenky" }));
     expect(onOpenReceipts).toHaveBeenCalledOnce();
@@ -102,9 +145,18 @@ describe("event costs route", () => {
       await record(archivedEvent, "30", "archived");
       return false;
     });
-    vi.mocked(archiveCache.ensureArchivedEventCached).mockRejectedValue(new syncBootstrap.SyncRequestError(401));
+    vi.mocked(archiveCache.ensureArchivedEventCached).mockRejectedValue(
+      new syncBootstrap.SyncRequestError(401),
+    );
     const onUnauthenticated = vi.fn();
-    render(<EventCostsPage eventId={archivedEvent} organizationId={organizationId} userId={userId} onUnauthenticated={onUnauthenticated} />);
+    render(
+      <EventCostsPage
+        eventId={archivedEvent}
+        organizationId={organizationId}
+        userId={userId}
+        onUnauthenticated={onUnauthenticated}
+      />,
+    );
     await vi.waitFor(() => expect(onUnauthenticated).toHaveBeenCalledOnce());
   });
 
@@ -115,7 +167,9 @@ describe("event costs route", () => {
     };
     const view = render(<EventCostsPage {...props} eventId={eventA} />);
     expect((await screen.findAllByText("10.00 CZK")).length).toBeGreaterThan(0);
-    expect(screen.getByRole("heading", { name: "Event A" })).toBeInTheDocument();
+    expect(
+      screen.getByRole("heading", { name: "Event A" }),
+    ).toBeInTheDocument();
     expect(screen.getByText("Očekávaná účast")).toBeInTheDocument();
     expect(
       await screen.findByRole("button", {
@@ -124,7 +178,9 @@ describe("event costs route", () => {
     ).toBeDisabled();
 
     view.rerender(<EventCostsPage {...props} eventId={eventB} />);
-    await waitFor(() => expect(screen.queryAllByText("10.00 CZK")).toHaveLength(0));
+    await waitFor(() =>
+      expect(screen.queryAllByText("10.00 CZK")).toHaveLength(0),
+    );
     expect((await screen.findAllByText("20.00 CZK")).length).toBeGreaterThan(0);
     expect(
       screen.getByRole("button", { name: "Aktualizovat odhady cen" }),
@@ -142,14 +198,18 @@ describe("event costs route", () => {
       .mockRejectedValueOnce(new Error("cached projection unavailable"));
     const view = render(<EventCostsPage {...props} eventId={eventMissing} />);
     expect(
-      await screen.findByText("Náklady akce nejsou v místní projekci k dispozici."),
+      await screen.findByText(
+        "Náklady akce nejsou v místní projekci k dispozici.",
+      ),
     ).toBeInTheDocument();
     readPlanner.mockRestore();
 
     view.rerender(<EventCostsPage {...props} eventId={eventB} />);
     await waitFor(() =>
       expect(
-        screen.queryByText("Náklady akce nejsou v místní projekci k dispozici."),
+        screen.queryByText(
+          "Náklady akce nejsou v místní projekci k dispozici.",
+        ),
       ).toBeNull(),
     );
     expect((await screen.findAllByText("20.00 CZK")).length).toBeGreaterThan(0);
@@ -167,10 +227,20 @@ describe("event costs route", () => {
       />,
     );
 
-    expect(await screen.findByText("Tato akce je archivovaná a plán je jen pro čtení.")).toBeInTheDocument();
-    expect(screen.getByRole("heading", { name: "Event B" })).toBeInTheDocument();
+    expect(
+      await screen.findByText(
+        "Tato akce je archivovaná a plán je jen pro čtení.",
+      ),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole("heading", { name: "Event B" }),
+    ).toBeInTheDocument();
     expect((await screen.findAllByText("30.00 CZK")).length).toBeGreaterThan(0);
-    expect(screen.queryByRole("button", { name: "Aktualizovat odhady cen" })).toBeNull();
-    expect(screen.queryByRole("button", { name: "Otevřít účtenky" })).toBeNull();
+    expect(
+      screen.queryByRole("button", { name: "Aktualizovat odhady cen" }),
+    ).toBeNull();
+    expect(
+      screen.queryByRole("button", { name: "Otevřít účtenky" }),
+    ).toBeNull();
   });
 });
