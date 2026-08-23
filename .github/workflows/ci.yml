@@ -117,6 +117,102 @@ jobs:
       - name: Build and smoke-test production images
         run: deploy/test-images.sh
 
+  vulnerability-scan:
+    name: Dependency and image vulnerability scan
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Validate vulnerability exception policy
+        run: python3 security/validate-vulnerability-exceptions.py security/vulnerability-exceptions.yaml
+      - name: Build production images for this commit
+        run: |
+          docker build --tag cookops-api:${GITHUB_SHA} backend
+          docker build --tag cookops-web:${GITHUB_SHA} frontend
+          docker build --tag cookops-oauth:${GITHUB_SHA} oauth-server
+      - name: Prepare SARIF output directory
+        run: mkdir -p security-results
+      - name: Scan locked dependencies
+        id: scan-dependencies
+        continue-on-error: true
+        uses: aquasecurity/trivy-action@a9c7b0f06e461e9d4b4d1711f154ee024b8d7ab8 # v0.36.0
+        with:
+          scan-type: fs
+          scan-ref: .
+          scanners: vuln
+          vuln-type: library
+          severity: HIGH,CRITICAL
+          exit-code: '1'
+          format: sarif
+          output: security-results/dependencies.sarif
+          trivyignores: security/vulnerability-exceptions.yaml
+          version: v0.74.0
+      - name: Scan API image
+        id: scan-api
+        continue-on-error: true
+        uses: aquasecurity/trivy-action@a9c7b0f06e461e9d4b4d1711f154ee024b8d7ab8 # v0.36.0
+        with:
+          image-ref: cookops-api:${{ github.sha }}
+          scanners: vuln
+          severity: HIGH,CRITICAL
+          exit-code: '1'
+          format: sarif
+          output: security-results/api.sarif
+          trivyignores: security/vulnerability-exceptions.yaml
+          version: v0.74.0
+      - name: Scan frontend image
+        id: scan-web
+        continue-on-error: true
+        uses: aquasecurity/trivy-action@a9c7b0f06e461e9d4b4d1711f154ee024b8d7ab8 # v0.36.0
+        with:
+          image-ref: cookops-web:${{ github.sha }}
+          scanners: vuln
+          severity: HIGH,CRITICAL
+          exit-code: '1'
+          format: sarif
+          output: security-results/web.sarif
+          trivyignores: security/vulnerability-exceptions.yaml
+          version: v0.74.0
+      - name: Scan OAuth image
+        id: scan-oauth
+        continue-on-error: true
+        uses: aquasecurity/trivy-action@a9c7b0f06e461e9d4b4d1711f154ee024b8d7ab8 # v0.36.0
+        with:
+          image-ref: cookops-oauth:${{ github.sha }}
+          scanners: vuln
+          severity: HIGH,CRITICAL
+          exit-code: '1'
+          format: sarif
+          output: security-results/oauth.sarif
+          trivyignores: security/vulnerability-exceptions.yaml
+          version: v0.74.0
+      - name: Validate reports and fail closed
+        if: always()
+        env:
+          DEPENDENCY_SCAN: ${{ steps.scan-dependencies.outcome }}
+          API_SCAN: ${{ steps.scan-api.outcome }}
+          WEB_SCAN: ${{ steps.scan-web.outcome }}
+          OAUTH_SCAN: ${{ steps.scan-oauth.outcome }}
+        run: |
+          set -eu
+          test "$DEPENDENCY_SCAN" = success
+          test "$API_SCAN" = success
+          test "$WEB_SCAN" = success
+          test "$OAUTH_SCAN" = success
+          for report in security-results/*.sarif; do
+            python3 security/validate-sarif.py "$report"
+          done
+      - name: Upload SARIF reports
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: vulnerability-scan-sarif
+          path: security-results/*.sarif
+          if-no-files-found: error
+
   oauth-provider-profile:
     name: OAuth provider and persistence
     runs-on: ubuntu-24.04
