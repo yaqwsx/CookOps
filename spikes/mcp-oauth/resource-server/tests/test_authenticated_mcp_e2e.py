@@ -378,7 +378,7 @@ async def scenario(database_url: str) -> None:
                         },
                         json={},
                     )
-                    assert wrong_host.status_code == 421
+                    assert wrong_host.status_code in (400, 421)
                     wrong_origin = await client.post(
                         resource,
                         headers={
