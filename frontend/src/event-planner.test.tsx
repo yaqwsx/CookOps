@@ -901,8 +901,7 @@ describe("EventPlanner", () => {
       />,
     );
     const nameInputs = await screen.findAllByLabelText("Název chodu");
-    await user.clear(nameInputs[1]);
-    await user.type(nameInputs[1], "Pozdní večeře");
+    await user.fill(nameInputs[1], "Pozdní večeře");
     await user.click(
       screen.getByRole("button", { name: "Uložit název chodu" }),
     );

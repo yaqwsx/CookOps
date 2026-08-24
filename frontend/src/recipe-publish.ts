@@ -118,6 +118,7 @@ async function writeRecipePublication(
   mutationId: string,
   actionAt: string,
   payload: Record<string, unknown>,
+  tagRecordIds: string[],
 ) {
   const recipeId = payload.recipe_id as string;
   const basedOn = payload.based_on_version_id as string;
@@ -202,26 +203,24 @@ async function writeRecipePublication(
     ]);
     if (!ingredient) throw new Error("ingredientLines");
   }
-  const tagRecords = await Promise.all(
-    tags.map(async (tagId) => {
-      const id = await recipeVersionTagId(versionId, tagId);
-      return overlay(
-        userId,
-        organizationId,
-        "recipe_version_tag",
+  const tagRecords = tags.map((tagId, index) => {
+    const id = tagRecordIds[index];
+    return overlay(
+      userId,
+      organizationId,
+      "recipe_version_tag",
+      id,
+      {
         id,
-        {
-          id,
-          recipe_version_id: versionId,
-          recipe_tag_id: tagId,
-          organization_id: organizationId,
-        },
-        mutationId,
-        actionAt,
-        true,
-      );
-    }),
-  );
+        recipe_version_id: versionId,
+        recipe_tag_id: tagId,
+        organization_id: organizationId,
+      },
+      mutationId,
+      actionAt,
+      true,
+    );
+  });
   const records: CanonicalRecord[] = [
     overlay(
       userId,
@@ -341,6 +340,9 @@ export async function queueRecipeVersionPublish(
         }
       : {}),
   };
+  const tagRecordIds = await Promise.all(
+    input.recipeTagIds.map((tagId) => recipeVersionTagId(versionId, tagId)),
+  );
   await localDb.transaction(
     "rw",
     localDb.canonicalRecords,
@@ -353,6 +355,7 @@ export async function queueRecipeVersionPublish(
         mutationId,
         actionAt,
         payload,
+        tagRecordIds,
       );
       await appendOutboxCommand({
         id: mutationId,
@@ -394,12 +397,18 @@ export async function replayRecipeVersionPublish(
   )
     return;
   try {
+    const tagRecordIds = await Promise.all(
+      (payload.recipe_tag_ids as string[]).map((tagId) =>
+        recipeVersionTagId(payload.recipe_version_id as string, tagId),
+      ),
+    );
     await writeRecipePublication(
       userId,
       organizationId,
       command.id,
       command.actionAt,
       payload,
+      tagRecordIds,
     );
   } catch {
     /* Retain malformed or stale intent for recovery. */
