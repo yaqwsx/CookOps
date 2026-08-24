@@ -12,6 +12,7 @@ from sqlalchemy import insert, select, update
 from test_sync_pull_http import SyncDatabase, _settings, _sign_in
 from test_sync_pull_http import sync_database as _sync_database_fixture
 
+from cookops.application.scheduled_recipe_catalog_update import UpdateScheduledRecipeCatalogCommand
 from cookops.http_sync import (
     OrganizationUpdatePayload,
     PublishIngredientPriceEstimatePayload,
@@ -4100,6 +4101,7 @@ def test_catalog_update_payload_is_strict() -> None:
         },
     }
     parsed = _push_command(PushCommandRequest.model_validate(base), uuid4())
+    assert isinstance(parsed, UpdateScheduledRecipeCatalogCommand)
     assert parsed.preserve_overrides is True
     for key, value in (("preserve_overrides", 1), ("extra", True)):
         payload = dict(base["payload"])
