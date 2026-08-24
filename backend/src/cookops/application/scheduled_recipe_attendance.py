@@ -4,7 +4,7 @@ import hashlib
 import json
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
-from typing import Literal
+from typing import Literal, cast
 from uuid import UUID
 
 from sqlalchemy import select, text
@@ -178,17 +178,27 @@ async def set_scheduled_recipe_attendance(
                     or retained.last_change_sequence is None
                 ):
                     raise RuntimeError("invalid retained attendance outcome")
+                diner_count = record.get("diner_count")
+                retained_attendance_mode = record.get("attendance_mode")
+                retained_outcome = retained.outcome
+                if (
+                    not isinstance(diner_count, int)
+                    or isinstance(diner_count, bool)
+                    or retained_attendance_mode not in ("manual", "follows_event")
+                    or retained_outcome not in ("accepted", "partially_superseded")
+                ):
+                    raise RuntimeError("invalid retained attendance outcome")
                 return ScheduledRecipeAttendanceResult(
                     command.mutation_id,
                     command.scheduled_recipe_id,
                     command.organization_id,
                     command.event_id,
-                    record["diner_count"],
-                    record["attendance_mode"],
+                    diner_count,
+                    cast(Literal["manual", "follows_event"], retained_attendance_mode),
                     retained.first_change_sequence,
                     retained.last_change_sequence,
                     True,
-                    retained.outcome,
+                    cast(Literal["accepted", "partially_superseded"], retained_outcome),
                 )
         elif violations:
             deferred = _reject(*violations)
@@ -221,6 +231,8 @@ async def set_scheduled_recipe_attendance(
                 )
             else:
                 event = await session.get(Event, command.event_id, with_for_update=True)
+                if event is None:
+                    raise RuntimeError("scheduled recipe event disappeared")
                 clock = await session.scalar(
                     select(FieldClock)
                     .where(
@@ -235,15 +247,25 @@ async def set_scheduled_recipe_attendance(
                     clock.winning_client_wall_time,
                     clock.winning_mutation_id,
                 )
+                current_attendance_mode = scheduled.attendance_mode
+                if current_attendance_mode not in ("manual", "follows_event"):
+                    raise RuntimeError("invalid scheduled attendance mode")
+                result_attendance_mode = cast(
+                    Literal["manual", "follows_event"], current_attendance_mode
+                )
+                winning_wall_time = when
+                winning_mutation_id = command.mutation_id
                 if wins:
-                    scheduled.diner_count = (
-                        event.base_expected_attendance
-                        if command.operation == "follow_event"
-                        else command.diner_count
-                    )
-                    scheduled.attendance_mode = (
+                    if command.operation == "follow_event":
+                        assert isinstance(event.base_expected_attendance, int)
+                        scheduled.diner_count = event.base_expected_attendance
+                    else:
+                        assert isinstance(command.diner_count, int)
+                        scheduled.diner_count = command.diner_count
+                    result_attendance_mode = (
                         "follows_event" if command.operation == "follow_event" else "manual"
                     )
+                    scheduled.attendance_mode = result_attendance_mode
                     if clock is None:
                         session.add(
                             FieldClock(
@@ -260,6 +282,10 @@ async def set_scheduled_recipe_attendance(
                             when,
                             command.mutation_id,
                         )
+                else:
+                    assert clock is not None
+                    winning_wall_time = clock.winning_client_wall_time
+                    winning_mutation_id = clock.winning_mutation_id
                 outcome: Literal["accepted", "partially_superseded"] = (
                     "accepted" if wins else "partially_superseded"
                 )
@@ -272,20 +298,17 @@ async def set_scheduled_recipe_attendance(
                     command.organization_id,
                     command.event_id,
                     scheduled.diner_count,
-                    scheduled.attendance_mode,
+                    result_attendance_mode,
                     first,
                     last,
                     False,
                     outcome,
                 )
                 record = _scheduled_recipe_change_record(scheduled)[2]
-                record["field_clocks"]["attendance"] = {
-                    "winning_client_wall_time": (
-                        when if wins else clock.winning_client_wall_time
-                    ).isoformat(),
-                    "winning_mutation_id": str(
-                        command.mutation_id if wins else clock.winning_mutation_id
-                    ),
+                field_clocks = cast(dict[str, object], record["field_clocks"])
+                field_clocks["attendance"] = {
+                    "winning_client_wall_time": winning_wall_time.isoformat(),
+                    "winning_mutation_id": str(winning_mutation_id),
                 }
                 session.add(
                     OrganizationChange(
