@@ -29,10 +29,21 @@ const resources = {
         logout: "Odhlásit se",
         logoutError: "Odhlášení se nepodařilo. Zkuste to znovu.",
         localeError: "Jazyk se nepodařilo uložit. Zkuste to znovu.",
-        authorizationRequiredOffline: "Offline přístup vypršel. Připojte se k internetu a ověřte oprávnění organizace.",
+        authorizationRequiredOffline:
+          "Offline přístup vypršel. Připojte se k internetu a ověřte oprávnění organizace.",
       },
-      routing: { notFound: "Požadovaná stránka nebyla nalezena.", home: "Domů" },
-      mcpGrants: { navigation: "Připojení MCP", heading: "Připojení MCP", empty: "Nemáte žádné aktivní připojení.", revoke: "Odvolat", confirm: "Opravdu chcete toto připojení odvolat?", error: "Připojení se nepodařilo načíst." },
+      routing: {
+        notFound: "Požadovaná stránka nebyla nalezena.",
+        home: "Domů",
+      },
+      mcpGrants: {
+        navigation: "Připojení MCP",
+        heading: "Připojení MCP",
+        empty: "Nemáte žádné aktivní připojení.",
+        revoke: "Odvolat",
+        confirm: "Opravdu chcete toto připojení odvolat?",
+        error: "Připojení se nepodařilo načíst.",
+      },
       systemOrganizations: {
         navigation: "Správa organizací",
         heading: "Nová organizace",
@@ -56,10 +67,26 @@ const resources = {
         saved: "Organizace byla vytvořena.",
         error: "Organizaci se nepodařilo vytvořit.",
         forbidden: "Tato funkce je dostupná jen systémovým administrátorům.",
-        routeForbidden: "Tato stránka je dostupná jen systémovým administrátorům.",
-        errors: { name: "Zadejte název do 200 znaků.", currency: "Zadejte platný třípísmenný kód měny." },
+        routeForbidden:
+          "Tato stránka je dostupná jen systémovým administrátorům.",
+        errors: {
+          name: "Zadejte název do 200 znaků.",
+          currency: "Zadejte platný třípísmenný kód měny.",
+        },
       },
-      organizationMetadata: { heading: "Nastavení organizace", name: "Název", description: "Popis", currency: "Výchozí měna", save: "Zařadit změnu k synchronizaci", offline: "Změny budou zařazeny k synchronizaci, až bude připojení.", offlineBlocked: "Offline úpravy vyžadují platné oprávnění organizace.", error: "Změnu se nepodařilo zařadit. Zkontrolujte neúspěšné akce a zkuste to znovu.", saved: "Změna byla zařazena k synchronizaci; server ji ještě musí přijmout." },
+      organizationMetadata: {
+        heading: "Nastavení organizace",
+        name: "Název",
+        description: "Popis",
+        currency: "Výchozí měna",
+        save: "Zařadit změnu k synchronizaci",
+        offline: "Změny budou zařazeny k synchronizaci, až bude připojení.",
+        offlineBlocked: "Offline úpravy vyžadují platné oprávnění organizace.",
+        error:
+          "Změnu se nepodařilo zařadit. Zkontrolujte neúspěšné akce a zkuste to znovu.",
+        saved:
+          "Změna byla zařazena k synchronizaci; server ji ještě musí přijmout.",
+      },
       membership: {
         heading: "Členové organizace",
         loading: "Načítáme členy organizace…",
@@ -71,7 +98,8 @@ const resources = {
         assignAdmin: "Povýšit na administrátora organizace",
         revokeAdmin: "Odebrat administrátorskou roli",
         removeConfirm: "Opravdu chcete odebrat {{email}}?",
-        revokeConfirm: "Opravdu chcete odebrat administrátorskou roli účtu {{email}}?",
+        revokeConfirm:
+          "Opravdu chcete odebrat administrátorskou roli účtu {{email}}?",
         changed: "Role administrátora byla aktualizována.",
         pending: "Ukládáme změnu role…",
         noMembers: "Tato organizace zatím nemá žádné členy.",
@@ -102,7 +130,8 @@ const resources = {
         archiveSearchEmpty: "Archivované akci neodpovídají hledání.",
         archiveError: "Archivované akce se nepodařilo načíst.",
         loadMore: "Načíst další archivované akce",
-        archiveOpenOfflineUnavailable: "Otevření vyžaduje připojení nebo uložený archivní snímek",
+        archiveOpenOfflineUnavailable:
+          "Otevření vyžaduje připojení nebo uložený archivní snímek",
       },
       eventsCreate: {
         heading: "Nová akce",
@@ -139,7 +168,8 @@ const resources = {
         submit: "Uložit účast",
         saved: "Účast je uložena místně a bude synchronizována.",
         saveMetadata: "Uložit údaje akce",
-        metadataSaved: "Údaje akce jsou uloženy místně a budou synchronizovány.",
+        metadataSaved:
+          "Údaje akce jsou uloženy místně a budou synchronizovány.",
         errors: {
           attendance: "Účast musí být nezáporné celé číslo.",
           event: "Akci nelze místně upravit.",
@@ -191,7 +221,8 @@ const resources = {
         descriptionMode: "Režim popisu",
         descriptionVisual: "Vizuálně",
         descriptionMarkdown: "Markdown",
-        descriptionUnsupported: "Tento Markdown nelze bezpečně převést do vizuálního režimu. Zdroj zůstal zachován; upravujte jej v režimu Markdown.",
+        descriptionUnsupported:
+          "Tento Markdown nelze bezpečně převést do vizuálního režimu. Zdroj zůstal zachován; upravujte jej v režimu Markdown.",
         scalingUnit: "Jednotka škálování",
         baseScalingAmount: "Základní množství škálování",
         noScalingUnits:
@@ -257,15 +288,26 @@ const resources = {
         catalogUpdateBlockedHelp:
           "Aktualizaci nelze potvrdit: chybí jednotka nebo kompatibilní převod. Množství nebylo odhadnuto.",
         catalogUpdateChoice: "Zvolte zachování nebo vyřazení místních úprav.",
-        catalogUpdateDiff: "Přidané: {{added}}, odebrané: {{removed}}, změněné množství: {{changed}}.",
-        catalogUpdateUnavailable: "Podrobný náhled není v místní projekci k dispozici; aktualizaci nelze bezpečně použít.",
-        catalogUpdateKinds: { added: "Přidáno", removed: "Odebráno", changed: "Změněno", preserved: "Zachováno" },
-        catalogUpdateScaleReset: "Jednotka škálování se mění z {{current}} na {{target}}; množství se nastaví na návrh podle účasti {{suggestion}}.",
-        catalogUpdateScaleKept: "Jednotka škálování {{unit}} zůstává kompatibilní; vybrané množství zůstane zachováno.",
-        catalogUpdateScaleDeferred: "Návrh vypočítá server při potvrzení změny.",
+        catalogUpdateDiff:
+          "Přidané: {{added}}, odebrané: {{removed}}, změněné množství: {{changed}}.",
+        catalogUpdateUnavailable:
+          "Podrobný náhled není v místní projekci k dispozici; aktualizaci nelze bezpečně použít.",
+        catalogUpdateKinds: {
+          added: "Přidáno",
+          removed: "Odebráno",
+          changed: "Změněno",
+          preserved: "Zachováno",
+        },
+        catalogUpdateScaleReset:
+          "Jednotka škálování se mění z {{current}} na {{target}}; množství se nastaví na návrh podle účasti {{suggestion}}.",
+        catalogUpdateScaleKept:
+          "Jednotka škálování {{unit}} zůstává kompatibilní; vybrané množství zůstane zachováno.",
+        catalogUpdateScaleDeferred:
+          "Návrh vypočítá server při potvrzení změny.",
         preserveOverrides: "Zachovat úpravy",
         discardOverrides: "Vyřadit úpravy",
-        catalogUpdateChanges: "Aktuální verze: {{current}} · Nová verze: {{target}}",
+        catalogUpdateChanges:
+          "Aktuální verze: {{current}} · Nová verze: {{target}}",
         retire: "Vyřadit recept",
         restore: "Obnovit recept",
         errors: {
@@ -295,7 +337,8 @@ const resources = {
         massHint: "Zadejte hmotnost odpovídající jedné základní jednotce.",
         dietaryTags: "Dietní štítky",
         noUnits: "Pro vytvoření suroviny je potřeba uložená jednotka.",
-        noStoreSections: "Pro vytvoření suroviny je potřeba aktivní oddělení obchodu.",
+        noStoreSections:
+          "Pro vytvoření suroviny je potřeba aktivní oddělení obchodu.",
         defaultStoreSection: "Výchozí oddělení ingredience",
         create: "Uložit surovinu",
         saved: "Surovina je uložena místně a bude synchronizována.",
@@ -312,7 +355,8 @@ const resources = {
         publishVersion: "Publikovat novou verzi",
         versionQueued: "Nová verze je uložena místně a bude synchronizována.",
         priceHeading: "Cena suroviny",
-        currentPrice: "Aktuální cena: {{amount}} {{currency}} / {{quantity}} {{unit}}",
+        currentPrice:
+          "Aktuální cena: {{amount}} {{currency}} / {{quantity}} {{unit}}",
         noPrice: "Cena zatím není nastavena.",
         priceAmount: "Částka",
         priceQuantity: "Množství",
@@ -328,12 +372,14 @@ const resources = {
         copyAction: "Kopírovat do jiné organizace",
         copyRetired: "Vyřazenou surovinu nelze kopírovat.",
         copyHeading: "Kopírovat surovinu",
-        copyOnlineOnly: "Kopírování vyžaduje připojení a po potvrzení vytvoří novou surovinu v cílové organizaci.",
+        copyOnlineOnly:
+          "Kopírování vyžaduje připojení a po potvrzení vytvoří novou surovinu v cílové organizaci.",
         copyDestination: "Cílová organizace",
         copyChooseDestination: "Vyberte cílovou organizaci",
         copyLoading: "Načítáme bezpečný náhled…",
         copyUnavailable: "Kopírování není pro tuto organizaci dostupné.",
-        copySuccess: "Surovina byla zkopírována. Cílový katalog se aktualizuje při synchronizaci.",
+        copySuccess:
+          "Surovina byla zkopírována. Cílový katalog se aktualizuje při synchronizaci.",
         copySource: "Zdrojová surovina: {{name}}",
         copyCurrentVersion: "Aktuální publikovaná verze",
         copyMappings: "Požadovaná mapování",
@@ -357,10 +403,21 @@ const resources = {
         },
       },
       catalogAdministration: {
-        heading: "Správa katalogu", recipeTags: "Štítky receptů", dietaryTags: "Dietní štítky",
-        storeSections: "Oddělení obchodu", customUnits: "Vlastní jednotky", mealRoles: "Role jídel",
-        name: "Název", color: "Barva", add: "Přidat", retired: "vyřazeno", restore: "Obnovit",
-        retire: "Vyřadit", edit: "Upravit", position: "Pořadí", save: "Uložit",
+        heading: "Správa katalogu",
+        recipeTags: "Štítky receptů",
+        dietaryTags: "Dietní štítky",
+        storeSections: "Oddělení obchodu",
+        customUnits: "Vlastní jednotky",
+        mealRoles: "Role jídel",
+        name: "Název",
+        color: "Barva",
+        add: "Přidat",
+        retired: "vyřazeno",
+        restore: "Obnovit",
+        retire: "Vyřadit",
+        edit: "Upravit",
+        position: "Pořadí",
+        save: "Uložit",
       },
       planner: {
         heading: "Plán akce",
@@ -415,14 +472,24 @@ const resources = {
         catalogUpdateAvailable:
           "Je dostupná aktualizace verzí surovin v katalogu.",
         dietaryWarnings: "Dietní konflikty",
-        dietaryTagSeeds: { vegetarian: "Vegetariánské", vegan: "Veganské", gluten: "Bez lepku", lactose: "Bez laktózy" },
-        dietaryWarning: "{{exception}}: štítky {{tags}} se týkají surovin {{ingredients}}.",
+        dietaryTagSeeds: {
+          vegetarian: "Vegetariánské",
+          vegan: "Veganské",
+          gluten: "Bez lepku",
+          lactose: "Bez laktózy",
+        },
+        dietaryWarning:
+          "{{exception}}: štítky {{tags}} se týkají surovin {{ingredients}}.",
         catalogUpdatePreview: "Náhled aktualizace katalogu",
         catalogUpdateChoice: "Zvolte zachování nebo vyřazení místních úprav.",
-        catalogUpdateDiff: "Přidané: {{added}}, odebrané: {{removed}}, změněné množství: {{changed}}.",
-        catalogUpdateScaleReset: "Jednotka škálování se mění z {{current}} na {{target}}; množství se nastaví na návrh podle účasti {{suggestion}}.",
-        catalogUpdateScaleKept: "Jednotka škálování {{unit}} zůstává kompatibilní; vybrané množství zůstane zachováno.",
-        catalogUpdateScaleDeferred: "Návrh vypočítá server při potvrzení změny.",
+        catalogUpdateDiff:
+          "Přidané: {{added}}, odebrané: {{removed}}, změněné množství: {{changed}}.",
+        catalogUpdateScaleReset:
+          "Jednotka škálování se mění z {{current}} na {{target}}; množství se nastaví na návrh podle účasti {{suggestion}}.",
+        catalogUpdateScaleKept:
+          "Jednotka škálování {{unit}} zůstává kompatibilní; vybrané množství zůstane zachováno.",
+        catalogUpdateScaleDeferred:
+          "Návrh vypočítá server při potvrzení změny.",
         preserveOverrides: "Zachovat úpravy",
         discardOverrides: "Vyřadit úpravy",
         diners: "Strávníci: {{count}}",
@@ -436,7 +503,8 @@ const resources = {
         recipeCost: "Náklady: {{total}} · na strávníka {{perDiner}}",
         recipeCostMissing: "chybí cena",
         weightUnavailable: "Hmotnost porce: nedostupná",
-        weightDetail: "Připravená hmotnost: {{total}} · na strávníka {{perDiner}}",
+        weightDetail:
+          "Připravená hmotnost: {{total}} · na strávníka {{perDiner}}",
         localOverrides: "Obsahuje místní úpravy",
         localOverrideMarker: "místní úprava",
         resetToCatalog: "Vrátit na katalog",
@@ -507,7 +575,10 @@ const resources = {
         defaultStoreSection: "Výchozí oddělení ingredience",
         clearManualTarget: "Použít vypočtený cíl",
         fulfilled: "Nakoupeno",
-        attribution: { note: "Nakoupil(a) {{actor}} · {{timestamp}}", you: "vy" },
+        attribution: {
+          note: "Nakoupil(a) {{actor}} · {{timestamp}}",
+          you: "vy",
+        },
         notRequired: "Není třeba kupovat",
         contributions: "Příspěvky receptů",
         generatedRequirement: "Vygenerovaná potřeba",
@@ -640,7 +711,8 @@ const resources = {
         pending: "Čekají změny: {{count}}",
         syncing: "Synchronizujeme…",
         retrying: "Synchronizace bude zopakována",
-        upgradeRequired: "Je nutná aktualizace aplikace. Lokální změny zůstanou zachovány.",
+        upgradeRequired:
+          "Je nutná aktualizace aplikace. Lokální změny zůstanou zachovány.",
         failed: "Změny vyžadují pozornost: {{count}}",
         storageUnavailable: "Místní úložiště synchronizace není k dispozici.",
         storagePersistence: {
@@ -655,13 +727,19 @@ const resources = {
         clockSkew: "Čas zařízení se liší od serveru.",
         reviewFailed: "Zobrazit odmítnuté změny ({{count}})",
         recoverableTitle: "Odmítnuté změny",
-        recoverableDescription: "Tyto záměry byly odmítnuty. Exportujte je pro pozdější kontrolu, nebo je zahoďte. Zahození odstraní jen odmítnutý záměr; uložená data zůstanou beze změny.",
+        recoverableDescription:
+          "Tyto záměry byly odmítnuty. Exportujte je pro pozdější kontrolu, nebo je zahoďte. Zahození odstraní jen odmítnutý záměr; uložená data zůstanou beze změny.",
         unknownCommand: "Neznámá změna",
         export: "Exportovat JSON",
         discard: "Zahodit",
-        discardConfirm: "Opravdu chcete odstranit tento odmítnutý záměr? Uložená data se nezmění.",
+        discardConfirm:
+          "Opravdu chcete odstranit tento odmítnutý záměr? Uložená data se nezmění.",
         close: "Zavřít",
-        commandTypes: { "event.update": "Úprava akce", "recipe.create": "Vytvoření receptu", "recipe.publish_version": "Publikování receptu" },
+        commandTypes: {
+          "event.update": "Úprava akce",
+          "recipe.create": "Vytvoření receptu",
+          "recipe.publish_version": "Publikování receptu",
+        },
       },
       authentication: {
         loading: "Ověřujeme přihlášení…",
@@ -703,7 +781,8 @@ const resources = {
         organizationsError:
           "Organizations could not be loaded. Please try again.",
         noOrganizations: "You do not have access to an active organization.",
-        organizationUnavailable: "This organization is not available to this account.",
+        organizationUnavailable:
+          "This organization is not available to this account.",
         language: "Language",
         heading: "Plan group cooking",
         introduction:
@@ -713,10 +792,18 @@ const resources = {
         logout: "Log out",
         logoutError: "Log out failed. Please try again.",
         localeError: "The language could not be saved. Please try again.",
-        authorizationRequiredOffline: "Offline access has expired. Connect to the internet to verify organization access.",
+        authorizationRequiredOffline:
+          "Offline access has expired. Connect to the internet to verify organization access.",
       },
       routing: { notFound: "The requested page was not found.", home: "Home" },
-      mcpGrants: { navigation: "MCP connections", heading: "MCP connections", empty: "You have no active connections.", revoke: "Revoke", confirm: "Revoke this connection?", error: "Unable to load connections." },
+      mcpGrants: {
+        navigation: "MCP connections",
+        heading: "MCP connections",
+        empty: "You have no active connections.",
+        revoke: "Revoke",
+        confirm: "Revoke this connection?",
+        error: "Unable to load connections.",
+      },
       systemOrganizations: {
         navigation: "Organization administration",
         heading: "New organization",
@@ -741,9 +828,26 @@ const resources = {
         error: "The organization could not be created.",
         forbidden: "Only system administrators can use this feature.",
         routeForbidden: "Only system administrators can access this page.",
-        errors: { name: "Enter a name of at most 200 characters.", currency: "Enter a valid three-letter currency code." },
+        errors: {
+          name: "Enter a name of at most 200 characters.",
+          currency: "Enter a valid three-letter currency code.",
+        },
       },
-      organizationMetadata: { heading: "Organization settings", name: "Name", description: "Description", currency: "Default currency", save: "Queue synchronization change", offline: "Changes will be queued and synchronized when connectivity returns.", offlineBlocked: "Offline edits require a valid organization authorization.", error: "The change could not be queued. Check failed outbox actions and try again.", saved: "Change queued for synchronization; the server has not accepted it yet." },
+      organizationMetadata: {
+        heading: "Organization settings",
+        name: "Name",
+        description: "Description",
+        currency: "Default currency",
+        save: "Queue synchronization change",
+        offline:
+          "Changes will be queued and synchronized when connectivity returns.",
+        offlineBlocked:
+          "Offline edits require a valid organization authorization.",
+        error:
+          "The change could not be queued. Check failed outbox actions and try again.",
+        saved:
+          "Change queued for synchronization; the server has not accepted it yet.",
+      },
       membership: {
         heading: "Organization members",
         loading: "Loading organization members…",
@@ -787,7 +891,8 @@ const resources = {
         archiveSearchEmpty: "No archived events match the search.",
         archiveError: "Archived events could not be loaded.",
         loadMore: "Load more archived events",
-        archiveOpenOfflineUnavailable: "Opening requires a connection or a cached archive snapshot",
+        archiveOpenOfflineUnavailable:
+          "Opening requires a connection or a cached archive snapshot",
       },
       eventsCreate: {
         heading: "New event",
@@ -831,7 +936,8 @@ const resources = {
           event: "The event cannot be edited locally.",
           unavailable:
             "Attendance could not be saved locally. Please try again.",
-          metadata: "Event details could not be saved locally. Please try again.",
+          metadata:
+            "Event details could not be saved locally. Please try again.",
         },
       },
       eventLifecycle: {
@@ -879,7 +985,8 @@ const resources = {
         descriptionMode: "Description mode",
         descriptionVisual: "Visual",
         descriptionMarkdown: "Markdown",
-        descriptionUnsupported: "This Markdown cannot be safely converted to visual mode. The source was preserved; edit it in Markdown mode.",
+        descriptionUnsupported:
+          "This Markdown cannot be safely converted to visual mode. The source was preserved; edit it in Markdown mode.",
         scalingUnit: "Scaling unit",
         baseScalingAmount: "Base scaling amount",
         noScalingUnits: "A stored scaling unit is required to create a recipe.",
@@ -925,7 +1032,8 @@ const resources = {
         copySaved: "Recipe copied.",
         scaling: "Base: {{amount}}",
         estimatedCost: "Estimated cost: {{amount}}",
-        incompleteCost: "Cost incomplete ({{count}} ingredients lack a valid price).",
+        incompleteCost:
+          "Cost incomplete ({{count}} ingredients lack a valid price).",
         showRetired: "Show retired recipes",
         retired: "Retired recipe",
         versionHistory: "Version history",
@@ -943,16 +1051,28 @@ const resources = {
         catalogUpdateBlocked: "cannot convert safely",
         catalogUpdateBlockedHelp:
           "This update cannot be confirmed because unit metadata or a compatible conversion is missing. No quantity was guessed.",
-        catalogUpdateChoice: "Choose whether to preserve or discard local overrides.",
-        catalogUpdateDiff: "Added: {{added}}, removed: {{removed}}, changed quantities: {{changed}}.",
-        catalogUpdateUnavailable: "The detailed preview is unavailable in the local projection; this update cannot be applied safely.",
-        catalogUpdateKinds: { added: "Added", removed: "Removed", changed: "Changed", preserved: "Preserved" },
-        catalogUpdateScaleReset: "The scaling unit changes from {{current}} to {{target}}; attendance suggests amount {{suggestion}}.",
-        catalogUpdateScaleKept: "Scaling unit {{unit}} remains compatible; the selected amount is preserved.",
-        catalogUpdateScaleDeferred: "The server will calculate the suggestion when the update is confirmed.",
+        catalogUpdateChoice:
+          "Choose whether to preserve or discard local overrides.",
+        catalogUpdateDiff:
+          "Added: {{added}}, removed: {{removed}}, changed quantities: {{changed}}.",
+        catalogUpdateUnavailable:
+          "The detailed preview is unavailable in the local projection; this update cannot be applied safely.",
+        catalogUpdateKinds: {
+          added: "Added",
+          removed: "Removed",
+          changed: "Changed",
+          preserved: "Preserved",
+        },
+        catalogUpdateScaleReset:
+          "The scaling unit changes from {{current}} to {{target}}; attendance suggests amount {{suggestion}}.",
+        catalogUpdateScaleKept:
+          "Scaling unit {{unit}} remains compatible; the selected amount is preserved.",
+        catalogUpdateScaleDeferred:
+          "The server will calculate the suggestion when the update is confirmed.",
         preserveOverrides: "Preserve overrides",
         discardOverrides: "Discard overrides",
-        catalogUpdateChanges: "Current version: {{current}} · New version: {{target}}",
+        catalogUpdateChanges:
+          "Current version: {{current}} · New version: {{target}}",
         retire: "Retire recipe",
         restore: "Restore recipe",
         errors: {
@@ -984,7 +1104,8 @@ const resources = {
         massHint: "Enter the mass represented by one canonical unit.",
         dietaryTags: "Dietary tags",
         noUnits: "A stored unit is required to create an ingredient.",
-        noStoreSections: "An active store section is required to create an ingredient.",
+        noStoreSections:
+          "An active store section is required to create an ingredient.",
         defaultStoreSection: "Ingredient default section",
         create: "Save ingredient",
         saved: "The ingredient is saved locally and will synchronize.",
@@ -1001,7 +1122,8 @@ const resources = {
         publishVersion: "Publish new version",
         versionQueued: "The new version is saved locally and will synchronize.",
         priceHeading: "Ingredient price",
-        currentPrice: "Current price: {{amount}} {{currency}} / {{quantity}} {{unit}}",
+        currentPrice:
+          "Current price: {{amount}} {{currency}} / {{quantity}} {{unit}}",
         noPrice: "No price has been set.",
         priceAmount: "Amount",
         priceQuantity: "Quantity",
@@ -1017,12 +1139,14 @@ const resources = {
         copyAction: "Copy to another organization",
         copyRetired: "Retired ingredients cannot be copied.",
         copyHeading: "Copy ingredient",
-        copyOnlineOnly: "Copying requires a network connection and creates a new ingredient in the destination organization after confirmation.",
+        copyOnlineOnly:
+          "Copying requires a network connection and creates a new ingredient in the destination organization after confirmation.",
         copyDestination: "Destination organization",
         copyChooseDestination: "Choose a destination organization",
         copyLoading: "Loading a guarded preview…",
         copyUnavailable: "Copying is not available for this organization.",
-        copySuccess: "Ingredient copied. The destination catalog will refresh during synchronization.",
+        copySuccess:
+          "Ingredient copied. The destination catalog will refresh during synchronization.",
         copySource: "Source ingredient: {{name}}",
         copyCurrentVersion: "Current published version",
         copyMappings: "Required mappings",
@@ -1047,10 +1171,21 @@ const resources = {
         },
       },
       catalogAdministration: {
-        heading: "Catalog administration", recipeTags: "Recipe tags", dietaryTags: "Dietary tags",
-        storeSections: "Store sections", customUnits: "Custom units", mealRoles: "Meal roles",
-        name: "Name", color: "Color", add: "Add", retired: "retired", restore: "Restore",
-        retire: "Retire", edit: "Edit", position: "Position", save: "Save",
+        heading: "Catalog administration",
+        recipeTags: "Recipe tags",
+        dietaryTags: "Dietary tags",
+        storeSections: "Store sections",
+        customUnits: "Custom units",
+        mealRoles: "Meal roles",
+        name: "Name",
+        color: "Color",
+        add: "Add",
+        retired: "retired",
+        restore: "Restore",
+        retire: "Retire",
+        edit: "Edit",
+        position: "Position",
+        save: "Save",
       },
       planner: {
         heading: "Event planner",
@@ -1105,14 +1240,25 @@ const resources = {
         catalogUpdateAvailable:
           "An ingredient version update is available in the catalog.",
         dietaryWarnings: "Dietary conflicts",
-        dietaryTagSeeds: { vegetarian: "Vegetarian", vegan: "Vegan", gluten: "Gluten-free", lactose: "Lactose-free" },
-        dietaryWarning: "{{exception}}: tags {{tags}} match ingredients {{ingredients}}.",
+        dietaryTagSeeds: {
+          vegetarian: "Vegetarian",
+          vegan: "Vegan",
+          gluten: "Gluten-free",
+          lactose: "Lactose-free",
+        },
+        dietaryWarning:
+          "{{exception}}: tags {{tags}} match ingredients {{ingredients}}.",
         catalogUpdatePreview: "Catalog update preview",
-        catalogUpdateChoice: "Choose whether to preserve or discard local overrides.",
-        catalogUpdateDiff: "Added: {{added}}, removed: {{removed}}, changed quantities: {{changed}}.",
-        catalogUpdateScaleReset: "The scaling unit changes from {{current}} to {{target}}; attendance suggests amount {{suggestion}}.",
-        catalogUpdateScaleKept: "Scaling unit {{unit}} remains compatible; the selected amount is preserved.",
-        catalogUpdateScaleDeferred: "The server will calculate the suggestion when the update is confirmed.",
+        catalogUpdateChoice:
+          "Choose whether to preserve or discard local overrides.",
+        catalogUpdateDiff:
+          "Added: {{added}}, removed: {{removed}}, changed quantities: {{changed}}.",
+        catalogUpdateScaleReset:
+          "The scaling unit changes from {{current}} to {{target}}; attendance suggests amount {{suggestion}}.",
+        catalogUpdateScaleKept:
+          "Scaling unit {{unit}} remains compatible; the selected amount is preserved.",
+        catalogUpdateScaleDeferred:
+          "The server will calculate the suggestion when the update is confirmed.",
         preserveOverrides: "Preserve overrides",
         discardOverrides: "Discard overrides",
         diners: "Diners: {{count}}",
@@ -1198,7 +1344,10 @@ const resources = {
         defaultStoreSection: "Ingredient default section",
         clearManualTarget: "Use calculated target",
         fulfilled: "Purchased",
-        attribution: { note: "Purchased by {{actor}} · {{timestamp}}", you: "You" },
+        attribution: {
+          note: "Purchased by {{actor}} · {{timestamp}}",
+          you: "You",
+        },
         notRequired: "Nothing to buy",
         contributions: "Recipe contributions",
         generatedRequirement: "Generated requirement",
@@ -1302,7 +1451,8 @@ const resources = {
         lifecycle: "Event lifecycle",
         archivedReadOnly: "Archived events are read-only.",
         loading: "Loading event settings…",
-        unavailable: "This event's settings are not available in the cached projection.",
+        unavailable:
+          "This event's settings are not available in the cached projection.",
       },
       eventNavigation: {
         label: "Event navigation",
@@ -1332,7 +1482,8 @@ const resources = {
         pending: "Pending changes: {{count}}",
         syncing: "Synchronizing…",
         retrying: "Synchronization will retry",
-        upgradeRequired: "An app update is required. Your local changes will be preserved.",
+        upgradeRequired:
+          "An app update is required. Your local changes will be preserved.",
         failed: "Changes need attention: {{count}}",
         storageUnavailable: "Local synchronization storage is unavailable.",
         storagePersistence: {
@@ -1347,13 +1498,19 @@ const resources = {
         clockSkew: "Your device time differs from the server.",
         reviewFailed: "Review rejected changes ({{count}})",
         recoverableTitle: "Rejected changes",
-        recoverableDescription: "These intents were rejected. Export them for later review, or discard them. Discarding removes only the rejected intent; cached data is unchanged.",
+        recoverableDescription:
+          "These intents were rejected. Export them for later review, or discard them. Discarding removes only the rejected intent; cached data is unchanged.",
         unknownCommand: "Unknown change",
         export: "Export JSON",
         discard: "Discard",
-        discardConfirm: "Discard this rejected intent? Cached data will not change.",
+        discardConfirm:
+          "Discard this rejected intent? Cached data will not change.",
         close: "Close",
-        commandTypes: { "event.update": "Event update", "recipe.create": "Recipe creation", "recipe.publish_version": "Recipe publication" },
+        commandTypes: {
+          "event.update": "Event update",
+          "recipe.create": "Recipe creation",
+          "recipe.publish_version": "Recipe publication",
+        },
       },
       authentication: {
         loading: "Checking your sign-in…",

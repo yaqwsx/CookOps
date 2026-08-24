@@ -109,7 +109,10 @@ describe("offline recipe lifecycle", () => {
     });
   });
 
-  async function addIngredient(retired: boolean, organization = organizationId) {
+  async function addIngredient(
+    retired: boolean,
+    organization = organizationId,
+  ) {
     await localDb.canonicalRecords.bulkAdd([
       {
         userId,
@@ -190,16 +193,24 @@ describe("offline recipe lifecycle", () => {
 
   it("warns only when the current recipe version references a retired ingredient", async () => {
     await addIngredient(true);
-    await expect(readRecipeCatalog(userId, organizationId)).resolves.toMatchObject({
-      recipes: [expect.objectContaining({ hasRetiredIngredientReference: true })],
+    await expect(
+      readRecipeCatalog(userId, organizationId),
+    ).resolves.toMatchObject({
+      recipes: [
+        expect.objectContaining({ hasRetiredIngredientReference: true }),
+      ],
     });
 
     await localDb.canonicalRecords.update(
       [userId, organizationId, "ingredient", ingredientId],
       { lifecycle: "active", fields: { retired_at: null } },
     );
-    await expect(readRecipeCatalog(userId, organizationId)).resolves.toMatchObject({
-      recipes: [expect.objectContaining({ hasRetiredIngredientReference: false })],
+    await expect(
+      readRecipeCatalog(userId, organizationId),
+    ).resolves.toMatchObject({
+      recipes: [
+        expect.objectContaining({ hasRetiredIngredientReference: false }),
+      ],
     });
   });
 
@@ -249,8 +260,12 @@ describe("offline recipe lifecycle", () => {
       immutable: true,
       updatedAt: "2026-08-10T12:00:00.000000Z",
     });
-    await expect(readRecipeCatalog(userId, organizationId)).resolves.toMatchObject({
-      recipes: [expect.objectContaining({ hasRetiredIngredientReference: true })],
+    await expect(
+      readRecipeCatalog(userId, organizationId),
+    ).resolves.toMatchObject({
+      recipes: [
+        expect.objectContaining({ hasRetiredIngredientReference: true }),
+      ],
       ingredients: expect.arrayContaining([
         expect.objectContaining({
           versionId: ingredientVersionId,
@@ -270,13 +285,20 @@ describe("offline recipe lifecycle", () => {
       entityId: "dce17d2f-8365-4b1f-a80b-34d10425d51c",
       recordSchemaVersion: 1,
       lifecycle: "retired",
-      fields: { organization_id: organizationId, current_version_id: ingredientVersionId },
+      fields: {
+        organization_id: organizationId,
+        current_version_id: ingredientVersionId,
+      },
       fieldClocks: {},
       immutable: false,
       updatedAt: "2026-08-10T12:00:00.000000Z",
     });
-    await expect(readRecipeCatalog(userId, organizationId)).resolves.toMatchObject({
-      recipes: [expect.objectContaining({ hasRetiredIngredientReference: false })],
+    await expect(
+      readRecipeCatalog(userId, organizationId),
+    ).resolves.toMatchObject({
+      recipes: [
+        expect.objectContaining({ hasRetiredIngredientReference: false }),
+      ],
     });
   });
 
@@ -288,7 +310,9 @@ describe("offline recipe lifecycle", () => {
     const normalCatalog = await readRecipeCatalog(userId, organizationId);
     expect(normalCatalog).toMatchObject({ recipes: [] });
     expect(normalCatalog).not.toHaveProperty("sourceUnits");
-    await expect(readRecipeCatalog(userId, organizationId, true)).resolves.toMatchObject({
+    await expect(
+      readRecipeCatalog(userId, organizationId, true),
+    ).resolves.toMatchObject({
       recipes: [expect.objectContaining({ id: recipeId, retired: true })],
     });
   });

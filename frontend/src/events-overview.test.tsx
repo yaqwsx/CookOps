@@ -20,7 +20,8 @@ const { getEventPage } = vi.hoisted(() => ({
   getEventPage: vi.fn(),
 }));
 vi.mock("./api/events", async () => {
-  const actual = await vi.importActual<typeof import("./api/events")>("./api/events");
+  const actual =
+    await vi.importActual<typeof import("./api/events")>("./api/events");
   return { ...actual, getEventPage };
 });
 
@@ -181,26 +182,68 @@ describe("EventOverview", () => {
       archivedAt: "2026-08-13",
     });
     getEventPage
-      .mockResolvedValueOnce({ events: [archived(eventId, "Server duplicate")], nextCursor: "next" })
-      .mockResolvedValueOnce({ events: [archived("11111111-1111-4111-8111-111111111111", "Second archive")], nextCursor: null });
+      .mockResolvedValueOnce({
+        events: [archived(eventId, "Server duplicate")],
+        nextCursor: "next",
+      })
+      .mockResolvedValueOnce({
+        events: [
+          archived("11111111-1111-4111-8111-111111111111", "Second archive"),
+        ],
+        nextCursor: null,
+      });
     await addEvent({ name: "Local active" });
     const user = userEvent.setup();
-    const view = render(<EventOverview onUnauthenticated={vi.fn()} organizationId={organizationId} userId={userId} />);
-    expect(await screen.findByRole("heading", { name: "Local active" })).toBeInTheDocument();
-    expect(screen.queryByRole("heading", { name: "Server duplicate" })).not.toBeInTheDocument();
-    await user.click(await screen.findByRole("button", { name: "Načíst další archivované akce" }));
-    expect(await screen.findByRole("heading", { name: "Second archive" })).toBeInTheDocument();
-    expect(screen.getAllByRole("heading", { name: "Local active" })).toHaveLength(1);
+    const view = render(
+      <EventOverview
+        onUnauthenticated={vi.fn()}
+        organizationId={organizationId}
+        userId={userId}
+      />,
+    );
+    expect(
+      await screen.findByRole("heading", { name: "Local active" }),
+    ).toBeInTheDocument();
+    expect(
+      screen.queryByRole("heading", { name: "Server duplicate" }),
+    ).not.toBeInTheDocument();
+    await user.click(
+      await screen.findByRole("button", {
+        name: "Načíst další archivované akce",
+      }),
+    );
+    expect(
+      await screen.findByRole("heading", { name: "Second archive" }),
+    ).toBeInTheDocument();
+    expect(
+      screen.getAllByRole("heading", { name: "Local active" }),
+    ).toHaveLength(1);
 
-    view.rerender(<EventOverview onUnauthenticated={vi.fn()} organizationId="different-org" userId={userId} />);
-    await waitFor(() => expect(screen.queryByRole("heading", { name: "Second archive" })).not.toBeInTheDocument());
+    view.rerender(
+      <EventOverview
+        onUnauthenticated={vi.fn()}
+        organizationId="different-org"
+        userId={userId}
+      />,
+    );
+    await waitFor(() =>
+      expect(
+        screen.queryByRole("heading", { name: "Second archive" }),
+      ).not.toBeInTheDocument(),
+    );
   });
 
   it("ignores an old organization archive response after switching organizations", async () => {
     const oldOrganizationId = organizationId;
     const newOrganizationId = "6de17d2f-8365-4b1f-a80b-34d10425d51c";
-    let resolveOldPage!: (page: { events: EventSummary[]; nextCursor: string | null }) => void;
-    const oldPage = new Promise<{ events: EventSummary[]; nextCursor: string | null }>((resolve) => {
+    let resolveOldPage!: (page: {
+      events: EventSummary[];
+      nextCursor: string | null;
+    }) => void;
+    const oldPage = new Promise<{
+      events: EventSummary[];
+      nextCursor: string | null;
+    }>((resolve) => {
       resolveOldPage = resolve;
     });
     const summary = (id: string, name: string, org: string): EventSummary => ({
@@ -217,14 +260,52 @@ describe("EventOverview", () => {
     });
     getEventPage
       .mockImplementationOnce(() => oldPage)
-      .mockResolvedValueOnce({ events: [summary("22222222-2222-4222-8222-222222222222", "Current archive", newOrganizationId)], nextCursor: null });
-    const view = render(<EventOverview onUnauthenticated={vi.fn()} organizationId={oldOrganizationId} userId={userId} />);
-    await waitFor(() => expect(getEventPage).toHaveBeenCalledWith(oldOrganizationId, undefined));
-    view.rerender(<EventOverview onUnauthenticated={vi.fn()} organizationId={newOrganizationId} userId={userId} />);
-    resolveOldPage({ events: [summary("11111111-1111-4111-8111-111111111111", "Old archive", oldOrganizationId)], nextCursor: null });
-    expect(screen.queryByRole("heading", { name: "Old archive" })).not.toBeInTheDocument();
-    expect(await screen.findByRole("heading", { name: "Current archive" })).toBeInTheDocument();
-    expect(screen.queryByRole("heading", { name: "Old archive" })).not.toBeInTheDocument();
+      .mockResolvedValueOnce({
+        events: [
+          summary(
+            "22222222-2222-4222-8222-222222222222",
+            "Current archive",
+            newOrganizationId,
+          ),
+        ],
+        nextCursor: null,
+      });
+    const view = render(
+      <EventOverview
+        onUnauthenticated={vi.fn()}
+        organizationId={oldOrganizationId}
+        userId={userId}
+      />,
+    );
+    await waitFor(() =>
+      expect(getEventPage).toHaveBeenCalledWith(oldOrganizationId, undefined),
+    );
+    view.rerender(
+      <EventOverview
+        onUnauthenticated={vi.fn()}
+        organizationId={newOrganizationId}
+        userId={userId}
+      />,
+    );
+    resolveOldPage({
+      events: [
+        summary(
+          "11111111-1111-4111-8111-111111111111",
+          "Old archive",
+          oldOrganizationId,
+        ),
+      ],
+      nextCursor: null,
+    });
+    expect(
+      screen.queryByRole("heading", { name: "Old archive" }),
+    ).not.toBeInTheDocument();
+    expect(
+      await screen.findByRole("heading", { name: "Current archive" }),
+    ).toBeInTheDocument();
+    expect(
+      screen.queryByRole("heading", { name: "Old archive" }),
+    ).not.toBeInTheDocument();
   });
 
   it("does not start a stale archive request after an old pull finishes", async () => {
@@ -237,77 +318,152 @@ describe("EventOverview", () => {
       .mockImplementationOnce(() => oldPull)
       .mockResolvedValueOnce(false);
     getEventPage.mockResolvedValue({
-      events: [{
-        id: "33333333-3333-4333-8333-333333333333",
-        organizationId: newOrganizationId,
-        name: "Current archive",
-        startDate: "2026-08-10",
-        endDate: "2026-08-12",
-        baseExpectedAttendance: 4,
-        budgetAmount: "20.00",
-        currency: "CZK",
-        lifecycle: "archived",
-        archivedAt: "2026-08-13",
-      }],
+      events: [
+        {
+          id: "33333333-3333-4333-8333-333333333333",
+          organizationId: newOrganizationId,
+          name: "Current archive",
+          startDate: "2026-08-10",
+          endDate: "2026-08-12",
+          baseExpectedAttendance: 4,
+          budgetAmount: "20.00",
+          currency: "CZK",
+          lifecycle: "archived",
+          archivedAt: "2026-08-13",
+        },
+      ],
       nextCursor: "next",
     });
-    const view = render(<EventOverview onUnauthenticated={vi.fn()} organizationId={organizationId} userId={userId} />);
-    await waitFor(() => expect(pullOrganization).toHaveBeenCalledWith(userId, organizationId));
-    view.rerender(<EventOverview onUnauthenticated={vi.fn()} organizationId={newOrganizationId} userId={userId} />);
+    const view = render(
+      <EventOverview
+        onUnauthenticated={vi.fn()}
+        organizationId={organizationId}
+        userId={userId}
+      />,
+    );
+    await waitFor(() =>
+      expect(pullOrganization).toHaveBeenCalledWith(userId, organizationId),
+    );
+    view.rerender(
+      <EventOverview
+        onUnauthenticated={vi.fn()}
+        organizationId={newOrganizationId}
+        userId={userId}
+      />,
+    );
     resolveOldPull(false);
-    await waitFor(() => expect(getEventPage).toHaveBeenCalledWith(newOrganizationId, undefined));
+    await waitFor(() =>
+      expect(getEventPage).toHaveBeenCalledWith(newOrganizationId, undefined),
+    );
     expect(getEventPage).not.toHaveBeenCalledWith(organizationId, undefined);
-    expect(screen.getByRole("button", { name: "Načíst další archivované akce" })).not.toBeDisabled();
+    expect(
+      screen.getByRole("button", { name: "Načíst další archivované akce" }),
+    ).not.toBeDisabled();
   });
 
   it("filters archived summaries by trimmed case-insensitive name or id while keeping active events visible", async () => {
     await addEvent({ name: "Active event", lifecycle: "active" });
     await addEvent(
-      { name: "Čokoládový ples", lifecycle: "archived", archived_at: "2026-08-13" },
+      {
+        name: "Čokoládový ples",
+        lifecycle: "archived",
+        archived_at: "2026-08-13",
+      },
       "canonical",
       "11111111-1111-4111-8111-111111111111",
     );
     await addEvent(
-      { name: "Other archive", lifecycle: "archived", archived_at: "2026-08-14" },
+      {
+        name: "Other archive",
+        lifecycle: "archived",
+        archived_at: "2026-08-14",
+      },
       "canonical",
       "22222222-2222-4222-8222-222222222222",
     );
     const user = userEvent.setup();
     render(
-      <EventOverview onUnauthenticated={vi.fn()} organizationId={organizationId} userId={userId} />,
+      <EventOverview
+        onUnauthenticated={vi.fn()}
+        organizationId={organizationId}
+        userId={userId}
+      />,
     );
 
-    expect(await screen.findByRole("heading", { name: "Active event" })).toBeInTheDocument();
+    expect(
+      await screen.findByRole("heading", { name: "Active event" }),
+    ).toBeInTheDocument();
     expect(screen.getByRole("searchbox")).toBeInTheDocument();
     await user.type(screen.getByRole("searchbox"), "  ČOKOLÁDOVÝ  ");
-    expect(screen.getByRole("heading", { name: "Active event" })).toBeInTheDocument();
-    expect(screen.getByRole("heading", { name: "Čokoládový ples" })).toBeInTheDocument();
-    expect(screen.queryByRole("heading", { name: "Other archive" })).not.toBeInTheDocument();
+    expect(
+      screen.getByRole("heading", { name: "Active event" }),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole("heading", { name: "Čokoládový ples" }),
+    ).toBeInTheDocument();
+    expect(
+      screen.queryByRole("heading", { name: "Other archive" }),
+    ).not.toBeInTheDocument();
 
     await user.clear(screen.getByRole("searchbox"));
-    await user.type(screen.getByRole("searchbox"), "22222222-2222-4222-8222-222222222222");
-    expect(screen.getByRole("heading", { name: "Active event" })).toBeInTheDocument();
-    expect(screen.getByRole("heading", { name: "Other archive" })).toBeInTheDocument();
-    expect(screen.queryByRole("heading", { name: "Čokoládový ples" })).not.toBeInTheDocument();
+    await user.type(
+      screen.getByRole("searchbox"),
+      "22222222-2222-4222-8222-222222222222",
+    );
+    expect(
+      screen.getByRole("heading", { name: "Active event" }),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole("heading", { name: "Other archive" }),
+    ).toBeInTheDocument();
+    expect(
+      screen.queryByRole("heading", { name: "Čokoládový ples" }),
+    ).not.toBeInTheDocument();
 
-    await user.click(screen.getByRole("button", { name: "Vymazat hledání archivovaných akcí" }));
-    expect(screen.getByRole("heading", { name: "Čokoládový ples" })).toBeInTheDocument();
-    expect(screen.getByRole("heading", { name: "Other archive" })).toBeInTheDocument();
+    await user.click(
+      screen.getByRole("button", {
+        name: "Vymazat hledání archivovaných akcí",
+      }),
+    );
+    expect(
+      screen.getByRole("heading", { name: "Čokoládový ples" }),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole("heading", { name: "Other archive" }),
+    ).toBeInTheDocument();
   });
 
   it("shows an accessible empty state and no search when archived events are absent", async () => {
     await addEvent({ name: "Only active", lifecycle: "active" });
     const user = userEvent.setup();
     render(
-      <EventOverview onUnauthenticated={vi.fn()} organizationId={organizationId} userId={userId} />,
+      <EventOverview
+        onUnauthenticated={vi.fn()}
+        organizationId={organizationId}
+        userId={userId}
+      />,
     );
-    expect(await screen.findByRole("heading", { name: "Only active" })).toBeInTheDocument();
+    expect(
+      await screen.findByRole("heading", { name: "Only active" }),
+    ).toBeInTheDocument();
     expect(screen.queryByRole("searchbox")).not.toBeInTheDocument();
 
-    await addEvent({ name: "Archived later", lifecycle: "archived", archived_at: "2026-08-13" }, "canonical", "33333333-3333-4333-8333-333333333333");
-    await waitFor(() => expect(screen.getByRole("searchbox")).toBeInTheDocument());
+    await addEvent(
+      {
+        name: "Archived later",
+        lifecycle: "archived",
+        archived_at: "2026-08-13",
+      },
+      "canonical",
+      "33333333-3333-4333-8333-333333333333",
+    );
+    await waitFor(() =>
+      expect(screen.getByRole("searchbox")).toBeInTheDocument(),
+    );
     await user.type(screen.getByRole("searchbox"), "missing");
-    expect(screen.getByRole("status")).toHaveTextContent("Archivované akci neodpovídají hledání.");
+    expect(screen.getByRole("status")).toHaveTextContent(
+      "Archivované akci neodpovídají hledání.",
+    );
   });
 
   it("keeps cached events readable offline without attempting synchronization", async () => {

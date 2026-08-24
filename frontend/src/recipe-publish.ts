@@ -32,7 +32,10 @@ export type RecipeVersionInput = {
   estimatedDinersPerScalingUnit?: string | null;
   roundSuggestionsUp?: boolean;
   catalogUpdate?: boolean;
-  expectedCurrentIngredientVersions?: { ingredientId: string; versionId: string }[];
+  expectedCurrentIngredientVersions?: {
+    ingredientId: string;
+    versionId: string;
+  }[];
 };
 
 export function validateRecipeVersion(
@@ -56,19 +59,25 @@ export function validateRecipeVersion(
     return "tags";
   if (
     input.expectedCurrentIngredientVersions?.some(
-      ({ ingredientId, versionId }) => !uuid.test(ingredientId) || !uuid.test(versionId),
+      ({ ingredientId, versionId }) =>
+        !uuid.test(ingredientId) || !uuid.test(versionId),
     ) ||
     (input.expectedCurrentIngredientVersions &&
-      new Set(input.expectedCurrentIngredientVersions.map(({ ingredientId }) => ingredientId)).size !==
-        input.expectedCurrentIngredientVersions.length)
+      new Set(
+        input.expectedCurrentIngredientVersions.map(
+          ({ ingredientId }) => ingredientId,
+        ),
+      ).size !== input.expectedCurrentIngredientVersions.length)
   )
     return "ingredientLines";
   for (const line of input.ingredientLines) {
     if (
       !uuid.test(line.ingredientVersionId) ||
       (line.lineKey !== undefined && !uuid.test(line.lineKey)) ||
-      (line.positionKey !== undefined && !/^[0-9A-Za-z]+$/.test(line.positionKey)) ||
-      (line.preferredDisplayUnitId !== undefined && !uuid.test(line.preferredDisplayUnitId)) ||
+      (line.positionKey !== undefined &&
+        !/^[0-9A-Za-z]+$/.test(line.positionKey)) ||
+      (line.preferredDisplayUnitId !== undefined &&
+        !uuid.test(line.preferredDisplayUnitId)) ||
       !decimal.test(line.baseQuantity) ||
       (line.scalingBehavior !== "proportional" &&
         line.scalingBehavior !== "fixed") ||
@@ -119,18 +128,41 @@ async function writeRecipePublication(
     "recipe",
     recipeId,
   );
-  if (current?.lifecycle !== "active" || current.fields.organization_id !== organizationId || current.fields.id !== recipeId)
+  if (
+    current?.lifecycle !== "active" ||
+    current.fields.organization_id !== organizationId ||
+    current.fields.id !== recipeId
+  )
     throw new Error("recipe");
   const currentVersionId = current.fields.current_version_id;
-  const currentVersion = typeof currentVersionId === "string" ? await readVisibleCanonicalRecord(userId, organizationId, "recipe_version", currentVersionId) : undefined;
-  if (currentVersion?.immutable !== true || currentVersion.fields.organization_id !== organizationId || currentVersion.fields.recipe_id !== recipeId || currentVersion.fields.id !== currentVersionId) throw new Error("recipe");
+  const currentVersion =
+    typeof currentVersionId === "string"
+      ? await readVisibleCanonicalRecord(
+          userId,
+          organizationId,
+          "recipe_version",
+          currentVersionId,
+        )
+      : undefined;
+  if (
+    currentVersion?.immutable !== true ||
+    currentVersion.fields.organization_id !== organizationId ||
+    currentVersion.fields.recipe_id !== recipeId ||
+    currentVersion.fields.id !== currentVersionId
+  )
+    throw new Error("recipe");
   const version = await readVisibleCanonicalRecord(
     userId,
     organizationId,
     "recipe_version",
     basedOn,
   );
-  if (version?.immutable !== true || version.fields.organization_id !== organizationId || version.fields.recipe_id !== recipeId || version.fields.id !== basedOn)
+  if (
+    version?.immutable !== true ||
+    version.fields.organization_id !== organizationId ||
+    version.fields.recipe_id !== recipeId ||
+    version.fields.id !== basedOn
+  )
     throw new Error("recipe");
   const unit = await localDb.canonicalRecords.get([
     userId,
@@ -146,7 +178,19 @@ async function writeRecipePublication(
   const lines = payload.ingredient_lines as Array<Record<string, unknown>>;
   const tags = payload.recipe_tag_ids as string[];
   for (const tagId of tags) {
-    const tag = (await localDb.optimisticOverlays.get([userId, organizationId, "recipe_tag", tagId])) ?? (await localDb.canonicalRecords.get([userId, organizationId, "recipe_tag", tagId]));
+    const tag =
+      (await localDb.optimisticOverlays.get([
+        userId,
+        organizationId,
+        "recipe_tag",
+        tagId,
+      ])) ??
+      (await localDb.canonicalRecords.get([
+        userId,
+        organizationId,
+        "recipe_tag",
+        tagId,
+      ]));
     if (tag?.lifecycle !== "active") throw new Error("tags");
   }
   for (const line of lines) {
@@ -203,7 +247,10 @@ async function writeRecipePublication(
         scaling_unit_id: payload.scaling_unit_id,
         base_scaling_amount: payload.base_scaling_amount,
         ...(payload.estimated_diners_per_scaling_unit !== undefined
-          ? { estimated_diners_per_scaling_unit: payload.estimated_diners_per_scaling_unit }
+          ? {
+              estimated_diners_per_scaling_unit:
+                payload.estimated_diners_per_scaling_unit,
+            }
           : {}),
         ...(payload.round_suggestions_up !== undefined
           ? { round_suggestions_up: payload.round_suggestions_up }
@@ -276,7 +323,10 @@ export async function queueRecipeVersionPublish(
         : {}),
     })),
     ...(input.estimatedDinersPerScalingUnit !== undefined
-      ? { estimated_diners_per_scaling_unit: input.estimatedDinersPerScalingUnit }
+      ? {
+          estimated_diners_per_scaling_unit:
+            input.estimatedDinersPerScalingUnit,
+        }
       : {}),
     ...(input.roundSuggestionsUp !== undefined
       ? { round_suggestions_up: input.roundSuggestionsUp }
@@ -285,7 +335,9 @@ export async function queueRecipeVersionPublish(
     ...(input.expectedCurrentIngredientVersions?.length
       ? {
           expected_current_ingredient_versions:
-            input.expectedCurrentIngredientVersions.map(({ ingredientId, versionId }) => [ingredientId, versionId]),
+            input.expectedCurrentIngredientVersions.map(
+              ({ ingredientId, versionId }) => [ingredientId, versionId],
+            ),
         }
       : {}),
   };
@@ -333,7 +385,14 @@ export async function replayRecipeVersionPublish(
     !Array.isArray(payload.ingredient_lines)
   )
     return;
-  if (!Array.isArray(payload.recipe_tag_ids) || new Set(payload.recipe_tag_ids).size !== payload.recipe_tag_ids.length || !payload.recipe_tag_ids.every((id): id is string => typeof id === "string" && uuid.test(id))) return;
+  if (
+    !Array.isArray(payload.recipe_tag_ids) ||
+    new Set(payload.recipe_tag_ids).size !== payload.recipe_tag_ids.length ||
+    !payload.recipe_tag_ids.every(
+      (id): id is string => typeof id === "string" && uuid.test(id),
+    )
+  )
+    return;
   try {
     await writeRecipePublication(
       userId,

@@ -5,7 +5,15 @@ import {
   type IngredientUnit,
 } from "./ingredient-catalog";
 import { readCanonicalRecords, readVisibleRecords } from "./visible-records";
-import { add, decimal, divide, money, multiply, zeroFraction, type Fraction } from "./event-cost-projections";
+import {
+  add,
+  decimal,
+  divide,
+  money,
+  multiply,
+  zeroFraction,
+  type Fraction,
+} from "./event-cost-projections";
 
 export type CatalogRecipe = {
   id: string;
@@ -33,10 +41,20 @@ export type CatalogRecipe = {
   catalogUpdateAvailable: boolean;
   recipeTagIds: string[];
 };
-export type RecipeVersionHistoryEntry = { id: string; publishedAt?: string; publishedByUserId?: string; name?: string };
+export type RecipeVersionHistoryEntry = {
+  id: string;
+  publishedAt?: string;
+  publishedByUserId?: string;
+  name?: string;
+};
 type ValidCatalogRecipeCandidate = CatalogRecipe & { versionId: string };
 
-export type RecipeScalingUnit = { id: string; name: string; dimension?: string; baseUnitFactor?: string };
+export type RecipeScalingUnit = {
+  id: string;
+  name: string;
+  dimension?: string;
+  baseUnitFactor?: string;
+};
 export type RecipeCatalogProjection = {
   recipes: CatalogRecipe[];
   scalingUnits: RecipeScalingUnit[];
@@ -47,8 +65,17 @@ export type RecipeCatalogProjection = {
   tags: { id: string; name: string; retired?: boolean }[];
   costs: Record<string, RecipeCostProjection>;
 };
-export type RecipeCostUnit = { id: string; name?: string; dimension: string; baseUnitFactor?: string };
-export type RecipeCostProjection = { currency: string; total: string | null; missingCount: number };
+export type RecipeCostUnit = {
+  id: string;
+  name?: string;
+  dimension: string;
+  baseUnitFactor?: string;
+};
+export type RecipeCostProjection = {
+  currency: string;
+  total: string | null;
+  missingCount: number;
+};
 
 export type RecipeCatalogUpdateLine = {
   lineId: string;
@@ -93,12 +120,20 @@ function conversionFactor(
   if (!sourceUnitId || !targetUnitId) return undefined;
   const sourceUnit = byId.get(sourceUnitId);
   const targetUnit = byId.get(targetUnitId);
-  if (!sourceUnit || !targetUnit || sourceUnit.dimension !== targetUnit.dimension)
+  if (
+    !sourceUnit ||
+    !targetUnit ||
+    sourceUnit.dimension !== targetUnit.dimension
+  )
     return undefined;
   if (sourceUnit.id === targetUnit.id) return decimal("1");
-  const sourceFactor = sourceUnit.baseUnitFactor && decimal(sourceUnit.baseUnitFactor);
-  const targetFactor = targetUnit.baseUnitFactor && decimal(targetUnit.baseUnitFactor);
-  return sourceFactor && targetFactor ? divide(sourceFactor, targetFactor) : undefined;
+  const sourceFactor =
+    sourceUnit.baseUnitFactor && decimal(sourceUnit.baseUnitFactor);
+  const targetFactor =
+    targetUnit.baseUnitFactor && decimal(targetUnit.baseUnitFactor);
+  return sourceFactor && targetFactor
+    ? divide(sourceFactor, targetFactor)
+    : undefined;
 }
 
 /** Preview one atomic recipe version update; incompatible cached metadata blocks confirmation. */
@@ -107,55 +142,104 @@ export function projectRecipeCatalogUpdate(
   ingredients: CatalogIngredient[],
   units: RecipeCostUnit[],
 ): RecipeCatalogUpdateProjection {
-  const byVersion = new Map(ingredients.map((ingredient) => [ingredient.versionId, ingredient]));
+  const byVersion = new Map(
+    ingredients.map((ingredient) => [ingredient.versionId, ingredient]),
+  );
   const byUnit = new Map(units.map((unit) => [unit.id, unit]));
   const currentByIngredient = new Map(
-    ingredients.filter((ingredient) => !ingredient.historical).map((ingredient) => [ingredient.id, ingredient]),
+    ingredients
+      .filter((ingredient) => !ingredient.historical)
+      .map((ingredient) => [ingredient.id, ingredient]),
   );
-  const lines = recipe.ingredientLines.flatMap<RecipeCatalogUpdateLine>((line) => {
-    const oldIngredient = byVersion.get(line.ingredientVersionId);
-    const newIngredient = oldIngredient ? currentByIngredient.get(oldIngredient.id) : undefined;
-    if (oldIngredient && newIngredient && oldIngredient.versionId === newIngredient.versionId) return [];
-    if (!oldIngredient || !newIngredient) {
-      return [{
-        lineId: line.id,
-        ...(line.lineKey ? { lineKey: line.lineKey } : {}),
-        ...(line.positionKey ? { positionKey: line.positionKey } : {}),
-        oldIngredient,
-        newIngredient,
-        oldQuantity: line.baseQuantity,
-        newQuantity: null,
-        oldUnitName: oldIngredient?.canonicalUnitName ?? "—",
-        newUnitName: newIngredient?.canonicalUnitName ?? "—",
-        compatible: false,
-        reason: "missing" as const,
-      }];
-    }
-    const factor = conversionFactor(oldIngredient.canonicalUnitId, newIngredient.canonicalUnitId, byUnit);
-    const quantity = decimal(line.baseQuantity);
-    const convertedQuantity = factor && quantity ? fractionText(multiply(quantity, factor)) : undefined;
-    const metadataComplete = uuid.test(line.lineKey ?? "") && positionPattern.test(line.positionKey ?? "");
-    const sourceUnit = oldIngredient.canonicalUnitId ? byUnit.get(oldIngredient.canonicalUnitId) : undefined;
-    const targetUnit = newIngredient.canonicalUnitId ? byUnit.get(newIngredient.canonicalUnitId) : undefined;
-    return [{
-      lineId: line.id,
-      ...(line.lineKey ? { lineKey: line.lineKey } : {}),
-      ...(line.positionKey ? { positionKey: line.positionKey } : {}),
-      oldIngredient,
-      newIngredient,
-      oldQuantity: line.baseQuantity,
-      newQuantity: convertedQuantity && metadataComplete ? convertedQuantity : null,
-      oldUnitName: sourceUnit?.name ?? oldIngredient.canonicalUnitName,
-      newUnitName: targetUnit?.name ?? newIngredient.canonicalUnitName,
-      compatible: Boolean(factor && quantity && convertedQuantity && metadataComplete),
-      ...(factor && quantity && convertedQuantity && metadataComplete ? {} : { reason: oldIngredient.canonicalUnitId && newIngredient.canonicalUnitId && metadataComplete ? "incompatible" as const : "missing" as const }),
-    }];
-  });
+  const lines = recipe.ingredientLines.flatMap<RecipeCatalogUpdateLine>(
+    (line) => {
+      const oldIngredient = byVersion.get(line.ingredientVersionId);
+      const newIngredient = oldIngredient
+        ? currentByIngredient.get(oldIngredient.id)
+        : undefined;
+      if (
+        oldIngredient &&
+        newIngredient &&
+        oldIngredient.versionId === newIngredient.versionId
+      )
+        return [];
+      if (!oldIngredient || !newIngredient) {
+        return [
+          {
+            lineId: line.id,
+            ...(line.lineKey ? { lineKey: line.lineKey } : {}),
+            ...(line.positionKey ? { positionKey: line.positionKey } : {}),
+            oldIngredient,
+            newIngredient,
+            oldQuantity: line.baseQuantity,
+            newQuantity: null,
+            oldUnitName: oldIngredient?.canonicalUnitName ?? "—",
+            newUnitName: newIngredient?.canonicalUnitName ?? "—",
+            compatible: false,
+            reason: "missing" as const,
+          },
+        ];
+      }
+      const factor = conversionFactor(
+        oldIngredient.canonicalUnitId,
+        newIngredient.canonicalUnitId,
+        byUnit,
+      );
+      const quantity = decimal(line.baseQuantity);
+      const convertedQuantity =
+        factor && quantity
+          ? fractionText(multiply(quantity, factor))
+          : undefined;
+      const metadataComplete =
+        uuid.test(line.lineKey ?? "") &&
+        positionPattern.test(line.positionKey ?? "");
+      const sourceUnit = oldIngredient.canonicalUnitId
+        ? byUnit.get(oldIngredient.canonicalUnitId)
+        : undefined;
+      const targetUnit = newIngredient.canonicalUnitId
+        ? byUnit.get(newIngredient.canonicalUnitId)
+        : undefined;
+      return [
+        {
+          lineId: line.id,
+          ...(line.lineKey ? { lineKey: line.lineKey } : {}),
+          ...(line.positionKey ? { positionKey: line.positionKey } : {}),
+          oldIngredient,
+          newIngredient,
+          oldQuantity: line.baseQuantity,
+          newQuantity:
+            convertedQuantity && metadataComplete ? convertedQuantity : null,
+          oldUnitName: sourceUnit?.name ?? oldIngredient.canonicalUnitName,
+          newUnitName: targetUnit?.name ?? newIngredient.canonicalUnitName,
+          compatible: Boolean(
+            factor && quantity && convertedQuantity && metadataComplete,
+          ),
+          ...(factor && quantity && convertedQuantity && metadataComplete
+            ? {}
+            : {
+                reason:
+                  oldIngredient.canonicalUnitId &&
+                  newIngredient.canonicalUnitId &&
+                  metadataComplete
+                    ? ("incompatible" as const)
+                    : ("missing" as const),
+              }),
+        },
+      ];
+    },
+  );
   return { lines, blocked: lines.some((line) => !line.compatible) };
 }
 
-export function projectRecipeCost(recipe: CatalogRecipe, ingredients: CatalogIngredient[], units: RecipeCostUnit[], currency: string): RecipeCostProjection {
-  const byVersion = new Map(ingredients.map((ingredient) => [ingredient.versionId, ingredient]));
+export function projectRecipeCost(
+  recipe: CatalogRecipe,
+  ingredients: CatalogIngredient[],
+  units: RecipeCostUnit[],
+  currency: string,
+): RecipeCostProjection {
+  const byVersion = new Map(
+    ingredients.map((ingredient) => [ingredient.versionId, ingredient]),
+  );
   const byUnit = new Map(units.map((unit) => [unit.id, unit]));
   let total = zeroFraction;
   let missingCount = 0;
@@ -165,10 +249,19 @@ export function projectRecipeCost(recipe: CatalogRecipe, ingredients: CatalogIng
     const quantity = decimal(line.baseQuantity);
     const amount = price && decimal(price.amount);
     const pricedQuantity = price && decimal(price.quantity);
-    const factor = conversionFactor(ingredient?.canonicalUnitId, price?.unitId, byUnit);
-    const cost = quantity && amount && pricedQuantity && price?.currency === currency && factor
-      ? divide(multiply(amount, multiply(quantity, factor)), pricedQuantity)
-      : undefined;
+    const factor = conversionFactor(
+      ingredient?.canonicalUnitId,
+      price?.unitId,
+      byUnit,
+    );
+    const cost =
+      quantity &&
+      amount &&
+      pricedQuantity &&
+      price?.currency === currency &&
+      factor
+        ? divide(multiply(amount, multiply(quantity, factor)), pricedQuantity)
+        : undefined;
     if (cost) total = add(total, cost);
     else missingCount++;
   }
@@ -184,13 +277,44 @@ function text(record: CanonicalRecord, key: string) {
   return typeof value === "string" ? value : undefined;
 }
 
-export function projectRecipeVersionHistory(recipeId: string, organizationId: string, records: CanonicalRecord[]): RecipeVersionHistoryEntry[] {
-  return records.filter((record) => record.immutable === true && uuid.test(record.entityId) && text(record, "id") === record.entityId && text(record, "organization_id") === organizationId && text(record, "recipe_id") === recipeId).map((record) => {
-    const publishedAt = text(record, "published_at");
-    const publishedByUserId = text(record, "published_by_user_id");
-    const name = text(record, "name");
-    return { id: record.entityId, ...(publishedAt && Number.isFinite(Date.parse(publishedAt)) ? { publishedAt } : {}), ...(publishedByUserId && uuid.test(publishedByUserId) ? { publishedByUserId } : {}), ...(name ? { name } : {}) };
-  }).sort((left, right) => (left.publishedAt ? Date.parse(left.publishedAt) : Number.POSITIVE_INFINITY) - (right.publishedAt ? Date.parse(right.publishedAt) : Number.POSITIVE_INFINITY) || left.id.localeCompare(right.id));
+export function projectRecipeVersionHistory(
+  recipeId: string,
+  organizationId: string,
+  records: CanonicalRecord[],
+): RecipeVersionHistoryEntry[] {
+  return records
+    .filter(
+      (record) =>
+        record.immutable === true &&
+        uuid.test(record.entityId) &&
+        text(record, "id") === record.entityId &&
+        text(record, "organization_id") === organizationId &&
+        text(record, "recipe_id") === recipeId,
+    )
+    .map((record) => {
+      const publishedAt = text(record, "published_at");
+      const publishedByUserId = text(record, "published_by_user_id");
+      const name = text(record, "name");
+      return {
+        id: record.entityId,
+        ...(publishedAt && Number.isFinite(Date.parse(publishedAt))
+          ? { publishedAt }
+          : {}),
+        ...(publishedByUserId && uuid.test(publishedByUserId)
+          ? { publishedByUserId }
+          : {}),
+        ...(name ? { name } : {}),
+      };
+    })
+    .sort(
+      (left, right) =>
+        (left.publishedAt
+          ? Date.parse(left.publishedAt)
+          : Number.POSITIVE_INFINITY) -
+          (right.publishedAt
+            ? Date.parse(right.publishedAt)
+            : Number.POSITIVE_INFINITY) || left.id.localeCompare(right.id),
+    );
 }
 
 /** Return only cached, organization-scoped recipe data that is safe to display or select. */
@@ -203,8 +327,18 @@ export async function readRecipeCatalog(
   pinnedVersionId?: string,
 ): Promise<RecipeCatalogProjection> {
   if (!uuid.test(userId) || !uuid.test(organizationId))
-    return { recipes: [], scalingUnits: [], ingredients: [], units: [], storeSections: [], tags: [], costs: {} };
-  const read = includeOptimisticOverlays ? readVisibleRecords : readCanonicalRecords;
+    return {
+      recipes: [],
+      scalingUnits: [],
+      ingredients: [],
+      units: [],
+      storeSections: [],
+      tags: [],
+      costs: {},
+    };
+  const read = includeOptimisticOverlays
+    ? readVisibleRecords
+    : readCanonicalRecords;
   const [
     recipeRecords,
     versionRecords,
@@ -220,7 +354,12 @@ export async function readRecipeCatalog(
     read(userId, organizationId, "recipe_version"),
     read(userId, organizationId, "unit_definition", includeRetired),
     read(userId, organizationId, "recipe_tag", true),
-    readIngredientCatalog(userId, organizationId, true, includeOptimisticOverlays),
+    readIngredientCatalog(
+      userId,
+      organizationId,
+      true,
+      includeOptimisticOverlays,
+    ),
     read(userId, organizationId, "recipe_ingredient_line"),
     read(userId, organizationId, "recipe_version_tag"),
     read(userId, organizationId, "ingredient", true),
@@ -270,7 +409,10 @@ export async function readRecipeCatalog(
           text(record, "organization_id") === organizationId &&
           uuid.test(text(record, "ingredient_id") ?? ""),
       )
-      .map((record) => [record.entityId, text(record, "ingredient_id") as string]),
+      .map((record) => [
+        record.entityId,
+        text(record, "ingredient_id") as string,
+      ]),
   );
   const versions = new Map(
     versionRecords
@@ -292,7 +434,12 @@ export async function readRecipeCatalog(
     )
     .map((record) => {
       const pinned = record.entityId === pinnedRecipeId;
-      const versionId = pinned ? (pinnedVersionId && uuid.test(pinnedVersionId) ? pinnedVersionId : "") : text(record, "current_version_id") ?? text(record, "recipe_version_id");
+      const versionId = pinned
+        ? pinnedVersionId && uuid.test(pinnedVersionId)
+          ? pinnedVersionId
+          : ""
+        : (text(record, "current_version_id") ??
+          text(record, "recipe_version_id"));
       const candidateVersion = versionId ? versions.get(versionId) : undefined;
       const version =
         candidateVersion &&
@@ -303,25 +450,33 @@ export async function readRecipeCatalog(
       const scalingUnitId = text(version ?? record, "scaling_unit_id");
       const baseScalingAmount = text(version ?? record, "base_scaling_amount");
       const description = (version ?? record).fields.description;
-      const estimatedDinersPerScalingUnit = text(version ?? record, "estimated_diners_per_scaling_unit");
-      const roundSuggestionsUp = (version ?? record).fields.round_suggestions_up;
+      const estimatedDinersPerScalingUnit = text(
+        version ?? record,
+        "estimated_diners_per_scaling_unit",
+      );
+      const roundSuggestionsUp = (version ?? record).fields
+        .round_suggestions_up;
       const ingredientLines = version
         ? lineRecords
             .filter(
-                (line) =>
-                  (text(line, "organization_id") === undefined ||
-                    text(line, "organization_id") === organizationId) &&
-                  text(line, "recipe_version_id") === versionId &&
-                  typeof text(line, "ingredient_version_id") === "string" &&
-                  decimalPattern.test(text(line, "base_quantity") ?? "") &&
-                  (line.fields.scaling_behavior === "proportional" ||
-                    line.fields.scaling_behavior === "fixed") &&
-                  typeof line.fields.include_in_portion_weight === "boolean",
+              (line) =>
+                (text(line, "organization_id") === undefined ||
+                  text(line, "organization_id") === organizationId) &&
+                text(line, "recipe_version_id") === versionId &&
+                typeof text(line, "ingredient_version_id") === "string" &&
+                decimalPattern.test(text(line, "base_quantity") ?? "") &&
+                (line.fields.scaling_behavior === "proportional" ||
+                  line.fields.scaling_behavior === "fixed") &&
+                typeof line.fields.include_in_portion_weight === "boolean",
             )
             .map((line) => ({
               id: line.entityId,
-              ...(text(line, "line_key") ? { lineKey: text(line, "line_key") } : {}),
-              ...(text(line, "position_key") ? { positionKey: text(line, "position_key") } : {}),
+              ...(text(line, "line_key")
+                ? { lineKey: text(line, "line_key") }
+                : {}),
+              ...(text(line, "position_key")
+                ? { positionKey: text(line, "position_key") }
+                : {}),
               ingredientVersionId: text(line, "ingredient_version_id") ?? "",
               baseQuantity: text(line, "base_quantity") ?? "0",
               scalingBehavior: line.fields.scaling_behavior as
@@ -330,14 +485,23 @@ export async function readRecipeCatalog(
               includeInPortionWeight: line.fields
                 .include_in_portion_weight as boolean,
               note: text(line, "note") ?? "",
-              ...(text(line, "preferred_display_unit_id") ? { preferredDisplayUnitId: text(line, "preferred_display_unit_id") } : {}),
+              ...(text(line, "preferred_display_unit_id")
+                ? {
+                    preferredDisplayUnitId: text(
+                      line,
+                      "preferred_display_unit_id",
+                    ),
+                  }
+                : {}),
             }))
         : [];
       const hasRetiredIngredientReference = ingredientLines.some((line) =>
         retiredIngredientVersionIds.has(line.ingredientVersionId),
       );
       const catalogUpdateAvailable = ingredientLines.some((line) => {
-        const ingredientId = ingredientVersionIngredientIds.get(line.ingredientVersionId);
+        const ingredientId = ingredientVersionIngredientIds.get(
+          line.ingredientVersionId,
+        );
         const currentVersionId = ingredientId
           ? currentIngredientVersionByIngredientId.get(ingredientId)
           : undefined;
@@ -345,7 +509,8 @@ export async function readRecipeCatalog(
           ingredientId &&
             currentVersionId &&
             currentVersionId !== line.ingredientVersionId &&
-            ingredientVersionIngredientIds.get(currentVersionId) === ingredientId,
+            ingredientVersionIngredientIds.get(currentVersionId) ===
+              ingredientId,
         );
       });
       const recipeTagIds = version
@@ -358,7 +523,11 @@ export async function readRecipeCatalog(
         id: record.entityId,
         retired: record.lifecycle === "retired",
         versionId,
-        versionHistory: projectRecipeVersionHistory(record.entityId, organizationId, versionRecords),
+        versionHistory: projectRecipeVersionHistory(
+          record.entityId,
+          organizationId,
+          versionRecords,
+        ),
         name,
         scalingUnitId,
         baseScalingAmount,
@@ -366,7 +535,9 @@ export async function readRecipeCatalog(
         ...(estimatedDinersPerScalingUnit !== undefined
           ? { estimatedDinersPerScalingUnit }
           : {}),
-        ...(typeof roundSuggestionsUp === "boolean" ? { roundSuggestionsUp } : {}),
+        ...(typeof roundSuggestionsUp === "boolean"
+          ? { roundSuggestionsUp }
+          : {}),
         ingredientLines,
         hasRetiredIngredientReference,
         catalogUpdateAvailable,
@@ -404,8 +575,12 @@ export async function readRecipeCatalog(
     .map((record) => ({
       id: record.entityId,
       name: text(record, "custom_name") ?? text(record, "code") ?? "",
-      ...(text(record, "dimension") ? { dimension: text(record, "dimension") } : {}),
-      ...(text(record, "base_unit_factor") ? { baseUnitFactor: text(record, "base_unit_factor") } : {}),
+      ...(text(record, "dimension")
+        ? { dimension: text(record, "dimension") }
+        : {}),
+      ...(text(record, "base_unit_factor")
+        ? { baseUnitFactor: text(record, "base_unit_factor") }
+        : {}),
     }))
     .filter((unit): unit is RecipeScalingUnit => Boolean(unit.name))
     .sort(
@@ -422,7 +597,11 @@ export async function readRecipeCatalog(
           referencedTagIds.has(record.entityId)) &&
         text(record, "organization_id") === organizationId,
     )
-    .map((record) => ({ id: record.entityId, name: text(record, "name"), ...(record.lifecycle === "retired" ? { retired: true } : {}) }))
+    .map((record) => ({
+      id: record.entityId,
+      name: text(record, "name"),
+      ...(record.lifecycle === "retired" ? { retired: true } : {}),
+    }))
     .filter((tag): tag is { id: string; name: string; retired?: boolean } =>
       Boolean(uuid.test(tag.id) && tag.name),
     );
@@ -458,39 +637,60 @@ export async function readRecipeCatalog(
           !currentIngredientVersionIds.has(record.entityId) &&
           text(record, "name") &&
           text(record, "canonical_unit_id") &&
-          decimalPattern.test(text(record, "mass_per_canonical_quantity") ?? ""),
+          decimalPattern.test(
+            text(record, "mass_per_canonical_quantity") ?? "",
+          ),
       );
     })
     .map((record) => {
       const ingredientId = text(record, "ingredient_id") ?? "";
       const root = ingredientRoots.get(ingredientId);
-      const currentIngredient = ingredientCatalog.ingredients.find((item) => item.id === ingredientId);
-      const sourceUnitName = (ingredientCatalog.sourceUnits ?? ingredientCatalog.units).find((unit) => unit.id === text(record, "canonical_unit_id"))?.name;
+      const currentIngredient = ingredientCatalog.ingredients.find(
+        (item) => item.id === ingredientId,
+      );
+      const sourceUnitName = (
+        ingredientCatalog.sourceUnits ?? ingredientCatalog.units
+      ).find((unit) => unit.id === text(record, "canonical_unit_id"))?.name;
       return {
         id: ingredientId,
         versionId: record.entityId,
         name: text(record, "name") ?? "",
-        canonicalUnitName: sourceUnitName ?? text(record, "canonical_unit_id") ?? "",
+        canonicalUnitName:
+          sourceUnitName ?? text(record, "canonical_unit_id") ?? "",
         canonicalUnitId: text(record, "canonical_unit_id") ?? "",
         massPerCanonicalQuantity:
           text(record, "mass_per_canonical_quantity") ?? "",
         historical: true,
-        ...(currentIngredient?.currentPrice ? { currentPrice: currentIngredient.currentPrice } : {}),
+        ...(currentIngredient?.currentPrice
+          ? { currentPrice: currentIngredient.currentPrice }
+          : {}),
         ...(root?.lifecycle === "retired" ? { retired: true } : {}),
       } satisfies CatalogIngredient;
     });
-  const ingredients = [...ingredientCatalog.ingredients, ...historicalIngredients];
-  const costs = Object.fromEntries(recipes.map((recipe) => [
-    recipe.id,
-    projectRecipeCost(recipe, ingredients, ingredientCatalog.units, ingredientCatalog.organizationDefaultCurrency),
-  ]));
+  const ingredients = [
+    ...ingredientCatalog.ingredients,
+    ...historicalIngredients,
+  ];
+  const costs = Object.fromEntries(
+    recipes.map((recipe) => [
+      recipe.id,
+      projectRecipeCost(
+        recipe,
+        ingredients,
+        ingredientCatalog.units,
+        ingredientCatalog.organizationDefaultCurrency,
+      ),
+    ]),
+  );
   return {
     recipes,
     scalingUnits,
     ingredients,
     units: ingredientCatalog.units,
     storeSections: ingredientCatalog.storeSections,
-    ...(includeRetired && ingredientCatalog.sourceUnits ? { sourceUnits: ingredientCatalog.sourceUnits } : {}),
+    ...(includeRetired && ingredientCatalog.sourceUnits
+      ? { sourceUnits: ingredientCatalog.sourceUnits }
+      : {}),
     tags,
     costs,
   };

@@ -14,7 +14,10 @@ function timestampMicros(value: string): bigint | undefined {
   if (!match) return undefined;
   const milliseconds = Date.parse(`${match[1]}${match[3]}`);
   if (!Number.isFinite(milliseconds)) return undefined;
-  return BigInt(milliseconds) * 1_000n + BigInt((match[2] ?? "").slice(0, 6).padEnd(6, "0"));
+  return (
+    BigInt(milliseconds) * 1_000n +
+    BigInt((match[2] ?? "").slice(0, 6).padEnd(6, "0"))
+  );
 }
 
 function wins(record: CanonicalRecord, id: string, actionAt: string): boolean {
@@ -27,7 +30,11 @@ function wins(record: CanonicalRecord, id: string, actionAt: string): boolean {
   if (typeof clockAt !== "string" || typeof clockId !== "string") return false;
   const left = timestampMicros(actionAt);
   const right = timestampMicros(clockAt);
-  return left !== undefined && right !== undefined && (left > right || (left === right && id > clockId));
+  return (
+    left !== undefined &&
+    right !== undefined &&
+    (left > right || (left === right && id > clockId))
+  );
 }
 
 async function applyLifecycle(
@@ -71,7 +78,10 @@ async function applyLifecycle(
       retired_at: operation === "retire" ? actionAt : null,
       retired_by_user_id: operation === "retire" ? userId : null,
     },
-    fieldClocks: { ...current.fieldClocks, lifecycle: { mutationId, actionAt } },
+    fieldClocks: {
+      ...current.fieldClocks,
+      lifecycle: { mutationId, actionAt },
+    },
     updatedAt: actionAt,
   });
 }
@@ -81,7 +91,11 @@ export async function queueRecipeLifecycle(
   organizationId: string,
   input: { recipeId: string; operation: Operation },
 ): Promise<void> {
-  if (!uuid.test(userId) || !uuid.test(organizationId) || !uuid.test(input.recipeId))
+  if (
+    !uuid.test(userId) ||
+    !uuid.test(organizationId) ||
+    !uuid.test(input.recipeId)
+  )
     throw new Error("selection");
   const mutationId = crypto.randomUUID();
   const actionAt = new Date().toISOString();
@@ -114,7 +128,14 @@ export async function queueRecipeLifecycle(
         !uuid.test(current.fields.current_version_id)
       )
         throw new Error("selection");
-      await applyLifecycle(userId, organizationId, input.recipeId, input.operation, mutationId, actionAt);
+      await applyLifecycle(
+        userId,
+        organizationId,
+        input.recipeId,
+        input.operation,
+        mutationId,
+        actionAt,
+      );
       await appendOutboxCommand({
         id: mutationId,
         userId,
