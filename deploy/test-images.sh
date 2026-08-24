@@ -26,7 +26,9 @@ prohibited_proxy_route() {
     awk '
         $1 ~ /^ProxyPass(Match|Reverse)?$/ {
             route = $2
-            if (route == "/mcp" || route ~ /^\/mcp\// || route == "/auth/mcp-grants" || route ~ /^\/auth\/mcp-grants\//) {
+            sub(/^\^/, "", route)
+            sub(/\(\?:\/\|\$\)$/, "", route)
+            if (route ~ /^\/mcp(\/|$)/ || route ~ /^\/auth\/mcp-grants(\/|$)/) {
                 prohibited = 1
                 exit
             }
@@ -36,12 +38,18 @@ prohibited_proxy_route() {
 }
 for proxy_rule in \
     'ProxyPass /mcp http://127.0.0.1:8000/' \
-    'ProxyPassMatch ^/mcp http://127.0.0.1:8000/'; do
+    'ProxyPassMatch ^/mcp http://127.0.0.1:8000/' \
+    'ProxyPassMatch ^/mcp(?:/|$) http://127.0.0.1:8000/' \
+    'ProxyPassMatch ^/auth/mcp-grants(?:/|$) http://127.0.0.1:8000/'; do
     if ! printf '%s\n' "$proxy_rule" | prohibited_proxy_route; then
         echo "OAuth/MCP proxy guard failed to recognize $proxy_rule" >&2
         exit 1
     fi
 done
+if printf '%s\n' 'ProxyPassMatch ^/mcpack(?:/|$) http://127.0.0.1:8000/' | prohibited_proxy_route; then
+    echo 'OAuth/MCP proxy guard incorrectly rejected a near-miss route' >&2
+    exit 1
+fi
 if printf '%s\n' 'ProxyPass /api/ http://oauth-server:3000/health/' | prohibited_proxy_route; then
     echo 'OAuth/MCP proxy guard incorrectly inspected an upstream target' >&2
     exit 1
