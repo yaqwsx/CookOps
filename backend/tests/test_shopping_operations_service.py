@@ -510,7 +510,7 @@ def test_lone_surrogate_row_note_is_retained_as_validation_rejection(
             service_database.organization_id,
             result.shopping_list_id,
             row_id,
-            second_note,  # type: ignore[arg-type]
+            second_note,
             first.client_wall_time,
         )
         with pytest.raises(ApplicationServiceError) as mismatch:
