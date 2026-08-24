@@ -360,18 +360,29 @@ def test_metadata_date_range_lww_rejection_and_day_reconciliation(
     service_database: ServiceDatabase,
 ) -> None:
     event_id, _, _ = _create_event_and_scheduled_recipes(service_database)
-    wall_time = datetime.now(UTC)
     with service_database.sync_engine.begin() as connection:
         accepted_mutation = connection.execute(
-            select(Mutation.id, Mutation.client_wall_time)
+            select(FieldClock.winning_mutation_id, Mutation.client_wall_time)
+            .join(
+                Mutation,
+                (Mutation.id == FieldClock.winning_mutation_id)
+                & (Mutation.organization_id == FieldClock.organization_id),
+            )
             .where(
-                Mutation.organization_id == service_database.organization_id,
+                FieldClock.organization_id == service_database.organization_id,
+                FieldClock.entity_kind == "event",
+                FieldClock.entity_id == event_id,
+                FieldClock.field_name == "end_date",
                 Mutation.outcome == "accepted",
             )
-            .order_by(Mutation.client_wall_time)
-            .limit(1)
         ).one()
         future_end_mutation, wall_time = accepted_mutation
+        future_end_wall_time = wall_time + timedelta(seconds=2)
+        connection.execute(
+            update(Mutation)
+            .where(Mutation.id == future_end_mutation)
+            .values(client_wall_time=future_end_wall_time)
+        )
         connection.execute(
             update(Event).where(Event.id == event_id).values(end_date=date(2026, 7, 1))
         )
@@ -383,8 +394,7 @@ def test_metadata_date_range_lww_rejection_and_day_reconciliation(
                 FieldClock.field_name == "end_date",
             )
             .values(
-                winning_client_wall_time=wall_time + timedelta(seconds=2),
-                winning_mutation_id=future_end_mutation,
+                winning_client_wall_time=future_end_wall_time,
             )
         )
 
