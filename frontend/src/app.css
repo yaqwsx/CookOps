@@ -49,6 +49,12 @@ textarea:focus-visible {
   background: #fffdf9;
 }
 
+.app-header > *,
+.app-main > * {
+  min-width: 0;
+  max-width: 100%;
+}
+
 .brand {
   color: #254a36;
   font-size: 1.35rem;
