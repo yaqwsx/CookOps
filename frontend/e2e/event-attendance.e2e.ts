@@ -23,6 +23,16 @@ test("edits cached event attendance through the offline outbox", async ({
     }
     await route.fulfill({ status: 404 });
   });
+  await page.route("**/api/v1/organizations", (route) =>
+    route.fulfill({
+      contentType: "application/json",
+      body: JSON.stringify({
+        organizations: [
+          { id: organizationId, name: "CookOps test organization" },
+        ],
+      }),
+    }),
+  );
   await page.route("**/api/v1/sync/bootstrap", async (route) => {
     await route.fulfill({
       contentType: "application/json",

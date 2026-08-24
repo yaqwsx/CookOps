@@ -39,6 +39,14 @@ test("an administrator explicitly confirms a guarded online event archive", asyn
       });
     await route.fulfill({ status: 404 });
   });
+  await page.route("**/api/v1/organizations", (route) =>
+    route.fulfill({
+      contentType: "application/json",
+      body: JSON.stringify({
+        organizations: [{ id: organizationId, name: "Kitchen" }],
+      }),
+    }),
+  );
   await page.route("**/api/v1/sync/bootstrap", (route) =>
     route.fulfill({
       contentType: "application/json",
@@ -134,6 +142,14 @@ test("reactivates an archived event only after the server confirms it", async ({
       });
     await route.fulfill({ status: 404 });
   });
+  await page.route("**/api/v1/organizations", (route) =>
+    route.fulfill({
+      contentType: "application/json",
+      body: JSON.stringify({
+        organizations: [{ id: organizationId, name: "Kitchen" }],
+      }),
+    }),
+  );
   const snapshotId = "archive-snapshot-2026-08-10";
   const archived = {
     id: eventId,
