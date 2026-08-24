@@ -841,7 +841,7 @@ def test_publish_preserves_recipe_root_author_for_a_different_member(
                 OrganizationChange.mutation_id == result.mutation_id,
                 OrganizationChange.entity_kind == "recipe",
             )
-    )
+        )
     assert record is not None
     record_payload = cast(dict[str, object], record)
     record_body = cast(dict[str, object], record_payload["record"])

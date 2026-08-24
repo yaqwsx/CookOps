@@ -1565,8 +1565,8 @@ def _push_command(command: PushCommandRequest, organization_id: UUID) -> SyncCom
                 logical_operation_id=update_dietary_exception_payload.logical_operation_id,
             )
         if command.command_kind == "event_dietary_exception.lifecycle":
-            dietary_exception_lifecycle_payload = EventDietaryExceptionLifecyclePayload.model_validate(
-                command.payload
+            dietary_exception_lifecycle_payload = (
+                EventDietaryExceptionLifecyclePayload.model_validate(command.payload)
             )
             return SetEventDietaryExceptionLifecycleCommand(
                 mutation_id=command.mutation_id,
