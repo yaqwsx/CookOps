@@ -168,6 +168,17 @@ async def set_scheduled_recipe_note(
                 retained.first_change_sequence is not None
                 and retained.last_change_sequence is not None
             ):
+                retained_payload = retained.outcome_payload
+                retained_scheduled_recipe = (
+                    retained_payload.get("scheduled_recipe")
+                    if isinstance(retained_payload, dict)
+                    else None
+                )
+                if not isinstance(retained_scheduled_recipe, dict):
+                    raise RuntimeError("invalid retained event scheduled note outcome")
+                retained_note = retained_scheduled_recipe.get("note")
+                if retained_note is not None and not isinstance(retained_note, str):
+                    raise RuntimeError("invalid retained event scheduled note outcome")
                 return ScheduledRecipeNoteResult(
                     command.mutation_id,
                     command.scheduled_recipe_id,
@@ -175,7 +186,7 @@ async def set_scheduled_recipe_note(
                     retained.last_change_sequence,
                     True,
                     retained.outcome,
-                    (retained.outcome_payload or {}).get("scheduled_recipe", {}).get("note"),
+                    retained_note,
                 )
             else:
                 raise RuntimeError("invalid retained event scheduled note outcome")
