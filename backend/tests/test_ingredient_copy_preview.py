@@ -731,7 +731,9 @@ def test_http_command_error_preserves_validation_contract() -> None:
     }
 
 
-def test_http_copy_rejects_unowned_disabled_and_non_browser_installations(copy_database: Any) -> None:
+def test_http_copy_rejects_unowned_disabled_and_non_browser_installations(
+    copy_database: Any,
+) -> None:
     db = copy_database
     route = f"/api/v1/organizations/{db.destination}/ingredient-copy"
     app = _copy_http_app(db)
