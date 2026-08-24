@@ -1,7 +1,8 @@
 from dataclasses import replace
 from datetime import UTC, datetime
 from decimal import Decimal
-from uuid import uuid4
+from typing import TypedDict, Unpack
+from uuid import UUID, uuid4
 
 from cookops.application.recipes import (
     PublishRecipeVersionCommand,
@@ -11,7 +12,12 @@ from cookops.application.recipes import (
 )
 
 
-def _command(**kwargs: object) -> PublishRecipeVersionCommand:
+class _CommandOverrides(TypedDict, total=False):
+    catalog_update: bool
+    expected_current_ingredient_versions: tuple[tuple[UUID, UUID], ...]
+
+
+def _command(**kwargs: Unpack[_CommandOverrides]) -> PublishRecipeVersionCommand:
     version_id = uuid4()
     return PublishRecipeVersionCommand(
         mutation_id=uuid4(),
