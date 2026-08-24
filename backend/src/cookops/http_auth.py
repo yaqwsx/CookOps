@@ -159,7 +159,7 @@ class OrganizationLifecycleRequest(BaseModel):
 
 
 class OrganizationEditRequest(BaseModel):
-    model_config = ConfigDict(extra="forbid", strict=True)
+    model_config = ConfigDict(extra="forbid")
 
     mutation_id: UUID
     client_installation_id: UUID
