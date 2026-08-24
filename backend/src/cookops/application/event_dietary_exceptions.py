@@ -5,6 +5,7 @@ import json
 import unicodedata
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
+from typing import Literal, Sequence, cast
 from uuid import UUID
 
 from sqlalchemy import select, text
@@ -465,25 +466,21 @@ async def update_event_dietary_exception(
                 raise ApplicationServiceError("idempotency_mismatch", retry_same_identity=False)
             if retained.outcome == "rejected":
                 error = (retained.outcome_payload or {}).get("error")
-                violations = (
-                    tuple(
-                        FieldViolation(v["path"], v["code"])
-                        for v in error.get("field_violations", [])
-                        if isinstance(v, dict)
-                        and isinstance(v.get("path"), str)
-                        and isinstance(v.get("code"), str)
-                    )
-                    if isinstance(error, dict)
-                    else ()
+                error_payload = cast(dict[str, object], error) if isinstance(error, dict) else {}
+                retained_violations = tuple(
+                    FieldViolation(path, code)
+                    for v in cast(list[object], error_payload.get("field_violations", []))
+                    if isinstance(v, dict)
+                    for path, code in [(v.get("path"), v.get("code"))]
+                    if isinstance(path, str) and isinstance(code, str)
                 )
-                code = (
-                    error.get("code")
-                    if isinstance(error, dict)
-                    and error.get("code") in {"validation_failed", "client_time_too_far_ahead"}
+                code: Literal["validation_failed", "client_time_too_far_ahead"] = (
+                    "client_time_too_far_ahead"
+                    if error_payload.get("code") == "client_time_too_far_ahead"
                     else "validation_failed"
                 )
                 raise ApplicationServiceError(
-                    code, field_violations=violations, retry_same_identity=False
+                    code, field_violations=retained_violations, retry_same_identity=False
                 )
             return EventDietaryExceptionUpdateResult(
                 mutation_id,
@@ -609,18 +606,17 @@ async def update_event_dietary_exception(
                                 mutation_id,
                             )
                 changes = []
-                old = []
+                old: Sequence[EventDietaryExceptionTag] = ()
                 if "tag_ids" in wins:
                     old = (
                         await session.scalars(
-                            select(EventDietaryExceptionTag)
-                            .where(
-                                EventDietaryExceptionTag.exception_id == item.id,
-                                EventDietaryExceptionTag.organization_id == organization_id,
-                            )
-                            .with_for_update()
-                        )
-                    ).all()
+                                select(EventDietaryExceptionTag)
+                                .where(
+                                    EventDietaryExceptionTag.exception_id == item.id,
+                                    EventDietaryExceptionTag.organization_id == organization_id,
+                                )
+                                .with_for_update()
+                        )).all()
                     old_by_tag = {x.dietary_tag_id: x for x in old if x.retired_at is None}
                     for association in old:
                         if association.dietary_tag_id not in tag_ids:
@@ -676,13 +672,12 @@ async def update_event_dietary_exception(
                 if "tag_ids" not in wins:
                     old = (
                         await session.scalars(
-                            select(EventDietaryExceptionTag).where(
-                                EventDietaryExceptionTag.exception_id == item.id,
-                                EventDietaryExceptionTag.organization_id == organization_id,
-                                EventDietaryExceptionTag.retired_at.is_(None),
-                            )
-                        )
-                    ).all()
+                                select(EventDietaryExceptionTag).where(
+                                    EventDietaryExceptionTag.exception_id == item.id,
+                                    EventDietaryExceptionTag.organization_id == organization_id,
+                                    EventDietaryExceptionTag.retired_at.is_(None),
+                                )
+                        )).all()
                 record = _record(item, clocks)
                 record["tag_ids"] = [
                     str(x)
