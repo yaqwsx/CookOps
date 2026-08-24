@@ -64,6 +64,21 @@ beforeEach(async () => {
 });
 
 describe("offline recipe lifecycle", () => {
+  it("keeps the current version when editing without a pinned version", async () => {
+    await expect(
+      readRecipeCatalog(
+        userId,
+        organizationId,
+        false,
+        true,
+        recipeId,
+        undefined,
+      ),
+    ).resolves.toMatchObject({
+      recipes: [expect.objectContaining({ id: recipeId, name: "Soup" })],
+    });
+  });
+
   it("keeps a retired referenced tag searchable in the catalog projection", async () => {
     const tagId = "1ce17d2f-8365-4b1f-a80b-34d10425d51c";
     await localDb.canonicalRecords.bulkAdd([

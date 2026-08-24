@@ -433,7 +433,8 @@ export async function readRecipeCatalog(
         text(record, "organization_id") === organizationId,
     )
     .map((record) => {
-      const pinned = record.entityId === pinnedRecipeId;
+      const pinned =
+        record.entityId === pinnedRecipeId && pinnedVersionId !== undefined;
       const versionId = pinned
         ? pinnedVersionId && uuid.test(pinnedVersionId)
           ? pinnedVersionId
