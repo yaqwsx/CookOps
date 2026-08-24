@@ -332,7 +332,9 @@ def test_metadata_updates_independent_lww_fields_and_publishes_complete_event_re
                 OrganizationChange.mutation_id == first.mutation_id
             )
         ).scalar_one()
-        assert set(change["record"]["field_clocks"]) >= {
+        record = cast(dict[str, object], change["record"])
+        field_clocks = cast(dict[str, object], record["field_clocks"])
+        assert set(field_clocks) >= {
             "name",
             "location",
             "budget_amount",
