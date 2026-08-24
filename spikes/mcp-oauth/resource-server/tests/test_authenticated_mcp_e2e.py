@@ -385,6 +385,7 @@ async def scenario(database_url: str) -> None:
                             headers={
                                 "authorization": f"Bearer {access_token}",
                                 "origin": "https://evil.example",
+                                "content-type": "application/json",
                             },
                             content=b"",
                         )
