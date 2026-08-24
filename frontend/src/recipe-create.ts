@@ -135,6 +135,28 @@ export async function queueRecipeCreate(
     recipe_tag_ids: input.recipeTagIds ?? [],
     ...(description ? { description } : {}),
   };
+  const recipeTagRecords = await Promise.all(
+    payload.recipe_tag_ids.map(async (tagId: string) => {
+      const id = await recipeVersionTagId(recipeVersionId, tagId);
+      return {
+        userId,
+        organizationId,
+        entityType: "recipe_version_tag" as const,
+        entityId: id,
+        recordSchemaVersion: 1,
+        lifecycle: "active" as const,
+        immutable: true,
+        fields: {
+          id,
+          recipe_version_id: recipeVersionId,
+          recipe_tag_id: tagId,
+          organization_id: organizationId,
+        },
+        fieldClocks: { optimistic: { mutationId, actionAt } },
+        updatedAt: actionAt,
+      } satisfies CanonicalRecord;
+    }),
+  );
   await localDb.transaction(
     "rw",
     localDb.canonicalRecords,
@@ -173,28 +195,7 @@ export async function queueRecipeCreate(
       await localDb.optimisticOverlays.bulkPut([
         recipeOverlay(userId, organizationId, mutationId, actionAt, payload),
         versionOverlay(userId, organizationId, mutationId, actionAt, payload),
-        ...(await Promise.all(
-          payload.recipe_tag_ids.map(async (tagId: string) => {
-            const id = await recipeVersionTagId(recipeVersionId, tagId);
-            return {
-              userId,
-              organizationId,
-              entityType: "recipe_version_tag",
-              entityId: id,
-              recordSchemaVersion: 1,
-              lifecycle: "active" as const,
-              immutable: true,
-              fields: {
-                id,
-                recipe_version_id: recipeVersionId,
-                recipe_tag_id: tagId,
-                organization_id: organizationId,
-              },
-              fieldClocks: { optimistic: { mutationId, actionAt } },
-              updatedAt: actionAt,
-            } satisfies CanonicalRecord;
-          }),
-        )),
+        ...recipeTagRecords,
       ]);
       await appendOutboxCommand({
         id: mutationId,
