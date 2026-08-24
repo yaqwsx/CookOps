@@ -472,7 +472,7 @@ async def scenario(database_url: str) -> None:
                         fresh_valid = await fresh_resource_client.post(
                             resource,
                             headers={"authorization": f"Bearer {fresh_access_token}"},
-                            json={},
+                            json={"jsonrpc": "2.0", "id": 1, "method": "ping"},
                         )
                     assert fresh_valid.status_code == 200
                     mixed_up = await refresh_client.post(
