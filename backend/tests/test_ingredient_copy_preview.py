@@ -341,9 +341,7 @@ def test_preview_includes_retired_historical_dependencies(copy_database):
 
     with db.engine.begin() as connection:
         connection.execute(
-            update(DietaryTag)
-            .where(DietaryTag.id == historical_tag)
-            .values(seed_key="vegetarian")
+            update(DietaryTag).where(DietaryTag.id == historical_tag).values(seed_key="vegetarian")
         )
         connection.execute(
             insert(DietaryTag).values(
@@ -428,9 +426,7 @@ def test_system_admin_can_preview_without_memberships(copy_database):
     db = copy_database
     with db.engine.begin() as connection:
         connection.execute(
-            delete(OrganizationMembership).where(
-                OrganizationMembership.user_id == db.actor
-            )
+            delete(OrganizationMembership).where(OrganizationMembership.user_id == db.actor)
         )
         connection.execute(
             insert(SystemRoleAssignment).values(
@@ -470,9 +466,7 @@ def test_retired_source_tag_remains_previewable_and_fingerprint_changes(copy_dat
     assert any(item.kind == "dietary_tag" for item in first.mapping_requirements)
     with db.engine.begin() as connection:
         connection.execute(
-            update(DietaryTag)
-            .where(DietaryTag.id == db.tag)
-            .values(seed_key="vegetarian")
+            update(DietaryTag).where(DietaryTag.id == db.tag).values(seed_key="vegetarian")
         )
     changed_tag = asyncio.run(
         preview_ingredient_copy(
@@ -915,9 +909,7 @@ def test_copy_multiversion_graph_has_only_destination_references(copy_database):
     db = copy_database
     setup = _prepare_multiversion_copy(db)
     with db.engine.begin() as connection:
-        connection.execute(
-            delete(DietaryTag).where(DietaryTag.id == setup.destination_tag)
-        )
+        connection.execute(delete(DietaryTag).where(DietaryTag.id == setup.destination_tag))
     result = asyncio.run(
         copy_ingredient_to_organization(
             db.sessions, context(db), _copy_command(db, setup, create_custom_tag=True)
