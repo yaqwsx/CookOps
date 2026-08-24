@@ -96,9 +96,11 @@ test("edits cached event attendance through the offline outbox", async ({
   await expect(
     card.getByText("Účast je uložena místně a bude synchronizována."),
   ).toBeVisible();
-  await expect(page.getByTestId("synchronization-status")).toHaveText(
-    "Bez připojení",
-  );
+  await expect(
+    page
+      .getByTestId("synchronization-status")
+      .getByText("Bez připojení", { exact: true }),
+  ).toHaveText("Bez připojení");
   await expect
     .poll(() =>
       page.evaluate(

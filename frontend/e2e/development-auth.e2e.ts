@@ -5,6 +5,10 @@ const alice = {
   display_name: "Alice Member",
   verified_email: "alice@example.test",
 };
+const developmentOrganization = {
+  id: "5ce17d2f-8365-4b1f-a80b-34d10425d51c",
+  name: "CookOps test organization",
+};
 
 async function installDevelopmentAuthFixture(page: Page) {
   await page.addInitScript(() => {
@@ -53,6 +57,17 @@ async function installDevelopmentAuthFixture(page: Page) {
       return;
     }
     await route.fulfill({ status: 404 });
+  });
+  await page.route("**/api/v1/organizations", async (route) => {
+    const request = route.request();
+    if (request.method() !== "GET") {
+      await route.fallback();
+      return;
+    }
+    await route.fulfill({
+      contentType: "application/json",
+      body: JSON.stringify({ organizations: [developmentOrganization] }),
+    });
   });
 }
 
