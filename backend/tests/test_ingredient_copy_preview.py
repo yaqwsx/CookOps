@@ -16,6 +16,7 @@ from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 from sqlalchemy.pool import NullPool
 
 from alembic import command
+from cookops.application.browser_sessions import BrowserSessionService
 from cookops.application.ingredient_copy import (
     CopyIngredientToOrganizationCommand,
     IngredientCopyMapping,
@@ -23,7 +24,6 @@ from cookops.application.ingredient_copy import (
     copy_ingredient_to_organization,
     preview_ingredient_copy,
 )
-from cookops.application.browser_sessions import BrowserSessionService
 from cookops.application.organizations import (
     ApplicationServiceError,
     ExecutionContext,
