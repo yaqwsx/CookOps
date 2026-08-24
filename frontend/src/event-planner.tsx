@@ -648,16 +648,27 @@ function RenameMealRole({
   const [roleId, setRoleId] = useState(roles[0]?.id ?? "");
   const [name, setName] = useState(roles[0]?.name ?? "");
   const [error, setError] = useState(false);
+  const previousRoleId = useRef("");
+  const previousProjectedName = useRef("");
   const selectedRole = roles.find((item) => item.id === roleId) ?? roles[0];
   const selectedRoleId = selectedRole?.id;
   const selectedRoleName = selectedRole?.name;
   useEffect(() => {
     if (selectedRoleId && selectedRoleName) {
+      const roleChanged = selectedRoleId !== previousRoleId.current;
       setRoleId(selectedRoleId);
-      setName(selectedRoleName);
+      setName((current) =>
+        roleChanged || current === previousProjectedName.current
+          ? selectedRoleName
+          : current,
+      );
+      previousRoleId.current = selectedRoleId;
+      previousProjectedName.current = selectedRoleName;
     } else {
       setRoleId("");
       setName("");
+      previousRoleId.current = "";
+      previousProjectedName.current = "";
     }
   }, [selectedRoleId, selectedRoleName]);
   if (planner.lifecycle !== "active" || !roleId) return null;
