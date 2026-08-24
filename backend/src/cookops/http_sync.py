@@ -1248,19 +1248,19 @@ def _push_command(command: PushCommandRequest, organization_id: UUID) -> SyncCom
                 logical_operation_id=ad_hoc_payload.logical_operation_id,
             )
         if command.command_kind == "shopping_list.update_ad_hoc_item":
-            ad_hoc_payload = UpdateAdHocShoppingItemPayload.model_validate(command.payload)
+            update_ad_hoc_payload = UpdateAdHocShoppingItemPayload.model_validate(command.payload)
             return UpdateAdHocShoppingItemCommand(
                 mutation_id=command.mutation_id,
                 organization_id=organization_id,
-                shopping_list_id=ad_hoc_payload.shopping_list_id,
-                ad_hoc_shopping_item_id=ad_hoc_payload.ad_hoc_shopping_item_id,
-                name=ad_hoc_payload.name,
-                target_amount=ad_hoc_payload.target_amount,
-                unit_id=ad_hoc_payload.unit_id,
-                store_section_id=ad_hoc_payload.store_section_id,
-                note=ad_hoc_payload.note,
+                shopping_list_id=update_ad_hoc_payload.shopping_list_id,
+                ad_hoc_shopping_item_id=update_ad_hoc_payload.ad_hoc_shopping_item_id,
+                name=update_ad_hoc_payload.name,
+                target_amount=update_ad_hoc_payload.target_amount,
+                unit_id=update_ad_hoc_payload.unit_id,
+                store_section_id=update_ad_hoc_payload.store_section_id,
+                note=update_ad_hoc_payload.note,
                 client_wall_time=command.client_wall_time,
-                logical_operation_id=ad_hoc_payload.logical_operation_id,
+                logical_operation_id=update_ad_hoc_payload.logical_operation_id,
             )
         if command.command_kind == "shopping_list.set_ad_hoc_item_fulfilment":
             ad_hoc_fulfilment_payload = SetAdHocShoppingItemFulfilmentPayload.model_validate(
@@ -1322,16 +1322,16 @@ def _push_command(command: PushCommandRequest, organization_id: UUID) -> SyncCom
                 logical_operation_id=recipe_payload.logical_operation_id,
             )
         if command.command_kind == "recipe.publish_version":
-            recipe_payload = PublishRecipeVersionPayload.model_validate(command.payload)
+            publish_recipe_payload = PublishRecipeVersionPayload.model_validate(command.payload)
             return PublishRecipeVersionCommand(
                 mutation_id=command.mutation_id,
-                recipe_id=recipe_payload.recipe_id,
-                recipe_version_id=recipe_payload.recipe_version_id,
-                based_on_version_id=recipe_payload.based_on_version_id,
+                recipe_id=publish_recipe_payload.recipe_id,
+                recipe_version_id=publish_recipe_payload.recipe_version_id,
+                based_on_version_id=publish_recipe_payload.based_on_version_id,
                 organization_id=organization_id,
-                name=recipe_payload.name,
-                scaling_unit_id=recipe_payload.scaling_unit_id,
-                base_scaling_amount=recipe_payload.base_scaling_amount,
+                name=publish_recipe_payload.name,
+                scaling_unit_id=publish_recipe_payload.scaling_unit_id,
+                base_scaling_amount=publish_recipe_payload.base_scaling_amount,
                 client_wall_time=command.client_wall_time,
                 ingredient_lines=tuple(
                     RecipeIngredientLineInput(
@@ -1345,25 +1345,29 @@ def _push_command(command: PushCommandRequest, organization_id: UUID) -> SyncCom
                         preferred_display_unit_id=line.preferred_display_unit_id,
                         note=line.note,
                     )
-                    for line in recipe_payload.ingredient_lines
+                    for line in publish_recipe_payload.ingredient_lines
                 ),
-                description=recipe_payload.description,
-                recipe_tag_ids=recipe_payload.recipe_tag_ids,
-                estimated_diners_per_scaling_unit=recipe_payload.estimated_diners_per_scaling_unit,
-                round_suggestions_up=recipe_payload.round_suggestions_up,
-                logical_operation_id=recipe_payload.logical_operation_id,
-                catalog_update=recipe_payload.catalog_update,
-                expected_current_ingredient_versions=recipe_payload.expected_current_ingredient_versions,
+                description=publish_recipe_payload.description,
+                recipe_tag_ids=publish_recipe_payload.recipe_tag_ids,
+                estimated_diners_per_scaling_unit=(
+                    publish_recipe_payload.estimated_diners_per_scaling_unit
+                ),
+                round_suggestions_up=publish_recipe_payload.round_suggestions_up,
+                logical_operation_id=publish_recipe_payload.logical_operation_id,
+                catalog_update=publish_recipe_payload.catalog_update,
+                expected_current_ingredient_versions=(
+                    publish_recipe_payload.expected_current_ingredient_versions
+                ),
             )
         if command.command_kind == "recipe.lifecycle":
-            recipe_payload = RecipeLifecyclePayload.model_validate(command.payload)
+            recipe_lifecycle_payload = RecipeLifecyclePayload.model_validate(command.payload)
             return SetRecipeLifecycleCommand(
                 mutation_id=command.mutation_id,
-                recipe_id=recipe_payload.recipe_id,
+                recipe_id=recipe_lifecycle_payload.recipe_id,
                 organization_id=organization_id,
-                operation=recipe_payload.operation,
+                operation=recipe_lifecycle_payload.operation,
                 client_wall_time=command.client_wall_time,
-                logical_operation_id=recipe_payload.logical_operation_id,
+                logical_operation_id=recipe_lifecycle_payload.logical_operation_id,
             )
         if command.command_kind == "ingredient.create":
             ingredient_payload = CreateIngredientPayload.model_validate(command.payload)
@@ -1393,44 +1397,50 @@ def _push_command(command: PushCommandRequest, organization_id: UUID) -> SyncCom
                 logical_operation_id=ingredient_payload.logical_operation_id,
             )
         if command.command_kind == "ingredient.publish_version":
-            ingredient_payload = PublishIngredientVersionPayload.model_validate(command.payload)
+            publish_ingredient_payload = PublishIngredientVersionPayload.model_validate(
+                command.payload
+            )
             return PublishIngredientVersionCommand(
                 mutation_id=command.mutation_id,
-                ingredient_id=ingredient_payload.ingredient_id,
-                based_on_version_id=ingredient_payload.based_on_version_id,
-                ingredient_version_id=ingredient_payload.ingredient_version_id,
+                ingredient_id=publish_ingredient_payload.ingredient_id,
+                based_on_version_id=publish_ingredient_payload.based_on_version_id,
+                ingredient_version_id=publish_ingredient_payload.ingredient_version_id,
                 organization_id=organization_id,
-                name=ingredient_payload.name,
-                canonical_unit_id=ingredient_payload.canonical_unit_id,
-                mass_per_canonical_quantity=ingredient_payload.mass_per_canonical_quantity,
+                name=publish_ingredient_payload.name,
+                canonical_unit_id=publish_ingredient_payload.canonical_unit_id,
+                mass_per_canonical_quantity=publish_ingredient_payload.mass_per_canonical_quantity,
                 client_wall_time=command.client_wall_time,
-                dietary_tag_ids=ingredient_payload.dietary_tag_ids,
-                default_store_section_id=ingredient_payload.default_store_section_id,
-                logical_operation_id=ingredient_payload.logical_operation_id,
+                dietary_tag_ids=publish_ingredient_payload.dietary_tag_ids,
+                default_store_section_id=publish_ingredient_payload.default_store_section_id,
+                logical_operation_id=publish_ingredient_payload.logical_operation_id,
             )
         if command.command_kind == "ingredient.publish_price_estimate":
-            price_payload = PublishIngredientPriceEstimatePayload.model_validate(command.payload)
+            ingredient_price_payload = PublishIngredientPriceEstimatePayload.model_validate(
+                command.payload
+            )
             return PublishIngredientPriceEstimateCommand(
                 mutation_id=command.mutation_id,
-                ingredient_id=price_payload.ingredient_id,
-                ingredient_price_estimate_id=price_payload.ingredient_price_estimate_id,
+                ingredient_id=ingredient_price_payload.ingredient_id,
+                ingredient_price_estimate_id=ingredient_price_payload.ingredient_price_estimate_id,
                 organization_id=organization_id,
-                amount=price_payload.amount,
-                priced_quantity=price_payload.priced_quantity,
-                unit_id=price_payload.unit_id,
-                currency=price_payload.currency,
+                amount=ingredient_price_payload.amount,
+                priced_quantity=ingredient_price_payload.priced_quantity,
+                unit_id=ingredient_price_payload.unit_id,
+                currency=ingredient_price_payload.currency,
                 client_wall_time=command.client_wall_time,
-                logical_operation_id=price_payload.logical_operation_id,
+                logical_operation_id=ingredient_price_payload.logical_operation_id,
             )
         if command.command_kind == "ingredient.lifecycle":
-            ingredient_payload = IngredientLifecyclePayload.model_validate(command.payload)
+            ingredient_lifecycle_payload = IngredientLifecyclePayload.model_validate(
+                command.payload
+            )
             return SetIngredientLifecycleCommand(
                 mutation_id=command.mutation_id,
-                ingredient_id=ingredient_payload.ingredient_id,
+                ingredient_id=ingredient_lifecycle_payload.ingredient_id,
                 organization_id=organization_id,
-                operation=ingredient_payload.operation,
+                operation=ingredient_lifecycle_payload.operation,
                 client_wall_time=command.client_wall_time,
-                logical_operation_id=ingredient_payload.logical_operation_id,
+                logical_operation_id=ingredient_lifecycle_payload.logical_operation_id,
             )
         if command.command_kind == "scheduled_recipe.schedule":
             scheduled_recipe_payload = ScheduleRecipePayload.model_validate(command.payload)
@@ -1465,27 +1475,31 @@ def _push_command(command: PushCommandRequest, organization_id: UUID) -> SyncCom
                 logical_operation_id=move_payload.logical_operation_id,
             )
         if command.command_kind == "scheduled_recipe.attendance":
-            payload = ScheduledRecipeAttendancePayload.model_validate(command.payload)
+            attendance_command_payload = ScheduledRecipeAttendancePayload.model_validate(
+                command.payload
+            )
             return SetScheduledRecipeAttendanceCommand(
                 mutation_id=command.mutation_id,
-                scheduled_recipe_id=payload.scheduled_recipe_id,
+                scheduled_recipe_id=attendance_command_payload.scheduled_recipe_id,
                 organization_id=organization_id,
-                event_id=payload.event_id,
-                operation=payload.operation,
-                diner_count=payload.diner_count,
+                event_id=attendance_command_payload.event_id,
+                operation=attendance_command_payload.operation,
+                diner_count=attendance_command_payload.diner_count,
                 client_wall_time=command.client_wall_time,
-                logical_operation_id=payload.logical_operation_id,
+                logical_operation_id=attendance_command_payload.logical_operation_id,
             )
         if command.command_kind == "scheduled_recipe.lifecycle":
-            payload = ScheduledRecipeLifecyclePayload.model_validate(command.payload)
+            lifecycle_command_payload = ScheduledRecipeLifecyclePayload.model_validate(
+                command.payload
+            )
             return SetScheduledRecipeLifecycleCommand(
                 mutation_id=command.mutation_id,
-                scheduled_recipe_id=payload.scheduled_recipe_id,
+                scheduled_recipe_id=lifecycle_command_payload.scheduled_recipe_id,
                 organization_id=organization_id,
-                event_id=payload.event_id,
-                operation=payload.operation,
+                event_id=lifecycle_command_payload.event_id,
+                operation=lifecycle_command_payload.operation,
                 client_wall_time=command.client_wall_time,
-                logical_operation_id=payload.logical_operation_id,
+                logical_operation_id=lifecycle_command_payload.logical_operation_id,
             )
         if command.command_kind == "event_day.visibility":
             day_payload = EventDayVisibilityPayload.model_validate(command.payload)
@@ -1521,52 +1535,58 @@ def _push_command(command: PushCommandRequest, organization_id: UUID) -> SyncCom
                 logical_operation_id=lifecycle_payload.logical_operation_id,
             )
         if command.command_kind == "event_dietary_exception.create":
-            payload = CreateEventDietaryExceptionPayload.model_validate(command.payload)
+            create_dietary_exception_payload = CreateEventDietaryExceptionPayload.model_validate(
+                command.payload
+            )
             return CreateEventDietaryExceptionCommand(
                 mutation_id=command.mutation_id,
-                exception_id=payload.exception_id,
+                exception_id=create_dietary_exception_payload.exception_id,
                 organization_id=organization_id,
-                event_id=payload.event_id,
-                name=payload.name,
-                note=payload.note,
-                tag_ids=payload.tag_ids,
+                event_id=create_dietary_exception_payload.event_id,
+                name=create_dietary_exception_payload.name,
+                note=create_dietary_exception_payload.note,
+                tag_ids=create_dietary_exception_payload.tag_ids,
                 client_wall_time=command.client_wall_time,
-                logical_operation_id=payload.logical_operation_id,
+                logical_operation_id=create_dietary_exception_payload.logical_operation_id,
             )
         if command.command_kind == "event_dietary_exception.update":
-            payload = UpdateEventDietaryExceptionPayload.model_validate(command.payload)
+            update_dietary_exception_payload = UpdateEventDietaryExceptionPayload.model_validate(
+                command.payload
+            )
             return UpdateEventDietaryExceptionCommand(
                 mutation_id=command.mutation_id,
-                exception_id=payload.exception_id,
+                exception_id=update_dietary_exception_payload.exception_id,
                 organization_id=organization_id,
-                event_id=payload.event_id,
-                name=payload.name,
-                note=payload.note,
-                tag_ids=payload.tag_ids,
+                event_id=update_dietary_exception_payload.event_id,
+                name=update_dietary_exception_payload.name,
+                note=update_dietary_exception_payload.note,
+                tag_ids=update_dietary_exception_payload.tag_ids,
                 client_wall_time=command.client_wall_time,
-                logical_operation_id=payload.logical_operation_id,
+                logical_operation_id=update_dietary_exception_payload.logical_operation_id,
             )
         if command.command_kind == "event_dietary_exception.lifecycle":
-            payload = EventDietaryExceptionLifecyclePayload.model_validate(command.payload)
+            dietary_exception_lifecycle_payload = EventDietaryExceptionLifecyclePayload.model_validate(
+                command.payload
+            )
             return SetEventDietaryExceptionLifecycleCommand(
                 mutation_id=command.mutation_id,
-                exception_id=payload.exception_id,
+                exception_id=dietary_exception_lifecycle_payload.exception_id,
                 organization_id=organization_id,
-                event_id=payload.event_id,
-                operation=payload.operation,
+                event_id=dietary_exception_lifecycle_payload.event_id,
+                operation=dietary_exception_lifecycle_payload.operation,
                 client_wall_time=command.client_wall_time,
-                logical_operation_id=payload.logical_operation_id,
+                logical_operation_id=dietary_exception_lifecycle_payload.logical_operation_id,
             )
         if command.command_kind == "event_day.note":
-            note_payload = EventDayNotePayload.model_validate(command.payload)
+            event_day_note_payload = EventDayNotePayload.model_validate(command.payload)
             return SetEventDayNoteCommand(
                 mutation_id=command.mutation_id,
-                event_day_id=note_payload.event_day_id,
+                event_day_id=event_day_note_payload.event_day_id,
                 organization_id=organization_id,
-                event_id=note_payload.event_id,
-                note=note_payload.note,
+                event_id=event_day_note_payload.event_id,
+                note=event_day_note_payload.note,
                 client_wall_time=command.client_wall_time,
-                logical_operation_id=note_payload.logical_operation_id,
+                logical_operation_id=event_day_note_payload.logical_operation_id,
             )
         if command.command_kind == "event_meal_role.create":
             role_payload = CreateEventMealRolePayload.model_validate(command.payload)
@@ -1602,52 +1622,58 @@ def _push_command(command: PushCommandRequest, organization_id: UUID) -> SyncCom
                 logical_operation_id=name_payload.logical_operation_id,
             )
         if command.command_kind == "event_meal_role.lifecycle":
-            lifecycle_payload = EventMealRoleLifecyclePayload.model_validate(command.payload)
+            meal_role_lifecycle_payload = EventMealRoleLifecyclePayload.model_validate(
+                command.payload
+            )
             return SetEventMealRoleLifecycleCommand(
                 mutation_id=command.mutation_id,
-                event_meal_role_id=lifecycle_payload.event_meal_role_id,
+                event_meal_role_id=meal_role_lifecycle_payload.event_meal_role_id,
                 organization_id=organization_id,
-                event_id=lifecycle_payload.event_id,
-                operation=lifecycle_payload.operation,
+                event_id=meal_role_lifecycle_payload.event_id,
+                operation=meal_role_lifecycle_payload.operation,
                 client_wall_time=command.client_wall_time,
-                logical_operation_id=lifecycle_payload.logical_operation_id,
+                logical_operation_id=meal_role_lifecycle_payload.logical_operation_id,
             )
         if command.command_kind == "scheduled_recipe.context":
-            payload = ScheduledRecipeContextPayload.model_validate(command.payload)
+            context_payload = ScheduledRecipeContextPayload.model_validate(command.payload)
             return SetScheduledRecipeContextCommand(
                 mutation_id=command.mutation_id,
-                scheduled_recipe_id=payload.scheduled_recipe_id,
+                scheduled_recipe_id=context_payload.scheduled_recipe_id,
                 organization_id=organization_id,
-                event_id=payload.event_id,
-                consumption_percentage=payload.consumption_percentage,
-                operation=payload.operation,
-                selected_scale_amount=payload.selected_scale_amount,
+                event_id=context_payload.event_id,
+                consumption_percentage=context_payload.consumption_percentage,
+                operation=context_payload.operation,
+                selected_scale_amount=context_payload.selected_scale_amount,
                 client_wall_time=command.client_wall_time,
-                logical_operation_id=payload.logical_operation_id,
+                logical_operation_id=context_payload.logical_operation_id,
             )
         if command.command_kind == "scheduled_recipe.note":
-            payload = ScheduledRecipeNotePayload.model_validate(command.payload)
+            scheduled_recipe_note_payload = ScheduledRecipeNotePayload.model_validate(
+                command.payload
+            )
             return SetScheduledRecipeNoteCommand(
                 mutation_id=command.mutation_id,
-                scheduled_recipe_id=payload.scheduled_recipe_id,
+                scheduled_recipe_id=scheduled_recipe_note_payload.scheduled_recipe_id,
                 organization_id=organization_id,
-                event_id=payload.event_id,
-                note=payload.note,
+                event_id=scheduled_recipe_note_payload.event_id,
+                note=scheduled_recipe_note_payload.note,
                 client_wall_time=command.client_wall_time,
-                logical_operation_id=payload.logical_operation_id,
+                logical_operation_id=scheduled_recipe_note_payload.logical_operation_id,
             )
         if command.command_kind == "scheduled_recipe.catalog_update":
-            payload = ScheduledRecipeCatalogUpdatePayload.model_validate(command.payload)
+            catalog_update_payload = ScheduledRecipeCatalogUpdatePayload.model_validate(
+                command.payload
+            )
             return UpdateScheduledRecipeCatalogCommand(
                 mutation_id=command.mutation_id,
-                scheduled_recipe_id=payload.scheduled_recipe_id,
+                scheduled_recipe_id=catalog_update_payload.scheduled_recipe_id,
                 organization_id=organization_id,
-                event_id=payload.event_id,
-                expected_recipe_version_id=payload.expected_recipe_version_id,
-                target_recipe_version_id=payload.target_recipe_version_id,
-                preserve_overrides=payload.preserve_overrides,
+                event_id=catalog_update_payload.event_id,
+                expected_recipe_version_id=catalog_update_payload.expected_recipe_version_id,
+                target_recipe_version_id=catalog_update_payload.target_recipe_version_id,
+                preserve_overrides=catalog_update_payload.preserve_overrides,
                 client_wall_time=command.client_wall_time,
-                logical_operation_id=payload.logical_operation_id,
+                logical_operation_id=catalog_update_payload.logical_operation_id,
             )
         if command.command_kind == "scheduled_recipe.ingredient_override":
             override_payload = scheduled_ingredient_override_payload_adapter.validate_python(
@@ -1693,15 +1719,15 @@ def _push_command(command: PushCommandRequest, organization_id: UUID) -> SyncCom
                 logical_operation_id=receipt_payload.logical_operation_id,
             )
         if command.command_kind == "receipt.lifecycle":
-            lifecycle_payload = ReceiptLifecyclePayload.model_validate(command.payload)
+            receipt_lifecycle_payload = ReceiptLifecyclePayload.model_validate(command.payload)
             return SetReceiptLifecycleCommand(
                 mutation_id=command.mutation_id,
-                receipt_id=lifecycle_payload.receipt_id,
+                receipt_id=receipt_lifecycle_payload.receipt_id,
                 organization_id=organization_id,
-                event_id=lifecycle_payload.event_id,
-                operation=lifecycle_payload.operation,
+                event_id=receipt_lifecycle_payload.event_id,
+                operation=receipt_lifecycle_payload.operation,
                 client_wall_time=command.client_wall_time,
-                logical_operation_id=lifecycle_payload.logical_operation_id,
+                logical_operation_id=receipt_lifecycle_payload.logical_operation_id,
             )
         if command.command_kind == "catalog_configuration.mutate":
             catalog_payload = CatalogConfigurationPayload.model_validate(command.payload)
