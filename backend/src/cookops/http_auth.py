@@ -144,7 +144,7 @@ class SystemOrganizationResponse(CreatedOrganizationResponse):
 
 
 class OrganizationLifecycleRequest(BaseModel):
-    model_config = ConfigDict(extra="forbid", strict=True)
+    model_config = ConfigDict(extra="forbid")
     operation: Literal["retire", "restore"]
     mutation_id: UUID
     client_installation_id: UUID
