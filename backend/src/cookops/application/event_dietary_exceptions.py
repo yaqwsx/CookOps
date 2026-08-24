@@ -3,9 +3,10 @@
 import hashlib
 import json
 import unicodedata
+from collections.abc import Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
-from typing import Literal, Sequence, cast
+from typing import Literal, cast
 from uuid import UUID
 
 from sqlalchemy import select, text
