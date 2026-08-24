@@ -454,14 +454,8 @@ def test_member_retires_and_restores_ingredient_root_without_mutating_version(
             .scalars()
             .all()
         )
-        assert (
-            cast(dict[str, str], records[-2]["record"])["lifecycle"]
-            == "retired"
-        )
-        assert (
-            cast(dict[str, str], records[-1]["record"])["lifecycle"]
-            == "active"
-        )
+        assert cast(dict[str, str], records[-2]["record"])["lifecycle"] == "retired"
+        assert cast(dict[str, str], records[-1]["record"])["lifecycle"] == "active"
     assert first.replayed is False
     assert replay.replayed is True
     assert second.outcome == "accepted"
