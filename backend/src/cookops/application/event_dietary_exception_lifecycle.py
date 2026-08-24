@@ -163,7 +163,7 @@ async def set_event_dietary_exception_lifecycle(
             if retained.outcome == "rejected":
                 error = (retained.outcome_payload or {}).get("error")
                 error_payload = cast(dict[str, object], error) if isinstance(error, dict) else {}
-                violations = tuple(
+                retained_violations = tuple(
                     FieldViolation(path, code)
                     for value in cast(list[object], error_payload.get("field_violations", []))
                     if isinstance(value, dict)
@@ -176,7 +176,7 @@ async def set_event_dietary_exception_lifecycle(
                     else "validation_failed"
                 )
                 deferred = ApplicationServiceError(
-                    code, field_violations=violations, retry_same_identity=False
+                    code, field_violations=retained_violations, retry_same_identity=False
                 )
             elif (
                 retained.first_change_sequence is not None
