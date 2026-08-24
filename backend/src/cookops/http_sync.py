@@ -17,6 +17,7 @@ from pydantic import (
     Field,
     StrictBool,
     StrictInt,
+    StrictStr,
     TypeAdapter,
     ValidationError,
     field_validator,
@@ -928,11 +929,11 @@ class CatalogConfigurationPayload(BaseModel):
 
 
 class OrganizationUpdatePayload(BaseModel):
-    model_config = ConfigDict(extra="forbid", strict=True)
+    model_config = ConfigDict(extra="forbid")
     organization_id: UUID
-    name: str
-    description: str | None
-    default_currency: str
+    name: StrictStr
+    description: StrictStr | None
+    default_currency: StrictStr
 
     @field_validator("name")
     @classmethod
