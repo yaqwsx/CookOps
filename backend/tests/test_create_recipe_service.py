@@ -843,6 +843,5 @@ def test_publish_preserves_recipe_root_author_for_a_different_member(
             )
         )
     assert record is not None
-    record_payload = cast(dict[str, object], record)
-    record_body = cast(dict[str, object], record_payload["record"])
+    record_body = cast(dict[str, object], record["record"])
     assert record_body["created_by_user_id"] == str(service_database.actor_id)
