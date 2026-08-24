@@ -5,7 +5,7 @@ import json
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from decimal import Decimal
-from typing import Literal
+from typing import Literal, cast
 from uuid import UUID
 
 from iso4217 import Currency
@@ -174,7 +174,7 @@ async def publish_ingredient_price_estimate(
                     retained.first_change_sequence or 0,
                     retained.last_change_sequence or 0,
                     True,
-                    retained.outcome,
+                    cast(Literal["accepted", "partially_superseded"], retained.outcome),
                 )
             raise _retained_price_error(retained)
         if violations:
