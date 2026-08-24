@@ -1,5 +1,6 @@
 import asyncio
 import os
+from datetime import UTC, datetime
 from uuid import uuid4
 
 import pytest
@@ -46,7 +47,11 @@ def test_event_summary_rechecks_revoked_membership(
                 OrganizationMembership.organization_id == service_database.organization_id,
                 OrganizationMembership.user_id == service_database.actor_id,
             )
-            .values(state="removed")
+            .values(
+                state="removed",
+                removed_at=datetime.now(UTC),
+                removed_by_user_id=service_database.actor_id,
+            )
         )
     with pytest.raises(EventQueryDenied, match="organization access denied"):
         asyncio.run(
