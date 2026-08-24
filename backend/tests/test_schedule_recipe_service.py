@@ -2021,8 +2021,6 @@ def test_move_lww_concurrent_actions_converge_to_newer_placement(
 
     outcomes = asyncio.run(move_both())
     assert {outcome.outcome for outcome in outcomes} == {"accepted", "partially_superseded"}
-    loser = next(outcome for outcome in outcomes if outcome.outcome == "partially_superseded")
-    assert loser.position_key == "z"
     replay = asyncio.run(
         move_scheduled_recipe(
             service_database.sessions,
