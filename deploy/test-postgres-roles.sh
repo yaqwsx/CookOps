@@ -4,8 +4,17 @@ set -eu
 root=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
 project="cookops_roles_test_$$"
 cleanup() {
+    status=$?
+    if [ "$status" -ne 0 ]; then
+        echo "Postgres role smoke failed (project=$project); diagnostics:" >&2
+        docker compose --project-name "$project" --env-file "$root/deploy/.env.example" \
+            -f "$root/deploy/compose.yaml" ps >&2 || true
+        docker compose --project-name "$project" --env-file "$root/deploy/.env.example" \
+            -f "$root/deploy/compose.yaml" logs --no-color postgres >&2 || true
+    fi
     docker compose --project-name "$project" --env-file "$root/deploy/.env.example" \
         -f "$root/deploy/compose.yaml" down --volumes --remove-orphans >/dev/null 2>&1 || true
+    exit "$status"
 }
 trap cleanup EXIT
 
