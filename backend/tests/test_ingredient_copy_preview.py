@@ -9,7 +9,7 @@ from uuid import UUID, uuid4
 import pytest
 from alembic.config import Config
 from fastapi.testclient import TestClient
-from sqlalchemy import create_engine, insert, select
+from sqlalchemy import create_engine, delete, insert, select, update
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 from sqlalchemy.pool import NullPool
 
@@ -298,22 +298,22 @@ def test_preview_includes_retired_historical_dependencies(copy_database):
             )
         )
         connection.execute(
-            Ingredient.__table__.update()
+            update(Ingredient)
             .where(Ingredient.id == db.ingredient)
             .values(current_version_id=current_version)
         )
         connection.execute(
-            UnitDefinition.__table__.update()
+            update(UnitDefinition)
             .where(UnitDefinition.id == historical_unit)
             .values(retired_at=now, retired_by_user_id=db.actor)
         )
         connection.execute(
-            StoreSection.__table__.update()
+            update(StoreSection)
             .where(StoreSection.id == historical_section)
             .values(retired_at=now, retired_by_user_id=db.actor)
         )
         connection.execute(
-            DietaryTag.__table__.update()
+            update(DietaryTag)
             .where(DietaryTag.id == historical_tag)
             .values(retired_at=now, retired_by_user_id=db.actor)
         )
@@ -341,7 +341,7 @@ def test_preview_includes_retired_historical_dependencies(copy_database):
 
     with db.engine.begin() as connection:
         connection.execute(
-            DietaryTag.__table__.update()
+            update(DietaryTag)
             .where(DietaryTag.id == historical_tag)
             .values(seed_key="vegetarian")
         )
@@ -370,7 +370,7 @@ def test_retired_source_is_stale_broken_graph(copy_database):
     db = copy_database
     with db.engine.begin() as connection:
         connection.execute(
-            Ingredient.__table__.update()
+            update(Ingredient)
             .where(Ingredient.id == db.ingredient)
             .values(retired_at=datetime.now(UTC), retired_by_user_id=db.actor)
         )
@@ -388,7 +388,7 @@ def test_source_member_or_destination_member_is_denied(copy_database):
     db = copy_database
     with db.engine.begin() as connection:
         connection.execute(
-            OrganizationMembership.__table__.update()
+            update(OrganizationMembership)
             .where(OrganizationMembership.organization_id == db.destination)
             .values(role="member")
         )
@@ -407,7 +407,7 @@ def test_disabled_user_is_denied_without_mutation(copy_database):
     db = copy_database
     with db.engine.begin() as connection:
         connection.execute(
-            User.__table__.update()
+            update(User)
             .where(User.id == db.actor)
             .values(disabled_at=datetime.now(UTC), disabled_by_user_id=db.actor)
         )
@@ -428,7 +428,7 @@ def test_system_admin_can_preview_without_memberships(copy_database):
     db = copy_database
     with db.engine.begin() as connection:
         connection.execute(
-            OrganizationMembership.__table__.delete().where(
+            delete(OrganizationMembership).where(
                 OrganizationMembership.user_id == db.actor
             )
         )
@@ -456,7 +456,7 @@ def test_retired_source_tag_remains_previewable_and_fingerprint_changes(copy_dat
     db = copy_database
     with db.engine.begin() as connection:
         connection.execute(
-            DietaryTag.__table__.update()
+            update(DietaryTag)
             .where(DietaryTag.id == db.tag)
             .values(retired_at=datetime.now(UTC), retired_by_user_id=db.actor)
         )
@@ -470,7 +470,7 @@ def test_retired_source_tag_remains_previewable_and_fingerprint_changes(copy_dat
     assert any(item.kind == "dietary_tag" for item in first.mapping_requirements)
     with db.engine.begin() as connection:
         connection.execute(
-            DietaryTag.__table__.update()
+            update(DietaryTag)
             .where(DietaryTag.id == db.tag)
             .values(seed_key="vegetarian")
         )
@@ -501,7 +501,7 @@ def test_retired_source_tag_remains_previewable_and_fingerprint_changes(copy_dat
     assert second.precondition_fingerprint != first.precondition_fingerprint
     with db.engine.begin() as connection:
         connection.execute(
-            Ingredient.__table__.update()
+            update(Ingredient)
             .where(Ingredient.id == db.ingredient)
             .values(retired_at=datetime.now(UTC), retired_by_user_id=db.actor)
         )
@@ -799,7 +799,7 @@ def _prepare_multiversion_copy(db):
     destination_section, destination_tag = (uuid4() for _ in range(2))
     with db.engine.begin() as connection:
         connection.execute(
-            DietaryTag.__table__.update()
+            update(DietaryTag)
             .where(DietaryTag.id == db.tag)
             .values(seed_key=None, name="Seasonal", normalized_name="seasonal")
         )
@@ -874,7 +874,7 @@ def _prepare_multiversion_copy(db):
             )
         )
         connection.execute(
-            Ingredient.__table__.update()
+            update(Ingredient)
             .where(Ingredient.id == db.ingredient)
             .values(current_version_id=historical_version)
         )
@@ -916,7 +916,7 @@ def test_copy_multiversion_graph_has_only_destination_references(copy_database):
     setup = _prepare_multiversion_copy(db)
     with db.engine.begin() as connection:
         connection.execute(
-            DietaryTag.__table__.delete().where(DietaryTag.id == setup.destination_tag)
+            delete(DietaryTag).where(DietaryTag.id == setup.destination_tag)
         )
     result = asyncio.run(
         copy_ingredient_to_organization(
@@ -1067,7 +1067,7 @@ def test_copy_allows_many_to_one_explicit_dietary_tag_mapping(copy_database):
             )
         )
         connection.execute(
-            Ingredient.__table__.update()
+            update(Ingredient)
             .where(Ingredient.id == db.ingredient)
             .values(current_version_id=new_version)
         )
@@ -1184,7 +1184,7 @@ def test_copy_replay_after_role_revocation_is_forbidden(copy_database):
     asyncio.run(copy_ingredient_to_organization(db.sessions, context(db), command))
     with db.engine.begin() as connection:
         connection.execute(
-            OrganizationMembership.__table__.update()
+            update(OrganizationMembership)
             .where(OrganizationMembership.organization_id == db.destination)
             .values(role="member")
         )
@@ -1198,7 +1198,7 @@ def test_copy_stale_mapping_leaves_no_copy(copy_database):
     command = _copy_command(db, setup)
     with db.engine.begin() as connection:
         connection.execute(
-            DietaryTag.__table__.update()
+            update(DietaryTag)
             .where(DietaryTag.id == db.tag)
             .values(name="Renamed", normalized_name="renamed")
         )
@@ -1223,7 +1223,7 @@ def test_copy_authorization_error_leaves_no_copy(copy_database):
     command = _copy_command(db, setup)
     with db.engine.begin() as connection:
         connection.execute(
-            OrganizationMembership.__table__.update()
+            update(OrganizationMembership)
             .where(OrganizationMembership.organization_id == db.destination)
             .values(role="member")
         )
