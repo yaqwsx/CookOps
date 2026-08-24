@@ -1,7 +1,8 @@
 import asyncio
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 from dataclasses import replace
 from datetime import UTC, datetime
+from typing import cast
 from uuid import uuid4
 
 import pytest
@@ -34,7 +35,11 @@ pytest_plugins = ("test_create_recipe_service",)
 @pytest.fixture
 def recipe_copy_database() -> Iterator[ServiceDatabase]:
     """Use the recipe fixture without colliding with other plugin fixtures."""
-    yield from create_recipe_service_database.__wrapped__()
+    fixture = cast(
+        Callable[[], Iterator[ServiceDatabase]],
+        vars(create_recipe_service_database)["__wrapped__"],
+    )
+    yield from fixture()
 
 
 def test_copy_current_recipe_to_destination_admin(
