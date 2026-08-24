@@ -61,6 +61,8 @@ pytestmark = pytest.mark.skipif(
 )
 
 KEY = base64.urlsafe_b64encode(b"0123456789abcdef0123456789abcdef").rstrip(b"=").decode()
+DETAILS_KEY = base64.urlsafe_b64encode(b"details-key-01234567890123456789").rstrip(b"=").decode()
+GRANTS_KEY = base64.urlsafe_b64encode(b"grants-key-012345678901234567890").rstrip(b"=").decode()
 
 
 @dataclass
@@ -442,10 +444,10 @@ def test_provisioning_refuses_production_before_acquiring_a_database_session() -
         database_url=PostgresDsn(os.environ["TEST_DATABASE_URL"]),
         browser_session_hmac_key=KEY,
         browser_origin="https://testserver",
-        oauth_interaction_details_api_credential_base64url=KEY[:-1] + "U",
+        oauth_interaction_details_api_credential_base64url=DETAILS_KEY,
         oauth_interaction_approval_api_credential_base64url=KEY,
         oauth_interaction_origin="https://testserver",
-        oauth_grants_api_credential_base64url=KEY[:-1] + "V",
+        oauth_grants_api_credential_base64url=GRANTS_KEY,
     )
 
     def unexpected_session_factory() -> AsyncSession:

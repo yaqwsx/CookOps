@@ -38,6 +38,8 @@ pytestmark = pytest.mark.skipif(
 )
 
 KEY = base64.urlsafe_b64encode(b"0123456789abcdef0123456789abcdef").rstrip(b"=").decode()
+DETAILS_KEY = base64.urlsafe_b64encode(b"details-key-01234567890123456789").rstrip(b"=").decode()
+GRANTS_KEY = base64.urlsafe_b64encode(b"grants-key-012345678901234567890").rstrip(b"=").decode()
 
 
 @dataclass
@@ -220,6 +222,7 @@ def test_dummy_authentication_only_selects_existing_identities_and_issues_a_secu
             "id": str(dummy_auth_database.authorized_user_id),
             "display_name": "Alice Member",
             "verified_email": "alice@example.test",
+            "preferred_locale": "cs",
         }
         organizations = client.get("/api/v1/organizations")
         assert organizations.status_code == 200
@@ -281,10 +284,10 @@ def test_google_route_issues_the_same_cookie_and_does_not_mount_dummy_routes() -
         google_client_id="test-client.apps.googleusercontent.com",
         browser_session_hmac_key=KEY,
         browser_origin="https://testserver",
-        oauth_interaction_details_api_credential_base64url=KEY[:-1] + "U",
+        oauth_interaction_details_api_credential_base64url=DETAILS_KEY,
         oauth_interaction_approval_api_credential_base64url=KEY,
         oauth_interaction_origin="https://testserver",
-        oauth_grants_api_credential_base64url=KEY[:-1] + "U",
+        oauth_grants_api_credential_base64url=GRANTS_KEY,
     )
     google_provider = MagicMock()
     google_provider.complete_id_token = AsyncMock(
@@ -344,10 +347,10 @@ def test_production_google_route_rejects_plain_http_before_token_verification() 
         google_client_id="test-client.apps.googleusercontent.com",
         browser_session_hmac_key=KEY,
         browser_origin="https://testserver",
-        oauth_interaction_details_api_credential_base64url=KEY[:-1] + "U",
+        oauth_interaction_details_api_credential_base64url=DETAILS_KEY,
         oauth_interaction_approval_api_credential_base64url=KEY,
         oauth_interaction_origin="https://testserver",
-        oauth_grants_api_credential_base64url=KEY[:-1] + "U",
+        oauth_grants_api_credential_base64url=GRANTS_KEY,
     )
     google_provider = MagicMock()
     app = FastAPI()
@@ -382,7 +385,7 @@ def test_identity_http_sessions_reach_cookie_bound_interaction_bridge(
             "oauth_interaction_origin": "https://testserver",
             "oauth_interaction_details_api_credential_base64url": KEY,
             "oauth_interaction_approval_api_credential_base64url": KEY,
-            "oauth_grants_api_credential_base64url": KEY[:-1] + "U",
+            "oauth_grants_api_credential_base64url": GRANTS_KEY,
         }
     )
 
