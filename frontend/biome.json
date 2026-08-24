@@ -6,7 +6,7 @@
     "useIgnoreFile": true
   },
   "files": {
-    "includes": ["**", "!dist"]
+    "includes": ["**", "!dist", "!src/api/generated.ts"]
   },
   "formatter": {
     "enabled": true,
