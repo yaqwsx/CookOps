@@ -2,7 +2,7 @@ import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it } from "vitest";
 
-import "./i18n";
+import i18n, { defaultLocale } from "./i18n";
 import { appendOutboxCommand, localDb } from "./local-db";
 import { EventSummary, useEventPendingSync } from "./event-summary";
 import type { EventPlannerProjection } from "./planner-projections";
@@ -53,6 +53,7 @@ function SummaryRoute({
 
 describe("event summary", () => {
   beforeEach(async () => {
+    await i18n.changeLanguage(defaultLocale);
     await Promise.all([
       localDb.outbox.clear(),
       localDb.canonicalRecords.clear(),
