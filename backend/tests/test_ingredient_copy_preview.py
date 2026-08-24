@@ -4,6 +4,7 @@ import asyncio
 import os
 from datetime import UTC, datetime
 from types import SimpleNamespace
+from typing import Any
 from uuid import UUID, uuid4
 
 import pytest
@@ -181,7 +182,7 @@ def copy_database():
     async_engine.sync_engine.dispose()
 
 
-def context(db):
+def context(db: Any) -> ExecutionContext:
     return ExecutionContext(db.actor, db.installation)
 
 
@@ -534,11 +535,11 @@ async def _ready() -> bool:
     return True
 
 
-def _authenticated(user_id):
+def _authenticated(user_id: UUID) -> SimpleNamespace:
     return SimpleNamespace(user_id=user_id)
 
 
-def _copy_http_app(db, *, authenticated_user_id=None):
+def _copy_http_app(db: Any, *, authenticated_user_id: UUID | None = None) -> Any:
     settings = Settings(
         browser_session_cookie_name="cookops_session",
         browser_origin="https://testserver",
@@ -556,7 +557,7 @@ def _copy_http_app(db, *, authenticated_user_id=None):
     return app
 
 
-def _http_copy_payload(db, *, mutation_id=None):
+def _http_copy_payload(db: Any, *, mutation_id: UUID | None = None) -> dict[str, object]:
     destination_section, destination_tag = uuid4(), uuid4()
     with db.engine.begin() as connection:
         connection.execute(
@@ -788,7 +789,7 @@ def test_http_copy_rejects_unowned_disabled_and_non_browser_installations(copy_d
         assert connection.execute(select(OrganizationChange)).first() is None
 
 
-def _prepare_multiversion_copy(db):
+def _prepare_multiversion_copy(db: Any) -> SimpleNamespace:
     historical_version, historical_unit, destination_unit = (uuid4() for _ in range(3))
     destination_section, destination_tag = (uuid4() for _ in range(2))
     with db.engine.begin() as connection:
@@ -879,7 +880,9 @@ def _prepare_multiversion_copy(db):
     )
 
 
-def _copy_command(db, setup, *, create_custom_tag=False):
+def _copy_command(
+    db: Any, setup: Any, *, create_custom_tag: bool = False
+) -> CopyIngredientToOrganizationCommand:
     preview = asyncio.run(
         preview_ingredient_copy(
             db.sessions,
