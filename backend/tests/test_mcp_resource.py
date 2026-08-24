@@ -134,12 +134,13 @@ def test_private_introspection_rejects_wrong_resource_and_never_mounts_routes() 
         ).verify_token("opaque")
     )
     assert token is None
-    assert create_mcp_protected_resource(
+    app = create_mcp_protected_resource(
         verifier({"active": False}),
         issuer="https://cookops.example/oauth",
         resource="https://cookops.example/mcp",
         session_factory=cast(Any, object()),
-    ).routes
+    )
+    assert cast(Any, app).routes
 
 
 def test_settings_factory_is_disabled_only_when_all_mcp_values_are_absent() -> None:
@@ -206,7 +207,7 @@ def test_mcp_client_lists_and_calls_event_summary_with_verified_subject(
     async def exercise() -> None:
         transport = httpx.ASGITransport(app=app)
         async with AsyncExitStack() as stack:
-            await stack.enter_async_context(app.router.lifespan_context(app))
+            await stack.enter_async_context(cast(Any, app).router.lifespan_context(app))
             http = await stack.enter_async_context(
                 httpx.AsyncClient(
                     transport=transport,
