@@ -2,9 +2,10 @@
 
 import asyncio
 import os
+from collections.abc import Iterator
 from datetime import UTC, datetime
 from types import SimpleNamespace
-from typing import Any
+from typing import Any, cast
 from uuid import UUID, uuid4
 
 import pytest
@@ -22,6 +23,7 @@ from cookops.application.ingredient_copy import (
     copy_ingredient_to_organization,
     preview_ingredient_copy,
 )
+from cookops.application.browser_sessions import BrowserSessionService
 from cookops.application.organizations import (
     ApplicationServiceError,
     ExecutionContext,
@@ -52,7 +54,7 @@ pytestmark = pytest.mark.skipif(
 
 
 @pytest.fixture
-def copy_database():
+def copy_database() -> Iterator[Any]:
     url = os.environ["TEST_DATABASE_URL"]
     configuration = Config("alembic.ini")
     configuration.set_main_option("sqlalchemy.url", url)
@@ -515,11 +517,11 @@ def test_authenticated_http_preview_route(copy_database: Any) -> None:
     settings = Settings(browser_session_cookie_name="cookops_session")
     app = create_app(settings, readiness_probe=lambda: _ready())
 
-    async def authenticate(_: str):
+    async def authenticate(_: str) -> SimpleNamespace:
         return _authenticated(db.actor)
 
     app.state.ingredient_copy = IngredientCopyHttpServices(
-        browser_sessions=SimpleNamespace(authenticate=authenticate),
+        browser_sessions=cast(BrowserSessionService, SimpleNamespace(authenticate=authenticate)),
         session_factory=db.sessions,
     )
     with TestClient(app) as client:
@@ -547,11 +549,11 @@ def _copy_http_app(db: Any, *, authenticated_user_id: UUID | None = None) -> Any
     app = create_app(settings, readiness_probe=lambda: _ready())
     user_id = db.actor if authenticated_user_id is None else authenticated_user_id
 
-    async def authenticate(secret: str):
+    async def authenticate(secret: str) -> SimpleNamespace | None:
         return _authenticated(user_id) if secret == "session" else None
 
     app.state.ingredient_copy = IngredientCopyHttpServices(
-        browser_sessions=SimpleNamespace(authenticate=authenticate),
+        browser_sessions=cast(BrowserSessionService, SimpleNamespace(authenticate=authenticate)),
         session_factory=db.sessions,
     )
     return app
@@ -635,7 +637,7 @@ def test_authenticated_http_copy_route_and_replay(copy_database: Any) -> None:
     with db.engine.connect() as connection:
         changes = connection.execute(
             select(OrganizationChange).where(
-                OrganizationChange.mutation_id == UUID(payload["mutation_id"])
+                OrganizationChange.mutation_id == UUID(str(payload["mutation_id"]))
             )
         ).all()
         assert (
@@ -722,7 +724,7 @@ def test_http_command_error_preserves_validation_contract() -> None:
     )
     response = _command_error(error)
     assert response.status_code == 422
-    assert response.detail == {
+    assert cast(dict[str, object], response.detail) == {
         "code": "validation_failed",
         "field_violations": [{"path": "mappings", "code": "missing"}],
         "retry_same_identity": False,
