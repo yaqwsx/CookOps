@@ -24,12 +24,22 @@ import {
   type ReceiptProjection,
 } from "./receipt-projections";
 import { pullOrganization, SyncRequestError } from "./sync-bootstrap";
-import { readEventPlanner, type EventPlannerProjection } from "./planner-projections";
-import { readEventCosts, type EventCostsProjection } from "./event-cost-projections";
+import {
+  readEventPlanner,
+  type EventPlannerProjection,
+} from "./planner-projections";
+import {
+  readEventCosts,
+  type EventCostsProjection,
+} from "./event-cost-projections";
 import { EventSummary, useEventPendingSync } from "./event-summary";
 import { EventSectionNavigation } from "./event-section-navigation";
 import { ensureArchivedEventCached } from "./archive-cache";
-import { formatReceiptAmount, formatReceiptDate, isReceiptDate } from "./receipt-display";
+import {
+  formatReceiptAmount,
+  formatReceiptDate,
+  isReceiptDate,
+} from "./receipt-display";
 
 const blank: ReceiptInput = {
   title: "",
@@ -161,7 +171,9 @@ function ReceiptItem({
   const [error, setError] = useState<"unavailable" | "retakePhoto">();
   const [attaching, setAttaching] = useState(false);
   const [previewUrls, setPreviewUrls] = useState<Record<string, string>>({});
-  const [cachedImageUrls, setCachedImageUrls] = useState<Record<string, string>>({});
+  const [cachedImageUrls, setCachedImageUrls] = useState<
+    Record<string, string>
+  >({});
   const previewUrlEntries = useRef(
     new Map<string, { signature: string; url: string }>(),
   );
@@ -210,15 +222,36 @@ function ReceiptItem({
   useEffect(() => {
     let active = true;
     const entries = receipt.attachments ?? [];
-    void Promise.all(entries.filter((attachment) => !attachment.retired).map(async (attachment) => [attachment.id, await loadReceiptImage(userId, organizationId, attachment)] as const)).then((loaded) => {
+    void Promise.all(
+      entries
+        .filter((attachment) => !attachment.retired)
+        .map(
+          async (attachment) =>
+            [
+              attachment.id,
+              await loadReceiptImage(userId, organizationId, attachment),
+            ] as const,
+        ),
+    ).then((loaded) => {
       if (!active) return;
       const urls: Record<string, string> = {};
-      for (const [id, blob] of loaded) if (blob && typeof URL.createObjectURL === "function") urls[id] = URL.createObjectURL(blob);
+      for (const [id, blob] of loaded)
+        if (blob && typeof URL.createObjectURL === "function")
+          urls[id] = URL.createObjectURL(blob);
       setCachedImageUrls(urls);
     });
-    return () => { active = false; };
+    return () => {
+      active = false;
+    };
   }, [organizationId, receipt.attachments, userId]);
-  useEffect(() => () => { Object.values(cachedImageUrls).forEach((url) => { URL.revokeObjectURL(url); }); }, [cachedImageUrls]);
+  useEffect(
+    () => () => {
+      Object.values(cachedImageUrls).forEach((url) => {
+        URL.revokeObjectURL(url);
+      });
+    },
+    [cachedImageUrls],
+  );
   async function lifecycle() {
     if (busy.current) return;
     busy.current = true;
@@ -266,9 +299,7 @@ function ReceiptItem({
       }
     } catch (reason) {
       setError(
-        isReceiptImageReadabilityError(reason)
-          ? "retakePhoto"
-          : "unavailable",
+        isReceiptImageReadabilityError(reason) ? "retakePhoto" : "unavailable",
       );
     } finally {
       input.value = "";
@@ -317,10 +348,15 @@ function ReceiptItem({
               <img
                 alt={t("receipts.photo")}
                 loading="lazy"
-                src={cachedImageUrls[attachment.id] ?? `/media/receipt-attachments/${attachment.id}?organization_id=${organizationId}`}
+                src={
+                  cachedImageUrls[attachment.id] ??
+                  `/media/receipt-attachments/${attachment.id}?organization_id=${organizationId}`
+                }
               />
             ) : null}
-            {offline && !cachedImageUrls[attachment.id] ? <p role="status">{t("receipts.photoUnavailableOffline")}</p> : null}
+            {offline && !cachedImageUrls[attachment.id] ? (
+              <p role="status">{t("receipts.photoUnavailableOffline")}</p>
+            ) : null}
             {!readOnly ? (
               <button
                 onClick={() =>
@@ -338,7 +374,9 @@ function ReceiptItem({
                 )}
               </button>
             ) : null}
-            {!readOnly && !receipt.retired && !attachment.retired &&
+            {!readOnly &&
+            !receipt.retired &&
+            !attachment.retired &&
             !uploads.some(
               (upload) =>
                 upload.replaceAttachmentId === attachment.id &&
@@ -453,7 +491,10 @@ export function EventReceipts({
   const optimisticUploadIds = useRef(new Set<string>());
   const [offlineState, setOfflineState] = useState({ identity, value: false });
   const [errorState, setErrorState] = useState({ identity, value: false });
-  const [readOnlyState, setReadOnlyState] = useState({ identity, value: false });
+  const [readOnlyState, setReadOnlyState] = useState({
+    identity,
+    value: false,
+  });
   const identityRef = useRef(identity);
   identityRef.current = identity;
   const [plannerState, setPlannerState] = useState<{
@@ -475,48 +516,56 @@ export function EventReceipts({
     }
     return byReceipt;
   }, [uploads]);
-  const refresh = useCallback(async (signal?: AbortSignal) => {
-    const requestIdentity = identity;
-    const isCurrent = () => identityRef.current === requestIdentity;
-    try {
-      const readOnly = async () => {
-        const event = await localDb.canonicalRecords.get([
-          userId,
-          organizationId,
-          "event",
-          eventId,
-        ]);
-        if (!event) return undefined;
-        return event.fields.lifecycle === "archived" &&
-          typeof event.fields.current_archive_snapshot_id === "string";
-      };
-      if (!isCurrent() || signal?.aborted) return;
-      const initiallyReadOnly = await readOnly();
-      if (initiallyReadOnly !== false) {
-        await pullOrganization(userId, organizationId);
-        if (!isCurrent() || signal?.aborted) return;
-        if (await readOnly())
-          await ensureArchivedEventCached(
+  const refresh = useCallback(
+    async (signal?: AbortSignal) => {
+      const requestIdentity = identity;
+      const isCurrent = () => identityRef.current === requestIdentity;
+      try {
+        const readOnly = async () => {
+          const event = await localDb.canonicalRecords.get([
             userId,
             organizationId,
+            "event",
             eventId,
-            fetch,
-            signal,
+          ]);
+          if (!event) return undefined;
+          return (
+            event.fields.lifecycle === "archived" &&
+            typeof event.fields.current_archive_snapshot_id === "string"
           );
-      } else {
-        setReadOnlyState({ identity: requestIdentity, value: false });
+        };
+        if (!isCurrent() || signal?.aborted) return;
+        const initiallyReadOnly = await readOnly();
+        if (initiallyReadOnly !== false) {
+          await pullOrganization(userId, organizationId);
+          if (!isCurrent() || signal?.aborted) return;
+          if (await readOnly())
+            await ensureArchivedEventCached(
+              userId,
+              organizationId,
+              eventId,
+              fetch,
+              signal,
+            );
+        } else {
+          setReadOnlyState({ identity: requestIdentity, value: false });
+        }
+        if (!isCurrent() || signal?.aborted) return;
+        setReadOnlyState({
+          identity: requestIdentity,
+          value: (await readOnly()) === true,
+        });
+        setOfflineState({ identity: requestIdentity, value: false });
+        setErrorState({ identity: requestIdentity, value: false });
+      } catch (reason) {
+        if (signal?.aborted || !isCurrent()) return;
+        if (reason instanceof SyncRequestError && reason.status === 401)
+          return onUnauthenticated();
+        setOfflineState({ identity: requestIdentity, value: true });
       }
-      if (!isCurrent() || signal?.aborted) return;
-      setReadOnlyState({ identity: requestIdentity, value: (await readOnly()) === true });
-      setOfflineState({ identity: requestIdentity, value: false });
-      setErrorState({ identity: requestIdentity, value: false });
-    } catch (reason) {
-      if (signal?.aborted || !isCurrent()) return;
-      if (reason instanceof SyncRequestError && reason.status === 401)
-        return onUnauthenticated();
-      setOfflineState({ identity: requestIdentity, value: true });
-    }
-  }, [eventId, identity, onUnauthenticated, organizationId, userId]);
+    },
+    [eventId, identity, onUnauthenticated, organizationId, userId],
+  );
   useEffect(() => {
     const effectIdentity = identity;
     setReceiptsState(undefined);
@@ -525,20 +574,37 @@ export function EventReceipts({
     setOfflineState({ identity: effectIdentity, value: false });
     setErrorState({ identity: effectIdentity, value: false });
     setReadOnlyState({ identity: effectIdentity, value: false });
-    const plannerSubscription = liveQuery(() => readEventPlanner(userId, organizationId, eventId)).subscribe({ next: (next) => setPlannerState({ identity: effectIdentity, planner: next }) });
-    const costsSubscription = liveQuery(() => readEventCosts(userId, organizationId, eventId)).subscribe({ next: (next) => setCostsState({ identity: effectIdentity, costs: next }) });
+    const plannerSubscription = liveQuery(() =>
+      readEventPlanner(userId, organizationId, eventId),
+    ).subscribe({
+      next: (next) =>
+        setPlannerState({ identity: effectIdentity, planner: next }),
+    });
+    const costsSubscription = liveQuery(() =>
+      readEventCosts(userId, organizationId, eventId),
+    ).subscribe({
+      next: (next) => setCostsState({ identity: effectIdentity, costs: next }),
+    });
     const subscription = liveQuery(() =>
       readEventReceipts(userId, organizationId, eventId),
     ).subscribe({
-      next: (next) => setReceiptsState({ identity: effectIdentity, receipts: next }),
+      next: (next) =>
+        setReceiptsState({ identity: effectIdentity, receipts: next }),
       error: () => setErrorState({ identity: effectIdentity, value: true }),
     });
     const controller = new AbortController();
     void refresh(controller.signal);
-    return () => { controller.abort(); subscription.unsubscribe(); plannerSubscription.unsubscribe(); costsSubscription.unsubscribe(); };
+    return () => {
+      controller.abort();
+      subscription.unsubscribe();
+      plannerSubscription.unsubscribe();
+      costsSubscription.unsubscribe();
+    };
   }, [eventId, organizationId, refresh, userId, identity]);
-  const planner = plannerState?.identity === identity ? plannerState.planner : undefined;
-  const costs = costsState?.identity === identity ? costsState.costs : undefined;
+  const planner =
+    plannerState?.identity === identity ? plannerState.planner : undefined;
+  const costs =
+    costsState?.identity === identity ? costsState.costs : undefined;
   useEffect(() => {
     const subscription = liveQuery(() =>
       localDb.pendingUploads.toArray(),
@@ -561,7 +627,8 @@ export function EventReceipts({
     });
     return () => subscription.unsubscribe();
   }, [organizationId, userId]);
-  const receipts = receiptsState?.identity === identity ? receiptsState.receipts : undefined;
+  const receipts =
+    receiptsState?.identity === identity ? receiptsState.receipts : undefined;
   const offline = offlineState.identity === identity && offlineState.value;
   const error = errorState.identity === identity && errorState.value;
   const readOnly = readOnlyState.identity === identity && readOnlyState.value;
@@ -577,52 +644,65 @@ export function EventReceipts({
     );
   return (
     <>
-    {planner ? <EventSummary eventId={eventId} organizationId={organizationId} userId={userId} planner={planner} costs={costs} pendingSync={pendingSync} /> : null}
-    <EventSectionNavigation current="receipts" eventId={eventId} organizationId={organizationId} />
-    <section className="event-receipts" aria-labelledby="receipts-heading">
-      <header className="event-receipts__header">
-        <h2 id="receipts-heading">{t("receipts.heading")}</h2>
-      </header>
-      <p>{t("receipts.scope")}</p>
-      {offline ? <p role="status">{t("receipts.offline")}</p> : null}
-      {!readOnly ? (
-        <ReceiptForm
+      {planner ? (
+        <EventSummary
           eventId={eventId}
           organizationId={organizationId}
           userId={userId}
+          planner={planner}
+          costs={costs}
+          pendingSync={pendingSync}
         />
-      ) : (
-        <p className="planner-archived" role="status">
-          {t("planner.archived")}
-        </p>
-      )}
-      {!receipts?.length ? (
-        <p role="status">{t("receipts.empty")}</p>
-      ) : (
-        <ul className="receipt-list">
-          {receipts.map((receipt) => (
-            <ReceiptItem
-              eventId={eventId}
-              key={receipt.id}
-              organizationId={organizationId}
-              onQueued={(upload) => {
-                optimisticUploadIds.current.add(upload.id);
-                setUploads((current) =>
-                  current.some((item) => item.id === upload.id)
-                    ? current
-                    : [...current, upload],
-                );
-              }}
-              receipt={receipt}
-              offline={offline}
-              userId={userId}
-              readOnly={readOnly}
-              uploads={uploadsByReceipt.get(receipt.id) ?? emptyUploads}
-            />
-          ))}
-        </ul>
-      )}
-    </section>
+      ) : null}
+      <EventSectionNavigation
+        current="receipts"
+        eventId={eventId}
+        organizationId={organizationId}
+      />
+      <section className="event-receipts" aria-labelledby="receipts-heading">
+        <header className="event-receipts__header">
+          <h2 id="receipts-heading">{t("receipts.heading")}</h2>
+        </header>
+        <p>{t("receipts.scope")}</p>
+        {offline ? <p role="status">{t("receipts.offline")}</p> : null}
+        {!readOnly ? (
+          <ReceiptForm
+            eventId={eventId}
+            organizationId={organizationId}
+            userId={userId}
+          />
+        ) : (
+          <p className="planner-archived" role="status">
+            {t("planner.archived")}
+          </p>
+        )}
+        {!receipts?.length ? (
+          <p role="status">{t("receipts.empty")}</p>
+        ) : (
+          <ul className="receipt-list">
+            {receipts.map((receipt) => (
+              <ReceiptItem
+                eventId={eventId}
+                key={receipt.id}
+                organizationId={organizationId}
+                onQueued={(upload) => {
+                  optimisticUploadIds.current.add(upload.id);
+                  setUploads((current) =>
+                    current.some((item) => item.id === upload.id)
+                      ? current
+                      : [...current, upload],
+                  );
+                }}
+                receipt={receipt}
+                offline={offline}
+                userId={userId}
+                readOnly={readOnly}
+                uploads={uploadsByReceipt.get(receipt.id) ?? emptyUploads}
+              />
+            ))}
+          </ul>
+        )}
+      </section>
     </>
   );
 }

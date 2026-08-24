@@ -84,14 +84,28 @@ describe("EventSettingsPage", () => {
     vi.mocked(syncBootstrap.pullOrganization).mockImplementation(async () => {
       order.push("pull");
       await addEvent(archivedId, "Archived", "archived");
-      const record = await localDb.canonicalRecords.get([userId, organizationId, "event", archivedId]);
-      if (record) await localDb.canonicalRecords.put({ ...record, fields: { ...record.fields, current_archive_snapshot_id: "eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee" } });
+      const record = await localDb.canonicalRecords.get([
+        userId,
+        organizationId,
+        "event",
+        archivedId,
+      ]);
+      if (record)
+        await localDb.canonicalRecords.put({
+          ...record,
+          fields: {
+            ...record.fields,
+            current_archive_snapshot_id: "eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee",
+          },
+        });
       return false;
     });
-    vi.mocked(archiveCache.ensureArchivedEventCached).mockImplementation(async () => {
-      order.push("archive");
-      return true;
-    });
+    vi.mocked(archiveCache.ensureArchivedEventCached).mockImplementation(
+      async () => {
+        order.push("archive");
+        return true;
+      },
+    );
 
     render(
       <EventSettingsPage
@@ -102,9 +116,17 @@ describe("EventSettingsPage", () => {
       />,
     );
 
-    expect(await screen.findByText("Archivovaná akce je jen pro čtení.")).toBeInTheDocument();
+    expect(
+      await screen.findByText("Archivovaná akce je jen pro čtení."),
+    ).toBeInTheDocument();
     await vi.waitFor(() => expect(order).toEqual(["pull", "archive"]));
-    expect(archiveCache.ensureArchivedEventCached).toHaveBeenCalledWith(userId, organizationId, archivedId, expect.any(Function), expect.any(AbortSignal));
+    expect(archiveCache.ensureArchivedEventCached).toHaveBeenCalledWith(
+      userId,
+      organizationId,
+      archivedId,
+      expect.any(Function),
+      expect.any(AbortSignal),
+    );
   });
 
   it("calls unauthenticated callback when archive hydration returns 401", async () => {
@@ -113,9 +135,18 @@ describe("EventSettingsPage", () => {
       await addEvent(archivedId, "Archived", "archived");
       return false;
     });
-    vi.mocked(archiveCache.ensureArchivedEventCached).mockRejectedValue(new syncBootstrap.SyncRequestError(401));
+    vi.mocked(archiveCache.ensureArchivedEventCached).mockRejectedValue(
+      new syncBootstrap.SyncRequestError(401),
+    );
     const onUnauthenticated = vi.fn();
-    render(<EventSettingsPage eventId={archivedId} organizationId={organizationId} userId={userId} onUnauthenticated={onUnauthenticated} />);
+    render(
+      <EventSettingsPage
+        eventId={archivedId}
+        organizationId={organizationId}
+        userId={userId}
+        onUnauthenticated={onUnauthenticated}
+      />,
+    );
     await vi.waitFor(() => expect(onUnauthenticated).toHaveBeenCalledOnce());
   });
 
@@ -127,14 +158,28 @@ describe("EventSettingsPage", () => {
       await addEvent(archivedId, "Archived", "archived");
       return false;
     });
-    vi.mocked(archiveCache.ensureArchivedEventCached).mockImplementation(async (...args) => {
-      signal = args[4];
-      await new Promise<void>(() => undefined);
-      return true;
-    });
-    const view = render(<EventSettingsPage eventId={archivedId} organizationId={organizationId} userId={userId} />);
+    vi.mocked(archiveCache.ensureArchivedEventCached).mockImplementation(
+      async (...args) => {
+        signal = args[4];
+        await new Promise<void>(() => undefined);
+        return true;
+      },
+    );
+    const view = render(
+      <EventSettingsPage
+        eventId={archivedId}
+        organizationId={organizationId}
+        userId={userId}
+      />,
+    );
     await vi.waitFor(() => expect(signal).toBeDefined());
-    view.rerender(<EventSettingsPage eventId="aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa" organizationId={organizationId} userId={userId} />);
+    view.rerender(
+      <EventSettingsPage
+        eventId="aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"
+        organizationId={organizationId}
+        userId={userId}
+      />,
+    );
     expect(signal?.aborted).toBe(true);
     expect(await screen.findByDisplayValue("Event A")).toBeInTheDocument();
   });

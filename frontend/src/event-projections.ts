@@ -39,7 +39,10 @@ function eventSummary(
     validStartDate === undefined ||
     validEndDate === undefined ||
     validEndDate < validStartDate ||
-    (Date.parse(`${validEndDate}T00:00:00Z`) - Date.parse(`${validStartDate}T00:00:00Z`)) / 86400000 >= 366 ||
+    (Date.parse(`${validEndDate}T00:00:00Z`) -
+      Date.parse(`${validStartDate}T00:00:00Z`)) /
+      86400000 >=
+      366 ||
     !budgetAmount ||
     !currency ||
     (fields.location !== undefined && location === null) ||
@@ -99,13 +102,16 @@ export async function readEventCapabilities(
     "organization_capabilities",
     organizationId,
   ]);
-  const trusted = (
+  const trusted =
     capabilities?.lifecycle === "active" &&
-    capabilities.fields.actor_user_id === userId
-  );
+    capabilities.fields.actor_user_id === userId;
   return {
     canManage: trusted && capabilities.fields.can_manage_organization === true,
-    canDuplicate: trusted && (capabilities.fields.role === "member" || capabilities.fields.role === "organization_admin" || capabilities.fields.role === "system_admin"),
+    canDuplicate:
+      trusted &&
+      (capabilities.fields.role === "member" ||
+        capabilities.fields.role === "organization_admin" ||
+        capabilities.fields.role === "system_admin"),
   };
 }
 

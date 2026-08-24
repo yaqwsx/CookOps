@@ -1,5 +1,11 @@
 import { liveQuery } from "dexie";
-import { useCallback, useEffect, useRef, useState, type MouseEvent } from "react";
+import {
+  useCallback,
+  useEffect,
+  useRef,
+  useState,
+  type MouseEvent,
+} from "react";
 import { useTranslation } from "react-i18next";
 
 import type { EventSummary } from "./api/events";
@@ -65,7 +71,9 @@ function EventCard({
       </div>
       <button
         className="event-card__open"
-        disabled={event.lifecycle === "archived" && !navigator.onLine && !canOpenOffline}
+        disabled={
+          event.lifecycle === "archived" && !navigator.onLine && !canOpenOffline
+        }
         onClick={() => onOpen(event.id)}
         type="button"
       >
@@ -153,42 +161,57 @@ export function EventOverview({
   const [archiveLoading, setArchiveLoading] = useState(false);
   const [archiveError, setArchiveError] = useState(false);
   const [archiveQuery, setArchiveQuery] = useState("");
-  const [hydratedArchiveEventIds, setHydratedArchiveEventIds] = useState<Set<string>>(new Set());
+  const [hydratedArchiveEventIds, setHydratedArchiveEventIds] = useState<
+    Set<string>
+  >(new Set());
   const [canCreate, setCanCreate] = useState(false);
   const generation = useRef(0);
-  const loadArchivePage = useCallback(async (cursor?: string, expectedGeneration = generation.current) => {
-    if (expectedGeneration !== generation.current) return;
-    const currentGeneration = expectedGeneration;
-    if (!navigator.onLine) return;
-    setArchiveLoading(true);
-    setArchiveError(false);
-    try {
-      const page = await getEventPage(organizationId, cursor);
-      if (currentGeneration !== generation.current) return;
+  const loadArchivePage = useCallback(
+    async (cursor?: string, expectedGeneration = generation.current) => {
+      if (expectedGeneration !== generation.current) return;
+      const currentGeneration = expectedGeneration;
+      if (!navigator.onLine) return;
+      setArchiveLoading(true);
+      setArchiveError(false);
       try {
-        await cacheArchivedEventSummaries(userId, organizationId, page.events);
-        const hydrated = await readHydratedArchivedEventIds(userId, organizationId, page.events);
-        setHydratedArchiveEventIds((current) => new Set([...current, ...hydrated]));
-      } catch {
-        // A cache failure must not hide an otherwise valid online page.
+        const page = await getEventPage(organizationId, cursor);
+        if (currentGeneration !== generation.current) return;
+        try {
+          await cacheArchivedEventSummaries(
+            userId,
+            organizationId,
+            page.events,
+          );
+          const hydrated = await readHydratedArchivedEventIds(
+            userId,
+            organizationId,
+            page.events,
+          );
+          setHydratedArchiveEventIds(
+            (current) => new Set([...current, ...hydrated]),
+          );
+        } catch {
+          // A cache failure must not hide an otherwise valid online page.
+        }
+        setArchiveEvents((current) => {
+          const merged = new Map(current.map((event) => [event.id, event]));
+          for (const event of page.events) merged.set(event.id, event);
+          return [...merged.values()];
+        });
+        setArchiveCursor(page.nextCursor);
+      } catch (error) {
+        if (currentGeneration !== generation.current) return;
+        if (error instanceof EventRequestError && error.status === 401) {
+          onUnauthenticated();
+          return;
+        }
+        setArchiveError(true);
+      } finally {
+        if (currentGeneration === generation.current) setArchiveLoading(false);
       }
-      setArchiveEvents((current) => {
-        const merged = new Map(current.map((event) => [event.id, event]));
-        for (const event of page.events) merged.set(event.id, event);
-        return [...merged.values()];
-      });
-      setArchiveCursor(page.nextCursor);
-    } catch (error) {
-      if (currentGeneration !== generation.current) return;
-      if (error instanceof EventRequestError && error.status === 401) {
-        onUnauthenticated();
-        return;
-      }
-      setArchiveError(true);
-    } finally {
-      if (currentGeneration === generation.current) setArchiveLoading(false);
-    }
-  }, [onUnauthenticated, organizationId, userId]);
+    },
+    [onUnauthenticated, organizationId, userId],
+  );
   const synchronize = useCallback(async () => {
     const currentGeneration = generation.current;
     if (!navigator.onLine) {
@@ -237,10 +260,15 @@ export function EventOverview({
     window.addEventListener("offline", offline);
     void (async () => {
       try {
-        const cached = await readCachedArchivedEventSummaries(userId, organizationId);
+        const cached = await readCachedArchivedEventSummaries(
+          userId,
+          organizationId,
+        );
         if (!active || generation.current !== expectedGeneration) return;
         setArchiveEvents(cached);
-        setHydratedArchiveEventIds(await readHydratedArchivedEventIds(userId, organizationId, cached));
+        setHydratedArchiveEventIds(
+          await readHydratedArchivedEventIds(userId, organizationId, cached),
+        );
       } catch {
         if (active) setState("error");
         return;
@@ -257,22 +285,40 @@ export function EventOverview({
   }, [organizationId, synchronize, userId]);
 
   const localEventIds = new Set(events.map((event) => event.id));
-  const allEvents = [...events, ...archiveEvents.filter((event) => !localEventIds.has(event.id))];
-  const hasArchivedEvents = allEvents.some((event) => event.lifecycle === "archived");
-  const normalizedArchiveQuery = archiveQuery.trim().normalize("NFC").toLocaleLowerCase();
-  const visibleEvents = allEvents.filter((event) =>
-    event.lifecycle === "active" ||
-    !normalizedArchiveQuery ||
-    [event.name, event.id].some((value) =>
-      value.normalize("NFC").toLocaleLowerCase().includes(normalizedArchiveQuery),
-    ),
+  const allEvents = [
+    ...events,
+    ...archiveEvents.filter((event) => !localEventIds.has(event.id)),
+  ];
+  const hasArchivedEvents = allEvents.some(
+    (event) => event.lifecycle === "archived",
+  );
+  const normalizedArchiveQuery = archiveQuery
+    .trim()
+    .normalize("NFC")
+    .toLocaleLowerCase();
+  const visibleEvents = allEvents.filter(
+    (event) =>
+      event.lifecycle === "active" ||
+      !normalizedArchiveQuery ||
+      [event.name, event.id].some((value) =>
+        value
+          .normalize("NFC")
+          .toLocaleLowerCase()
+          .includes(normalizedArchiveQuery),
+      ),
   );
   const catalogLinks = (
     <p className="event-overview__catalog-links">
-      <a href={`/organizations/${organizationId}/recipes`} onClick={onOpenRecipes}>
+      <a
+        href={`/organizations/${organizationId}/recipes`}
+        onClick={onOpenRecipes}
+      >
         {t("shell.recipes")}
       </a>
-      <a href={`/organizations/${organizationId}/ingredients`} onClick={onOpenIngredients}>
+      <a
+        href={`/organizations/${organizationId}/ingredients`}
+        onClick={onOpenIngredients}
+      >
         {t("shell.ingredients")}
       </a>
     </p>
@@ -338,10 +384,7 @@ export function EventOverview({
             value={archiveQuery}
           />
           {archiveQuery ? (
-            <button
-              onClick={() => setArchiveQuery("")}
-              type="button"
-            >
+            <button onClick={() => setArchiveQuery("")} type="button">
               {t("eventsOverview.clearArchiveSearch")}
             </button>
           ) : null}
@@ -374,10 +417,14 @@ export function EventOverview({
           onClick={() => void loadArchivePage(archiveCursor)}
           type="button"
         >
-          {archiveLoading ? t("eventsOverview.loading") : t("eventsOverview.loadMore")}
+          {archiveLoading
+            ? t("eventsOverview.loading")
+            : t("eventsOverview.loadMore")}
         </button>
       ) : null}
-      {hasArchivedEvents && visibleEvents.every((event) => event.lifecycle === "active") && normalizedArchiveQuery ? (
+      {hasArchivedEvents &&
+      visibleEvents.every((event) => event.lifecycle === "active") &&
+      normalizedArchiveQuery ? (
         <p role="status">{t("eventsOverview.archiveSearchEmpty")}</p>
       ) : null}
       {state === "error" ? (

@@ -43,17 +43,23 @@ export function EventSettingsPage({
     void (async () => {
       if (!navigator.onLine) return;
       try {
-        const initial = (await readVisibleEventSummaries(userId, organizationId)).find(
-          (candidate) => candidate.id === eventId,
-        );
+        const initial = (
+          await readVisibleEventSummaries(userId, organizationId)
+        ).find((candidate) => candidate.id === eventId);
         if (initial?.lifecycle === "active") return;
         await pullOrganization(userId, organizationId);
         if (current !== generation.current) return;
-        const event = (await readVisibleEventSummaries(userId, organizationId)).find(
-          (candidate) => candidate.id === eventId,
-        );
+        const event = (
+          await readVisibleEventSummaries(userId, organizationId)
+        ).find((candidate) => candidate.id === eventId);
         if (event?.lifecycle !== "archived") return;
-        await ensureArchivedEventCached(userId, organizationId, eventId, fetch, controller.signal);
+        await ensureArchivedEventCached(
+          userId,
+          organizationId,
+          eventId,
+          fetch,
+          controller.signal,
+        );
       } catch (error) {
         if (controller.signal.aborted || current !== generation.current) return;
         if (error instanceof SyncRequestError && error.status === 401)
@@ -85,7 +91,11 @@ export function EventSettingsPage({
   if (!event) return <p role="alert">{t("eventSettings.unavailable")}</p>;
   return (
     <section aria-labelledby="event-settings-heading">
-      <EventSectionNavigation current="settings" eventId={eventId} organizationId={organizationId} />
+      <EventSectionNavigation
+        current="settings"
+        eventId={eventId}
+        organizationId={organizationId}
+      />
       <h2 id="event-settings-heading">{t("eventSettings.heading")}</h2>
       <p>
         {t("eventSettings.lifecycle")}:{" "}
@@ -115,7 +125,11 @@ export function EventSettingsPage({
             organizationId={organizationId}
             userId={userId}
           />
-          <EventDietaryExceptions eventId={event.id} organizationId={organizationId} userId={userId} />
+          <EventDietaryExceptions
+            eventId={event.id}
+            organizationId={organizationId}
+            userId={userId}
+          />
           {canManage ? (
             <EventLifecycle
               eventId={event.id}

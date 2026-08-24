@@ -13,9 +13,18 @@ export function EventSectionNavigation({
 }) {
   const { t } = useTranslation();
   const base = `/organizations/${organizationId}/events/${eventId}`;
-  const sections: EventSection[] = ["planner", "shopping", "costs", "receipts", "settings"];
+  const sections: EventSection[] = [
+    "planner",
+    "shopping",
+    "costs",
+    "receipts",
+    "settings",
+  ];
   return (
-    <nav aria-label={t("eventNavigation.label")} className="event-section-navigation">
+    <nav
+      aria-label={t("eventNavigation.label")}
+      className="event-section-navigation"
+    >
       {sections.map((section) => (
         <a
           aria-current={section === current ? "page" : undefined}

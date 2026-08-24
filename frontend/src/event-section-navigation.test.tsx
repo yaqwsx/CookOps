@@ -13,9 +13,21 @@ describe("EventSectionNavigation", () => {
     );
     const links = screen.getAllByRole("link");
     expect(links).toHaveLength(5);
-    for (const section of ["planner", "shopping", "costs", "receipts", "settings"]) {
-      expect(links.find((link) => link.getAttribute("href")?.endsWith(`/${section}`))).toBeTruthy();
+    for (const section of [
+      "planner",
+      "shopping",
+      "costs",
+      "receipts",
+      "settings",
+    ]) {
+      expect(
+        links.find((link) =>
+          link.getAttribute("href")?.endsWith(`/${section}`),
+        ),
+      ).toBeTruthy();
     }
-    expect(links.find((link) => link.getAttribute("href")?.endsWith("/costs"))).toHaveAttribute("aria-current", "page");
+    expect(
+      links.find((link) => link.getAttribute("href")?.endsWith("/costs")),
+    ).toHaveAttribute("aria-current", "page");
   });
 });

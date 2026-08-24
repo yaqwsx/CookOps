@@ -6,7 +6,10 @@ import {
   readEventPlanner,
   type EventPlannerProjection,
 } from "./planner-projections";
-import { readEventCosts, type EventCostsProjection } from "./event-cost-projections";
+import {
+  readEventCosts,
+  type EventCostsProjection,
+} from "./event-cost-projections";
 import {
   hasQueuedShoppingListRefresh,
   queueShoppingListRename,
@@ -43,11 +46,23 @@ import { formatShoppingQuantity } from "./shopping-quantity";
 
 type ShoppingState = "loading" | "ready" | "offline" | "error";
 
-function FulfilmentAttributionNote({ attribution, userId }: { attribution: FulfilmentAttribution | null; userId: string }) {
+function FulfilmentAttributionNote({
+  attribution,
+  userId,
+}: {
+  attribution: FulfilmentAttribution | null;
+  userId: string;
+}) {
   const { t, i18n } = useTranslation();
   if (!attribution) return null;
-  const actor = attribution.updatedByUserId === userId ? t("shopping.attribution.you") : attribution.updatedByUserId.slice(0, 8);
-  const timestamp = new Intl.DateTimeFormat(i18n.language, { dateStyle: "medium", timeStyle: "short" }).format(new Date(attribution.updatedAt));
+  const actor =
+    attribution.updatedByUserId === userId
+      ? t("shopping.attribution.you")
+      : attribution.updatedByUserId.slice(0, 8);
+  const timestamp = new Intl.DateTimeFormat(i18n.language, {
+    dateStyle: "medium",
+    timeStyle: "short",
+  }).format(new Date(attribution.updatedAt));
   return <small>{t("shopping.attribution.note", { actor, timestamp })}</small>;
 }
 
@@ -167,7 +182,11 @@ function ShoppingDetail({
           </section>
         ))
       ) : (
-        <p>{shoppingList.rows.length ? t("shopping.noFilteredRows") : t("shopping.noRows")}</p>
+        <p>
+          {shoppingList.rows.length
+            ? t("shopping.noFilteredRows")
+            : t("shopping.noRows")}
+        </p>
       )}
       {shoppingList.adHocItems.length ? (
         <section
@@ -184,11 +203,15 @@ function ShoppingDetail({
                       checked={item.fulfilled}
                       aria-checked={item.partial ? "mixed" : undefined}
                       onChange={(event) =>
-                        void queueAdHocShoppingItemFulfilment(userId, organizationId, {
-                          shoppingListId: shoppingList.id,
-                          adHocShoppingItemId: item.id,
-                          fulfilled: event.currentTarget.checked,
-                        })
+                        void queueAdHocShoppingItemFulfilment(
+                          userId,
+                          organizationId,
+                          {
+                            shoppingListId: shoppingList.id,
+                            adHocShoppingItemId: item.id,
+                            fulfilled: event.currentTarget.checked,
+                          },
+                        )
                       }
                       ref={(element) => {
                         if (element) element.indeterminate = item.partial;
@@ -203,7 +226,12 @@ function ShoppingDetail({
                 {item.sectionName ? ` · ${item.sectionName}` : null}
                 {item.retired ? ` · ${t("shopping.retired")}` : null}
                 {item.note ? <p>{item.note}</p> : null}
-                {item.fulfilmentAttribution ? <FulfilmentAttributionNote attribution={item.fulfilmentAttribution} userId={userId} /> : null}
+                {item.fulfilmentAttribution ? (
+                  <FulfilmentAttributionNote
+                    attribution={item.fulfilmentAttribution}
+                    userId={userId}
+                  />
+                ) : null}
                 {editable && !item.retired ? (
                   <AdHocShoppingEdit
                     item={item}
@@ -215,15 +243,23 @@ function ShoppingDetail({
                 {editable ? (
                   <button
                     onClick={() =>
-                      void queueAdHocShoppingItemLifecycle(userId, organizationId, {
-                        shoppingListId: shoppingList.id,
-                        adHocShoppingItemId: item.id,
-                        operation: item.retired ? "restore" : "retire",
-                      })
+                      void queueAdHocShoppingItemLifecycle(
+                        userId,
+                        organizationId,
+                        {
+                          shoppingListId: shoppingList.id,
+                          adHocShoppingItemId: item.id,
+                          operation: item.retired ? "restore" : "retire",
+                        },
+                      )
                     }
                     type="button"
                   >
-                    {t(item.retired ? "shopping.adHoc.restore" : "shopping.adHoc.retire")}
+                    {t(
+                      item.retired
+                        ? "shopping.adHoc.restore"
+                        : "shopping.adHoc.retire",
+                    )}
                   </button>
                 ) : null}
               </li>
@@ -254,7 +290,10 @@ function ShoppingListRename({
     if (submitting) return;
     setSubmitting(true);
     try {
-      await queueShoppingListRename(userId, organizationId, { shoppingListId: shoppingList.id, name });
+      await queueShoppingListRename(userId, organizationId, {
+        shoppingListId: shoppingList.id,
+        name,
+      });
       setError(false);
     } catch {
       setError(true);
@@ -263,12 +302,22 @@ function ShoppingListRename({
     }
   }
   return (
-    <form aria-label={t("shopping.renameHeading")} onSubmit={(event) => void submit(event)}>
+    <form
+      aria-label={t("shopping.renameHeading")}
+      onSubmit={(event) => void submit(event)}
+    >
       <label>
         {t("shopping.name")}
-        <input maxLength={200} onChange={(event) => setName(event.currentTarget.value)} required value={name} />
+        <input
+          maxLength={200}
+          onChange={(event) => setName(event.currentTarget.value)}
+          required
+          value={name}
+        />
       </label>
-      <button disabled={submitting} type="submit">{t("shopping.rename")}</button>
+      <button disabled={submitting} type="submit">
+        {t("shopping.rename")}
+      </button>
       {error ? <p role="alert">{t("shopping.errors.unavailable")}</p> : null}
     </form>
   );
@@ -294,13 +343,22 @@ function AdHocShoppingEdit({
   const [note, setNote] = useState(item.note ?? "");
   const [error, setError] = useState(false);
   if (!editing)
-    return <button onClick={() => setEditing(true)} type="button">{t("shopping.adHoc.edit")}</button>;
+    return (
+      <button onClick={() => setEditing(true)} type="button">
+        {t("shopping.adHoc.edit")}
+      </button>
+    );
   async function submit(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
     try {
       await queueAdHocShoppingItemUpdate(userId, organizationId, {
-        shoppingListId: shoppingList.id, adHocShoppingItemId: item.id, name, targetAmount,
-        unitId, storeSectionId: sectionId, note,
+        shoppingListId: shoppingList.id,
+        adHocShoppingItemId: item.id,
+        name,
+        targetAmount,
+        unitId,
+        storeSectionId: sectionId,
+        note,
       });
       setError(false);
       setEditing(false);
@@ -310,13 +368,64 @@ function AdHocShoppingEdit({
   }
   return (
     <form onSubmit={(event) => void submit(event)}>
-      <label>{t("shopping.adHoc.name")}<input maxLength={200} onChange={(event) => setName(event.currentTarget.value)} required value={name} /></label>
-      <label>{t("shopping.adHoc.amount")}<input inputMode="decimal" min="0" onChange={(event) => setTargetAmount(event.currentTarget.value)} required type="number" value={targetAmount} /></label>
-      <label>{t("shopping.adHoc.unit")}<select onChange={(event) => setUnitId(event.currentTarget.value)} value={unitId}>{shoppingList.quantityUnits.map((unit) => <option key={unit.id} value={unit.id}>{unit.name}</option>)}</select></label>
-      <label>{t("shopping.adHoc.section")}<select onChange={(event) => setSectionId(event.currentTarget.value)} value={sectionId}>{shoppingList.storeSections.map((section) => <option key={section.id} value={section.id}>{section.name}</option>)}</select></label>
-      <label>{t("shopping.adHoc.note")}<input maxLength={4000} onChange={(event) => setNote(event.currentTarget.value)} value={note} /></label>
+      <label>
+        {t("shopping.adHoc.name")}
+        <input
+          maxLength={200}
+          onChange={(event) => setName(event.currentTarget.value)}
+          required
+          value={name}
+        />
+      </label>
+      <label>
+        {t("shopping.adHoc.amount")}
+        <input
+          inputMode="decimal"
+          min="0"
+          onChange={(event) => setTargetAmount(event.currentTarget.value)}
+          required
+          type="number"
+          value={targetAmount}
+        />
+      </label>
+      <label>
+        {t("shopping.adHoc.unit")}
+        <select
+          onChange={(event) => setUnitId(event.currentTarget.value)}
+          value={unitId}
+        >
+          {shoppingList.quantityUnits.map((unit) => (
+            <option key={unit.id} value={unit.id}>
+              {unit.name}
+            </option>
+          ))}
+        </select>
+      </label>
+      <label>
+        {t("shopping.adHoc.section")}
+        <select
+          onChange={(event) => setSectionId(event.currentTarget.value)}
+          value={sectionId}
+        >
+          {shoppingList.storeSections.map((section) => (
+            <option key={section.id} value={section.id}>
+              {section.name}
+            </option>
+          ))}
+        </select>
+      </label>
+      <label>
+        {t("shopping.adHoc.note")}
+        <input
+          maxLength={4000}
+          onChange={(event) => setNote(event.currentTarget.value)}
+          value={note}
+        />
+      </label>
       <button type="submit">{t("shopping.adHoc.save")}</button>
-      <button onClick={() => setEditing(false)} type="button">{t("shopping.cancel")}</button>
+      <button onClick={() => setEditing(false)} type="button">
+        {t("shopping.cancel")}
+      </button>
       {error ? <p role="alert">{t("shopping.errors.unavailable")}</p> : null}
     </form>
   );
@@ -565,10 +674,14 @@ function ShoppingRowControls({
     () => setManualTarget(row.manualPurchaseTarget ?? row.target),
     [row.manualPurchaseTarget, row.target],
   );
-  useEffect(() => setSectionId(row.storeSectionOverrideId ?? ""), [row.storeSectionOverrideId]);
+  useEffect(
+    () => setSectionId(row.storeSectionOverrideId ?? ""),
+    [row.storeSectionOverrideId],
+  );
   useEffect(() => setNote(row.note ?? ""), [row.note]);
   useEffect(() => {
-    if (fulfilmentInput.current) fulfilmentInput.current.indeterminate = row.partial;
+    if (fulfilmentInput.current)
+      fulfilmentInput.current.indeterminate = row.partial;
   }, [row.partial]);
   const input = { shoppingListId, shoppingIngredientRowId: row.id };
   async function run(work: () => Promise<void>) {
@@ -586,15 +699,11 @@ function ShoppingRowControls({
         <dl>
           <div>
             <dt>{t("shopping.remaining")}</dt>
-            <dd>
-              {formatShoppingQuantity(row.remaining, row.unit, locale)}
-            </dd>
+            <dd>{formatShoppingQuantity(row.remaining, row.unit, locale)}</dd>
           </div>
           <div>
             <dt>{t("shopping.target")}</dt>
-            <dd>
-              {formatShoppingQuantity(row.target, row.unit, locale)}
-            </dd>
+            <dd>{formatShoppingQuantity(row.target, row.unit, locale)}</dd>
           </div>
         </dl>
       </div>
@@ -664,7 +773,9 @@ function ShoppingRowControls({
             >
               <option value="">{t("shopping.defaultStoreSection")}</option>
               {shoppingList.storeSections.map((section) => (
-                <option key={section.id} value={section.id}>{section.name}</option>
+                <option key={section.id} value={section.id}>
+                  {section.name}
+                </option>
               ))}
             </select>
           </label>
@@ -722,7 +833,12 @@ function ShoppingRowControls({
               ? t("shopping.notRequired")
               : t("shopping.fulfilled")}
           </label>
-          {row.fulfilmentAttribution ? <FulfilmentAttributionNote attribution={row.fulfilmentAttribution} userId={userId} /> : null}
+          {row.fulfilmentAttribution ? (
+            <FulfilmentAttributionNote
+              attribution={row.fulfilmentAttribution}
+              userId={userId}
+            />
+          ) : null}
           {row.manualPurchaseTarget !== null ? (
             <button
               onClick={() =>
@@ -750,19 +866,22 @@ function ShoppingRowControls({
             <div>
               <dt>{t("shopping.generatedRequirement")}</dt>
               <dd>
-                {formatShoppingQuantity(row.generatedRequirement, row.unit, locale)}
+                {formatShoppingQuantity(
+                  row.generatedRequirement,
+                  row.unit,
+                  locale,
+                )}
               </dd>
             </div>
             <div>
               <dt>{t("shopping.purchaseTarget")}</dt>
-              <dd>
-                {formatShoppingQuantity(row.target, row.unit, locale)}
-              </dd>
+              <dd>{formatShoppingQuantity(row.target, row.unit, locale)}</dd>
             </div>
           </dl>
           <ul>
             {row.contributions.map((contribution) => {
-              const requiredQuantity = contribution.requiredQuantity ?? contribution.generated;
+              const requiredQuantity =
+                contribution.requiredQuantity ?? contribution.generated;
               const lineNotes = contribution.lineNotes ?? [];
               const recipeNotes = contribution.recipeNotes ?? [];
               const ingredientNotes = contribution.ingredientNotes ?? [];
@@ -773,7 +892,9 @@ function ShoppingRowControls({
                     <label>
                       <input
                         aria-label={label}
-                        aria-checked={contribution.partial ? "mixed" : undefined}
+                        aria-checked={
+                          contribution.partial ? "mixed" : undefined
+                        }
                         checked={contribution.fulfilled}
                         onChange={(event) =>
                           void run(() =>
@@ -789,21 +910,39 @@ function ShoppingRowControls({
                           )
                         }
                         ref={(element) => {
-                          if (element) element.indeterminate = contribution.partial;
+                          if (element)
+                            element.indeterminate = contribution.partial;
                         }}
                         type="checkbox"
                       />
                       {label}
-                      {contribution.fulfilmentAttribution ? <FulfilmentAttributionNote attribution={contribution.fulfilmentAttribution} userId={userId} /> : null}
+                      {contribution.fulfilmentAttribution ? (
+                        <FulfilmentAttributionNote
+                          attribution={contribution.fulfilmentAttribution}
+                          userId={userId}
+                        />
+                      ) : null}
                     </label>
                   ) : (
-                    <span>{label}{contribution.fulfilmentAttribution ? <FulfilmentAttributionNote attribution={contribution.fulfilmentAttribution} userId={userId} /> : null}</span>
+                    <span>
+                      {label}
+                      {contribution.fulfilmentAttribution ? (
+                        <FulfilmentAttributionNote
+                          attribution={contribution.fulfilmentAttribution}
+                          userId={userId}
+                        />
+                      ) : null}
+                    </span>
                   )}
                   <dl>
                     <div>
                       <dt>{t("shopping.generatedRequirement")}</dt>
                       <dd>
-                        {formatShoppingQuantity(requiredQuantity, row.unit, locale)}
+                        {formatShoppingQuantity(
+                          requiredQuantity,
+                          row.unit,
+                          locale,
+                        )}
                       </dd>
                     </div>
                     <div>
@@ -904,7 +1043,10 @@ export function EventShopping({
   const [lists, setLists] = useState<ShoppingListSummary[]>([]);
   const [shoppingList, setShoppingList] = useState<ShoppingListProjection>();
   const [refreshPending, setRefreshPending] = useState(false);
-  const [costs, setCosts] = useState<{ identity: string; value: EventCostsProjection }>();
+  const [costs, setCosts] = useState<{
+    identity: string;
+    value: EventCostsProjection;
+  }>();
   const identity = `${userId}:${organizationId}:${eventId}`;
   const pendingSync = useEventPendingSync(userId, organizationId, eventId);
   const generation = useRef(0);
@@ -953,7 +1095,11 @@ export function EventShopping({
       next: (next) => {
         if (!active) return;
         setPlanner(next.planner);
-        setCosts(next.costs ? { identity: effectIdentity, value: next.costs } : undefined);
+        setCosts(
+          next.costs
+            ? { identity: effectIdentity, value: next.costs }
+            : undefined,
+        );
         setLists(next.lists);
         setShoppingList(next.shoppingList);
         setRefreshPending(next.refreshPending);
@@ -993,7 +1139,11 @@ export function EventShopping({
         pendingSync={pendingSync}
         planner={planner}
       />
-      <EventSectionNavigation current="shopping" eventId={eventId} organizationId={organizationId} />
+      <EventSectionNavigation
+        current="shopping"
+        eventId={eventId}
+        organizationId={organizationId}
+      />
       <section className="event-shopping" aria-labelledby="shopping-heading">
         <header>
           <h2 id="shopping-heading">{t("shopping.heading")}</h2>
@@ -1002,52 +1152,52 @@ export function EventShopping({
           organizationId={organizationId}
           userId={userId}
         />
-      {planner.lifecycle === "archived" ? (
-        <p className="planner-archived" role="status">
-          {t("shopping.archived")}
-        </p>
-      ) : null}
-      {state === "offline" ? (
-        <p role="status">{t("shopping.offline")}</p>
-      ) : null}
-      {shoppingListId ? (
-        shoppingList ? (
-          <ShoppingDetail
-            editable={planner.lifecycle === "active"}
-            onBack={onBack}
-            organizationId={organizationId}
-            planner={planner}
-            refreshPending={refreshPending}
-            shoppingList={shoppingList}
-            userId={userId}
-          />
+        {planner.lifecycle === "archived" ? (
+          <p className="planner-archived" role="status">
+            {t("shopping.archived")}
+          </p>
+        ) : null}
+        {state === "offline" ? (
+          <p role="status">{t("shopping.offline")}</p>
+        ) : null}
+        {shoppingListId ? (
+          shoppingList ? (
+            <ShoppingDetail
+              editable={planner.lifecycle === "active"}
+              onBack={onBack}
+              organizationId={organizationId}
+              planner={planner}
+              refreshPending={refreshPending}
+              shoppingList={shoppingList}
+              userId={userId}
+            />
+          ) : (
+            <div role="alert">
+              <p>{t("shopping.listUnavailable")}</p>
+              <button onClick={onBack} type="button">
+                {t("shopping.back")}
+              </button>
+            </div>
+          )
         ) : (
+          <>
+            <ShoppingCreate
+              eventId={eventId}
+              organizationId={organizationId}
+              planner={planner}
+              userId={userId}
+            />
+            <ShoppingIndex lists={lists} onOpenList={onOpenList} />
+          </>
+        )}
+        {state === "error" ? (
           <div role="alert">
-            <p>{t("shopping.listUnavailable")}</p>
-            <button onClick={onBack} type="button">
-              {t("shopping.back")}
+            <p>{t("shopping.error")}</p>
+            <button onClick={() => void synchronize()} type="button">
+              {t("eventsOverview.retry")}
             </button>
           </div>
-        )
-      ) : (
-        <>
-          <ShoppingCreate
-            eventId={eventId}
-            organizationId={organizationId}
-            planner={planner}
-            userId={userId}
-          />
-          <ShoppingIndex lists={lists} onOpenList={onOpenList} />
-        </>
-      )}
-      {state === "error" ? (
-        <div role="alert">
-          <p>{t("shopping.error")}</p>
-          <button onClick={() => void synchronize()} type="button">
-            {t("eventsOverview.retry")}
-          </button>
-        </div>
-      ) : null}
+        ) : null}
       </section>
     </>
   );

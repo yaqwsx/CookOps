@@ -25,8 +25,11 @@ export function ShoppingCreate({
   const inFlight = useRef(false);
   const days = planner.days ?? [];
   const roles = planner.roles ?? [];
-  const visibleScheduled = (planner.scheduled ?? []).filter((recipe) =>
-    !recipe.retired && days.some((day) => day.id === recipe.dayId) && roles.some((role) => role.id === recipe.roleId),
+  const visibleScheduled = (planner.scheduled ?? []).filter(
+    (recipe) =>
+      !recipe.retired &&
+      days.some((day) => day.id === recipe.dayId) &&
+      roles.some((role) => role.id === recipe.roleId),
   );
 
   async function submit(event: React.FormEvent<HTMLFormElement>) {
@@ -34,7 +37,11 @@ export function ShoppingCreate({
     if (inFlight.current || !name.trim()) return;
     inFlight.current = true;
     try {
-      const shoppingListId = await queueShoppingList(userId, organizationId, { eventId, name, scheduledRecipeIds: selected });
+      const shoppingListId = await queueShoppingList(userId, organizationId, {
+        eventId,
+        name,
+        scheduledRecipeIds: selected,
+      });
       setName("");
       setSelected([]);
       setError(undefined);
@@ -54,23 +61,67 @@ export function ShoppingCreate({
       <h3>{t("shopping.createHeading")}</h3>
       <label>
         {t("shopping.name")}
-        <input maxLength={200} onChange={(event) => setName(event.target.value)} required value={name} />
+        <input
+          maxLength={200}
+          onChange={(event) => setName(event.target.value)}
+          required
+          value={name}
+        />
       </label>
       <fieldset>
         <legend>{t("shopping.sources")}</legend>
         {visibleScheduled.length ? (
           days.map((day) => {
-            const dayRecipes = visibleScheduled.filter((recipe) => recipe.dayId === day.id);
+            const dayRecipes = visibleScheduled.filter(
+              (recipe) => recipe.dayId === day.id,
+            );
             if (!dayRecipes.length) return null;
-            return <fieldset key={day.id}><legend>{day.date}</legend>{roles.map((role) => {
-              const roleRecipes = dayRecipes.filter((recipe) => recipe.roleId === role.id);
-              if (!roleRecipes.length) return null;
-              return <div key={role.id}><strong>{role.name}</strong>{roleRecipes.map((recipe) => <label className="shopping-create__source" key={recipe.id}><input checked={selected.includes(recipe.id)} onChange={(event) => setSelected((current) => event.target.checked ? [...new Set([...current, recipe.id])] : current.filter((id) => id !== recipe.id))} type="checkbox" /><span>{recipe.name} · {t("planner.diners", { count: recipe.dinerCount })}</span></label>)}</div>;
-            })}</fieldset>;
+            return (
+              <fieldset key={day.id}>
+                <legend>{day.date}</legend>
+                {roles.map((role) => {
+                  const roleRecipes = dayRecipes.filter(
+                    (recipe) => recipe.roleId === role.id,
+                  );
+                  if (!roleRecipes.length) return null;
+                  return (
+                    <div key={role.id}>
+                      <strong>{role.name}</strong>
+                      {roleRecipes.map((recipe) => (
+                        <label
+                          className="shopping-create__source"
+                          key={recipe.id}
+                        >
+                          <input
+                            checked={selected.includes(recipe.id)}
+                            onChange={(event) =>
+                              setSelected((current) =>
+                                event.target.checked
+                                  ? [...new Set([...current, recipe.id])]
+                                  : current.filter((id) => id !== recipe.id),
+                              )
+                            }
+                            type="checkbox"
+                          />
+                          <span>
+                            {recipe.name} ·{" "}
+                            {t("planner.diners", { count: recipe.dinerCount })}
+                          </span>
+                        </label>
+                      ))}
+                    </div>
+                  );
+                })}
+              </fieldset>
+            );
           })
-        ) : <p>{t("shopping.noSources")}</p>}
+        ) : (
+          <p>{t("shopping.noSources")}</p>
+        )}
       </fieldset>
-      <button disabled={!name.trim()} type="submit">{t("shopping.create")}</button>
+      <button disabled={!name.trim()} type="submit">
+        {t("shopping.create")}
+      </button>
       {error ? <p role="alert">{t(`shopping.errors.${error}`)}</p> : null}
       {saved ? <p role="status">{t("shopping.saved")}</p> : null}
     </form>

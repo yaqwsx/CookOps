@@ -68,9 +68,33 @@ describe("event receipt metadata screen", () => {
   });
 
   it("does not refresh or hydrate a known active event", async () => {
-    await localDb.canonicalRecords.put({ userId, organizationId, entityType: "event", entityId: eventId, recordSchemaVersion: 1, lifecycle: "active", fields: { id: eventId, organization_id: organizationId, lifecycle: "active", current_archive_snapshot_id: null }, fieldClocks: {}, immutable: false, updatedAt: new Date().toISOString() });
+    await localDb.canonicalRecords.put({
+      userId,
+      organizationId,
+      entityType: "event",
+      entityId: eventId,
+      recordSchemaVersion: 1,
+      lifecycle: "active",
+      fields: {
+        id: eventId,
+        organization_id: organizationId,
+        lifecycle: "active",
+        current_archive_snapshot_id: null,
+      },
+      fieldClocks: {},
+      immutable: false,
+      updatedAt: new Date().toISOString(),
+    });
     const sync = vi.mocked((await import("./sync-bootstrap")).pullOrganization);
-    render(<EventReceipts eventId={eventId} onBack={vi.fn()} onUnauthenticated={vi.fn()} organizationId={organizationId} userId={userId} />);
+    render(
+      <EventReceipts
+        eventId={eventId}
+        onBack={vi.fn()}
+        onUnauthenticated={vi.fn()}
+        organizationId={organizationId}
+        userId={userId}
+      />,
+    );
     await screen.findByRole("heading", { name: "Účtenky" });
     expect(sync).not.toHaveBeenCalled();
     expect(archiveMocks.ensureArchivedEventCached).not.toHaveBeenCalled();
@@ -78,11 +102,39 @@ describe("event receipt metadata screen", () => {
 
   it("reports archive hydration authorization failures", async () => {
     const onUnauthenticated = vi.fn();
-    await localDb.canonicalRecords.put({ userId, organizationId, entityType: "event", entityId: eventId, recordSchemaVersion: 1, lifecycle: "retired", fields: { id: eventId, organization_id: organizationId, lifecycle: "archived", current_archive_snapshot_id: crypto.randomUUID() }, fieldClocks: {}, immutable: true, updatedAt: new Date().toISOString() });
-    const { SyncRequestError, pullOrganization } = await import("./sync-bootstrap");
+    await localDb.canonicalRecords.put({
+      userId,
+      organizationId,
+      entityType: "event",
+      entityId: eventId,
+      recordSchemaVersion: 1,
+      lifecycle: "retired",
+      fields: {
+        id: eventId,
+        organization_id: organizationId,
+        lifecycle: "archived",
+        current_archive_snapshot_id: crypto.randomUUID(),
+      },
+      fieldClocks: {},
+      immutable: true,
+      updatedAt: new Date().toISOString(),
+    });
+    const { SyncRequestError, pullOrganization } = await import(
+      "./sync-bootstrap"
+    );
     vi.mocked(pullOrganization).mockResolvedValueOnce(false);
-    archiveMocks.ensureArchivedEventCached.mockRejectedValueOnce(new SyncRequestError(401));
-    render(<EventReceipts eventId={eventId} onBack={vi.fn()} onUnauthenticated={onUnauthenticated} organizationId={organizationId} userId={userId} />);
+    archiveMocks.ensureArchivedEventCached.mockRejectedValueOnce(
+      new SyncRequestError(401),
+    );
+    render(
+      <EventReceipts
+        eventId={eventId}
+        onBack={vi.fn()}
+        onUnauthenticated={onUnauthenticated}
+        organizationId={organizationId}
+        userId={userId}
+      />,
+    );
     await waitFor(() => expect(onUnauthenticated).toHaveBeenCalledTimes(1));
     expect(screen.queryByRole("alert")).not.toBeInTheDocument();
   });
@@ -90,17 +142,55 @@ describe("event receipt metadata screen", () => {
   it("aborts archive hydration when the route changes", async () => {
     const eventB = crypto.randomUUID();
     let release!: () => void;
-    const hydration = new Promise<boolean>((resolve) => { release = () => resolve(true); });
-    archiveMocks.ensureArchivedEventCached.mockImplementationOnce(async (...args) => {
-      const signal = args[4];
-      await hydration;
-      expect(signal?.aborted).toBe(true);
-      return true;
+    const hydration = new Promise<boolean>((resolve) => {
+      release = () => resolve(true);
     });
-    await localDb.canonicalRecords.put({ userId, organizationId, entityType: "event", entityId: eventId, recordSchemaVersion: 1, lifecycle: "retired", fields: { id: eventId, organization_id: organizationId, lifecycle: "archived", current_archive_snapshot_id: crypto.randomUUID() }, fieldClocks: {}, immutable: true, updatedAt: new Date().toISOString() });
-    const view = render(<EventReceipts eventId={eventId} onBack={vi.fn()} onUnauthenticated={vi.fn()} organizationId={organizationId} userId={userId} />);
-    await waitFor(() => expect(archiveMocks.ensureArchivedEventCached).toHaveBeenCalled());
-    view.rerender(<EventReceipts eventId={eventB} onBack={vi.fn()} onUnauthenticated={vi.fn()} organizationId={organizationId} userId={userId} />);
+    archiveMocks.ensureArchivedEventCached.mockImplementationOnce(
+      async (...args) => {
+        const signal = args[4];
+        await hydration;
+        expect(signal?.aborted).toBe(true);
+        return true;
+      },
+    );
+    await localDb.canonicalRecords.put({
+      userId,
+      organizationId,
+      entityType: "event",
+      entityId: eventId,
+      recordSchemaVersion: 1,
+      lifecycle: "retired",
+      fields: {
+        id: eventId,
+        organization_id: organizationId,
+        lifecycle: "archived",
+        current_archive_snapshot_id: crypto.randomUUID(),
+      },
+      fieldClocks: {},
+      immutable: true,
+      updatedAt: new Date().toISOString(),
+    });
+    const view = render(
+      <EventReceipts
+        eventId={eventId}
+        onBack={vi.fn()}
+        onUnauthenticated={vi.fn()}
+        organizationId={organizationId}
+        userId={userId}
+      />,
+    );
+    await waitFor(() =>
+      expect(archiveMocks.ensureArchivedEventCached).toHaveBeenCalled(),
+    );
+    view.rerender(
+      <EventReceipts
+        eventId={eventB}
+        onBack={vi.fn()}
+        onUnauthenticated={vi.fn()}
+        organizationId={organizationId}
+        userId={userId}
+      />,
+    );
     release();
     await screen.findByRole("heading", { name: "Účtenky" });
     expect(screen.queryByText("Načítáme účtenky…")).not.toBeInTheDocument();
@@ -109,14 +199,54 @@ describe("event receipt metadata screen", () => {
   it("does not report authorization after an aborted archive hydration", async () => {
     const eventB = crypto.randomUUID();
     let rejectHydration!: (reason: unknown) => void;
-    const hydration = new Promise<boolean>((_resolve, reject) => { rejectHydration = reject; });
-    archiveMocks.ensureArchivedEventCached.mockImplementationOnce(async () => hydration);
-    await localDb.canonicalRecords.put({ userId, organizationId, entityType: "event", entityId: eventId, recordSchemaVersion: 1, lifecycle: "retired", fields: { id: eventId, organization_id: organizationId, lifecycle: "archived", current_archive_snapshot_id: crypto.randomUUID() }, fieldClocks: {}, immutable: true, updatedAt: new Date().toISOString() });
+    const hydration = new Promise<boolean>((_resolve, reject) => {
+      rejectHydration = reject;
+    });
+    archiveMocks.ensureArchivedEventCached.mockImplementationOnce(
+      async () => hydration,
+    );
+    await localDb.canonicalRecords.put({
+      userId,
+      organizationId,
+      entityType: "event",
+      entityId: eventId,
+      recordSchemaVersion: 1,
+      lifecycle: "retired",
+      fields: {
+        id: eventId,
+        organization_id: organizationId,
+        lifecycle: "archived",
+        current_archive_snapshot_id: crypto.randomUUID(),
+      },
+      fieldClocks: {},
+      immutable: true,
+      updatedAt: new Date().toISOString(),
+    });
     const onUnauthenticated = vi.fn();
-    const view = render(<EventReceipts eventId={eventId} onBack={vi.fn()} onUnauthenticated={onUnauthenticated} organizationId={organizationId} userId={userId} />);
-    await waitFor(() => expect(archiveMocks.ensureArchivedEventCached).toHaveBeenCalled());
-    view.rerender(<EventReceipts eventId={eventB} onBack={vi.fn()} onUnauthenticated={onUnauthenticated} organizationId={organizationId} userId={userId} />);
-    rejectHydration(new (await import("./sync-bootstrap")).SyncRequestError(401));
+    const view = render(
+      <EventReceipts
+        eventId={eventId}
+        onBack={vi.fn()}
+        onUnauthenticated={onUnauthenticated}
+        organizationId={organizationId}
+        userId={userId}
+      />,
+    );
+    await waitFor(() =>
+      expect(archiveMocks.ensureArchivedEventCached).toHaveBeenCalled(),
+    );
+    view.rerender(
+      <EventReceipts
+        eventId={eventB}
+        onBack={vi.fn()}
+        onUnauthenticated={onUnauthenticated}
+        organizationId={organizationId}
+        userId={userId}
+      />,
+    );
+    rejectHydration(
+      new (await import("./sync-bootstrap")).SyncRequestError(401),
+    );
     await screen.findByRole("heading", { name: "Účtenky" });
     expect(onUnauthenticated).not.toHaveBeenCalled();
   });
@@ -151,21 +281,132 @@ describe("event receipt metadata screen", () => {
   it("hides receipt mutations when refresh archives the event", async () => {
     const snapshotId = crypto.randomUUID();
     const receiptId = crypto.randomUUID();
-    await localDb.canonicalRecords.put({ userId, organizationId, entityType: "receipt", entityId: receiptId, recordSchemaVersion: 1, lifecycle: "active", fields: { id: receiptId, organization_id: organizationId, event_id: eventId, title: "Bakery", total_amount: "12.50", currency: "CZK", receipt_date: null, note: null }, fieldClocks: {}, immutable: false, updatedAt: new Date().toISOString() });
+    await localDb.canonicalRecords.put({
+      userId,
+      organizationId,
+      entityType: "receipt",
+      entityId: receiptId,
+      recordSchemaVersion: 1,
+      lifecycle: "active",
+      fields: {
+        id: receiptId,
+        organization_id: organizationId,
+        event_id: eventId,
+        title: "Bakery",
+        total_amount: "12.50",
+        currency: "CZK",
+        receipt_date: null,
+        note: null,
+      },
+      fieldClocks: {},
+      immutable: false,
+      updatedAt: new Date().toISOString(),
+    });
     const sync = vi.mocked((await import("./sync-bootstrap")).pullOrganization);
-    sync.mockImplementationOnce(async () => { await localDb.canonicalRecords.put({ userId, organizationId, entityType: "event", entityId: eventId, recordSchemaVersion: 1, lifecycle: "retired", fields: { id: eventId, organization_id: organizationId, lifecycle: "archived", current_archive_snapshot_id: snapshotId }, fieldClocks: {}, immutable: true, updatedAt: new Date().toISOString() }); await localDb.archiveRecords.put({ userId, organizationId, eventId, snapshotId, entityType: "receipt", entityId: receiptId, recordSchemaVersion: 1, lifecycle: "active", fields: { id: receiptId, organization_id: organizationId, event_id: eventId, title: "Bakery", total_amount: "12.50", currency: "CZK", receipt_date: null, note: null }, fieldClocks: {}, immutable: true, updatedAt: new Date().toISOString() }); return true; });
-    render(<EventReceipts eventId={eventId} onBack={vi.fn()} onUnauthenticated={vi.fn()} organizationId={organizationId} userId={userId} />);
+    sync.mockImplementationOnce(async () => {
+      await localDb.canonicalRecords.put({
+        userId,
+        organizationId,
+        entityType: "event",
+        entityId: eventId,
+        recordSchemaVersion: 1,
+        lifecycle: "retired",
+        fields: {
+          id: eventId,
+          organization_id: organizationId,
+          lifecycle: "archived",
+          current_archive_snapshot_id: snapshotId,
+        },
+        fieldClocks: {},
+        immutable: true,
+        updatedAt: new Date().toISOString(),
+      });
+      await localDb.archiveRecords.put({
+        userId,
+        organizationId,
+        eventId,
+        snapshotId,
+        entityType: "receipt",
+        entityId: receiptId,
+        recordSchemaVersion: 1,
+        lifecycle: "active",
+        fields: {
+          id: receiptId,
+          organization_id: organizationId,
+          event_id: eventId,
+          title: "Bakery",
+          total_amount: "12.50",
+          currency: "CZK",
+          receipt_date: null,
+          note: null,
+        },
+        fieldClocks: {},
+        immutable: true,
+        updatedAt: new Date().toISOString(),
+      });
+      return true;
+    });
+    render(
+      <EventReceipts
+        eventId={eventId}
+        onBack={vi.fn()}
+        onUnauthenticated={vi.fn()}
+        organizationId={organizationId}
+        userId={userId}
+      />,
+    );
     await screen.findByText("Bakery");
-    expect(screen.queryByRole("button", { name: "Uložit účtenku" })).not.toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: "Upravit" })).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: "Uložit účtenku" }),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: "Upravit" }),
+    ).not.toBeInTheDocument();
   });
 
   it("renders the shared summary from the scoped planner and cost projections", async () => {
-    const planner = vi.spyOn(plannerProjections, "readEventPlanner").mockResolvedValue({ name: "Receipt Event", startDate: "2026-08-15", endDate: "2026-08-15", attendance: 3, lifecycle: "archived", days: [], hiddenDays: [], retiredDays: [], roles: [], retiredRoles: [], recipes: [], ingredients: [], scheduled: [] });
-    const costs = vi.spyOn(costProjections, "readEventCosts").mockResolvedValue({ budget: "30", total: "20", actual: "10", remaining: "20", currency: "CZK", expectedShopping: "20", missingIngredients: [], scheduled: new Map() });
+    const planner = vi
+      .spyOn(plannerProjections, "readEventPlanner")
+      .mockResolvedValue({
+        name: "Receipt Event",
+        startDate: "2026-08-15",
+        endDate: "2026-08-15",
+        attendance: 3,
+        lifecycle: "archived",
+        days: [],
+        hiddenDays: [],
+        retiredDays: [],
+        roles: [],
+        retiredRoles: [],
+        recipes: [],
+        ingredients: [],
+        scheduled: [],
+      });
+    const costs = vi
+      .spyOn(costProjections, "readEventCosts")
+      .mockResolvedValue({
+        budget: "30",
+        total: "20",
+        actual: "10",
+        remaining: "20",
+        currency: "CZK",
+        expectedShopping: "20",
+        missingIngredients: [],
+        scheduled: new Map(),
+      });
     try {
-      render(<EventReceipts eventId={eventId} onBack={vi.fn()} onUnauthenticated={vi.fn()} organizationId={organizationId} userId={userId} />);
-      expect(await screen.findByRole("heading", { name: "Receipt Event" })).toBeInTheDocument();
+      render(
+        <EventReceipts
+          eventId={eventId}
+          onBack={vi.fn()}
+          onUnauthenticated={vi.fn()}
+          organizationId={organizationId}
+          userId={userId}
+        />,
+      );
+      expect(
+        await screen.findByRole("heading", { name: "Receipt Event" }),
+      ).toBeInTheDocument();
       expect(screen.getByText("Očekávaná účast")).toBeInTheDocument();
       expect(screen.getByText("30 CZK")).toBeInTheDocument();
     } finally {
@@ -176,15 +417,67 @@ describe("event receipt metadata screen", () => {
 
   it("formats receipt details when the application locale changes", async () => {
     await localDb.canonicalRecords.bulkPut([
-      { userId, organizationId, entityType: "event", entityId: eventId, recordSchemaVersion: 1, lifecycle: "active", fields: { id: eventId, organization_id: organizationId, lifecycle: "active", current_archive_snapshot_id: null }, fieldClocks: {}, immutable: false, updatedAt: new Date().toISOString() },
-      { userId, organizationId, entityType: "receipt", entityId: "receipt-locale", recordSchemaVersion: 1, lifecycle: "active", fields: { id: "receipt-locale", organization_id: organizationId, event_id: eventId, title: "Bakery", total_amount: "12.50", currency: "CZK", receipt_date: "2026-08-07", note: null }, fieldClocks: {}, immutable: false, updatedAt: new Date().toISOString() },
+      {
+        userId,
+        organizationId,
+        entityType: "event",
+        entityId: eventId,
+        recordSchemaVersion: 1,
+        lifecycle: "active",
+        fields: {
+          id: eventId,
+          organization_id: organizationId,
+          lifecycle: "active",
+          current_archive_snapshot_id: null,
+        },
+        fieldClocks: {},
+        immutable: false,
+        updatedAt: new Date().toISOString(),
+      },
+      {
+        userId,
+        organizationId,
+        entityType: "receipt",
+        entityId: "receipt-locale",
+        recordSchemaVersion: 1,
+        lifecycle: "active",
+        fields: {
+          id: "receipt-locale",
+          organization_id: organizationId,
+          event_id: eventId,
+          title: "Bakery",
+          total_amount: "12.50",
+          currency: "CZK",
+          receipt_date: "2026-08-07",
+          note: null,
+        },
+        fieldClocks: {},
+        immutable: false,
+        updatedAt: new Date().toISOString(),
+      },
     ]);
     await i18n.changeLanguage("cs");
-    const view = render(<EventReceipts eventId={eventId} onBack={vi.fn()} onUnauthenticated={vi.fn()} organizationId={organizationId} userId={userId} />);
-    expect(await screen.findByText((_, element) => element?.textContent === "12,50 Kč")).toBeInTheDocument();
+    const view = render(
+      <EventReceipts
+        eventId={eventId}
+        onBack={vi.fn()}
+        onUnauthenticated={vi.fn()}
+        organizationId={organizationId}
+        userId={userId}
+      />,
+    );
+    expect(
+      await screen.findByText(
+        (_, element) => element?.textContent === "12,50 Kč",
+      ),
+    ).toBeInTheDocument();
     expect(screen.getByText(/srpna/)).toBeInTheDocument();
     await i18n.changeLanguage("en");
-    expect(await screen.findByText((_, element) => element?.textContent === "CZK 12.50")).toBeInTheDocument();
+    expect(
+      await screen.findByText(
+        (_, element) => element?.textContent === "CZK 12.50",
+      ),
+    ).toBeInTheDocument();
     expect(screen.getByText(/August/)).toBeInTheDocument();
     view.unmount();
     await i18n.changeLanguage("cs");
@@ -192,14 +485,65 @@ describe("event receipt metadata screen", () => {
 
   it("does not render the previous summary while switching event identity", async () => {
     const eventB = crypto.randomUUID();
-    const planner = vi.spyOn(plannerProjections, "readEventPlanner").mockImplementation(async (_userId, _organizationId, requestedEventId) => ({ name: requestedEventId === eventId ? "Event A" : "Event B", startDate: "2026-08-15", endDate: "2026-08-15", attendance: 3, lifecycle: "active", days: [], hiddenDays: [], retiredDays: [], roles: [], retiredRoles: [], recipes: [], ingredients: [], scheduled: [] }));
-    const costs = vi.spyOn(costProjections, "readEventCosts").mockResolvedValue({ budget: "30", total: "20", actual: "10", remaining: "20", currency: "CZK", expectedShopping: "20", missingIngredients: [], scheduled: new Map() });
+    const planner = vi
+      .spyOn(plannerProjections, "readEventPlanner")
+      .mockImplementation(
+        async (_userId, _organizationId, requestedEventId) => ({
+          name: requestedEventId === eventId ? "Event A" : "Event B",
+          startDate: "2026-08-15",
+          endDate: "2026-08-15",
+          attendance: 3,
+          lifecycle: "active",
+          days: [],
+          hiddenDays: [],
+          retiredDays: [],
+          roles: [],
+          retiredRoles: [],
+          recipes: [],
+          ingredients: [],
+          scheduled: [],
+        }),
+      );
+    const costs = vi
+      .spyOn(costProjections, "readEventCosts")
+      .mockResolvedValue({
+        budget: "30",
+        total: "20",
+        actual: "10",
+        remaining: "20",
+        currency: "CZK",
+        expectedShopping: "20",
+        missingIngredients: [],
+        scheduled: new Map(),
+      });
     try {
-      const view = render(<EventReceipts eventId={eventId} onBack={vi.fn()} onUnauthenticated={vi.fn()} organizationId={organizationId} userId={userId} />);
-      expect(await screen.findByRole("heading", { name: "Event A" })).toBeInTheDocument();
-      view.rerender(<EventReceipts eventId={eventB} onBack={vi.fn()} onUnauthenticated={vi.fn()} organizationId={organizationId} userId={userId} />);
-      expect(screen.queryByRole("heading", { name: "Event A" })).not.toBeInTheDocument();
-      expect(await screen.findByRole("heading", { name: "Event B" })).toBeInTheDocument();
+      const view = render(
+        <EventReceipts
+          eventId={eventId}
+          onBack={vi.fn()}
+          onUnauthenticated={vi.fn()}
+          organizationId={organizationId}
+          userId={userId}
+        />,
+      );
+      expect(
+        await screen.findByRole("heading", { name: "Event A" }),
+      ).toBeInTheDocument();
+      view.rerender(
+        <EventReceipts
+          eventId={eventB}
+          onBack={vi.fn()}
+          onUnauthenticated={vi.fn()}
+          organizationId={organizationId}
+          userId={userId}
+        />,
+      );
+      expect(
+        screen.queryByRole("heading", { name: "Event A" }),
+      ).not.toBeInTheDocument();
+      expect(
+        await screen.findByRole("heading", { name: "Event B" }),
+      ).toBeInTheDocument();
     } finally {
       planner.mockRestore();
       costs.mockRestore();
@@ -210,14 +554,68 @@ describe("event receipt metadata screen", () => {
     const eventB = crypto.randomUUID();
     const receiptId = crypto.randomUUID();
     await localDb.canonicalRecords.bulkPut([
-      { userId, organizationId, entityType: "receipt", entityId: receiptId, recordSchemaVersion: 1, lifecycle: "active", fields: { id: receiptId, organization_id: organizationId, event_id: eventId, title: "Old receipt", total_amount: "1", currency: "CZK", receipt_date: null, note: null }, fieldClocks: {}, immutable: false, updatedAt: new Date().toISOString() },
-      { userId, organizationId, entityType: "event", entityId: eventB, recordSchemaVersion: 1, lifecycle: "retired", fields: { id: eventB, organization_id: organizationId, lifecycle: "archived", current_archive_snapshot_id: crypto.randomUUID() }, fieldClocks: {}, immutable: true, updatedAt: new Date().toISOString() },
+      {
+        userId,
+        organizationId,
+        entityType: "receipt",
+        entityId: receiptId,
+        recordSchemaVersion: 1,
+        lifecycle: "active",
+        fields: {
+          id: receiptId,
+          organization_id: organizationId,
+          event_id: eventId,
+          title: "Old receipt",
+          total_amount: "1",
+          currency: "CZK",
+          receipt_date: null,
+          note: null,
+        },
+        fieldClocks: {},
+        immutable: false,
+        updatedAt: new Date().toISOString(),
+      },
+      {
+        userId,
+        organizationId,
+        entityType: "event",
+        entityId: eventB,
+        recordSchemaVersion: 1,
+        lifecycle: "retired",
+        fields: {
+          id: eventB,
+          organization_id: organizationId,
+          lifecycle: "archived",
+          current_archive_snapshot_id: crypto.randomUUID(),
+        },
+        fieldClocks: {},
+        immutable: true,
+        updatedAt: new Date().toISOString(),
+      },
     ]);
-    const view = render(<EventReceipts eventId={eventId} onBack={vi.fn()} onUnauthenticated={vi.fn()} organizationId={organizationId} userId={userId} />);
+    const view = render(
+      <EventReceipts
+        eventId={eventId}
+        onBack={vi.fn()}
+        onUnauthenticated={vi.fn()}
+        organizationId={organizationId}
+        userId={userId}
+      />,
+    );
     expect(await screen.findByText("Old receipt")).toBeInTheDocument();
-    view.rerender(<EventReceipts eventId={eventB} onBack={vi.fn()} onUnauthenticated={vi.fn()} organizationId={organizationId} userId={userId} />);
+    view.rerender(
+      <EventReceipts
+        eventId={eventB}
+        onBack={vi.fn()}
+        onUnauthenticated={vi.fn()}
+        organizationId={organizationId}
+        userId={userId}
+      />,
+    );
     expect(screen.queryByText("Old receipt")).not.toBeInTheDocument();
-    expect(screen.queryByText("Událost je archivována")).not.toBeInTheDocument();
+    expect(
+      screen.queryByText("Událost je archivována"),
+    ).not.toBeInTheDocument();
   });
 
   it("previews persisted pending photos across remounts without marking them synchronized", async () => {
@@ -316,7 +714,9 @@ describe("event receipt metadata screen", () => {
       await localDb.pendingUploads.update("upload-pending", {
         state: "uploading",
       });
-      expect(await screen.findByText("Fotografie se nahrává")).toBeInTheDocument();
+      expect(
+        await screen.findByText("Fotografie se nahrává"),
+      ).toBeInTheDocument();
       expect(objectUrls).toHaveBeenCalledTimes(4);
       expect(revokeObjectUrl).not.toHaveBeenCalled();
       await localDb.pendingUploads.update("upload-pending", {
@@ -580,8 +980,9 @@ describe("event receipt metadata screen", () => {
     const picker = screen.getByLabelText("Přidat fotografii účtenky");
     const file = new File(["first"], "first.jpg", { type: "image/jpeg" });
     const fileList = (files: File[]): FileList =>
-      Object.assign(files, { item: (index: number) => files[index] ?? null }) as
-        unknown as FileList;
+      Object.assign(files, {
+        item: (index: number) => files[index] ?? null,
+      }) as unknown as FileList;
     fireEvent.change(picker, { target: { files: fileList([file]) } });
     fireEvent.change(picker, {
       target: {
@@ -608,8 +1009,19 @@ describe("event receipt metadata screen", () => {
         entityId: receiptId,
         recordSchemaVersion: 1,
         lifecycle: "active",
-        fields: { id: receiptId, organization_id: organizationId, event_id: eventId, title: "Bakery", total_amount: "12.50", currency: "CZK", receipt_date: null, note: null },
-        fieldClocks: {}, immutable: false, updatedAt: new Date().toISOString(),
+        fields: {
+          id: receiptId,
+          organization_id: organizationId,
+          event_id: eventId,
+          title: "Bakery",
+          total_amount: "12.50",
+          currency: "CZK",
+          receipt_date: null,
+          note: null,
+        },
+        fieldClocks: {},
+        immutable: false,
+        updatedAt: new Date().toISOString(),
       },
       {
         userId,
@@ -618,20 +1030,52 @@ describe("event receipt metadata screen", () => {
         entityId: attachmentId,
         recordSchemaVersion: 1,
         lifecycle: "active",
-        fields: { id: attachmentId, organization_id: organizationId, receipt_id: receiptId, storage_state: "ready", media_type: "image/jpeg" },
-        fieldClocks: {}, immutable: false, updatedAt: new Date().toISOString(),
+        fields: {
+          id: attachmentId,
+          organization_id: organizationId,
+          receipt_id: receiptId,
+          storage_state: "ready",
+          media_type: "image/jpeg",
+        },
+        fieldClocks: {},
+        immutable: false,
+        updatedAt: new Date().toISOString(),
       },
     ]);
     const prepared = new Blob(["replacement"], { type: "image/jpeg" });
     mediaMocks.prepareReceiptImage.mockResolvedValue(prepared);
-    mediaMocks.queueReceiptAttachment.mockResolvedValue({ id: "pending-replacement" });
+    mediaMocks.queueReceiptAttachment.mockResolvedValue({
+      id: "pending-replacement",
+    });
     const user = userEvent.setup();
-    render(<EventReceipts eventId={eventId} onBack={vi.fn()} onUnauthenticated={vi.fn()} organizationId={organizationId} userId={userId} />);
+    render(
+      <EventReceipts
+        eventId={eventId}
+        onBack={vi.fn()}
+        onUnauthenticated={vi.fn()}
+        organizationId={organizationId}
+        userId={userId}
+      />,
+    );
     await screen.findByRole("heading", { name: "Účtenky" });
-    const oldPhoto = await screen.findByRole("img", { name: "Fotografie účtenky" });
-    await user.upload(screen.getByLabelText("Nahradit fotografii"), new File(["new"], "new.jpg", { type: "image/jpeg" }));
-    expect(mediaMocks.queueReceiptAttachment).toHaveBeenCalledWith(userId, organizationId, receiptId, prepared, attachmentId);
-    expect(oldPhoto).toHaveAttribute("src", expect.stringContaining(`/media/receipt-attachments/${attachmentId}`));
+    const oldPhoto = await screen.findByRole("img", {
+      name: "Fotografie účtenky",
+    });
+    await user.upload(
+      screen.getByLabelText("Nahradit fotografii"),
+      new File(["new"], "new.jpg", { type: "image/jpeg" }),
+    );
+    expect(mediaMocks.queueReceiptAttachment).toHaveBeenCalledWith(
+      userId,
+      organizationId,
+      receiptId,
+      prepared,
+      attachmentId,
+    );
+    expect(oldPhoto).toHaveAttribute(
+      "src",
+      expect.stringContaining(`/media/receipt-attachments/${attachmentId}`),
+    );
   });
 
   it("does not offer replacement for retired attachments or an in-flight replacement", async () => {
@@ -639,11 +1083,66 @@ describe("event receipt metadata screen", () => {
     const retiredId = crypto.randomUUID();
     const busyId = crypto.randomUUID();
     await localDb.canonicalRecords.bulkPut([
-      { userId, organizationId, entityType: "receipt", entityId: receiptId, recordSchemaVersion: 1, lifecycle: "active", fields: { id: receiptId, organization_id: organizationId, event_id: eventId, title: "Bakery", total_amount: "12.50", currency: "CZK", receipt_date: null, note: null }, fieldClocks: {}, immutable: false, updatedAt: new Date().toISOString() },
-      ...[retiredId, busyId].map((id, index) => ({ userId, organizationId, entityType: "receipt_attachment", entityId: id, recordSchemaVersion: 1, lifecycle: index ? "active" as const : "retired" as const, fields: { id, organization_id: organizationId, receipt_id: receiptId, storage_state: "ready", media_type: "image/jpeg" }, fieldClocks: {}, immutable: false, updatedAt: new Date().toISOString() })),
+      {
+        userId,
+        organizationId,
+        entityType: "receipt",
+        entityId: receiptId,
+        recordSchemaVersion: 1,
+        lifecycle: "active",
+        fields: {
+          id: receiptId,
+          organization_id: organizationId,
+          event_id: eventId,
+          title: "Bakery",
+          total_amount: "12.50",
+          currency: "CZK",
+          receipt_date: null,
+          note: null,
+        },
+        fieldClocks: {},
+        immutable: false,
+        updatedAt: new Date().toISOString(),
+      },
+      ...[retiredId, busyId].map((id, index) => ({
+        userId,
+        organizationId,
+        entityType: "receipt_attachment",
+        entityId: id,
+        recordSchemaVersion: 1,
+        lifecycle: index ? ("active" as const) : ("retired" as const),
+        fields: {
+          id,
+          organization_id: organizationId,
+          receipt_id: receiptId,
+          storage_state: "ready",
+          media_type: "image/jpeg",
+        },
+        fieldClocks: {},
+        immutable: false,
+        updatedAt: new Date().toISOString(),
+      })),
     ]);
-    await localDb.pendingUploads.add({ id: "busy", userId, organizationId, receiptId, attachmentId: crypto.randomUUID(), replaceAttachmentId: busyId, blob: new Blob(["old"], { type: "image/jpeg" }), createdAt: new Date().toISOString(), state: "pending" });
-    render(<EventReceipts eventId={eventId} onBack={vi.fn()} onUnauthenticated={vi.fn()} organizationId={organizationId} userId={userId} />);
+    await localDb.pendingUploads.add({
+      id: "busy",
+      userId,
+      organizationId,
+      receiptId,
+      attachmentId: crypto.randomUUID(),
+      replaceAttachmentId: busyId,
+      blob: new Blob(["old"], { type: "image/jpeg" }),
+      createdAt: new Date().toISOString(),
+      state: "pending",
+    });
+    render(
+      <EventReceipts
+        eventId={eventId}
+        onBack={vi.fn()}
+        onUnauthenticated={vi.fn()}
+        organizationId={organizationId}
+        userId={userId}
+      />,
+    );
     await screen.findByRole("heading", { name: "Účtenky" });
     expect(screen.queryAllByLabelText("Nahradit fotografii")).toHaveLength(0);
   });

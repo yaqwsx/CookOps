@@ -358,12 +358,12 @@ describe("offline shopping-list creation", () => {
       "shopping_contribution",
       ids.contribution,
     ];
-    const seededContribution = await localDb.canonicalRecords.get(contributionKey);
+    const seededContribution =
+      await localDb.canonicalRecords.get(contributionKey);
     if (!seededContribution) throw new Error("seeded contribution missing");
-    await localDb.canonicalRecords.update(
-      contributionKey,
-      { fields: { ...seededContribution.fields, fulfilment_credit: "1" } },
-    );
+    await localDb.canonicalRecords.update(contributionKey, {
+      fields: { ...seededContribution.fields, fulfilment_credit: "1" },
+    });
     await expect(
       readShoppingList(ids.user, ids.organization, ids.event, ids.list),
     ).resolves.toMatchObject({
@@ -399,10 +399,9 @@ describe("offline shopping-list creation", () => {
       ],
       { fields: zeroSnapshot.fields },
     );
-    await localDb.canonicalRecords.update(
-      contributionKey,
-      { fields: { ...seededContribution.fields, fulfilment_credit: "2" } },
-    );
+    await localDb.canonicalRecords.update(contributionKey, {
+      fields: { ...seededContribution.fields, fulfilment_credit: "2" },
+    });
     await expect(
       readShoppingList(ids.user, ids.organization, ids.event, ids.list),
     ).resolves.toMatchObject({
@@ -411,7 +410,10 @@ describe("offline shopping-list creation", () => {
     const contribution = await localDb.canonicalRecords.get(contributionKey);
     if (!contribution) throw new Error("test contribution missing");
     await localDb.canonicalRecords.update(contributionKey, {
-      fields: { ...contribution.fields, ingredient_id: ids.retiredContribution },
+      fields: {
+        ...contribution.fields,
+        ingredient_id: ids.retiredContribution,
+      },
     });
     await expect(
       readShoppingList(ids.user, ids.organization, ids.event, ids.list),
@@ -437,7 +439,13 @@ describe("offline shopping-list creation", () => {
     await expect(
       readShoppingList(ids.user, ids.organization, ids.event, ids.list),
     ).resolves.toMatchObject({
-      rows: [{ contributions: [expect.objectContaining({ expectedCost: "6.00 EUR" })] }],
+      rows: [
+        {
+          contributions: [
+            expect.objectContaining({ expectedCost: "6.00 EUR" }),
+          ],
+        },
+      ],
     });
     await localDb.canonicalRecords.update(
       [ids.user, ids.organization, "unit_definition", ids.retiredContribution],
@@ -455,7 +463,9 @@ describe("offline shopping-list creation", () => {
     await expect(
       readShoppingList(ids.user, ids.organization, ids.event, ids.list),
     ).resolves.toMatchObject({
-      rows: [{ contributions: [expect.objectContaining({ expectedCost: null })] }],
+      rows: [
+        { contributions: [expect.objectContaining({ expectedCost: null })] },
+      ],
     });
     await localDb.canonicalRecords.update(
       [ids.user, ids.organization, "unit_definition", ids.retiredContribution],
@@ -472,7 +482,12 @@ describe("offline shopping-list creation", () => {
     );
     await localDb.canonicalRecords.update(rowKey, { fields: row.fields });
     await localDb.canonicalRecords.update(
-      [ids.user, ids.organization, "shopping_contribution_snapshot", ids.snapshot],
+      [
+        ids.user,
+        ids.organization,
+        "shopping_contribution_snapshot",
+        ids.snapshot,
+      ],
       { fields: { price_amount: "NaN", source_details: [] } },
     );
     await expect(
@@ -504,7 +519,13 @@ describe("offline shopping-list creation", () => {
     await expect(
       readShoppingList(ids.user, ids.organization, ids.event, ids.list),
     ).resolves.toMatchObject({
-      rows: [{ contributions: [expect.objectContaining({ source: null, expectedCost: null })] }],
+      rows: [
+        {
+          contributions: [
+            expect.objectContaining({ source: null, expectedCost: null }),
+          ],
+        },
+      ],
     });
     await localDb.canonicalRecords.update(snapshotKey, {
       fields: { ...cached.fields, ingredient_id: ids.retiredContribution },
@@ -512,7 +533,13 @@ describe("offline shopping-list creation", () => {
     await expect(
       readShoppingList(ids.user, ids.organization, ids.event, ids.list),
     ).resolves.toMatchObject({
-      rows: [{ contributions: [expect.objectContaining({ source: null, expectedCost: null })] }],
+      rows: [
+        {
+          contributions: [
+            expect.objectContaining({ source: null, expectedCost: null }),
+          ],
+        },
+      ],
     });
     await localDb.canonicalRecords.update(snapshotKey, {
       fields: {
@@ -537,7 +564,13 @@ describe("offline shopping-list creation", () => {
     await expect(
       readShoppingList(ids.user, ids.organization, ids.event, ids.list),
     ).resolves.toMatchObject({
-      rows: [{ contributions: [expect.objectContaining({ source: "Chili", expectedCost: null })] }],
+      rows: [
+        {
+          contributions: [
+            expect.objectContaining({ source: "Chili", expectedCost: null }),
+          ],
+        },
+      ],
     });
     await localDb.canonicalRecords.update(
       [ids.user, ids.organization, "unit_definition", ids.unit],
@@ -551,27 +584,90 @@ describe("offline shopping-list creation", () => {
   it("updates an ad-hoc item through the typed outbox without overwriting a newer field", async () => {
     await seedPlanner();
     const itemId = "2e8b2b21-c378-4574-9e46-9338c81305ef";
-    const record = (entityType: string, entityId: string, fields: Record<string, unknown>, fieldClocks: Record<string, unknown> = {}) => ({
-      userId: ids.user, organizationId: ids.organization, entityType, entityId,
-      recordSchemaVersion: 1, lifecycle: "active" as const, fields, fieldClocks,
-      immutable: false, updatedAt: "2026-08-07T12:00:00.000Z",
+    const record = (
+      entityType: string,
+      entityId: string,
+      fields: Record<string, unknown>,
+      fieldClocks: Record<string, unknown> = {},
+    ) => ({
+      userId: ids.user,
+      organizationId: ids.organization,
+      entityType,
+      entityId,
+      recordSchemaVersion: 1,
+      lifecycle: "active" as const,
+      fields,
+      fieldClocks,
+      immutable: false,
+      updatedAt: "2026-08-07T12:00:00.000Z",
     });
     await localDb.canonicalRecords.bulkAdd([
-      record("shopping_list", ids.list, { id: ids.list, organization_id: ids.organization, event_id: ids.event }),
-      record("unit_definition", ids.unit, { id: ids.unit, organization_id: null, code: "g", allows_ingredient_quantity: true }),
-      record("store_section", ids.section, { id: ids.section, organization_id: ids.organization, name: "Produce" }),
-      record("ad_hoc_shopping_item", itemId, {
-        id: itemId, organization_id: ids.organization, event_id: ids.event, shopping_list_id: ids.list,
-        name: "Lemons", target_amount: "3", unit_id: ids.unit, store_section_id: ids.section, note: null,
-      }, { name: { winning_client_wall_time: "2999-01-01T00:00:00.000Z", winning_mutation_id: "ffffffff-ffff-4fff-8fff-ffffffffffff" } }),
+      record("shopping_list", ids.list, {
+        id: ids.list,
+        organization_id: ids.organization,
+        event_id: ids.event,
+      }),
+      record("unit_definition", ids.unit, {
+        id: ids.unit,
+        organization_id: null,
+        code: "g",
+        allows_ingredient_quantity: true,
+      }),
+      record("store_section", ids.section, {
+        id: ids.section,
+        organization_id: ids.organization,
+        name: "Produce",
+      }),
+      record(
+        "ad_hoc_shopping_item",
+        itemId,
+        {
+          id: itemId,
+          organization_id: ids.organization,
+          event_id: ids.event,
+          shopping_list_id: ids.list,
+          name: "Lemons",
+          target_amount: "3",
+          unit_id: ids.unit,
+          store_section_id: ids.section,
+          note: null,
+        },
+        {
+          name: {
+            winning_client_wall_time: "2999-01-01T00:00:00.000Z",
+            winning_mutation_id: "ffffffff-ffff-4fff-8fff-ffffffffffff",
+          },
+        },
+      ),
     ]);
     await queueAdHocShoppingItemUpdate(ids.user, ids.organization, {
-      shoppingListId: ids.list, adHocShoppingItemId: itemId, name: "Limes", targetAmount: "4", unitId: ids.unit, storeSectionId: ids.section, note: "fresh",
+      shoppingListId: ids.list,
+      adHocShoppingItemId: itemId,
+      name: "Limes",
+      targetAmount: "4",
+      unitId: ids.unit,
+      storeSectionId: ids.section,
+      note: "fresh",
     });
-    await expect(localDb.optimisticOverlays.get([ids.user, ids.organization, "ad_hoc_shopping_item", itemId])).resolves.toMatchObject({ fields: { name: "Lemons", target_amount: "4", note: "fresh" } });
-    await expect(localDb.outbox.orderBy("createdAt").last()).resolves.toEqual(expect.objectContaining({ commandType: "shopping_list.update_ad_hoc_item" }));
+    await expect(
+      localDb.optimisticOverlays.get([
+        ids.user,
+        ids.organization,
+        "ad_hoc_shopping_item",
+        itemId,
+      ]),
+    ).resolves.toMatchObject({
+      fields: { name: "Lemons", target_amount: "4", note: "fresh" },
+    });
+    await expect(localDb.outbox.orderBy("createdAt").last()).resolves.toEqual(
+      expect.objectContaining({
+        commandType: "shopping_list.update_ad_hoc_item",
+      }),
+    );
     await replayAdHocShoppingItemUpdate(ids.user, ids.organization, {
-      id: "1e8b2b21-c378-4574-9e46-9338c81305ef", actionAt: "invalid", payload: {},
+      id: "1e8b2b21-c378-4574-9e46-9338c81305ef",
+      actionAt: "invalid",
+      payload: {},
     });
   });
 
@@ -638,7 +734,12 @@ describe("offline shopping-list creation", () => {
       fulfilled: true,
     });
     await expect(
-      localDb.optimisticOverlays.get([ids.user, ids.organization, "ad_hoc_shopping_item", itemId]),
+      localDb.optimisticOverlays.get([
+        ids.user,
+        ids.organization,
+        "ad_hoc_shopping_item",
+        itemId,
+      ]),
     ).resolves.toMatchObject({
       fields: {
         fulfilment_updated_by_user_id: ids.user,
@@ -662,35 +763,57 @@ describe("offline shopping-list creation", () => {
     );
     await expect(
       readShoppingList(ids.user, ids.organization, ids.event, ids.list),
-    ).resolves.toMatchObject({ adHocItems: [{ fulfilled: false, partial: false }] });
+    ).resolves.toMatchObject({
+      adHocItems: [{ fulfilled: false, partial: false }],
+    });
     await localDb.optimisticOverlays.update(
       [ids.user, ids.organization, "ad_hoc_shopping_item", itemId],
       { fields: { ...baseFields, fulfilment_credit: "1" } },
     );
     await expect(
       readShoppingList(ids.user, ids.organization, ids.event, ids.list),
-    ).resolves.toMatchObject({ adHocItems: [{ fulfilled: false, partial: true }] });
+    ).resolves.toMatchObject({
+      adHocItems: [{ fulfilled: false, partial: true }],
+    });
     await localDb.optimisticOverlays.update(
       [ids.user, ids.organization, "ad_hoc_shopping_item", itemId],
-      { fields: { ...baseFields, target_amount: "3.50", fulfilment_credit: "3.5" } },
+      {
+        fields: {
+          ...baseFields,
+          target_amount: "3.50",
+          fulfilment_credit: "3.5",
+        },
+      },
     );
     await expect(
       readShoppingList(ids.user, ids.organization, ids.event, ids.list),
-    ).resolves.toMatchObject({ adHocItems: [{ fulfilled: true, partial: false }] });
+    ).resolves.toMatchObject({
+      adHocItems: [{ fulfilled: true, partial: false }],
+    });
     await localDb.optimisticOverlays.update(
       [ids.user, ids.organization, "ad_hoc_shopping_item", itemId],
-      { fields: { ...baseFields, target_amount: "0.5", fulfilment_credit: "0.25" } },
+      {
+        fields: {
+          ...baseFields,
+          target_amount: "0.5",
+          fulfilment_credit: "0.25",
+        },
+      },
     );
     await expect(
       readShoppingList(ids.user, ids.organization, ids.event, ids.list),
-    ).resolves.toMatchObject({ adHocItems: [{ fulfilled: false, partial: true }] });
+    ).resolves.toMatchObject({
+      adHocItems: [{ fulfilled: false, partial: true }],
+    });
     await localDb.optimisticOverlays.update(
       [ids.user, ids.organization, "ad_hoc_shopping_item", itemId],
       { fields: { ...baseFields, target_amount: "0", fulfilment_credit: "1" } },
     );
     await expect(
       readShoppingList(ids.user, ids.organization, ids.event, ids.list),
-    ).resolves.toMatchObject({ adHocItems: [{ fulfilled: false, partial: false }] });
+    ).resolves.toMatchObject({
+      adHocItems: [{ fulfilled: false, partial: false }],
+    });
     await expect(
       readShoppingList(ids.user, ids.organization, ids.event, ids.list),
     ).resolves.toMatchObject({ adHocItems: [{ fulfilled: false }] });
@@ -731,27 +854,74 @@ describe("offline shopping-list creation", () => {
   it("retires and explicitly restores an ad-hoc item through durable lifecycle intent", async () => {
     await seedPlanner();
     const itemId = "2e8b2b21-c378-4574-9e46-9338c81305ef";
-    const record = (entityType: string, entityId: string, fields: Record<string, unknown>) => ({
-      userId: ids.user, organizationId: ids.organization, entityType, entityId,
-      recordSchemaVersion: 1, lifecycle: "active" as const, fields, fieldClocks: {},
-      immutable: false, updatedAt: "2026-08-07T12:00:00.000Z",
+    const record = (
+      entityType: string,
+      entityId: string,
+      fields: Record<string, unknown>,
+    ) => ({
+      userId: ids.user,
+      organizationId: ids.organization,
+      entityType,
+      entityId,
+      recordSchemaVersion: 1,
+      lifecycle: "active" as const,
+      fields,
+      fieldClocks: {},
+      immutable: false,
+      updatedAt: "2026-08-07T12:00:00.000Z",
     });
     await localDb.canonicalRecords.bulkAdd([
-      record("shopping_list", ids.list, { id: ids.list, organization_id: ids.organization, event_id: ids.event }),
-      record("ad_hoc_shopping_item", itemId, { id: itemId, organization_id: ids.organization, event_id: ids.event, shopping_list_id: ids.list }),
+      record("shopping_list", ids.list, {
+        id: ids.list,
+        organization_id: ids.organization,
+        event_id: ids.event,
+      }),
+      record("ad_hoc_shopping_item", itemId, {
+        id: itemId,
+        organization_id: ids.organization,
+        event_id: ids.event,
+        shopping_list_id: ids.list,
+      }),
     ]);
     await queueAdHocShoppingItemLifecycle(ids.user, ids.organization, {
-      shoppingListId: ids.list, adHocShoppingItemId: itemId, operation: "retire",
+      shoppingListId: ids.list,
+      adHocShoppingItemId: itemId,
+      operation: "retire",
     });
-    const retired = await localDb.optimisticOverlays.get([ids.user, ids.organization, "ad_hoc_shopping_item", itemId]);
+    const retired = await localDb.optimisticOverlays.get([
+      ids.user,
+      ids.organization,
+      "ad_hoc_shopping_item",
+      itemId,
+    ]);
     expect(retired?.lifecycle).toBe("retired");
-    await expect(localDb.outbox.toArray()).resolves.toContainEqual(expect.objectContaining({ commandType: "shopping_list.ad_hoc_item_lifecycle" }));
+    await expect(localDb.outbox.toArray()).resolves.toContainEqual(
+      expect.objectContaining({
+        commandType: "shopping_list.ad_hoc_item_lifecycle",
+      }),
+    );
     await replayAdHocShoppingItemLifecycle(ids.user, ids.organization, {
       id: "3e8b2b21-c378-4574-9e46-9338c81305ef",
-      actionAt: new Date(Date.parse(retired?.updatedAt ?? "") + 1).toISOString(),
-      payload: { shopping_list_id: ids.list, ad_hoc_shopping_item_id: itemId, operation: "restore" },
+      actionAt: new Date(
+        Date.parse(retired?.updatedAt ?? "") + 1,
+      ).toISOString(),
+      payload: {
+        shopping_list_id: ids.list,
+        ad_hoc_shopping_item_id: itemId,
+        operation: "restore",
+      },
     });
-    await expect(localDb.optimisticOverlays.get([ids.user, ids.organization, "ad_hoc_shopping_item", itemId])).resolves.toMatchObject({ lifecycle: "active", fields: { retired_at: null } });
+    await expect(
+      localDb.optimisticOverlays.get([
+        ids.user,
+        ids.organization,
+        "ad_hoc_shopping_item",
+        itemId,
+      ]),
+    ).resolves.toMatchObject({
+      lifecycle: "active",
+      fields: { retired_at: null },
+    });
   });
 
   it("rejects malformed, duplicate, and out-of-event source selections without partial state", async () => {
@@ -801,11 +971,13 @@ describe("offline shopping-list creation", () => {
       [ids.user, ids.organization, "scheduled_recipe", ids.scheduled],
       { lifecycle: "retired" },
     );
-    await expect(queueShoppingList(ids.user, ids.organization, {
-      eventId: ids.event,
-      name: "List",
-      scheduledRecipeIds: [ids.scheduled],
-    })).rejects.toThrow("shopping_list");
+    await expect(
+      queueShoppingList(ids.user, ids.organization, {
+        eventId: ids.event,
+        name: "List",
+        scheduledRecipeIds: [ids.scheduled],
+      }),
+    ).rejects.toThrow("shopping_list");
     await expect(localDb.optimisticOverlays.count()).resolves.toBe(0);
     await expect(localDb.outbox.count()).resolves.toBe(0);
   });
@@ -819,21 +991,38 @@ describe("offline shopping-list creation", () => {
     });
     await expect(localDb.outbox.count()).resolves.toBe(1);
     await expect(localDb.optimisticOverlays.count()).resolves.toBe(1);
-    await Promise.all([localDb.outbox.clear(), localDb.optimisticOverlays.clear()]);
+    await Promise.all([
+      localDb.outbox.clear(),
+      localDb.optimisticOverlays.clear(),
+    ]);
 
-    const scheduledKey: [string, string, string, string] = [ids.user, ids.organization, "scheduled_recipe", ids.scheduled];
-    await localDb.canonicalRecords.update(scheduledKey, { "fields.event_day_id": "9d8b2b21-c378-4574-9e46-9338c81305ef" });
-    await expect(queueShoppingList(ids.user, ids.organization, {
-      eventId: ids.event,
-      name: "Hidden day",
-      scheduledRecipeIds: [ids.scheduled],
-    })).rejects.toThrow("shopping_list");
-    await localDb.canonicalRecords.update(scheduledKey, { "fields.event_day_id": ids.day, "fields.event_meal_role_id": "9d8b2b21-c378-4574-9e46-9338c81305ef" });
-    await expect(queueShoppingList(ids.user, ids.organization, {
-      eventId: ids.event,
-      name: "Hidden role",
-      scheduledRecipeIds: [ids.scheduled],
-    })).rejects.toThrow("shopping_list");
+    const scheduledKey: [string, string, string, string] = [
+      ids.user,
+      ids.organization,
+      "scheduled_recipe",
+      ids.scheduled,
+    ];
+    await localDb.canonicalRecords.update(scheduledKey, {
+      "fields.event_day_id": "9d8b2b21-c378-4574-9e46-9338c81305ef",
+    });
+    await expect(
+      queueShoppingList(ids.user, ids.organization, {
+        eventId: ids.event,
+        name: "Hidden day",
+        scheduledRecipeIds: [ids.scheduled],
+      }),
+    ).rejects.toThrow("shopping_list");
+    await localDb.canonicalRecords.update(scheduledKey, {
+      "fields.event_day_id": ids.day,
+      "fields.event_meal_role_id": "9d8b2b21-c378-4574-9e46-9338c81305ef",
+    });
+    await expect(
+      queueShoppingList(ids.user, ids.organization, {
+        eventId: ids.event,
+        name: "Hidden role",
+        scheduledRecipeIds: [ids.scheduled],
+      }),
+    ).rejects.toThrow("shopping_list");
     await expect(localDb.outbox.count()).resolves.toBe(0);
     await expect(localDb.optimisticOverlays.count()).resolves.toBe(0);
   });
@@ -1050,7 +1239,11 @@ describe("offline shopping-list creation", () => {
         organization_id: ids.organization,
         ingredient_id: ids.recipe,
       }),
-      record("unit_definition", ids.unit, { id: ids.unit, organization_id: null, code: "kg" }),
+      record("unit_definition", ids.unit, {
+        id: ids.unit,
+        organization_id: null,
+        code: "kg",
+      }),
       record("store_section", ids.section, {
         id: ids.section,
         organization_id: ids.organization,
@@ -1227,45 +1420,152 @@ describe("offline shopping-list creation", () => {
   });
 
   it("queues, clears, and replays a valid active store-section override fail closed", async () => {
-    const record = (entityType: string, entityId: string, fields: Record<string, unknown>, lifecycle: "active" | "retired" = "active") => ({
-      userId: ids.user, organizationId: ids.organization, entityType, entityId,
-      recordSchemaVersion: 1, lifecycle, fields, fieldClocks: {}, immutable: false,
+    const record = (
+      entityType: string,
+      entityId: string,
+      fields: Record<string, unknown>,
+      lifecycle: "active" | "retired" = "active",
+    ) => ({
+      userId: ids.user,
+      organizationId: ids.organization,
+      entityType,
+      entityId,
+      recordSchemaVersion: 1,
+      lifecycle,
+      fields,
+      fieldClocks: {},
+      immutable: false,
       updatedAt: "2026-08-07T12:00:00.000Z",
     });
     await localDb.canonicalRecords.bulkAdd([
       record("event", ids.event, { id: ids.event, lifecycle: "active" }),
-      record("shopping_list", ids.list, { id: ids.list, organization_id: ids.organization, event_id: ids.event }),
-      record("shopping_ingredient_row", ids.row, { id: ids.row, organization_id: ids.organization, shopping_list_id: ids.list, store_section_override_id: null }),
-      record("store_section", ids.section, { id: ids.section, organization_id: ids.organization, name: "Produce" }),
-      record("store_section", ids.retiredContribution, { id: ids.retiredContribution, organization_id: ids.organization, name: "Retired" }, "retired"),
-      record("store_section", ids.contribution, { id: ids.contribution, organization_id: ids.user, name: "Foreign" }),
+      record("shopping_list", ids.list, {
+        id: ids.list,
+        organization_id: ids.organization,
+        event_id: ids.event,
+      }),
+      record("shopping_ingredient_row", ids.row, {
+        id: ids.row,
+        organization_id: ids.organization,
+        shopping_list_id: ids.list,
+        store_section_override_id: null,
+      }),
+      record("store_section", ids.section, {
+        id: ids.section,
+        organization_id: ids.organization,
+        name: "Produce",
+      }),
+      record(
+        "store_section",
+        ids.retiredContribution,
+        {
+          id: ids.retiredContribution,
+          organization_id: ids.organization,
+          name: "Retired",
+        },
+        "retired",
+      ),
+      record("store_section", ids.contribution, {
+        id: ids.contribution,
+        organization_id: ids.user,
+        name: "Foreign",
+      }),
     ]);
-    const input = { shoppingListId: ids.list, shoppingIngredientRowId: ids.row };
-    await queueShoppingStoreSectionOverride(ids.user, ids.organization, { ...input, storeSectionId: ids.section });
+    const input = {
+      shoppingListId: ids.list,
+      shoppingIngredientRowId: ids.row,
+    };
+    await queueShoppingStoreSectionOverride(ids.user, ids.organization, {
+      ...input,
+      storeSectionId: ids.section,
+    });
     const queued = await localDb.outbox.toArray();
     expect(queued).toHaveLength(1);
-    expect(queued[0]).toMatchObject({ commandType: "shopping_list.set_store_section_override", payload: { shopping_list_id: ids.list, shopping_ingredient_row_id: ids.row, store_section_id: ids.section } });
-    expect((await localDb.canonicalRecords.get([ids.user, ids.organization, "shopping_ingredient_row", ids.row]))?.fields.store_section_override_id).toBeNull();
-    await queueShoppingStoreSectionOverride(ids.user, ids.organization, { ...input, storeSectionId: null });
-    expect((await localDb.optimisticOverlays.get([ids.user, ids.organization, "shopping_ingredient_row", ids.row]))?.fields.store_section_override_id).toBeNull();
-    await expect(queueShoppingStoreSectionOverride(ids.user, ids.organization, { ...input, storeSectionId: ids.retiredContribution })).rejects.toThrow("shopping_operation");
-    await expect(queueShoppingStoreSectionOverride(ids.user, ids.organization, { ...input, storeSectionId: ids.contribution })).rejects.toThrow("shopping_operation");
+    expect(queued[0]).toMatchObject({
+      commandType: "shopping_list.set_store_section_override",
+      payload: {
+        shopping_list_id: ids.list,
+        shopping_ingredient_row_id: ids.row,
+        store_section_id: ids.section,
+      },
+    });
+    expect(
+      (
+        await localDb.canonicalRecords.get([
+          ids.user,
+          ids.organization,
+          "shopping_ingredient_row",
+          ids.row,
+        ])
+      )?.fields.store_section_override_id,
+    ).toBeNull();
+    await queueShoppingStoreSectionOverride(ids.user, ids.organization, {
+      ...input,
+      storeSectionId: null,
+    });
+    expect(
+      (
+        await localDb.optimisticOverlays.get([
+          ids.user,
+          ids.organization,
+          "shopping_ingredient_row",
+          ids.row,
+        ])
+      )?.fields.store_section_override_id,
+    ).toBeNull();
+    await expect(
+      queueShoppingStoreSectionOverride(ids.user, ids.organization, {
+        ...input,
+        storeSectionId: ids.retiredContribution,
+      }),
+    ).rejects.toThrow("shopping_operation");
+    await expect(
+      queueShoppingStoreSectionOverride(ids.user, ids.organization, {
+        ...input,
+        storeSectionId: ids.contribution,
+      }),
+    ).rejects.toThrow("shopping_operation");
     await localDb.optimisticOverlays.clear();
     await replayShoppingOperation(ids.user, ids.organization, queued[0]);
-    expect((await localDb.optimisticOverlays.get([ids.user, ids.organization, "shopping_ingredient_row", ids.row]))?.fields.store_section_override_id).toBe(ids.section);
+    expect(
+      (
+        await localDb.optimisticOverlays.get([
+          ids.user,
+          ids.organization,
+          "shopping_ingredient_row",
+          ids.row,
+        ])
+      )?.fields.store_section_override_id,
+    ).toBe(ids.section);
     await localDb.optimisticOverlays.clear();
-    await replayShoppingOperation(ids.user, ids.organization, { ...queued[0], payload: { ...queued[0].payload, unexpected: true } });
+    await replayShoppingOperation(ids.user, ids.organization, {
+      ...queued[0],
+      payload: { ...queued[0].payload, unexpected: true },
+    });
     await expect(localDb.optimisticOverlays.count()).resolves.toBe(0);
-    const section = await localDb.canonicalRecords.get([ids.user, ids.organization, "store_section", ids.section]);
+    const section = await localDb.canonicalRecords.get([
+      ids.user,
+      ids.organization,
+      "store_section",
+      ids.section,
+    ]);
     if (!section) throw new Error("missing section");
     await localDb.canonicalRecords.put({ ...section, lifecycle: "retired" });
     await replayShoppingOperation(ids.user, ids.organization, queued[0]);
     await expect(localDb.optimisticOverlays.count()).resolves.toBe(0);
-    await localDb.canonicalRecords.put({ ...section, fields: { ...section.fields, organization_id: ids.user } });
+    await localDb.canonicalRecords.put({
+      ...section,
+      fields: { ...section.fields, organization_id: ids.user },
+    });
     await replayShoppingOperation(ids.user, ids.organization, queued[0]);
     await expect(localDb.optimisticOverlays.count()).resolves.toBe(0);
     await localDb.canonicalRecords.put(section);
-    const canonicalRow = await localDb.canonicalRecords.get([ids.user, ids.organization, "shopping_ingredient_row", ids.row]);
+    const canonicalRow = await localDb.canonicalRecords.get([
+      ids.user,
+      ids.organization,
+      "shopping_ingredient_row",
+      ids.row,
+    ]);
     if (!canonicalRow) throw new Error("missing row");
     await localDb.canonicalRecords.put({
       ...canonicalRow,
@@ -1289,45 +1589,121 @@ describe("offline shopping-list creation", () => {
       actionAt: "not-a-timestamp",
     });
     await expect(localDb.optimisticOverlays.count()).resolves.toBe(0);
-    const event = await localDb.canonicalRecords.get([ids.user, ids.organization, "event", ids.event]);
-    const list = await localDb.canonicalRecords.get([ids.user, ids.organization, "shopping_list", ids.list]);
+    const event = await localDb.canonicalRecords.get([
+      ids.user,
+      ids.organization,
+      "event",
+      ids.event,
+    ]);
+    const list = await localDb.canonicalRecords.get([
+      ids.user,
+      ids.organization,
+      "shopping_list",
+      ids.list,
+    ]);
     if (!event || !list) throw new Error("missing shopping scope");
-    await localDb.canonicalRecords.put({ ...event, fields: { ...event.fields, lifecycle: "archived" } });
-    await expect(queueShoppingStoreSectionOverride(ids.user, ids.organization, { ...input, storeSectionId: ids.section })).rejects.toThrow("shopping_operation");
+    await localDb.canonicalRecords.put({
+      ...event,
+      fields: { ...event.fields, lifecycle: "archived" },
+    });
+    await expect(
+      queueShoppingStoreSectionOverride(ids.user, ids.organization, {
+        ...input,
+        storeSectionId: ids.section,
+      }),
+    ).rejects.toThrow("shopping_operation");
     await localDb.canonicalRecords.put(event);
     await localDb.canonicalRecords.put({ ...list, lifecycle: "retired" });
-    await expect(queueShoppingStoreSectionOverride(ids.user, ids.organization, { ...input, storeSectionId: ids.section })).rejects.toThrow("shopping_operation");
+    await expect(
+      queueShoppingStoreSectionOverride(ids.user, ids.organization, {
+        ...input,
+        storeSectionId: ids.section,
+      }),
+    ).rejects.toThrow("shopping_operation");
     await localDb.canonicalRecords.put(list);
-    await localDb.canonicalRecords.put({ ...canonicalRow, lifecycle: "retired" });
-    await expect(queueShoppingStoreSectionOverride(ids.user, ids.organization, { ...input, storeSectionId: ids.section })).rejects.toThrow("shopping_operation");
+    await localDb.canonicalRecords.put({
+      ...canonicalRow,
+      lifecycle: "retired",
+    });
+    await expect(
+      queueShoppingStoreSectionOverride(ids.user, ids.organization, {
+        ...input,
+        storeSectionId: ids.section,
+      }),
+    ).rejects.toThrow("shopping_operation");
   });
 
   it("canonicalizes and replays scoped row notes", async () => {
-    const record = (entityType: string, entityId: string, fields: Record<string, unknown>) => ({
-      userId: ids.user, organizationId: ids.organization, entityType, entityId,
-      recordSchemaVersion: 1, lifecycle: "active" as const, fields, fieldClocks: {}, immutable: false,
+    const record = (
+      entityType: string,
+      entityId: string,
+      fields: Record<string, unknown>,
+    ) => ({
+      userId: ids.user,
+      organizationId: ids.organization,
+      entityType,
+      entityId,
+      recordSchemaVersion: 1,
+      lifecycle: "active" as const,
+      fields,
+      fieldClocks: {},
+      immutable: false,
       updatedAt: "2026-08-07T12:00:00.000Z",
     });
     await localDb.canonicalRecords.bulkAdd([
       record("event", ids.event, { id: ids.event, lifecycle: "active" }),
-      record("shopping_list", ids.list, { id: ids.list, organization_id: ids.organization, event_id: ids.event }),
-      record("shopping_ingredient_row", ids.row, { id: ids.row, organization_id: ids.organization, shopping_list_id: ids.list, note: null }),
+      record("shopping_list", ids.list, {
+        id: ids.list,
+        organization_id: ids.organization,
+        event_id: ids.event,
+      }),
+      record("shopping_ingredient_row", ids.row, {
+        id: ids.row,
+        organization_id: ids.organization,
+        shopping_list_id: ids.list,
+        note: null,
+      }),
     ]);
-    const input = { shoppingListId: ids.list, shoppingIngredientRowId: ids.row };
-    await queueShoppingRowNote(ids.user, ids.organization, { ...input, note: "  e\u0301\r\nnote  " });
+    const input = {
+      shoppingListId: ids.list,
+      shoppingIngredientRowId: ids.row,
+    };
+    await queueShoppingRowNote(ids.user, ids.organization, {
+      ...input,
+      note: "  e\u0301\r\nnote  ",
+    });
     const queued = await localDb.outbox.toArray();
     expect(queued[0]?.payload).toMatchObject({ note: "é\nnote" });
     await localDb.optimisticOverlays.clear();
     await replayShoppingOperation(ids.user, ids.organization, queued[0]);
-    await expect(localDb.optimisticOverlays.get([ids.user, ids.organization, "shopping_ingredient_row", ids.row])).resolves.toMatchObject({ fields: { note: "é\nnote" } });
+    await expect(
+      localDb.optimisticOverlays.get([
+        ids.user,
+        ids.organization,
+        "shopping_ingredient_row",
+        ids.row,
+      ]),
+    ).resolves.toMatchObject({ fields: { note: "é\nnote" } });
     const canonicalRetry = {
       ...queued[0],
       payload: { ...queued[0].payload, note: "é\nnote" },
     };
     await localDb.optimisticOverlays.clear();
     await replayShoppingOperation(ids.user, ids.organization, canonicalRetry);
-    await expect(localDb.optimisticOverlays.get([ids.user, ids.organization, "shopping_ingredient_row", ids.row])).resolves.toMatchObject({ fields: { note: "é\nnote" } });
-    const row = await localDb.canonicalRecords.get([ids.user, ids.organization, "shopping_ingredient_row", ids.row]);
+    await expect(
+      localDb.optimisticOverlays.get([
+        ids.user,
+        ids.organization,
+        "shopping_ingredient_row",
+        ids.row,
+      ]),
+    ).resolves.toMatchObject({ fields: { note: "é\nnote" } });
+    const row = await localDb.canonicalRecords.get([
+      ids.user,
+      ids.organization,
+      "shopping_ingredient_row",
+      ids.row,
+    ]);
     if (!row) throw new Error("missing row");
     await localDb.canonicalRecords.put({
       ...row,
@@ -1345,9 +1721,29 @@ describe("offline shopping-list creation", () => {
       actionAt: "2026-08-07T12:00:00.000001Z",
     });
     await expect(localDb.optimisticOverlays.count()).resolves.toBe(0);
-    await expect(queueShoppingRowNote(ids.user, ids.organization, { ...input, note: "\0" })).rejects.toThrow("shopping_operation");
-    await expect(queueShoppingRowNote(ids.user, ids.organization, { ...input, note: "x".repeat(4001) })).rejects.toThrow("shopping_operation");
-    await queueShoppingRowNote(ids.user, ids.organization, { ...input, note: "   " });
-    await expect(localDb.optimisticOverlays.get([ids.user, ids.organization, "shopping_ingredient_row", ids.row])).resolves.toMatchObject({ fields: { note: null } });
+    await expect(
+      queueShoppingRowNote(ids.user, ids.organization, {
+        ...input,
+        note: "\0",
+      }),
+    ).rejects.toThrow("shopping_operation");
+    await expect(
+      queueShoppingRowNote(ids.user, ids.organization, {
+        ...input,
+        note: "x".repeat(4001),
+      }),
+    ).rejects.toThrow("shopping_operation");
+    await queueShoppingRowNote(ids.user, ids.organization, {
+      ...input,
+      note: "   ",
+    });
+    await expect(
+      localDb.optimisticOverlays.get([
+        ids.user,
+        ids.organization,
+        "shopping_ingredient_row",
+        ids.row,
+      ]),
+    ).resolves.toMatchObject({ fields: { note: null } });
   });
 });
