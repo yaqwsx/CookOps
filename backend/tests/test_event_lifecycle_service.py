@@ -347,12 +347,13 @@ def test_archive_persists_resolved_dietary_warnings_after_live_changes(
                 EventArchiveSnapshot.id == result.archive_snapshot_id
             )
         )
+        assert before is not None
         expected_descriptors = sorted(
             [
                 {"id": str(tag_id), "seed_key": "vegan", "name": None},
                 {"id": str(custom_tag_id), "seed_key": None, "name": "Nut-free"},
             ],
-            key=lambda item: item["id"],
+            key=lambda item: cast(str, item["id"]),
         )
         assert before["resolved_dietary_warnings"] == [
             {
@@ -395,6 +396,7 @@ def test_archive_persists_resolved_dietary_warnings_after_live_changes(
                 EventArchiveSnapshot.id == result.archive_snapshot_id
             )
         )
+    assert after is not None
     assert after["resolved_dietary_warnings"] == before["resolved_dietary_warnings"]
 
 
