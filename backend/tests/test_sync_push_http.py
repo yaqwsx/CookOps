@@ -1116,10 +1116,14 @@ def test_push_accepts_and_replays_relative_move_and_retains_invalid_targets(
         outcome = client.post("/api/v1/sync/push", json=body).json()["outcomes"][0]
         assert outcome["status"] == "accepted"
         assert client.post("/api/v1/sync/push", json=body).json()["outcomes"][0]["replayed"]
+        move_payload = cast(dict[str, object], move["payload"])
         mixed = {
             **move,
             "mutation_id": str(uuid4()),
-            "payload": {**move["payload"], "position_key": "z"},
+            "payload": {
+                **move_payload,
+                "position_key": "z",
+            },
         }
         assert (
             client.post(
@@ -1132,7 +1136,7 @@ def test_push_accepts_and_replays_relative_move_and_retains_invalid_targets(
             **move,
             "mutation_id": str(uuid4()),
             "payload": {
-                **move["payload"],
+                **move_payload,
                 "target_scheduled_recipe_id": str(uuid4()),
             },
         }
@@ -1576,10 +1580,15 @@ def test_push_replicates_meal_role_preset_with_strict_payload_and_position_clock
             "lifecycle",
         }
 
+        command_payload = cast(dict[str, object], command["payload"])
         updated = {
             **command,
             "mutation_id": str(uuid4()),
-            "payload": {**command["payload"], "operation": "update", "position_key": "aa"},
+            "payload": {
+                **command_payload,
+                "operation": "update",
+                "position_key": "aa",
+            },
         }
         assert (
             client.post(
@@ -1590,7 +1599,10 @@ def test_push_replicates_meal_role_preset_with_strict_payload_and_position_clock
         oversized = {
             **command,
             "mutation_id": str(uuid4()),
-            "payload": {**command["payload"], "position_key": "a" * 256},
+            "payload": {
+                **command_payload,
+                "position_key": "a" * 256,
+            },
         }
         assert (
             client.post(
@@ -1602,7 +1614,10 @@ def test_push_replicates_meal_role_preset_with_strict_payload_and_position_clock
         malformed = {
             **command,
             "mutation_id": str(uuid4()),
-            "payload": {**command["payload"], "unexpected": True},
+            "payload": {
+                **command_payload,
+                "unexpected": True,
+            },
         }
         rejected = client.post(
             "/api/v1/sync/push", json=_body(sync_database, installation_id, [malformed])
@@ -1637,7 +1652,9 @@ def test_catalog_configuration_future_time_is_retained(
     with sync_database.engine.connect() as connection:
         assert (
             connection.scalar(
-                select(Mutation.outcome).where(Mutation.id == UUID(command["mutation_id"]))
+                select(Mutation.outcome).where(
+                    Mutation.id == UUID(cast(str, command["mutation_id"]))
+                )
             )
             == "rejected"
         )
@@ -2069,9 +2086,13 @@ def test_push_sets_clears_and_rejects_scoped_row_notes(
             "/api/v1/sync/push", json=_body(sync_database, installation_id, [set_note])
         ).json()["outcomes"][0]
         assert accepted["status"] == "accepted"
+        set_note_payload = cast(dict[str, object], set_note["payload"])
         canonical_retry = {
             **set_note,
-            "payload": {**set_note["payload"], "note": "é\nnote"},
+            "payload": {
+                **set_note_payload,
+                "note": "é\nnote",
+            },
         }
         equivalent = client.post(
             "/api/v1/sync/push",
@@ -2477,7 +2498,7 @@ def test_push_creates_an_ad_hoc_item_with_scoped_dependencies_and_replays(
             )
         )
         assert isinstance(retired_record, dict)
-        assert isinstance(retired_record["record"].get("retired_at"), str)
+        assert isinstance(cast(dict[str, object], retired_record["record"]).get("retired_at"), str)
         assert (
             connection.scalar(
                 select(Mutation.outcome).where(
@@ -3225,10 +3246,11 @@ def test_push_schedules_a_recipe_through_the_typed_shared_command(
         assert client.post("/api/v1/sync/push", json=meal_role_body).json()["outcomes"][0][
             "replayed"
         ]
+        meal_role_payload = cast(dict[str, object], meal_role["payload"])
         role_name = _event_meal_role_name_command(
             mutation_id=uuid4(),
             event_id=event_id,
-            event_meal_role_id=UUID(meal_role["payload"]["event_meal_role_id"]),
+            event_meal_role_id=UUID(cast(str, meal_role_payload["event_meal_role_id"])),
             custom_name="Late dinner",
         )
         role_name_body = _body(sync_database, installation_id, [role_name])
@@ -3244,7 +3266,7 @@ def test_push_schedules_a_recipe_through_the_typed_shared_command(
             mutation_id=uuid4(),
             event_id=event_id,
             kind="event_meal_role.position",
-            event_meal_role_id=meal_role["payload"]["event_meal_role_id"],
+            event_meal_role_id=cast(str, meal_role_payload["event_meal_role_id"]),
             position_key="z9",
         )
         cast(dict[str, object], role_position["payload"])["event_id"] = str(event_id)
@@ -3262,7 +3284,7 @@ def test_push_schedules_a_recipe_through_the_typed_shared_command(
             mutation_id=uuid4(),
             event_id=event_id,
             kind="event_meal_role.lifecycle",
-            event_meal_role_id=meal_role["payload"]["event_meal_role_id"],
+            event_meal_role_id=cast(str, meal_role_payload["event_meal_role_id"]),
             operation="retire",
         )
         cast(dict[str, object], role_lifecycle["payload"])["event_id"] = str(event_id)
@@ -3280,7 +3302,7 @@ def test_push_schedules_a_recipe_through_the_typed_shared_command(
             mutation_id=uuid4(),
             event_id=event_id,
             kind="event_meal_role.position",
-            event_meal_role_id=meal_role["payload"]["event_meal_role_id"],
+            event_meal_role_id=cast(str, meal_role_payload["event_meal_role_id"]),
             position_key="!",
         )
         cast(dict[str, object], malformed_position["payload"])["event_id"] = str(event_id)
@@ -3299,7 +3321,7 @@ def test_push_schedules_a_recipe_through_the_typed_shared_command(
             item["payload"]["record"]
             for item in bootstrap["records"]
             if item["entity_kind"] == "event_meal_role"
-            and item["entity_id"] == meal_role["payload"]["event_meal_role_id"]
+            and item["entity_id"] == meal_role_payload["event_meal_role_id"]
         )
         assert role_record["position_key"] == "z9"
         assert role_record["custom_name"] == "Late dinner"
@@ -3328,7 +3350,7 @@ def test_push_schedules_a_recipe_through_the_typed_shared_command(
         malformed_role_name = _event_meal_role_name_command(
             mutation_id=uuid4(),
             event_id=event_id,
-            event_meal_role_id=UUID(meal_role["payload"]["event_meal_role_id"]),
+            event_meal_role_id=UUID(cast(str, meal_role_payload["event_meal_role_id"])),
             custom_name="bad\0name",
         )
         assert (
@@ -3369,7 +3391,7 @@ def test_push_schedules_a_recipe_through_the_typed_shared_command(
             mutation_id=uuid4(),
             event_id=event_id,
             kind="event_day.lifecycle",
-            event_day_id=str(created_day["payload"]["event_day_id"]),
+            event_day_id=str(cast(dict[str, object], created_day["payload"])["event_day_id"]),
             operation="retire",
         )
         cast(dict[str, object], day_lifecycle["payload"])["event_id"] = str(event_id)
@@ -3881,7 +3903,13 @@ def test_push_creates_an_ingredient_through_the_typed_sync_adapter(
         assert outcome["status"] == "accepted"
         assert client.post("/api/v1/sync/push", json=body).json()["outcomes"][0]["replayed"]
         ingredient_id = UUID(
-            cast(dict[str, object], body["commands"][0])["payload"]["ingredient_id"]
+            cast(
+                str,
+                cast(
+                    dict[str, object],
+                    cast(list[dict[str, object]], body["commands"])[0]["payload"],
+                )["ingredient_id"],
+            )
         )
         retire = _body(
             sync_database,
@@ -4079,7 +4107,7 @@ def test_push_clock_and_timestamp_boundaries_are_safe(
     )
     with TestClient(create_app(_settings()), base_url="https://testserver") as client:
         _sign_in(client, "dummy-member")
-        client.app.state.synchronization.commands._clock = lambda: server_now
+        cast(Any, client.app).state.synchronization.commands._clock = lambda: server_now
         response = client.post("/api/v1/sync/push", json=body)
     assert response.status_code == status_code
     if status_code == 200:
@@ -4104,7 +4132,7 @@ def test_catalog_update_payload_is_strict() -> None:
     assert isinstance(parsed, UpdateScheduledRecipeCatalogCommand)
     assert parsed.preserve_overrides is True
     for key, value in (("preserve_overrides", 1), ("extra", True)):
-        payload = dict(base["payload"])
+        payload = cast(dict[str, object], base["payload"]).copy()
         payload[key] = value
         rejected = _push_command(
             PushCommandRequest.model_validate({**base, "payload": payload}), uuid4()
