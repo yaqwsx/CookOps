@@ -37,6 +37,7 @@ def _settings(root: Path) -> Settings:
 def test_attachment_status_requires_current_authorized_browser_session(
     service_database: ServiceDatabase, tmp_path: Path
 ) -> None:
+    receipt_id = _receipt(service_database, _event(service_database))
     with service_database.sync_engine.begin() as connection:
         connection.execute(
             insert(ExternalIdentity).values(
@@ -47,7 +48,6 @@ def test_attachment_status_requires_current_authorized_browser_session(
                 normalized_verified_email="admin@example.test",
             )
         )
-    receipt_id = _receipt(service_database, _event(service_database))
     attachment_id, installation_id = uuid4(), uuid4()
     path = f"/media/receipt-attachments/{attachment_id}/status"
     params = {
