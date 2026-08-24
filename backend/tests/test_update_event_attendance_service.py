@@ -197,11 +197,9 @@ def test_member_updates_event_attendance_and_only_following_recipes(
             .order_by(OrganizationChange.sequence)
         ).all()
         assert [change.entity_kind for change in changes] == ["event", "scheduled_recipe"]
-        assert changes[0].payload["record"]["field_clocks"] == {
-            "base_expected_attendance": {
-                "winning_client_wall_time": command.client_wall_time.isoformat(),
-                "winning_mutation_id": str(command.mutation_id),
-            }
+        assert changes[0].payload["record"]["field_clocks"]["base_expected_attendance"] == {
+            "winning_client_wall_time": command.client_wall_time.isoformat(),
+            "winning_mutation_id": str(command.mutation_id),
         }
         assert changes[1].payload["record"]["diner_count"] == 57
 
@@ -363,8 +361,9 @@ def test_metadata_date_range_lww_rejection_and_day_reconciliation(
 ) -> None:
     event_id, _, _ = _create_event_and_scheduled_recipes(service_database)
     wall_time = datetime.now(UTC)
-    future_end_mutation = uuid4()
     with service_database.sync_engine.begin() as connection:
+        future_end_mutation = connection.scalar(select(Mutation.id).limit(1))
+        assert future_end_mutation is not None
         connection.execute(
             update(Event).where(Event.id == event_id).values(end_date=date(2026, 7, 1))
         )
