@@ -284,6 +284,7 @@ def test_google_route_issues_the_same_cookie_and_does_not_mount_dummy_routes() -
         oauth_interaction_details_api_credential_base64url=KEY[:-1] + "U",
         oauth_interaction_approval_api_credential_base64url=KEY,
         oauth_interaction_origin="https://testserver",
+        oauth_grants_api_credential_base64url=KEY[:-1] + "U",
     )
     google_provider = MagicMock()
     google_provider.complete_id_token = AsyncMock(
@@ -346,6 +347,7 @@ def test_production_google_route_rejects_plain_http_before_token_verification() 
         oauth_interaction_details_api_credential_base64url=KEY[:-1] + "U",
         oauth_interaction_approval_api_credential_base64url=KEY,
         oauth_interaction_origin="https://testserver",
+        oauth_grants_api_credential_base64url=KEY[:-1] + "U",
     )
     google_provider = MagicMock()
     app = FastAPI()
@@ -380,6 +382,7 @@ def test_identity_http_sessions_reach_cookie_bound_interaction_bridge(
             "oauth_interaction_origin": "https://testserver",
             "oauth_interaction_details_api_credential_base64url": KEY,
             "oauth_interaction_approval_api_credential_base64url": KEY,
+            "oauth_grants_api_credential_base64url": KEY[:-1] + "U",
         }
     )
 

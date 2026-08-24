@@ -430,6 +430,7 @@ def test_seeded_dummy_identities_use_the_existing_browser_session_authentication
             "id": str(ORGANIZATION_ADMIN.id),
             "display_name": ORGANIZATION_ADMIN.display_name,
             "verified_email": ORGANIZATION_ADMIN.verified_email,
+            "preferred_locale": "cs",
         }
 
 
@@ -444,6 +445,7 @@ def test_provisioning_refuses_production_before_acquiring_a_database_session() -
         oauth_interaction_details_api_credential_base64url=KEY[:-1] + "U",
         oauth_interaction_approval_api_credential_base64url=KEY,
         oauth_interaction_origin="https://testserver",
+        oauth_grants_api_credential_base64url=KEY[:-1] + "V",
     )
 
     def unexpected_session_factory() -> AsyncSession:
