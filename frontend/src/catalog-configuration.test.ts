@@ -169,7 +169,7 @@ describe("catalog configuration outbox", () => {
     }
     await replayCatalogConfiguration(userId, organizationId, {
       id: "ace17d2f-8365-4b1f-a80b-34d10425d51c",
-      actionAt: "2026-08-20T00:00:01.000000001Z",
+      actionAt: "2099-08-20T00:00:01.000000001Z",
       payload: {
         entity_id: id,
         entity_kind: "organization_meal_role_preset",
