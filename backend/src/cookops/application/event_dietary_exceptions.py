@@ -610,13 +610,14 @@ async def update_event_dietary_exception(
                 if "tag_ids" in wins:
                     old = (
                         await session.scalars(
-                                select(EventDietaryExceptionTag)
-                                .where(
-                                    EventDietaryExceptionTag.exception_id == item.id,
-                                    EventDietaryExceptionTag.organization_id == organization_id,
-                                )
-                                .with_for_update()
-                        )).all()
+                            select(EventDietaryExceptionTag)
+                            .where(
+                                EventDietaryExceptionTag.exception_id == item.id,
+                                EventDietaryExceptionTag.organization_id == organization_id,
+                            )
+                            .with_for_update()
+                        )
+                    ).all()
                     old_by_tag = {x.dietary_tag_id: x for x in old if x.retired_at is None}
                     for association in old:
                         if association.dietary_tag_id not in tag_ids:
@@ -672,12 +673,13 @@ async def update_event_dietary_exception(
                 if "tag_ids" not in wins:
                     old = (
                         await session.scalars(
-                                select(EventDietaryExceptionTag).where(
-                                    EventDietaryExceptionTag.exception_id == item.id,
-                                    EventDietaryExceptionTag.organization_id == organization_id,
-                                    EventDietaryExceptionTag.retired_at.is_(None),
-                                )
-                        )).all()
+                            select(EventDietaryExceptionTag).where(
+                                EventDietaryExceptionTag.exception_id == item.id,
+                                EventDietaryExceptionTag.organization_id == organization_id,
+                                EventDietaryExceptionTag.retired_at.is_(None),
+                            )
+                        )
+                    ).all()
                 record = _record(item, clocks)
                 record["tag_ids"] = [
                     str(x)
