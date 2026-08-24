@@ -1584,6 +1584,7 @@ def test_push_replicates_meal_role_preset_with_strict_payload_and_position_clock
         updated = {
             **command,
             "mutation_id": str(uuid4()),
+            "client_wall_time": (datetime.now(UTC) + timedelta(seconds=1)).isoformat(),
             "payload": {
                 **command_payload,
                 "operation": "update",
