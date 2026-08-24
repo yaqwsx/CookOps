@@ -4,7 +4,7 @@ import hashlib
 import json
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
-from typing import Literal
+from typing import Literal, cast
 from uuid import UUID
 
 from sqlalchemy import select, text
@@ -189,7 +189,7 @@ async def set_scheduled_recipe_lifecycle(
                     retained.first_change_sequence,
                     retained.last_change_sequence,
                     True,
-                    retained.outcome,
+                    cast(Literal["accepted", "partially_superseded"], retained.outcome),
                 )
             else:
                 raise RuntimeError("invalid retained scheduled recipe lifecycle outcome")
