@@ -309,7 +309,7 @@ test("keeps a normalized receipt photo queued offline", async ({ page }) => {
     page
       .getByRole("listitem")
       .filter({ has: page.getByRole("heading", { name: "Pekárna" }) })
-      .getByText("12.50 CZK", { exact: true }),
+      .getByText(/12,50\s*Kč/),
   ).toBeVisible();
   const picker = page.getByLabel("Přidat fotografii účtenky");
   await expect(picker).toBeVisible();
