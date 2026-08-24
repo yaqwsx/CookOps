@@ -135,6 +135,46 @@ describe("offline receipt metadata", () => {
     ]);
   });
 
+  it("uses the cached organization currency when an event cache lacks currency", async () => {
+    await localDb.canonicalRecords.bulkPut([
+      {
+        userId,
+        organizationId,
+        entityType: "organization",
+        entityId: organizationId,
+        recordSchemaVersion: 1,
+        lifecycle: "active",
+        fields: { id: organizationId, default_currency: "CZK" },
+        fieldClocks: {},
+        immutable: false,
+        updatedAt: "2026-08-07T12:00:00.000Z",
+      },
+      {
+        userId,
+        organizationId,
+        entityType: "event",
+        entityId: eventId,
+        recordSchemaVersion: 1,
+        lifecycle: "active",
+        fields: { id: eventId, organization_id: organizationId },
+        fieldClocks: {},
+        immutable: false,
+        updatedAt: "2026-08-07T12:00:00.000Z",
+      },
+    ]);
+    const receiptId = await queueReceiptCreate(
+      userId,
+      organizationId,
+      eventId,
+      input,
+    );
+    await expect(
+      readEventReceipts(userId, organizationId, eventId),
+    ).resolves.toEqual([
+      expect.objectContaining({ id: receiptId, currency: "CZK" }),
+    ]);
+  });
+
   it("notifies a live receipt projection after an optimistic create", async () => {
     await addEvent();
     let subscription: { unsubscribe: () => void } | undefined;

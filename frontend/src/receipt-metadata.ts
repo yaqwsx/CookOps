@@ -2,6 +2,7 @@ import { appendOutboxCommand, localDb, type CanonicalRecord } from "./local-db";
 
 const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const decimal = /^(?:0|[1-9]\d*)(?:\.\d+)?$/;
+const currency = /^[A-Z]{3}$/;
 
 export type ReceiptInput = {
   title: string;
@@ -95,7 +96,25 @@ async function activeEvent(
       "event",
       eventId,
     ])) ?? canonical;
-  return event?.lifecycle === "active" ? event : undefined;
+  if (event?.lifecycle !== "active") return undefined;
+  if (typeof event.fields.currency === "string") return event;
+  const organization =
+    (await localDb.optimisticOverlays.get([
+      userId,
+      organizationId,
+      "organization",
+      organizationId,
+    ])) ??
+    (await localDb.canonicalRecords.get([
+      userId,
+      organizationId,
+      "organization",
+      organizationId,
+    ]));
+  const defaultCurrency = organization?.fields.default_currency;
+  return typeof defaultCurrency === "string" && currency.test(defaultCurrency)
+    ? { ...event, fields: { ...event.fields, currency: defaultCurrency } }
+    : event;
 }
 
 async function currentReceipt(
