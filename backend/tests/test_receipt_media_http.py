@@ -1,8 +1,10 @@
 import base64
 import hashlib
 import os
+from collections.abc import Callable, Iterator
 from datetime import UTC, datetime
 from pathlib import Path
+from typing import cast
 from uuid import uuid4
 
 import pytest
@@ -10,7 +12,12 @@ from fastapi.testclient import TestClient
 from pydantic import PostgresDsn
 from sqlalchemy import insert, select
 from test_create_event_service import ServiceDatabase
-from test_receipt_media_service import _event, _jpeg, _receipt
+from test_receipt_media_service import (
+    _event,
+    _jpeg,
+    _receipt,
+)
+from test_receipt_media_service import service_database as receipt_media_service_database
 
 from cookops.config import Environment, HumanAuthProvider, Settings
 from cookops.main import create_app
@@ -19,8 +26,6 @@ from cookops.persistence.models import ExternalIdentity, ReceiptAttachment
 pytestmark = pytest.mark.skipif(
     "TEST_DATABASE_URL" not in os.environ, reason="TEST_DATABASE_URL is not set"
 )
-pytest_plugins = ("test_create_event_service",)
-
 KEY = base64.urlsafe_b64encode(b"0123456789abcdef0123456789abcdef").rstrip(b"=").decode()
 
 
@@ -34,9 +39,19 @@ def _settings(root: Path) -> Settings:
     )
 
 
+@pytest.fixture
+def receipt_media_database() -> Iterator[ServiceDatabase]:
+    fixture = cast(
+        Callable[[], Iterator[ServiceDatabase]],
+        vars(receipt_media_service_database)["__wrapped__"],
+    )
+    yield from fixture()
+
+
 def test_attachment_status_requires_current_authorized_browser_session(
-    service_database: ServiceDatabase, tmp_path: Path
+    receipt_media_database: ServiceDatabase, tmp_path: Path
 ) -> None:
+    service_database = receipt_media_database
     receipt_id = _receipt(service_database, _event(service_database))
     with service_database.sync_engine.begin() as connection:
         connection.execute(
