@@ -1,4 +1,5 @@
 import asyncio
+from collections.abc import Iterator
 from dataclasses import replace
 from datetime import UTC, datetime
 from uuid import uuid4
@@ -6,6 +7,7 @@ from uuid import uuid4
 import pytest
 from sqlalchemy import insert, select, update
 from test_create_recipe_service import ServiceDatabase, context, recipe_command
+from test_create_recipe_service import service_database as create_recipe_service_database
 
 from cookops.application.organizations import ApplicationServiceError
 from cookops.application.recipe_copy import (
@@ -29,10 +31,16 @@ from cookops.persistence.models import (
 pytest_plugins = ("test_create_recipe_service",)
 
 
+@pytest.fixture
+def recipe_copy_database() -> Iterator[ServiceDatabase]:
+    """Use the recipe fixture without colliding with other plugin fixtures."""
+    yield from create_recipe_service_database.__wrapped__()
+
+
 def test_copy_current_recipe_to_destination_admin(
-    service_database: ServiceDatabase,
+    recipe_copy_database: ServiceDatabase,
 ) -> None:
-    database = service_database
+    database = recipe_copy_database
     destination_ingredient_id, destination_version_id = uuid4(), uuid4()
     destination_tag_id = uuid4()
     with database.sync_engine.begin() as connection:
@@ -127,9 +135,9 @@ def test_copy_current_recipe_to_destination_admin(
 
 
 def test_same_organization_rejection_is_retained(
-    service_database: ServiceDatabase,
+    recipe_copy_database: ServiceDatabase,
 ) -> None:
-    database = service_database
+    database = recipe_copy_database
     with database.sync_engine.begin() as connection:
         connection.execute(
             update(OrganizationMembership)
@@ -163,9 +171,9 @@ def test_same_organization_rejection_is_retained(
 
 
 def test_stale_source_current_version_rejects_without_target_graph(
-    service_database: ServiceDatabase,
+    recipe_copy_database: ServiceDatabase,
 ) -> None:
-    database = service_database
+    database = recipe_copy_database
     source = asyncio.run(
         create_recipe(database.sessions, context(database), recipe_command(database))
     )
@@ -267,9 +275,9 @@ def test_stale_source_current_version_rejects_without_target_graph(
 
 
 def test_missing_mapping_rejects_replays_without_target_rows(
-    service_database: ServiceDatabase,
+    recipe_copy_database: ServiceDatabase,
 ) -> None:
-    database = service_database
+    database = recipe_copy_database
     source = asyncio.run(
         create_recipe(database.sessions, context(database), recipe_command(database))
     )
