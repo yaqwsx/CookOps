@@ -1747,8 +1747,8 @@ def _push_command(command: PushCommandRequest, organization_id: UUID) -> SyncCom
                 logical_operation_id=catalog_payload.logical_operation_id,
             )
         if command.command_kind == "organization.update":
-            payload = OrganizationUpdatePayload.model_validate(command.payload)
-            if payload.organization_id != organization_id:
+            organization_payload = OrganizationUpdatePayload.model_validate(command.payload)
+            if organization_payload.organization_id != organization_id:
                 return UnsupportedSyncCommand(
                     mutation_id=command.mutation_id,
                     command_kind=command.command_kind,
@@ -1758,10 +1758,10 @@ def _push_command(command: PushCommandRequest, organization_id: UUID) -> SyncCom
                 )
             return OrganizationUpdateCommand(
                 mutation_id=command.mutation_id,
-                organization_id=payload.organization_id,
-                name=payload.name,
-                description=payload.description,
-                default_currency=payload.default_currency,
+                organization_id=organization_payload.organization_id,
+                name=organization_payload.name,
+                description=organization_payload.description,
+                default_currency=organization_payload.default_currency,
                 client_wall_time=command.client_wall_time,
             )
     except ValidationError:
