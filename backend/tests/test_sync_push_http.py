@@ -3,7 +3,7 @@ from collections.abc import Callable, Iterator
 from datetime import UTC, date, datetime, timedelta
 from decimal import Decimal
 from pathlib import Path
-from typing import cast
+from typing import Any, cast
 from uuid import UUID, uuid4
 
 import pytest
@@ -704,7 +704,7 @@ def test_dietary_exception_lifecycle_retire_restore_lww_and_retained_rejection(
 
 def _command(
     *, mutation_id: UUID, event_id: UUID, kind: str = "event.create", **payload: object
-) -> dict[str, object]:
+) -> dict[str, Any]:
     if kind == "event.create":
         payload = {
             "event_id": str(event_id),
