@@ -6,7 +6,7 @@ import json
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from decimal import ROUND_CEILING, Decimal
-from typing import Literal
+from typing import Literal, cast
 from uuid import UUID
 
 from sqlalchemy import select, text
@@ -115,7 +115,7 @@ def _result(
         command.event_id,
         scheduled.consumption_percentage,
         scheduled.selected_scale_amount,
-        scheduled.scale_mode,
+        cast(Literal["manual", "suggested"], scheduled.scale_mode),
         first,
         last,
         replayed,
@@ -181,7 +181,7 @@ async def _suggestion(
     base, capacity, round_up, unit = version
     capacity = Decimal(1) if unit == "person" else capacity
     if capacity is None or capacity <= 0:
-        return base
+        return cast(Decimal, base)
     value = Decimal(scheduled.diner_count) * consumption / Decimal(100) / capacity
     return value.to_integral_value(rounding=ROUND_CEILING) if round_up else value
 
@@ -273,11 +273,11 @@ async def set_scheduled_recipe_context(
                     command.event_id,
                     Decimal(str(payload["consumption_percentage"])),
                     Decimal(str(payload["selected_scale_amount"])),
-                    payload["scale_mode"],
+                    cast(Literal["manual", "suggested"], payload["scale_mode"]),
                     retained.first_change_sequence,
                     retained.last_change_sequence,
                     True,
-                    retained.outcome,
+                    cast(Literal["accepted", "partially_superseded"], retained.outcome),
                 )
         elif violations:
             deferred = _reject(*violations)
@@ -350,13 +350,18 @@ async def set_scheduled_recipe_context(
                             when,
                             command.mutation_id,
                         )
-                outcome = "accepted" if wins else "partially_superseded"
+                outcome: Literal["accepted", "partially_superseded"] = (
+                    "accepted" if wins else "partially_superseded"
+                )
                 first, last = await _reserve_change_range(
                     session, command.organization_id, command.mutation_id, 1
                 )
                 result = _result(command, scheduled, first, last, False, outcome)
                 record = _scheduled_recipe_change_record(scheduled)[2]
-                record["field_clocks"]["context"] = {
+                field_clocks = record["field_clocks"]
+                assert isinstance(field_clocks, dict)
+                assert clock is not None
+                field_clocks["context"] = {
                     "winning_client_wall_time": clock.winning_client_wall_time.isoformat(),
                     "winning_mutation_id": str(clock.winning_mutation_id),
                 }
