@@ -362,8 +362,16 @@ def test_metadata_date_range_lww_rejection_and_day_reconciliation(
     event_id, _, _ = _create_event_and_scheduled_recipes(service_database)
     wall_time = datetime.now(UTC)
     with service_database.sync_engine.begin() as connection:
-        future_end_mutation = connection.scalar(select(Mutation.id).limit(1))
-        assert future_end_mutation is not None
+        accepted_mutation = connection.execute(
+            select(Mutation.id, Mutation.client_wall_time)
+            .where(
+                Mutation.organization_id == service_database.organization_id,
+                Mutation.outcome == "accepted",
+            )
+            .order_by(Mutation.client_wall_time)
+            .limit(1)
+        ).one()
+        future_end_mutation, wall_time = accepted_mutation
         connection.execute(
             update(Event).where(Event.id == event_id).values(end_date=date(2026, 7, 1))
         )
