@@ -183,4 +183,4 @@ jobs:
           npm ci
           npx playwright install --with-deps chromium
       - name: Complete a real production OAuth consent interaction in a browser
-        run: deploy/test-oauth-consent-smoke.sh
+        run: ./deploy/test-oauth-consent-smoke.sh
