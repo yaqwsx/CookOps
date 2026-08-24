@@ -134,7 +134,9 @@ describe("receipt image preparation", () => {
     );
 
     await expect(
-      prepareReceiptImage(new File(["source"], "receipt.jpg", { type: "image/jpeg" })),
+      prepareReceiptImage(
+        new File(["source"], "receipt.jpg", { type: "image/jpeg" }),
+      ),
     ).rejects.toBeInstanceOf(ReceiptImageReadabilityError);
     expect(bitmap.close).toHaveBeenCalledOnce();
   });
@@ -221,13 +223,29 @@ describe("receipt upload lost finalization recovery", () => {
     const send = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
       const url = String(input);
       if (url === "/media/receipt-attachments")
-        return Response.json({ attachment_id: attachmentId, ticket_secret: "ticket" });
+        return Response.json({
+          attachment_id: attachmentId,
+          ticket_secret: "ticket",
+        });
       if (init?.method === "PUT") {
-        expect(new Headers(init.headers).get("x-cookops-replace-attachment-id")).toBe(originalAttachmentId);
+        expect(
+          new Headers(init.headers).get("x-cookops-replace-attachment-id"),
+        ).toBe(originalAttachmentId);
         return Response.json({ storage_state: "ready" });
       }
       if (url.startsWith(`/media/receipt-attachments/${attachmentId}/status?`))
-        return Response.json({ attachment_id: attachmentId, storage_state: "ready", content_hash: "0".repeat(64), source_content_hash: await hash(blob as Blob), byte_size: 5, source_byte_size: blob?.size, pixel_width: 1, pixel_height: 1, media_type: "image/jpeg", retired: false });
+        return Response.json({
+          attachment_id: attachmentId,
+          storage_state: "ready",
+          content_hash: "0".repeat(64),
+          source_content_hash: await hash(blob as Blob),
+          byte_size: 5,
+          source_byte_size: blob?.size,
+          pixel_width: 1,
+          pixel_height: 1,
+          media_type: "image/jpeg",
+          retired: false,
+        });
       throw new Error(`unexpected ${url}`);
     });
     await dispatchReceiptUploads(userId, organizationId, { fetch: send });

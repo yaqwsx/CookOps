@@ -139,7 +139,13 @@ describe("offline receipt metadata", () => {
     await addEvent();
     let subscription: { unsubscribe: () => void } | undefined;
     const observed = new Promise<void>((resolve) => {
-      subscription = liveQuery(() => readEventReceipts(userId, organizationId, eventId)).subscribe({ next: (items) => { if (items.length === 1) resolve(); } });
+      subscription = liveQuery(() =>
+        readEventReceipts(userId, organizationId, eventId),
+      ).subscribe({
+        next: (items) => {
+          if (items.length === 1) resolve();
+        },
+      });
     });
     await queueReceiptCreate(userId, organizationId, eventId, input);
     await observed;

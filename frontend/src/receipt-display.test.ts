@@ -12,7 +12,9 @@ describe("receipt detail presentation", () => {
     expect(formatReceiptDate("2026-08-07", "cs")).toContain("srpna");
     expect(formatReceiptAmount("12.50", "CZK", "cs")).toContain("12,50");
     expect(formatReceiptAmount("12.50", "CZK", "en")).toContain("12.50");
-    expect(formatReceiptAmount("9007199254740993", "CZK", "en")).toContain("9,007,199,254,740,993");
+    expect(formatReceiptAmount("9007199254740993", "CZK", "en")).toContain(
+      "9,007,199,254,740,993",
+    );
     expect(formatReceiptAmount("12.5000", "CZK", "en")).toContain("12.5000");
   });
 

@@ -7,11 +7,14 @@ import { RecipeCatalog } from "./recipe-catalog-view";
 import { queueRecipeVersionPublish } from "./recipe-publish";
 import { queueIngredientCreateWithVersion } from "./ingredient-create";
 
-const { emptyStoreSections, queueCatalogConfiguration, refreshCatalog } = vi.hoisted(() => ({
-  emptyStoreSections: { value: false },
-  queueCatalogConfiguration: vi.fn(async () => "2ce17d2f-8365-4b1f-a80b-34d10425d51c"),
-  refreshCatalog: vi.fn<() => void>(),
-}));
+const { emptyStoreSections, queueCatalogConfiguration, refreshCatalog } =
+  vi.hoisted(() => ({
+    emptyStoreSections: { value: false },
+    queueCatalogConfiguration: vi.fn(
+      async () => "2ce17d2f-8365-4b1f-a80b-34d10425d51c",
+    ),
+    refreshCatalog: vi.fn<() => void>(),
+  }));
 vi.mock("./catalog-configuration", () => ({ queueCatalogConfiguration }));
 
 vi.mock("dexie", async (importOriginal) => ({
@@ -19,23 +22,37 @@ vi.mock("dexie", async (importOriginal) => ({
   liveQuery: (query: () => Promise<unknown>) => ({
     subscribe: (observer: { next: (value: unknown) => void }) => {
       void query().then(observer.next);
-      refreshCatalog.mockImplementation(() => { void query().then(observer.next); });
+      refreshCatalog.mockImplementation(() => {
+        void query().then(observer.next);
+      });
       return { unsubscribe: () => undefined };
     },
   }),
 }));
 vi.mock("./recipe-catalog", () => ({
-  projectRecipeCatalogUpdate: vi.fn((recipe: { id: string }) => recipe.id === "6ce17d2f-8365-4b1f-a80b-34d10425d51c" ? ({
-    blocked: false,
-    lines: [{
-      lineId: "dce17d2f-8365-4b1f-a80b-34d10425d51c",
-      oldIngredient: { name: "Historical carrot", versionId: "bde17d2f-8365-4b1f-a80b-34d10425d51c" },
-      newIngredient: { name: "Current carrot", versionId: "ace17d2f-8365-4b1f-a80b-34d10425d51c" },
-      oldQuantity: "1",
-      newQuantity: "1",
-      compatible: true,
-    }],
-  }) : ({ blocked: false, lines: [] })),
+  projectRecipeCatalogUpdate: vi.fn((recipe: { id: string }) =>
+    recipe.id === "6ce17d2f-8365-4b1f-a80b-34d10425d51c"
+      ? {
+          blocked: false,
+          lines: [
+            {
+              lineId: "dce17d2f-8365-4b1f-a80b-34d10425d51c",
+              oldIngredient: {
+                name: "Historical carrot",
+                versionId: "bde17d2f-8365-4b1f-a80b-34d10425d51c",
+              },
+              newIngredient: {
+                name: "Current carrot",
+                versionId: "ace17d2f-8365-4b1f-a80b-34d10425d51c",
+              },
+              oldQuantity: "1",
+              newQuantity: "1",
+              compatible: true,
+            },
+          ],
+        }
+      : { blocked: false, lines: [] },
+  ),
   readRecipeCatalog: vi.fn(async () => ({
     recipes: [
       {
@@ -128,10 +145,25 @@ vi.mock("./recipe-catalog", () => ({
       },
     ],
     units: [
-      { id: "9ce17d2f-8365-4b1f-a80b-34d10425d51c", name: "g", dimension: "mass", baseUnitFactor: "1" },
-      { id: "0ce17d2f-8365-4b1f-8000-000000000001", name: "piece", dimension: "count", baseUnitFactor: "1" },
+      {
+        id: "9ce17d2f-8365-4b1f-a80b-34d10425d51c",
+        name: "g",
+        dimension: "mass",
+        baseUnitFactor: "1",
+      },
+      {
+        id: "0ce17d2f-8365-4b1f-8000-000000000001",
+        name: "piece",
+        dimension: "count",
+        baseUnitFactor: "1",
+      },
     ],
-    storeSections: emptyStoreSections.value ? [] : [{ id: "3ce17d2f-8365-4b1f-a80b-34d10425d51c", name: "Produce" }, { id: "4ce17d2f-8365-4b1f-a80b-34d10425d51c", name: "Pantry" }],
+    storeSections: emptyStoreSections.value
+      ? []
+      : [
+          { id: "3ce17d2f-8365-4b1f-a80b-34d10425d51c", name: "Produce" },
+          { id: "4ce17d2f-8365-4b1f-a80b-34d10425d51c", name: "Pantry" },
+        ],
     organizationDefaultCurrency: "EUR",
     costs: {
       "6ce17d2f-8365-4b1f-a80b-34d10425d51c": {
@@ -186,26 +218,62 @@ describe("recipe retired ingredient warning", () => {
     expect(await screen.findByRole("alert")).toHaveTextContent(
       "Tento recept obsahuje vyřazenou surovinu",
     );
-    expect(screen.getByText("Je dostupná aktualizace verzí surovin v katalogu.")).toBeVisible();
+    expect(
+      screen.getByText("Je dostupná aktualizace verzí surovin v katalogu."),
+    ).toBeVisible();
   });
 
   it("creates and selects a tag inline, while tag filtering composes with text search", async () => {
     const user = userEvent.setup();
-    render(<RecipeCatalog onUnauthenticated={() => undefined} organizationId="5ce17d2f-8365-4b1f-a80b-34d10425d51c" userId="a6a58bd6-214e-49af-8fae-e5f974bf8e08" />);
+    render(
+      <RecipeCatalog
+        onUnauthenticated={() => undefined}
+        organizationId="5ce17d2f-8365-4b1f-a80b-34d10425d51c"
+        userId="a6a58bd6-214e-49af-8fae-e5f974bf8e08"
+      />,
+    );
     await screen.findByRole("heading", { name: "Nový recept" });
-    await user.click(screen.getAllByRole("button", { name: "Vytvořit štítek" })[0]);
-    await user.type(screen.getByRole("textbox", { name: "Název nového štítku" }), "Family");
-    await user.click(screen.getByRole("button", { name: "Uložit a vybrat štítek" }));
-    expect(queueCatalogConfiguration).toHaveBeenCalledWith(expect.any(String), expect.any(String), "recipe_tag", "create", { name: "Family", color: "#336699" });
+    await user.click(
+      screen.getAllByRole("button", { name: "Vytvořit štítek" })[0],
+    );
+    await user.type(
+      screen.getByRole("textbox", { name: "Název nového štítku" }),
+      "Family",
+    );
+    await user.click(
+      screen.getByRole("button", { name: "Uložit a vybrat štítek" }),
+    );
+    expect(queueCatalogConfiguration).toHaveBeenCalledWith(
+      expect.any(String),
+      expect.any(String),
+      "recipe_tag",
+      "create",
+      { name: "Family", color: "#336699" },
+    );
     expect(screen.getByRole("checkbox", { name: "Family" })).toBeChecked();
     await user.click(screen.getByRole("button", { name: "Vytvořit štítek" }));
-    await user.type(screen.getByRole("textbox", { name: "Název nového štítku" }), "Family");
-    await user.click(screen.getByRole("button", { name: "Uložit a vybrat štítek" }));
+    await user.type(
+      screen.getByRole("textbox", { name: "Název nového štítku" }),
+      "Family",
+    );
+    await user.click(
+      screen.getByRole("button", { name: "Uložit a vybrat štítek" }),
+    );
     expect(queueCatalogConfiguration).toHaveBeenCalledTimes(1);
-    expect(screen.getByText("Štítek je neplatný nebo již existuje.")).toBeVisible();
-    await user.selectOptions(screen.getByRole("combobox", { name: "Filtrovat podle štítku" }), "1ce17d2f-8365-4b1f-a80b-34d10425d51c");
-    await user.type(screen.getByRole("searchbox", { name: "Hledat recepty" }), "Family");
-    expect(screen.queryByRole("heading", { name: "Pasta" })).not.toBeInTheDocument();
+    expect(
+      screen.getByText("Štítek je neplatný nebo již existuje."),
+    ).toBeVisible();
+    await user.selectOptions(
+      screen.getByRole("combobox", { name: "Filtrovat podle štítku" }),
+      "1ce17d2f-8365-4b1f-a80b-34d10425d51c",
+    );
+    await user.type(
+      screen.getByRole("searchbox", { name: "Hledat recepty" }),
+      "Family",
+    );
+    expect(
+      screen.queryByRole("heading", { name: "Pasta" }),
+    ).not.toBeInTheDocument();
   });
 
   it("keeps one Markdown buffer across the safe visual preview", async () => {
@@ -225,7 +293,9 @@ describe("recipe retired ingredient warning", () => {
       value: () => document.querySelector("[contenteditable=true]"),
     });
     const visual = await waitFor(() => {
-      const editor = document.querySelector<HTMLElement>("[contenteditable=true]");
+      const editor = document.querySelector<HTMLElement>(
+        "[contenteditable=true]",
+      );
       if (!editor) throw new Error("Milkdown editor is not mounted");
       return editor;
     });
@@ -235,7 +305,11 @@ describe("recipe retired ingredient warning", () => {
     await user.clear(markdown);
     await user.type(markdown, "# Soup\n<script>alert(1)</script>");
     await user.click(screen.getAllByRole("tab")[0]);
-    expect(screen.getByText("Tento Markdown nelze bezpečně převést", { exact: false })).toBeVisible();
+    expect(
+      screen.getByText("Tento Markdown nelze bezpečně převést", {
+        exact: false,
+      }),
+    ).toBeVisible();
     expect(screen.queryByRole("script")).not.toBeInTheDocument();
     await user.click(screen.getAllByRole("tab")[1]);
     expect(screen.getByRole("textbox", { name: "Markdown" })).toHaveValue(
@@ -245,13 +319,23 @@ describe("recipe retired ingredient warning", () => {
     expect(queueRecipeVersionPublish).toHaveBeenCalledWith(
       expect.any(String),
       expect.any(String),
-      expect.objectContaining({ description: "# Soup\n<script>alert(1)</script>" }),
+      expect.objectContaining({
+        description: "# Soup\n<script>alert(1)</script>",
+      }),
     );
   });
 
   it("preserves unsupported Markdown when visual mode cannot round-trip it", async () => {
     const user = userEvent.setup();
-    render(<RecipeCatalog editRecipeId="6ce17d2f-8365-4b1f-a80b-34d10425d51c" onUnauthenticated={() => undefined} organizationId="5ce17d2f-8365-4b1f-a80b-34d10425d51c" selectedRecipeId="6ce17d2f-8365-4b1f-a80b-34d10425d51c" userId="a6a58bd6-214e-49af-8fae-e5f974bf8e08" />);
+    render(
+      <RecipeCatalog
+        editRecipeId="6ce17d2f-8365-4b1f-a80b-34d10425d51c"
+        onUnauthenticated={() => undefined}
+        organizationId="5ce17d2f-8365-4b1f-a80b-34d10425d51c"
+        selectedRecipeId="6ce17d2f-8365-4b1f-a80b-34d10425d51c"
+        userId="a6a58bd6-214e-49af-8fae-e5f974bf8e08"
+      />,
+    );
     await screen.findByRole("tablist");
     await user.click(screen.getAllByRole("tab")[1]);
     const source = "| A | B |\n|---|---|\n| 1 | 2 |";
@@ -259,15 +343,27 @@ describe("recipe retired ingredient warning", () => {
     await user.clear(raw);
     await user.type(raw, source);
     await user.click(screen.getAllByRole("tab")[0]);
-    expect(await screen.findByText("Tento Markdown nelze bezpečně převést", { exact: false })).toBeVisible();
+    expect(
+      await screen.findByText("Tento Markdown nelze bezpečně převést", {
+        exact: false,
+      }),
+    ).toBeVisible();
     await user.click(screen.getAllByRole("tab")[1]);
     const repaired = screen.getByRole("textbox", { name: "Markdown" });
     expect(repaired).toHaveValue(source);
     await user.clear(repaired);
     await user.type(repaired, "Supported **source**");
     await user.click(screen.getAllByRole("tab")[0]);
-    expect(screen.queryByText("Tento Markdown nelze bezpečně převést", { exact: false })).not.toBeInTheDocument();
-    expect(document.getElementById("recipe-description-6ce17d2f-8365-4b1f-a80b-34d10425d51c-visual")).toBeVisible();
+    expect(
+      screen.queryByText("Tento Markdown nelze bezpečně převést", {
+        exact: false,
+      }),
+    ).not.toBeInTheDocument();
+    expect(
+      document.getElementById(
+        "recipe-description-6ce17d2f-8365-4b1f-a80b-34d10425d51c-visual",
+      ),
+    ).toBeVisible();
   });
 
   it("previews and confirms one atomic ingredient update", async () => {
@@ -282,14 +378,20 @@ describe("recipe retired ingredient warning", () => {
     );
     await user.click(await screen.findByText("Náhled aktualizace katalogu"));
     expect(screen.getByText(/Historical carrot/)).toBeVisible();
-    await user.click(screen.getByRole("button", { name: "Použít aktualizace surovin" }));
+    await user.click(
+      screen.getByRole("button", { name: "Použít aktualizace surovin" }),
+    );
     expect(queueRecipeVersionPublish).toHaveBeenCalledTimes(1);
     expect(queueRecipeVersionPublish).toHaveBeenCalledWith(
       expect.any(String),
       expect.any(String),
       expect.objectContaining({
         recipeId: "6ce17d2f-8365-4b1f-a80b-34d10425d51c",
-        ingredientLines: [expect.objectContaining({ ingredientVersionId: "ace17d2f-8365-4b1f-a80b-34d10425d51c" })],
+        ingredientLines: [
+          expect.objectContaining({
+            ingredientVersionId: "ace17d2f-8365-4b1f-a80b-34d10425d51c",
+          }),
+        ],
         recipeTagIds: ["1ce17d2f-8365-4b1f-a80b-34d10425d51c"],
       }),
     );
@@ -314,13 +416,19 @@ describe("recipe retired ingredient warning", () => {
     const ingredientSelect = screen.getByRole("combobox", { name: "Surovina" });
     expect(ingredientSelect).toHaveValue("Historical carrot");
     await user.click(ingredientSelect);
-    expect(screen.queryByRole("option", { name: "Historical carrot" })).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("option", { name: "Historical carrot" }),
+    ).not.toBeInTheDocument();
     await user.click(screen.getByRole("button", { name: "Odebrat surovinu" }));
     await user.click(screen.getByRole("button", { name: "Přidat surovinu" }));
-    const newIngredientSelect = screen.getByRole("combobox", { name: "Surovina" });
+    const newIngredientSelect = screen.getByRole("combobox", {
+      name: "Surovina",
+    });
     expect(newIngredientSelect).toHaveValue("Current carrot");
     await user.click(newIngredientSelect);
-    expect(screen.queryByRole("option", { name: "Historical carrot" })).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("option", { name: "Historical carrot" }),
+    ).not.toBeInTheDocument();
   });
 
   it("publishes editable ingredient-line semantics and clears incompatible units", async () => {
@@ -334,27 +442,42 @@ describe("recipe retired ingredient warning", () => {
         userId="a6a58bd6-214e-49af-8fae-e5f974bf8e08"
       />,
     );
-    const ingredient = await screen.findByRole("combobox", { name: "Surovina" });
-    const preferred = screen.getByRole("combobox", { name: "Preferovaná zobrazovací jednotka" });
+    const ingredient = await screen.findByRole("combobox", {
+      name: "Surovina",
+    });
+    const preferred = screen.getByRole("combobox", {
+      name: "Preferovaná zobrazovací jednotka",
+    });
     await user.selectOptions(preferred, "9ce17d2f-8365-4b1f-a80b-34d10425d51c");
-    await user.selectOptions(screen.getByRole("combobox", { name: "Škálování" }), "fixed");
-    await user.click(screen.getByRole("checkbox", { name: "Zahrnout do hmotnosti porce" }));
-    await user.type(screen.getByRole("textbox", { name: "Poznámka" }), "soak overnight");
+    await user.selectOptions(
+      screen.getByRole("combobox", { name: "Škálování" }),
+      "fixed",
+    );
+    await user.click(
+      screen.getByRole("checkbox", { name: "Zahrnout do hmotnosti porce" }),
+    );
+    await user.type(
+      screen.getByRole("textbox", { name: "Poznámka" }),
+      "soak overnight",
+    );
     await user.clear(ingredient);
     await user.type(ingredient, "beans");
     await user.click(screen.getByRole("option", { name: /Beans/ }));
     expect(preferred).toHaveValue("");
     await user.click(screen.getByRole("button", { name: "Publikovat verzi" }));
     expect(queueRecipeVersionPublish).toHaveBeenCalledWith(
-      expect.any(String), expect.any(String),
+      expect.any(String),
+      expect.any(String),
       expect.objectContaining({
-        ingredientLines: [expect.objectContaining({
-          ingredientVersionId: "0ce17d2f-8365-4b1f-8000-000000000003",
-          scalingBehavior: "fixed",
-          includeInPortionWeight: false,
-          note: "soak overnight",
-          preferredDisplayUnitId: undefined,
-        })],
+        ingredientLines: [
+          expect.objectContaining({
+            ingredientVersionId: "0ce17d2f-8365-4b1f-8000-000000000003",
+            scalingBehavior: "fixed",
+            includeInPortionWeight: false,
+            note: "soak overnight",
+            preferredDisplayUnitId: undefined,
+          }),
+        ],
       }),
     );
   });
@@ -409,7 +532,9 @@ describe("recipe retired ingredient warning", () => {
     const combobox = await screen.findByRole("combobox", { name: "Surovina" });
     await user.clear(combobox);
     await user.type(combobox, "current");
-    expect(screen.getByRole("option", { name: /Current carrot/ })).not.toHaveAttribute("tabindex");
+    expect(
+      screen.getByRole("option", { name: /Current carrot/ }),
+    ).not.toHaveAttribute("tabindex");
     expect(combobox).toHaveValue("current");
     await user.keyboard("{ArrowDown}{Enter}");
     expect(combobox).toHaveValue("Current carrot");
@@ -433,7 +558,9 @@ describe("recipe retired ingredient warning", () => {
     expect(queueRecipeVersionPublish).toHaveBeenCalledWith(
       expect.any(String),
       expect.any(String),
-      expect.objectContaining({ ingredientLines: [expect.objectContaining({ ingredientVersionId: "" })] }),
+      expect.objectContaining({
+        ingredientLines: [expect.objectContaining({ ingredientVersionId: "" })],
+      }),
     );
   });
 
@@ -469,42 +596,91 @@ describe("recipe retired ingredient warning", () => {
     const combobox = await screen.findByRole("combobox", { name: "Surovina" });
     await user.clear(combobox);
     await user.type(combobox, "not found");
-    await user.click(screen.getByRole("button", { name: "Vytvořit novou surovinu" }));
-    await user.type(screen.getByRole("textbox", { name: "Název nové suroviny" }), "New ingredient");
-    const section = screen.getByRole("combobox", { name: "Výchozí oddělení ingredience" });
+    await user.click(
+      screen.getByRole("button", { name: "Vytvořit novou surovinu" }),
+    );
+    await user.type(
+      screen.getByRole("textbox", { name: "Název nové suroviny" }),
+      "New ingredient",
+    );
+    const section = screen.getByRole("combobox", {
+      name: "Výchozí oddělení ingredience",
+    });
     expect(section).toHaveValue("3ce17d2f-8365-4b1f-a80b-34d10425d51c");
     await user.selectOptions(section, "4ce17d2f-8365-4b1f-a80b-34d10425d51c");
-    await user.click(screen.getByRole("button", { name: "Uložit a vybrat surovinu" }));
+    await user.click(
+      screen.getByRole("button", { name: "Uložit a vybrat surovinu" }),
+    );
     expect(queueIngredientCreateWithVersion).toHaveBeenCalledOnce();
-    expect(queueIngredientCreateWithVersion).toHaveBeenCalledWith(expect.any(String), expect.any(String), expect.objectContaining({ defaultStoreSectionId: "4ce17d2f-8365-4b1f-a80b-34d10425d51c" }));
+    expect(queueIngredientCreateWithVersion).toHaveBeenCalledWith(
+      expect.any(String),
+      expect.any(String),
+      expect.objectContaining({
+        defaultStoreSectionId: "4ce17d2f-8365-4b1f-a80b-34d10425d51c",
+      }),
+    );
     expect(combobox).toHaveValue("New ingredient");
   });
 
   it("blocks inline ingredient creation when no store sections are available", async () => {
     emptyStoreSections.value = true;
     const user = userEvent.setup();
-    render(<RecipeCatalog editRecipeId="6ce17d2f-8365-4b1f-a80b-34d10425d51c" onUnauthenticated={() => undefined} organizationId="5ce17d2f-8365-4b1f-a80b-34d10425d51c" selectedRecipeId="6ce17d2f-8365-4b1f-a80b-34d10425d51c" userId="a6a58bd6-214e-49af-8fae-e5f974bf8e08" />);
+    render(
+      <RecipeCatalog
+        editRecipeId="6ce17d2f-8365-4b1f-a80b-34d10425d51c"
+        onUnauthenticated={() => undefined}
+        organizationId="5ce17d2f-8365-4b1f-a80b-34d10425d51c"
+        selectedRecipeId="6ce17d2f-8365-4b1f-a80b-34d10425d51c"
+        userId="a6a58bd6-214e-49af-8fae-e5f974bf8e08"
+      />,
+    );
     const combobox = await screen.findByRole("combobox", { name: "Surovina" });
     await user.clear(combobox);
     await user.type(combobox, "not found");
-    await user.click(screen.getByRole("button", { name: "Vytvořit novou surovinu" }));
-    expect(screen.getByText("Pro vytvoření suroviny je potřeba aktivní oddělení obchodu.")).toBeVisible();
-    expect(screen.getByRole("button", { name: "Uložit a vybrat surovinu" })).toBeDisabled();
+    await user.click(
+      screen.getByRole("button", { name: "Vytvořit novou surovinu" }),
+    );
+    expect(
+      screen.getByText(
+        "Pro vytvoření suroviny je potřeba aktivní oddělení obchodu.",
+      ),
+    ).toBeVisible();
+    expect(
+      screen.getByRole("button", { name: "Uložit a vybrat surovinu" }),
+    ).toBeDisabled();
     expect(queueIngredientCreateWithVersion).not.toHaveBeenCalled();
   });
 
   it("uses sections loaded after mount when opening inline ingredient creation", async () => {
     emptyStoreSections.value = true;
     const user = userEvent.setup();
-    render(<RecipeCatalog editRecipeId="6ce17d2f-8365-4b1f-a80b-34d10425d51c" onUnauthenticated={() => undefined} organizationId="5ce17d2f-8365-4b1f-a80b-34d10425d51c" selectedRecipeId="6ce17d2f-8365-4b1f-a80b-34d10425d51c" userId="a6a58bd6-214e-49af-8fae-e5f974bf8e08" />);
+    render(
+      <RecipeCatalog
+        editRecipeId="6ce17d2f-8365-4b1f-a80b-34d10425d51c"
+        onUnauthenticated={() => undefined}
+        organizationId="5ce17d2f-8365-4b1f-a80b-34d10425d51c"
+        selectedRecipeId="6ce17d2f-8365-4b1f-a80b-34d10425d51c"
+        userId="a6a58bd6-214e-49af-8fae-e5f974bf8e08"
+      />,
+    );
     const combobox = await screen.findByRole("combobox", { name: "Surovina" });
     await user.click(combobox);
     emptyStoreSections.value = false;
     refreshCatalog();
-    await waitFor(() => expect(screen.getByRole("button", { name: "Vytvořit novou surovinu" })).toBeVisible());
-    await user.click(screen.getByRole("button", { name: "Vytvořit novou surovinu" }));
-    expect(screen.getByRole("combobox", { name: "Výchozí oddělení ingredience" })).toHaveValue("3ce17d2f-8365-4b1f-a80b-34d10425d51c");
-    expect(screen.getByRole("button", { name: "Uložit a vybrat surovinu" })).toBeEnabled();
+    await waitFor(() =>
+      expect(
+        screen.getByRole("button", { name: "Vytvořit novou surovinu" }),
+      ).toBeVisible(),
+    );
+    await user.click(
+      screen.getByRole("button", { name: "Vytvořit novou surovinu" }),
+    );
+    expect(
+      screen.getByRole("combobox", { name: "Výchozí oddělení ingredience" }),
+    ).toHaveValue("3ce17d2f-8365-4b1f-a80b-34d10425d51c");
+    expect(
+      screen.getByRole("button", { name: "Uložit a vybrat surovinu" }),
+    ).toBeEnabled();
     expect(combobox).toBeVisible();
   });
 
@@ -545,7 +721,9 @@ describe("recipe retired ingredient warning", () => {
       />,
     );
     expect(await screen.findByRole("heading", { name: "Pasta" })).toBeVisible();
-    expect(screen.queryByRole("heading", { name: "Soup" })).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("heading", { name: "Soup" }),
+    ).not.toBeInTheDocument();
     await user.click(screen.getByRole("link", { name: "Zpět do katalogu" }));
     expect(onBack).toHaveBeenCalledOnce();
   });
@@ -561,7 +739,9 @@ describe("recipe retired ingredient warning", () => {
         userId="a6a58bd6-214e-49af-8fae-e5f974bf8e08"
       />,
     );
-    expect(await screen.findByText("Tento recept není v této organizaci dostupný.")).toBeVisible();
+    expect(
+      await screen.findByText("Tento recept není v této organizaci dostupný."),
+    ).toBeVisible();
     rerender(
       <RecipeCatalog
         onBackToCatalog={() => undefined}
@@ -572,7 +752,9 @@ describe("recipe retired ingredient warning", () => {
         userId="a6a58bd6-214e-49af-8fae-e5f974bf8e08"
       />,
     );
-    expect(await screen.findByRole("heading", { name: "Nová verze receptu" })).toBeVisible();
+    expect(
+      await screen.findByRole("heading", { name: "Nová verze receptu" }),
+    ).toBeVisible();
     expect(screen.getByRole("dialog")).toBeVisible();
   });
 
@@ -586,7 +768,9 @@ describe("recipe retired ingredient warning", () => {
         userId="a6a58bd6-214e-49af-8fae-e5f974bf8e08"
       />,
     );
-    const opener = (await screen.findAllByRole("button", { name: "Upravit recept" }))[0];
+    const opener = (
+      await screen.findAllByRole("button", { name: "Upravit recept" })
+    )[0];
     await user.click(opener);
     const dialog = await screen.findByRole("dialog");
     expect(dialog).toBeVisible();
@@ -597,14 +781,20 @@ describe("recipe retired ingredient warning", () => {
     expect(screen.getByRole("dialog")).toBeVisible();
     vi.mocked(window.confirm).mockReturnValue(true);
     fireEvent(dialog, new Event("cancel", { bubbles: true, cancelable: true }));
-    await waitFor(() => expect(screen.getAllByRole("button", { name: "Upravit recept" })[0]).toHaveFocus());
+    await waitFor(() =>
+      expect(
+        screen.getAllByRole("button", { name: "Upravit recept" })[0],
+      ).toHaveFocus(),
+    );
   });
 
   it("lets the route guard keep or close a route-backed editor", async () => {
     const user = userEvent.setup();
     const recipeId = "6ce17d2f-8365-4b1f-a80b-34d10425d51c";
     let allowBack = false;
-    const confirmMock = vi.spyOn(window, "confirm").mockImplementation(() => allowBack);
+    const confirmMock = vi
+      .spyOn(window, "confirm")
+      .mockImplementation(() => allowBack);
     let rerender!: ReturnType<typeof render>["rerender"];
     const onBackToCatalog = vi.fn(() => {
       if (!window.confirm("discard")) return;
@@ -638,7 +828,9 @@ describe("recipe retired ingredient warning", () => {
     expect(screen.getByRole("dialog")).toBeVisible();
     allowBack = true;
     await user.click(screen.getByRole("button", { name: "Zpět do katalogu" }));
-    expect(await screen.findByRole("button", { name: "Upravit recept" })).toBeVisible();
+    expect(
+      await screen.findByRole("button", { name: "Upravit recept" }),
+    ).toBeVisible();
     expect(confirmMock).toHaveBeenCalledTimes(2);
     confirmMock.mockRestore();
   });
@@ -706,7 +898,9 @@ describe("recipe retired ingredient warning", () => {
         userId="a6a58bd6-214e-49af-8fae-e5f974bf8e08"
       />,
     );
-    expect(await screen.findByRole("button", { name: "Upravit recept" })).toBeVisible();
+    expect(
+      await screen.findByRole("button", { name: "Upravit recept" }),
+    ).toBeVisible();
     rerender(
       <RecipeCatalog
         discardToken={1}
@@ -719,7 +913,9 @@ describe("recipe retired ingredient warning", () => {
       />,
     );
     await user.click(screen.getByRole("button", { name: "Upravit recept" }));
-    expect((screen.getAllByRole("textbox", { name: "Název" })[1])).toHaveValue("Soup");
+    expect(screen.getAllByRole("textbox", { name: "Název" })[1]).toHaveValue(
+      "Soup",
+    );
   });
 
   it("removes a dirty recipe when direct navigation unmounts its editor", async () => {

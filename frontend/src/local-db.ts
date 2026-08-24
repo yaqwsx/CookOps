@@ -119,7 +119,10 @@ export class CookOpsDatabase extends Dexie {
   >;
   readonly outbox!: EntityTable<OutboxCommand, "id">;
   readonly pendingUploads!: EntityTable<PendingUpload, "id">;
-  readonly receiptImageCache!: Table<ReceiptImageCacheEntry, [string, string, string, string]>;
+  readonly receiptImageCache!: Table<
+    ReceiptImageCacheEntry,
+    [string, string, string, string]
+  >;
   readonly bootstrapStaging!: Table<
     BootstrapStagingRecord,
     [string, string, string, string, string]
@@ -209,7 +212,8 @@ export class CookOpsDatabase extends Dexie {
         "[userId+organizationId+id], [userId+organizationId]",
     });
     this.version(10).stores({
-      receiptImageCache: "[userId+organizationId+attachmentId+contentHash], [userId+organizationId]",
+      receiptImageCache:
+        "[userId+organizationId+attachmentId+contentHash], [userId+organizationId]",
     });
   }
 }
@@ -225,17 +229,27 @@ export async function readCachedArchivedEventSummaries(
     .equals([userId, organizationId])
     .toArray();
   return cached
-    .sort((left, right) => (right.archivedAt ?? "").localeCompare(left.archivedAt ?? "") || left.id.localeCompare(right.id))
+    .sort(
+      (left, right) =>
+        (right.archivedAt ?? "").localeCompare(left.archivedAt ?? "") ||
+        left.id.localeCompare(right.id),
+    )
     .map(({ userId: _userId, ...summary }) => summary);
 }
 
 function isCanonicalTimestamp(value: unknown): value is string {
   if (typeof value !== "string") return false;
-  const match = /^(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2})(?:\.(\d{1,6}))?(Z|\+00:00)$/.exec(value);
+  const match =
+    /^(\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2})(?:\.(\d{1,6}))?(Z|\+00:00)$/.exec(
+      value,
+    );
   if (!match) return false;
   const milliseconds = (match[2] ?? "").slice(0, 3).padEnd(3, "0");
   const timestamp = Date.parse(`${match[1]}.${milliseconds}Z`);
-  return Number.isFinite(timestamp) && new Date(timestamp).toISOString() === `${match[1]}.${milliseconds}Z`;
+  return (
+    Number.isFinite(timestamp) &&
+    new Date(timestamp).toISOString() === `${match[1]}.${milliseconds}Z`
+  );
 }
 
 export async function readHydratedArchivedEventIds(
@@ -254,7 +268,11 @@ export async function readHydratedArchivedEventIds(
       "event_archive_snapshot",
       `archive:${summary.currentArchiveSnapshotId}`,
     ]);
-    if (marker?.lifecycle === "active" && marker.fields.snapshot_id === summary.currentArchiveSnapshotId) hydrated.add(summary.id);
+    if (
+      marker?.lifecycle === "active" &&
+      marker.fields.snapshot_id === summary.currentArchiveSnapshotId
+    )
+      hydrated.add(summary.id);
   }
   return hydrated;
 }
@@ -264,34 +282,67 @@ export async function cacheArchivedEventSummaries(
   organizationId: string,
   summaries: EventSummary[],
 ): Promise<void> {
-  if (summaries.some((summary) =>
-    summary.organizationId !== organizationId ||
-    !summary.id ||
-    (summary.lifecycle === "archived" && !isCanonicalTimestamp(summary.archivedAt)) ||
-    (summary.lifecycle !== "archived" && summary.lifecycle !== "active")
-  )) return;
+  if (
+    summaries.some(
+      (summary) =>
+        summary.organizationId !== organizationId ||
+        !summary.id ||
+        (summary.lifecycle === "archived" &&
+          !isCanonicalTimestamp(summary.archivedAt)) ||
+        (summary.lifecycle !== "archived" && summary.lifecycle !== "active"),
+    )
+  )
+    return;
   await localDb.transaction("rw", localDb.archivedEventSummaries, async () => {
     await localDb.archivedEventSummaries.bulkDelete(
-      summaries.filter((summary) => summary.lifecycle === "active").map((summary) => [userId, organizationId, summary.id] as [string, string, string]),
+      summaries
+        .filter((summary) => summary.lifecycle === "active")
+        .map(
+          (summary) =>
+            [userId, organizationId, summary.id] as [string, string, string],
+        ),
     );
-    await localDb.archivedEventSummaries.bulkPut(summaries.filter((summary) => summary.lifecycle === "archived").map((summary) => ({ ...summary, userId, organizationId })));
+    await localDb.archivedEventSummaries.bulkPut(
+      summaries
+        .filter((summary) => summary.lifecycle === "archived")
+        .map((summary) => ({ ...summary, userId, organizationId })),
+    );
   });
 }
 
 export const OFFLINE_AUTHORIZATION_LEASE_MS = 7 * 24 * 60 * 60 * 1000;
 
-export function hasValidOfflineAuthorization(lastAuthorizedAt: unknown, now = new Date()): boolean {
-  if (typeof lastAuthorizedAt !== "string" || !/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/.test(lastAuthorizedAt)) return false;
+export function hasValidOfflineAuthorization(
+  lastAuthorizedAt: unknown,
+  now = new Date(),
+): boolean {
+  if (
+    typeof lastAuthorizedAt !== "string" ||
+    !/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/.test(lastAuthorizedAt)
+  )
+    return false;
   const authorized = Date.parse(lastAuthorizedAt);
-  return Number.isFinite(authorized) && new Date(authorized).toISOString() === lastAuthorizedAt && Number.isFinite(now.getTime()) && now.getTime() >= authorized && now.getTime() - authorized <= OFFLINE_AUTHORIZATION_LEASE_MS;
+  return (
+    Number.isFinite(authorized) &&
+    new Date(authorized).toISOString() === lastAuthorizedAt &&
+    Number.isFinite(now.getTime()) &&
+    now.getTime() >= authorized &&
+    now.getTime() - authorized <= OFFLINE_AUTHORIZATION_LEASE_MS
+  );
 }
 
-export async function readOfflineAuthorization(userId: string, organizationId: string, now = new Date()): Promise<boolean> {
+export async function readOfflineAuthorization(
+  userId: string,
+  organizationId: string,
+  now = new Date(),
+): Promise<boolean> {
   const metadata = await localDb.syncMetadata.get([userId, organizationId]);
   return hasValidOfflineAuthorization(metadata?.lastAuthorizedAt, now);
 }
 
-export async function readCachedOrganizations(userId: string): Promise<{ id: string; name: string }[]> {
+export async function readCachedOrganizations(
+  userId: string,
+): Promise<{ id: string; name: string }[]> {
   const [canonical, overlays] = await Promise.all([
     localDb.canonicalRecords
       .where("[userId+organizationId]")
@@ -308,11 +359,15 @@ export async function readCachedOrganizations(userId: string): Promise<{ id: str
       .map((record) => [record.organizationId, record] as const),
   );
   for (const record of overlays) {
-    if (record.entityType === "organization") visible.set(record.organizationId, record);
+    if (record.entityType === "organization")
+      visible.set(record.organizationId, record);
   }
   return [...visible.values()]
     .filter((record) => typeof record.fields.name === "string")
-    .map((record) => ({ id: record.organizationId, name: record.fields.name as string }));
+    .map((record) => ({
+      id: record.organizationId,
+      name: record.fields.name as string,
+    }));
 }
 
 /** Append while holding the outbox transaction, preserving dependency order across equal timestamps. */
@@ -377,7 +432,8 @@ export interface RecoverableIntent {
 
 export function toRecoverableIntent(command: OutboxCommand): RecoverableIntent {
   const payload = JSON.parse(JSON.stringify(command.payload)) as unknown;
-  if (!payload || typeof payload !== "object" || Array.isArray(payload)) throw new Error("Invalid outbox payload.");
+  if (!payload || typeof payload !== "object" || Array.isArray(payload))
+    throw new Error("Invalid outbox payload.");
   return {
     schema: "cookops.recoverable-intent",
     version: 1,

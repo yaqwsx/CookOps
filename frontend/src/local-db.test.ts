@@ -59,49 +59,156 @@ describe("local synchronization database", () => {
       archivedAt: "2026-08-11T00:00:00.000Z",
     };
     await cacheArchivedEventSummaries("user-a", "org-a", [summary]);
-    await cacheArchivedEventSummaries("user-a", "org-a", [{ ...summary, organizationId: "org-b", id: "cross-org" }]);
-    await cacheArchivedEventSummaries("user-a", "org-a", [{ ...summary, id: "invalid-date", archivedAt: "2026-08-11" }]);
-    await cacheArchivedEventSummaries("user-a", "org-a", [{ ...summary, name: "Updated" }]);
-    await cacheArchivedEventSummaries("user-b", "org-a", [{ ...summary, name: "Other user" }]);
-    await expect(readCachedArchivedEventSummaries("user-a", "org-a")).resolves.toEqual([{ ...summary, name: "Updated" }]);
-    await expect(readCachedArchivedEventSummaries("user-b", "org-a")).resolves.toEqual([{ ...summary, name: "Other user" }]);
-    await expect(readCachedArchivedEventSummaries("user-a", "org-b")).resolves.toEqual([]);
-    await cacheArchivedEventSummaries("user-a", "org-a", [{ ...summary, lifecycle: "active", archivedAt: null }]);
-    await expect(readCachedArchivedEventSummaries("user-a", "org-a")).resolves.toEqual([]);
+    await cacheArchivedEventSummaries("user-a", "org-a", [
+      { ...summary, organizationId: "org-b", id: "cross-org" },
+    ]);
+    await cacheArchivedEventSummaries("user-a", "org-a", [
+      { ...summary, id: "invalid-date", archivedAt: "2026-08-11" },
+    ]);
+    await cacheArchivedEventSummaries("user-a", "org-a", [
+      { ...summary, name: "Updated" },
+    ]);
+    await cacheArchivedEventSummaries("user-b", "org-a", [
+      { ...summary, name: "Other user" },
+    ]);
+    await expect(
+      readCachedArchivedEventSummaries("user-a", "org-a"),
+    ).resolves.toEqual([{ ...summary, name: "Updated" }]);
+    await expect(
+      readCachedArchivedEventSummaries("user-b", "org-a"),
+    ).resolves.toEqual([{ ...summary, name: "Other user" }]);
+    await expect(
+      readCachedArchivedEventSummaries("user-a", "org-b"),
+    ).resolves.toEqual([]);
+    await cacheArchivedEventSummaries("user-a", "org-a", [
+      { ...summary, lifecycle: "active", archivedAt: null },
+    ]);
+    await expect(
+      readCachedArchivedEventSummaries("user-a", "org-a"),
+    ).resolves.toEqual([]);
   });
 
   it("orders cached summaries by newest archive timestamp", async () => {
-    const summary = { id: "event-a", organizationId: "org-a", name: "A", startDate: "2026-08-10", endDate: "2026-08-10", baseExpectedAttendance: 1, budgetAmount: "1", currency: "CZK", lifecycle: "archived" as const, archivedAt: "2026-08-11T00:00:00.000Z" };
+    const summary = {
+      id: "event-a",
+      organizationId: "org-a",
+      name: "A",
+      startDate: "2026-08-10",
+      endDate: "2026-08-10",
+      baseExpectedAttendance: 1,
+      budgetAmount: "1",
+      currency: "CZK",
+      lifecycle: "archived" as const,
+      archivedAt: "2026-08-11T00:00:00.000Z",
+    };
     await cacheArchivedEventSummaries("user-a", "org-a", [
       { ...summary, archivedAt: "2026-08-11T00:00:00+00:00" },
       { ...summary, id: "event-b", archivedAt: "2026-08-12T00:00:00.123456Z" },
     ]);
-    await expect(readCachedArchivedEventSummaries("user-a", "org-a")).resolves.toMatchObject([{ id: "event-b" }, { id: "event-a" }]);
+    await expect(
+      readCachedArchivedEventSummaries("user-a", "org-a"),
+    ).resolves.toMatchObject([{ id: "event-b" }, { id: "event-a" }]);
   });
 
   it("requires the current archive snapshot marker for offline opening", async () => {
-    const record = (eventId: string, snapshotId: string, entityType: string, entityId: string) => ({
-      userId: "user-a", organizationId: "org-a", eventId, snapshotId, entityType, entityId,
-      recordSchemaVersion: 1, lifecycle: "active" as const, fields: { snapshot_id: snapshotId }, fieldClocks: {}, immutable: true, updatedAt: "2026-08-11T00:00:00.000Z",
+    const record = (
+      eventId: string,
+      snapshotId: string,
+      entityType: string,
+      entityId: string,
+    ) => ({
+      userId: "user-a",
+      organizationId: "org-a",
+      eventId,
+      snapshotId,
+      entityType,
+      entityId,
+      recordSchemaVersion: 1,
+      lifecycle: "active" as const,
+      fields: { snapshot_id: snapshotId },
+      fieldClocks: {},
+      immutable: true,
+      updatedAt: "2026-08-11T00:00:00.000Z",
     });
     await localDb.archiveRecords.bulkPut([
-      record("event-a", "old-snapshot", "event_archive_snapshot", "archive:old-snapshot"),
-      record("event-a", "current-snapshot", "event_archive_snapshot", "archive:current-snapshot"),
+      record(
+        "event-a",
+        "old-snapshot",
+        "event_archive_snapshot",
+        "archive:old-snapshot",
+      ),
+      record(
+        "event-a",
+        "current-snapshot",
+        "event_archive_snapshot",
+        "archive:current-snapshot",
+      ),
     ]);
-    await expect(readHydratedArchivedEventIds("user-a", "org-a", [{ id: "event-a", currentArchiveSnapshotId: "missing" }])).resolves.toEqual(new Set());
-    await expect(readHydratedArchivedEventIds("user-a", "org-a", [{ id: "event-a", currentArchiveSnapshotId: "current-snapshot" }])).resolves.toEqual(new Set(["event-a"]));
+    await expect(
+      readHydratedArchivedEventIds("user-a", "org-a", [
+        { id: "event-a", currentArchiveSnapshotId: "missing" },
+      ]),
+    ).resolves.toEqual(new Set());
+    await expect(
+      readHydratedArchivedEventIds("user-a", "org-a", [
+        { id: "event-a", currentArchiveSnapshotId: "current-snapshot" },
+      ]),
+    ).resolves.toEqual(new Set(["event-a"]));
   });
 
   it("reads and discards only failed commands in the requested user and organization", async () => {
     await localDb.outbox.bulkAdd([
-      { id: "selected", userId: "user-a", organizationId: "org-a", commandType: "event.update", payload: { event_id: "e" }, actionAt: "2026-08-07T10:00:00Z", createdAt: "2026-08-07T10:00:00Z", state: "failed", failureReason: "stale" },
-      { id: "pending", userId: "user-a", organizationId: "org-a", commandType: "event.update", payload: {}, actionAt: "2026-08-07T10:00:00Z", createdAt: "2026-08-07T10:00:00Z", state: "pending" },
-      { id: "other-org", userId: "user-a", organizationId: "org-b", commandType: "event.update", payload: {}, actionAt: "2026-08-07T10:00:00Z", createdAt: "2026-08-07T10:00:00Z", state: "failed" },
-      { id: "other-user", userId: "user-b", organizationId: "org-a", commandType: "event.update", payload: {}, actionAt: "2026-08-07T10:00:00Z", createdAt: "2026-08-07T10:00:00Z", state: "failed" },
+      {
+        id: "selected",
+        userId: "user-a",
+        organizationId: "org-a",
+        commandType: "event.update",
+        payload: { event_id: "e" },
+        actionAt: "2026-08-07T10:00:00Z",
+        createdAt: "2026-08-07T10:00:00Z",
+        state: "failed",
+        failureReason: "stale",
+      },
+      {
+        id: "pending",
+        userId: "user-a",
+        organizationId: "org-a",
+        commandType: "event.update",
+        payload: {},
+        actionAt: "2026-08-07T10:00:00Z",
+        createdAt: "2026-08-07T10:00:00Z",
+        state: "pending",
+      },
+      {
+        id: "other-org",
+        userId: "user-a",
+        organizationId: "org-b",
+        commandType: "event.update",
+        payload: {},
+        actionAt: "2026-08-07T10:00:00Z",
+        createdAt: "2026-08-07T10:00:00Z",
+        state: "failed",
+      },
+      {
+        id: "other-user",
+        userId: "user-b",
+        organizationId: "org-a",
+        commandType: "event.update",
+        payload: {},
+        actionAt: "2026-08-07T10:00:00Z",
+        createdAt: "2026-08-07T10:00:00Z",
+        state: "failed",
+      },
     ]);
-    await expect(readFailedOutboxCommands("user-a", "org-a")).resolves.toMatchObject([{ id: "selected" }]);
-    await expect(discardFailedOutboxCommand("user-a", "org-a", "other-org")).resolves.toBe(false);
-    await expect(discardFailedOutboxCommand("user-a", "org-a", "selected")).resolves.toBe(true);
+    await expect(
+      readFailedOutboxCommands("user-a", "org-a"),
+    ).resolves.toMatchObject([{ id: "selected" }]);
+    await expect(
+      discardFailedOutboxCommand("user-a", "org-a", "other-org"),
+    ).resolves.toBe(false);
+    await expect(
+      discardFailedOutboxCommand("user-a", "org-a", "selected"),
+    ).resolves.toBe(true);
     await expect(localDb.outbox.get("selected")).resolves.toBeUndefined();
     await expect(localDb.outbox.get("pending")).resolves.toBeDefined();
     await expect(localDb.outbox.get("other-org")).resolves.toBeDefined();
@@ -109,18 +216,51 @@ describe("local synchronization database", () => {
 
   it("scopes the seven-day authorization lease to one user and fails closed", async () => {
     const now = new Date("2026-08-22T12:00:00.000Z");
-    await localDb.syncMetadata.put({ userId: "user-a", organizationId: "organization-a", activity: "caughtUp", lastAuthorizedAt: "2026-08-15T12:00:00.000Z" });
-    await expect(readOfflineAuthorization("user-a", "organization-a", now)).resolves.toBe(true);
-    expect(hasValidOfflineAuthorization("2026-08-15T11:59:59.999Z", now)).toBe(false);
+    await localDb.syncMetadata.put({
+      userId: "user-a",
+      organizationId: "organization-a",
+      activity: "caughtUp",
+      lastAuthorizedAt: "2026-08-15T12:00:00.000Z",
+    });
+    await expect(
+      readOfflineAuthorization("user-a", "organization-a", now),
+    ).resolves.toBe(true);
+    expect(hasValidOfflineAuthorization("2026-08-15T11:59:59.999Z", now)).toBe(
+      false,
+    );
     expect(hasValidOfflineAuthorization("not-a-date", now)).toBe(false);
-    expect(hasValidOfflineAuthorization("2026-08-23T12:00:00.000Z", now)).toBe(false);
-    expect(hasValidOfflineAuthorization("2026-02-30T12:00:00.000Z", now)).toBe(false);
-    await expect(readOfflineAuthorization("user-b", "organization-a", now)).resolves.toBe(false);
+    expect(hasValidOfflineAuthorization("2026-08-23T12:00:00.000Z", now)).toBe(
+      false,
+    );
+    expect(hasValidOfflineAuthorization("2026-02-30T12:00:00.000Z", now)).toBe(
+      false,
+    );
+    await expect(
+      readOfflineAuthorization("user-b", "organization-a", now),
+    ).resolves.toBe(false);
   });
 
   it("creates a small JSON recoverable intent without browser metadata", async () => {
-    await expect(toRecoverableIntent({ id: "cmd", userId: "u", organizationId: "o", commandType: "event.update", payload: { event_id: "e" }, actionAt: "2026-08-07T10:00:00Z", createdAt: "2026-08-07T10:00:00Z", state: "failed", failureReason: "stale" })).toEqual({
-      schema: "cookops.recoverable-intent", version: 1, commandId: "cmd", commandType: "event.update", actionAt: "2026-08-07T10:00:00Z", failureCode: "stale", payload: { event_id: "e" },
+    await expect(
+      toRecoverableIntent({
+        id: "cmd",
+        userId: "u",
+        organizationId: "o",
+        commandType: "event.update",
+        payload: { event_id: "e" },
+        actionAt: "2026-08-07T10:00:00Z",
+        createdAt: "2026-08-07T10:00:00Z",
+        state: "failed",
+        failureReason: "stale",
+      }),
+    ).toEqual({
+      schema: "cookops.recoverable-intent",
+      version: 1,
+      commandId: "cmd",
+      commandType: "event.update",
+      actionAt: "2026-08-07T10:00:00Z",
+      failureCode: "stale",
+      payload: { event_id: "e" },
     });
   });
 
