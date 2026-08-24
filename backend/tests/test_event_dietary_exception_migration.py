@@ -123,7 +123,7 @@ def test_0018_upgrades_from_0017_without_losing_existing_rows(
     assert active_pair["unique"] is True
     predicate = active_pair.get("dialect_options", {}).get("postgresql_where")
     assert predicate is not None
-    assert str(predicate).strip().lower() == "retired_at is null"
+    assert str(predicate).strip().lower().strip("() ") == "retired_at is null"
 
     exception_uniques = {
         constraint["name"]: constraint
