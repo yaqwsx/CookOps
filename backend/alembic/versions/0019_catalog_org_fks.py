@@ -4,7 +4,7 @@ from collections.abc import Sequence
 
 from alembic import op
 
-revision: str = "0019_catalog_organization_foreign_keys"
+revision: str = "0019_catalog_org_fks"
 down_revision: str | None = "0018_event_dietary_exceptions"
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
