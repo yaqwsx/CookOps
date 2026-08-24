@@ -681,10 +681,11 @@ def test_member_hides_an_event_day_with_lww_replay(
             )
         )
     assert payload is not None
-    assert payload["record"]["is_visible"] is False
-    assert payload["record"]["field_clocks"]["is_visible"]["winning_mutation_id"] == str(
-        command.mutation_id
-    )
+    record = cast(dict[str, object], cast(dict[str, object], payload)["record"])
+    assert record["is_visible"] is False
+    assert cast(
+        dict[str, object], cast(dict[str, object], record["field_clocks"])["is_visible"]
+    )["winning_mutation_id"] == str(command.mutation_id)
 
 
 def test_member_updates_an_event_day_note_with_lww_replay(
@@ -728,10 +729,11 @@ def test_member_updates_an_event_day_note_with_lww_replay(
             )
         )
     assert payload is not None
-    assert payload["record"]["note"] == "Menu\npro hosty"
-    assert payload["record"]["field_clocks"]["note"]["winning_mutation_id"] == str(
-        command.mutation_id
-    )
+    record = cast(dict[str, object], cast(dict[str, object], payload)["record"])
+    assert record["note"] == "Menu\npro hosty"
+    assert cast(
+        dict[str, object], cast(dict[str, object], record["field_clocks"])["note"]
+    )["winning_mutation_id"] == str(command.mutation_id)
 
 
 def test_member_creates_one_custom_event_meal_role(service_database: ServiceDatabase) -> None:
@@ -761,8 +763,9 @@ def test_member_creates_one_custom_event_meal_role(service_database: ServiceData
         )
     assert accepted.event_meal_role_id == command.event_meal_role_id
     assert payload is not None
-    assert payload["record"]["custom_name"] == "Late supper"
-    assert payload["record"]["position_key"] == f"z{command.event_meal_role_id.hex}"
+    record = cast(dict[str, object], cast(dict[str, object], payload)["record"])
+    assert record["custom_name"] == "Late supper"
+    assert record["position_key"] == f"z{command.event_meal_role_id.hex}"
 
 
 def test_member_reorders_an_event_meal_role_once(service_database: ServiceDatabase) -> None:
@@ -846,10 +849,11 @@ def test_member_renames_a_custom_event_meal_role_once(service_database: ServiceD
             )
         )
     assert payload is not None
-    assert payload["record"]["custom_name"] == "Late supper"
-    assert payload["record"]["field_clocks"]["custom_name"]["winning_mutation_id"] == str(
-        command.mutation_id
-    )
+    record = cast(dict[str, object], cast(dict[str, object], payload)["record"])
+    assert record["custom_name"] == "Late supper"
+    assert cast(
+        dict[str, object], cast(dict[str, object], record["field_clocks"])["custom_name"]
+    )["winning_mutation_id"] == str(command.mutation_id)
     with pytest.raises(ApplicationServiceError, match="validation_failed"):
         asyncio.run(
             set_event_meal_role_name(
@@ -904,10 +908,11 @@ def test_member_retires_and_restores_an_event_meal_role(service_database: Servic
             )
         )
     assert payload is not None
-    assert payload["record"]["retired_at"] is None
-    assert payload["record"]["field_clocks"]["lifecycle"]["winning_mutation_id"] == str(
-        restored.mutation_id
-    )
+    record = cast(dict[str, object], cast(dict[str, object], payload)["record"])
+    assert record["retired_at"] is None
+    assert cast(
+        dict[str, object], cast(dict[str, object], record["field_clocks"])["lifecycle"]
+    )["winning_mutation_id"] == str(restored.mutation_id)
 
 
 def test_member_creates_a_manual_event_day_once(service_database: ServiceDatabase) -> None:
@@ -932,7 +937,10 @@ def test_member_creates_a_manual_event_day_once(service_database: ServiceDatabas
             )
         )
     assert accepted.event_day_id == command.event_day_id
-    assert record is not None and record["record"]["provenance"] == "manually_added"
+    assert record is not None
+    assert cast(dict[str, object], cast(dict[str, object], record)["record"])[
+        "provenance"
+    ] == "manually_added"
 
 
 def test_member_retires_and_restores_an_event_day(service_database: ServiceDatabase) -> None:
@@ -969,10 +977,11 @@ def test_member_retires_and_restores_an_event_day(service_database: ServiceDatab
             )
         )
     assert payload is not None
-    assert payload["record"]["retired_at"] is None
-    assert payload["record"]["field_clocks"]["lifecycle"]["winning_mutation_id"] == str(
-        restored.mutation_id
-    )
+    record = cast(dict[str, object], cast(dict[str, object], payload)["record"])
+    assert record["retired_at"] is None
+    assert cast(
+        dict[str, object], cast(dict[str, object], record["field_clocks"])["lifecycle"]
+    )["winning_mutation_id"] == str(restored.mutation_id)
 
 
 def test_stale_attendance_keeps_the_winning_clock_in_the_change_feed(
@@ -1012,7 +1021,8 @@ def test_stale_attendance_keeps_the_winning_clock_in_the_change_feed(
             )
         )
     assert payload is not None
-    assert payload["record"]["field_clocks"]["attendance"] == {
+    record = cast(dict[str, object], cast(dict[str, object], payload)["record"])
+    assert cast(dict[str, object], record["field_clocks"])["attendance"] == {
         "winning_client_wall_time": newer_time.isoformat(),
         "winning_mutation_id": str(newer.mutation_id),
     }
@@ -1115,9 +1125,11 @@ def test_context_sets_manual_or_suggested_scale_with_lww_replay(
                 OrganizationChange.mutation_id == stale.mutation_id
             )
         )
-    assert payload["record"]["field_clocks"]["context"]["winning_mutation_id"] == str(
-        suggestion.mutation_id
-    )
+    assert payload is not None
+    record = cast(dict[str, object], cast(dict[str, object], payload)["record"])
+    assert cast(
+        dict[str, object], cast(dict[str, object], record["field_clocks"])["context"]
+    )["winning_mutation_id"] == str(suggestion.mutation_id)
 
 
 def test_note_is_canonicalized_cleared_and_lww_rejected(service_database: ServiceDatabase) -> None:
@@ -2269,7 +2281,10 @@ def test_catalog_update_preserve_and_discard_commands_are_explicit(  # noqa: E50
                         OrganizationChange.entity_id == override_id,
                     )
                 ).scalar_one()
-                clocks = change["record"]["field_clocks"]
+                change_record = cast(
+                    dict[str, object], cast(dict[str, object], change)["record"]
+                )
+                clocks = cast(dict[str, object], change_record["field_clocks"])
                 assert "catalog_update" in clocks
                 assert set(original_clocks) <= set(clocks)
                 scheduled_change = connection.execute(
@@ -2278,7 +2293,12 @@ def test_catalog_update_preserve_and_discard_commands_are_explicit(  # noqa: E50
                         OrganizationChange.entity_id == scheduled_recipe_id,
                     )
                 ).scalar_one()
-                scheduled_clocks = scheduled_change["record"]["field_clocks"]
+                scheduled_record = cast(
+                    dict[str, object], cast(dict[str, object], scheduled_change)["record"]
+                )
+                scheduled_clocks = cast(
+                    dict[str, object], scheduled_record["field_clocks"]
+                )
                 assert {"recipe_version_id", "selected_scale_amount", "scale_mode"} <= set(
                     scheduled_clocks
                 )
