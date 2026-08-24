@@ -1048,21 +1048,32 @@ h1 {
   .header-actions {
     align-items: flex-start;
     flex-wrap: wrap;
+    width: 100%;
   }
 
   .user-menu {
+    width: 100%;
     padding-left: 0;
     border-left: 0;
   }
 
   .app-header nav {
+    width: 100%;
     min-width: 0;
     overflow-x: auto;
   }
 
   .locale-picker,
   .organization-picker {
+    min-width: 0;
+    max-width: 100%;
     justify-self: start;
+  }
+
+  .locale-picker select,
+  .organization-picker select {
+    min-width: 0;
+    max-width: 100%;
   }
 
   .primary-navigation {
