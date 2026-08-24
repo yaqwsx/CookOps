@@ -393,7 +393,7 @@ async def provision_dummy_development_identities(
             .one_or_none()
         )
         if existing_recipe_line is None:
-            await session.execute(insert(RecipeVersionIngredientLine.__table__).values(recipe_line))
+            await session.execute(insert(RecipeVersionIngredientLine).values(recipe_line))
         elif any(existing_recipe_line[key] != value for key, value in recipe_line.items()):
             raise DevelopmentSeedConflict(
                 "reserved development seed row conflicts in recipe_version_ingredient_lines"
@@ -517,7 +517,7 @@ async def provision_dummy_development_identities(
             ),
         )
         await session.execute(
-            insert(ShoppingRevisionSource.__table__)
+            insert(ShoppingRevisionSource)
             .values(
                 generation_revision_id=revision_id,
                 shopping_list_id=shopping_list_id,
