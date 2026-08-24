@@ -10,7 +10,7 @@ import pytest
 from alembic.config import Config
 from fastapi.testclient import TestClient
 from pydantic import PostgresDsn
-from sqlalchemy import Engine, create_engine, insert, select, text
+from sqlalchemy import Engine, create_engine, insert, select, text, update
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 from sqlalchemy.pool import NullPool
 
@@ -55,7 +55,9 @@ def test_membership_command_validation_keeps_remove_and_role_fields_safe() -> No
     with pytest.raises(ApplicationServiceError, match="validation_failed"):
         _validate_command(
             OrganizationAdminRoleCommand(
-                **base,
+                mutation_id=base["mutation_id"],
+                organization_id=base["organization_id"],
+                membership_id=base["membership_id"],
                 client_wall_time=datetime.now(UTC),
                 role="invalid",  # type: ignore[arg-type]
             )
@@ -63,7 +65,9 @@ def test_membership_command_validation_keeps_remove_and_role_fields_safe() -> No
     with pytest.raises(ApplicationServiceError, match="validation_failed"):
         _validate_command(
             OrganizationAdminRoleCommand(
-                **base,
+                mutation_id=base["mutation_id"],
+                organization_id=base["organization_id"],
+                membership_id=base["membership_id"],
                 client_wall_time="invalid",  # type: ignore[arg-type]
             )
         )
@@ -363,7 +367,7 @@ def test_system_admin_can_change_active_membership_role_idempotently(
     if suffix == "revoke-organization-admin":
         with membership_database.engine.begin() as connection:
             connection.execute(
-                OrganizationMembership.__table__.update()
+                update(OrganizationMembership)
                 .where(OrganizationMembership.id == membership_database.ordinary_membership_id)
                 .values(role="organization_admin")
             )
@@ -403,7 +407,7 @@ def test_non_system_actor_and_inactive_or_foreign_membership_are_not_enumerated(
     path = f"/api/v1/organizations/{membership_database.organization_id}/members"
     with membership_database.engine.begin() as connection:
         connection.execute(
-            OrganizationMembership.__table__.update()
+            update(OrganizationMembership)
             .where(OrganizationMembership.id == membership_database.ordinary_membership_id)
             .values(role="organization_admin")
         )
@@ -419,7 +423,7 @@ def test_non_system_actor_and_inactive_or_foreign_membership_are_not_enumerated(
         _sign_in(client, "membership-admin")
         with membership_database.engine.begin() as connection:
             connection.execute(
-                OrganizationMembership.__table__.update()
+                update(OrganizationMembership)
                 .where(OrganizationMembership.id == membership_database.ordinary_membership_id)
                 .values(
                     state="removed",
@@ -437,7 +441,7 @@ def test_non_system_actor_and_inactive_or_foreign_membership_are_not_enumerated(
         )
         with membership_database.engine.begin() as connection:
             connection.execute(
-                OrganizationMembership.__table__.update()
+                update(OrganizationMembership)
                 .where(OrganizationMembership.id == membership_database.ordinary_membership_id)
                 .values(state="active", removed_at=None, removed_by_user_id=None)
             )
