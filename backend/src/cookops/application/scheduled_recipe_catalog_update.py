@@ -291,7 +291,11 @@ async def update_scheduled_recipe_catalog(
                                 or new_lines[override.target_line_key].ingredient_version_id
                                 != override.ingredient_version_id
                             ):
-                                old_line = old_lines.get(override.target_line_key)
+                                old_line = (
+                                    old_lines.get(override.target_line_key)
+                                    if override.target_line_key is not None
+                                    else None
+                                )
                                 override.override_kind = "add"
                                 override.target_line_key = None
                                 override.include_in_portion_weight = getattr(
