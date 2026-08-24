@@ -193,6 +193,7 @@ async def test_mounted_mcp_runs_child_lifespan_and_serves_a_protected_tool(
                 {"organization_id": str(organization_id), "event_id": str(event_id)},
             )
             assert result.isError is False
+            assert result.structuredContent is not None
             assert result.structuredContent["name"] == "Harvest"
 
 
