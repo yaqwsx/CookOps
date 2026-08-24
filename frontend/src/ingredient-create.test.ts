@@ -66,7 +66,10 @@ async function addTag(lifecycle: "active" | "retired" = "active") {
   });
 }
 
-async function addSection(lifecycle: "active" | "retired" = "active", owner = organizationId) {
+async function addSection(
+  lifecycle: "active" | "retired" = "active",
+  owner = organizationId,
+) {
   await localDb.canonicalRecords.add({
     userId,
     organizationId,
@@ -155,14 +158,28 @@ describe("offline ingredient creation", () => {
 
   it("returns the exact immutable version represented by the optimistic outbox", async () => {
     await addUnit();
-    const result = await queueIngredientCreateWithVersion(userId, organizationId, input);
+    const result = await queueIngredientCreateWithVersion(
+      userId,
+      organizationId,
+      input,
+    );
     const [command] = await localDb.outbox.toArray();
     expect(result).toEqual({
       ingredientId: command.payload.ingredient_id,
       ingredientVersionId: command.payload.ingredient_version_id,
     });
-    expect(await localDb.optimisticOverlays.get([userId, organizationId, "ingredient_version", result.ingredientVersionId])).toEqual(
-      expect.objectContaining({ entityId: result.ingredientVersionId, immutable: true }),
+    expect(
+      await localDb.optimisticOverlays.get([
+        userId,
+        organizationId,
+        "ingredient_version",
+        result.ingredientVersionId,
+      ]),
+    ).toEqual(
+      expect.objectContaining({
+        entityId: result.ingredientVersionId,
+        immutable: true,
+      }),
     );
   });
 
@@ -224,7 +241,11 @@ describe("offline ingredient creation", () => {
         dietary_tag_ids,
       },
     });
-    await replayIngredientCreate(userId, organizationId, command("not-an-array"));
+    await replayIngredientCreate(
+      userId,
+      organizationId,
+      command("not-an-array"),
+    );
     await replayIngredientCreate(userId, organizationId, command([tagId]));
     await addTag("retired");
     await replayIngredientCreate(userId, organizationId, command([tagId]));
@@ -307,24 +328,70 @@ describe("offline ingredient creation", () => {
   it("includes an active section in the payload and optimistic version", async () => {
     await addUnit();
     await addSection();
-    const result = await queueIngredientCreateWithVersion(userId, organizationId, { ...input, defaultStoreSectionId: sectionId });
-    expect((await localDb.outbox.toArray())[0]?.payload).toMatchObject({ default_store_section_id: sectionId });
-    await expect(localDb.optimisticOverlays.get([userId, organizationId, "ingredient_version", result.ingredientVersionId])).resolves.toMatchObject({ fields: { default_store_section_id: sectionId } });
+    const result = await queueIngredientCreateWithVersion(
+      userId,
+      organizationId,
+      { ...input, defaultStoreSectionId: sectionId },
+    );
+    expect((await localDb.outbox.toArray())[0]?.payload).toMatchObject({
+      default_store_section_id: sectionId,
+    });
+    await expect(
+      localDb.optimisticOverlays.get([
+        userId,
+        organizationId,
+        "ingredient_version",
+        result.ingredientVersionId,
+      ]),
+    ).resolves.toMatchObject({
+      fields: { default_store_section_id: sectionId },
+    });
   });
 
-  it.each([["retired", "retired"], ["foreign", organizationId.replace("5", "a")]])("does not queue a %s selected section", async (_label, ownerOrLifecycle) => {
-    await addUnit();
-    await addSection(ownerOrLifecycle === "retired" ? "retired" : "active", ownerOrLifecycle === "retired" ? organizationId : ownerOrLifecycle);
-    await expect(queueIngredientCreate(userId, organizationId, { ...input, defaultStoreSectionId: sectionId })).rejects.toThrow("storeSection");
-    await expect(localDb.outbox.count()).resolves.toBe(0);
-  });
+  it.each([
+    ["retired", "retired"],
+    ["foreign", organizationId.replace("5", "a")],
+  ])(
+    "does not queue a %s selected section",
+    async (_label, ownerOrLifecycle) => {
+      await addUnit();
+      await addSection(
+        ownerOrLifecycle === "retired" ? "retired" : "active",
+        ownerOrLifecycle === "retired" ? organizationId : ownerOrLifecycle,
+      );
+      await expect(
+        queueIngredientCreate(userId, organizationId, {
+          ...input,
+          defaultStoreSectionId: sectionId,
+        }),
+      ).rejects.toThrow("storeSection");
+      await expect(localDb.outbox.count()).resolves.toBe(0);
+    },
+  );
 
   it("does not replay a create whose selected section is retired or foreign", async () => {
     await addUnit();
-    const command = { id: "9ce17d2f-8365-4b1f-a80b-34d10425d51c", actionAt: "2026-08-08T00:00:00Z", payload: { ingredient_id: "ace17d2f-8365-4b1f-a80b-34d10425d51c", ingredient_version_id: "bce17d2f-8365-4b1f-a80b-34d10425d51c", name: "Tomatoes", canonical_unit_id: unitId, mass_per_canonical_quantity: "1", dietary_tag_ids: [], default_store_section_id: sectionId } };
+    const command = {
+      id: "9ce17d2f-8365-4b1f-a80b-34d10425d51c",
+      actionAt: "2026-08-08T00:00:00Z",
+      payload: {
+        ingredient_id: "ace17d2f-8365-4b1f-a80b-34d10425d51c",
+        ingredient_version_id: "bce17d2f-8365-4b1f-a80b-34d10425d51c",
+        name: "Tomatoes",
+        canonical_unit_id: unitId,
+        mass_per_canonical_quantity: "1",
+        dietary_tag_ids: [],
+        default_store_section_id: sectionId,
+      },
+    };
     await addSection("retired");
     await replayIngredientCreate(userId, organizationId, command);
-    await localDb.canonicalRecords.delete([userId, organizationId, "store_section", sectionId]);
+    await localDb.canonicalRecords.delete([
+      userId,
+      organizationId,
+      "store_section",
+      sectionId,
+    ]);
     await addSection("active", organizationId.replace("5", "a"));
     await replayIngredientCreate(userId, organizationId, command);
     await expect(localDb.optimisticOverlays.count()).resolves.toBe(0);

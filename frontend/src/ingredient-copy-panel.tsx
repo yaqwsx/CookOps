@@ -38,14 +38,22 @@ type PreviewState = {
 type PanelState =
   | { status: "closed" }
   | { status: "organizations"; organizations: AvailableOrganization[] }
-  | { status: "loading"; organizations: AvailableOrganization[]; destinationId: string }
+  | {
+      status: "loading";
+      organizations: AvailableOrganization[];
+      destinationId: string;
+    }
   | ({ status: "ready" | "copying" } & PreviewState)
   | {
       status: "success";
       organizations: AvailableOrganization[];
       destinationId: string;
     }
-  | { status: "error"; organizations: AvailableOrganization[]; destinationId?: string };
+  | {
+      status: "error";
+      organizations: AvailableOrganization[];
+      destinationId?: string;
+    };
 
 type Ingredient = IngredientCatalogProjection["ingredients"][number];
 
@@ -60,7 +68,9 @@ function candidateIds(
   destinationCatalog: IngredientCopyCatalog,
 ): string[] {
   if (requirement.kind === "canonical_unit") {
-    const source = sourceCatalog.units.find((item) => item.id === requirement.sourceId);
+    const source = sourceCatalog.units.find(
+      (item) => item.id === requirement.sourceId,
+    );
     if (!source) return [];
     const versions = ingredient.versions ?? [
       {
@@ -82,7 +92,8 @@ function candidateIds(
       .filter(
         (item) =>
           item.dimension === source.dimension &&
-          (source.dimension !== "mass" || masses.has(item.baseUnitFactor ?? "")),
+          (source.dimension !== "mass" ||
+            masses.has(item.baseUnitFactor ?? "")),
       )
       .map((item) => item.id);
   }
@@ -90,7 +101,10 @@ function candidateIds(
     return destinationCatalog.sections.map((section) => section.id);
   }
   return destinationCatalog.dietaryTags
-    .filter((tag) => requirement.seedKey === null || tag.seedKey === requirement.seedKey)
+    .filter(
+      (tag) =>
+        requirement.seedKey === null || tag.seedKey === requirement.seedKey,
+    )
     .map((tag) => tag.id);
 }
 
@@ -99,8 +113,12 @@ function mappingGroupKey(
   sourceCatalog: IngredientCopyCatalog,
 ): string | null {
   if (requirement.kind !== "canonical_unit") return null;
-  const dimension = sourceCatalog.units.find((item) => item.id === requirement.sourceId)?.dimension;
-  return dimension === "count" || dimension === "custom" ? `${requirement.kind}:${dimension}` : null;
+  const dimension = sourceCatalog.units.find(
+    (item) => item.id === requirement.sourceId,
+  )?.dimension;
+  return dimension === "count" || dimension === "custom"
+    ? `${requirement.kind}:${dimension}`
+    : null;
 }
 
 function candidateIdsForRequirement(
@@ -111,12 +129,24 @@ function candidateIdsForRequirement(
   destinationCatalog: IngredientCopyCatalog,
 ): string[] {
   const group = mappingGroupKey(requirement, sourceCatalog);
-  if (!group) return candidateIds(requirement, ingredient, sourceCatalog, destinationCatalog);
-  const grouped = requirements.filter((item) => mappingGroupKey(item, sourceCatalog) === group);
+  if (!group)
+    return candidateIds(
+      requirement,
+      ingredient,
+      sourceCatalog,
+      destinationCatalog,
+    );
+  const grouped = requirements.filter(
+    (item) => mappingGroupKey(item, sourceCatalog) === group,
+  );
   const candidates = grouped.map((item) =>
     candidateIds(item, ingredient, sourceCatalog, destinationCatalog),
   );
-  return candidates[0]?.filter((id) => candidates.every((items) => items.includes(id))) ?? [];
+  return (
+    candidates[0]?.filter((id) =>
+      candidates.every((items) => items.includes(id)),
+    ) ?? []
+  );
 }
 
 function mappingsAreComplete(
@@ -131,13 +161,27 @@ function mappingsAreComplete(
     const group = mappingGroupKey(requirement, sourceCatalog);
     if (group) groups.set(group, [...(groups.get(group) ?? []), requirement]);
     const value = mappings[requirementKey(requirement)] ?? null;
-    const required = requirement.kind !== "dietary_tag" || requirement.seedKey !== null;
+    const required =
+      requirement.kind !== "dietary_tag" || requirement.seedKey !== null;
     if (required && value === null) return false;
-    if (value !== null && !candidateIdsForRequirement(requirement, preview.mappingRequirements, ingredient, sourceCatalog, destinationCatalog).includes(value)) return false;
+    if (
+      value !== null &&
+      !candidateIdsForRequirement(
+        requirement,
+        preview.mappingRequirements,
+        ingredient,
+        sourceCatalog,
+        destinationCatalog,
+      ).includes(value)
+    )
+      return false;
   }
   for (const requirements of groups.values()) {
-    const values = requirements.map((requirement) => mappings[requirementKey(requirement)] ?? null);
-    if (values.some((value) => value === null) || new Set(values).size !== 1) return false;
+    const values = requirements.map(
+      (requirement) => mappings[requirementKey(requirement)] ?? null,
+    );
+    if (values.some((value) => value === null) || new Set(values).size !== 1)
+      return false;
   }
   return true;
 }
@@ -148,10 +192,19 @@ function sourceLabel(
   t: (key: string) => string,
 ) {
   if (requirement.kind === "canonical_unit")
-    return sourceCatalog.units.find((item) => item.id === requirement.sourceId)?.name ?? t("ingredientsCatalog.copyUnknownDependency");
+    return (
+      sourceCatalog.units.find((item) => item.id === requirement.sourceId)
+        ?.name ?? t("ingredientsCatalog.copyUnknownDependency")
+    );
   if (requirement.kind === "default_store_section")
-    return sourceCatalog.sections.find((item) => item.id === requirement.sourceId)?.name ?? t("ingredientsCatalog.copyUnknownDependency");
-  return sourceCatalog.dietaryTags.find((item) => item.id === requirement.sourceId)?.name ?? t("ingredientsCatalog.copyUnknownDependency");
+    return (
+      sourceCatalog.sections.find((item) => item.id === requirement.sourceId)
+        ?.name ?? t("ingredientsCatalog.copyUnknownDependency")
+    );
+  return (
+    sourceCatalog.dietaryTags.find((item) => item.id === requirement.sourceId)
+      ?.name ?? t("ingredientsCatalog.copyUnknownDependency")
+  );
 }
 
 function optionLabel(
@@ -160,9 +213,19 @@ function optionLabel(
   destinationCatalog: IngredientCopyCatalog,
   fallback: string,
 ) {
-  if (requirement.kind === "canonical_unit") return destinationCatalog.units.find((item) => item.id === id)?.name ?? fallback;
-  if (requirement.kind === "default_store_section") return destinationCatalog.sections.find((item) => item.id === id)?.name ?? fallback;
-  return destinationCatalog.dietaryTags.find((item) => item.id === id)?.name ?? fallback;
+  if (requirement.kind === "canonical_unit")
+    return (
+      destinationCatalog.units.find((item) => item.id === id)?.name ?? fallback
+    );
+  if (requirement.kind === "default_store_section")
+    return (
+      destinationCatalog.sections.find((item) => item.id === id)?.name ??
+      fallback
+    );
+  return (
+    destinationCatalog.dietaryTags.find((item) => item.id === id)?.name ??
+    fallback
+  );
 }
 
 function isUnauthorized(reason: unknown): boolean {
@@ -175,7 +238,12 @@ function isUnauthorized(reason: unknown): boolean {
 }
 
 function isDefiniteRejection(reason: unknown): boolean {
-  return reason instanceof IngredientCopyRequestError && reason.status >= 400 && reason.status < 500 && reason.status !== 401;
+  return (
+    reason instanceof IngredientCopyRequestError &&
+    reason.status >= 400 &&
+    reason.status < 500 &&
+    reason.status !== 401
+  );
 }
 
 export function IngredientCopyPanel({
@@ -220,21 +288,30 @@ export function IngredientCopyPanel({
         return;
       }
       const currentRequest = ++requestNumber.current;
-      const organizationList = state.status === "closed" ? [] : state.organizations;
+      const organizationList =
+        state.status === "closed" ? [] : state.organizations;
       setState((current) => ({
         status: "loading",
-        organizations: current.status === "closed" ? organizationList : current.organizations,
+        organizations:
+          current.status === "closed"
+            ? organizationList
+            : current.organizations,
         destinationId,
       }));
       try {
         await pullOrganization(userId, organizationId);
         await pullOrganization(userId, destinationId);
-        const [preview, sourceCatalog, sourceProjection, destinationCatalog] = await Promise.all([
-          getIngredientCopyPreview(destinationId, organizationId, ingredient.id),
-          readIngredientCopyCatalog(userId, organizationId, "source"),
-          readIngredientCatalog(userId, organizationId, true),
-          readIngredientCopyCatalog(userId, destinationId),
-        ]);
+        const [preview, sourceCatalog, sourceProjection, destinationCatalog] =
+          await Promise.all([
+            getIngredientCopyPreview(
+              destinationId,
+              organizationId,
+              ingredient.id,
+            ),
+            readIngredientCopyCatalog(userId, organizationId, "source"),
+            readIngredientCatalog(userId, organizationId, true),
+            readIngredientCopyCatalog(userId, destinationId),
+          ]);
         const refreshedIngredient = sourceProjection.ingredients.find(
           (item) => item.id === ingredient.id,
         );
@@ -250,7 +327,8 @@ export function IngredientCopyPanel({
           throw new Error("Ingredient copy preview is stale or unavailable.");
         const currentIngredient = {
           ...refreshedIngredient,
-          canonicalUnitId: refreshedIngredient.canonicalUnitId ?? preview.canonicalUnitId,
+          canonicalUnitId:
+            refreshedIngredient.canonicalUnitId ?? preview.canonicalUnitId,
         };
         const mappings: Record<string, string | null> = {};
         for (const requirement of preview.mappingRequirements) {
@@ -264,7 +342,7 @@ export function IngredientCopyPanel({
           mappings[requirementKey(requirement)] =
             requirement.kind === "dietary_tag" && requirement.seedKey === null
               ? null
-              : candidates[0] ?? null;
+              : (candidates[0] ?? null);
         }
         for (const requirement of preview.mappingRequirements) {
           const group = mappingGroupKey(requirement, sourceCatalog);
@@ -277,7 +355,10 @@ export function IngredientCopyPanel({
         }
         setState((current) => ({
           status: "ready",
-          organizations: current.status === "closed" ? organizationList : current.organizations,
+          organizations:
+            current.status === "closed"
+              ? organizationList
+              : current.organizations,
           destinationId,
           preview,
           sourceIngredient: currentIngredient,
@@ -292,7 +373,10 @@ export function IngredientCopyPanel({
         if (isUnauthorized(reason)) onUnauthenticated();
         setState((current) => ({
           status: "error",
-          organizations: current.status === "closed" ? organizationList : current.organizations,
+          organizations:
+            current.status === "closed"
+              ? organizationList
+              : current.organizations,
           destinationId,
         }));
       }
@@ -310,18 +394,21 @@ export function IngredientCopyPanel({
   async function confirm() {
     if (submitting.current || state.status !== "ready") return;
     const prepared = state;
-    const mappings: IngredientCopyMapping[] = state.preview.mappingRequirements.map((requirement) => ({
-      kind: requirement.kind,
-      sourceId: requirement.sourceId,
-      destinationId: state.mappings[requirementKey(requirement)] ?? null,
-    }));
-    if (!mappingsAreComplete(
-      state.preview,
-      state.sourceIngredient,
-      state.sourceCatalog,
-      state.destinationCatalog,
-      state.mappings,
-    ))
+    const mappings: IngredientCopyMapping[] =
+      state.preview.mappingRequirements.map((requirement) => ({
+        kind: requirement.kind,
+        sourceId: requirement.sourceId,
+        destinationId: state.mappings[requirementKey(requirement)] ?? null,
+      }));
+    if (
+      !mappingsAreComplete(
+        state.preview,
+        state.sourceIngredient,
+        state.sourceCatalog,
+        state.destinationCatalog,
+        state.mappings,
+      )
+    )
       return;
     submitting.current = true;
     const currentRequest = requestNumber.current;
@@ -356,13 +443,19 @@ export function IngredientCopyPanel({
         if (isDefiniteRejection(reason)) {
           setState((current) =>
             current.status === "copying"
-              ? { status: "error", organizations: current.organizations, destinationId: current.destinationId }
+              ? {
+                  status: "error",
+                  organizations: current.organizations,
+                  destinationId: current.destinationId,
+                }
               : current,
           );
           return;
         }
         setState((current) =>
-          current.status === "copying" ? { ...current, status: "ready", copyError: true } : current,
+          current.status === "copying"
+            ? { ...current, status: "ready", copyError: true }
+            : current,
         );
       }
     } finally {
@@ -372,18 +465,23 @@ export function IngredientCopyPanel({
 
   const readyState = state.status === "ready" ? state : undefined;
   const selectedDestination =
-    state.status === "loading" || state.status === "ready" || state.status === "copying" || state.status === "success"
+    state.status === "loading" ||
+    state.status === "ready" ||
+    state.status === "copying" ||
+    state.status === "success"
       ? state.destinationId
       : "";
   const missingMapping = useMemo(
     () =>
-      readyState ? !mappingsAreComplete(
-        readyState.preview,
-        readyState.sourceIngredient,
-        readyState.sourceCatalog,
-        readyState.destinationCatalog,
-        readyState.mappings,
-      ) : false,
+      readyState
+        ? !mappingsAreComplete(
+            readyState.preview,
+            readyState.sourceIngredient,
+            readyState.sourceCatalog,
+            readyState.destinationCatalog,
+            readyState.mappings,
+          )
+        : false,
     [readyState],
   );
 
@@ -399,17 +497,27 @@ export function IngredientCopyPanel({
         </button>
       ) : (
         <>
-          <h3 id="ingredient-copy-heading">{t("ingredientsCatalog.copyHeading")}</h3>
+          <h3 id="ingredient-copy-heading">
+            {t("ingredientsCatalog.copyHeading")}
+          </h3>
           <p>{t("ingredientsCatalog.copyOnlineOnly")}</p>
           <label>
             {t("ingredientsCatalog.copyDestination")}
             <select
               aria-describedby="ingredient-copy-help"
-              disabled={state.status === "loading" || state.status === "copying" || state.status === "success"}
-              onChange={(event) => void selectDestination(event.currentTarget.value)}
+              disabled={
+                state.status === "loading" ||
+                state.status === "copying" ||
+                state.status === "success"
+              }
+              onChange={(event) =>
+                void selectDestination(event.currentTarget.value)
+              }
               value={selectedDestination}
             >
-              <option value="">{t("ingredientsCatalog.copyChooseDestination")}</option>
+              <option value="">
+                {t("ingredientsCatalog.copyChooseDestination")}
+              </option>
               {organizations
                 .filter((organization) => organization.id !== organizationId)
                 .map((organization) => (
@@ -420,11 +528,21 @@ export function IngredientCopyPanel({
             </select>
           </label>
           <p id="ingredient-copy-help" role="status" aria-live="polite">
-            {state.status === "organizations" ? t("ingredientsCatalog.copyChooseDestination") : null}
-            {state.status === "loading" || state.status === "copying" ? t("ingredientsCatalog.copyLoading") : null}
-            {state.status === "ready" && state.copyError ? t("ingredientsCatalog.copyUnavailable") : null}
-            {state.status === "error" ? t("ingredientsCatalog.copyUnavailable") : null}
-            {state.status === "success" ? t("ingredientsCatalog.copySuccess") : null}
+            {state.status === "organizations"
+              ? t("ingredientsCatalog.copyChooseDestination")
+              : null}
+            {state.status === "loading" || state.status === "copying"
+              ? t("ingredientsCatalog.copyLoading")
+              : null}
+            {state.status === "ready" && state.copyError
+              ? t("ingredientsCatalog.copyUnavailable")
+              : null}
+            {state.status === "error"
+              ? t("ingredientsCatalog.copyUnavailable")
+              : null}
+            {state.status === "success"
+              ? t("ingredientsCatalog.copySuccess")
+              : null}
           </p>
           {readyState ? (
             <div className="ingredient-copy__preview">
@@ -433,9 +551,7 @@ export function IngredientCopyPanel({
                   name: readyState.preview.sourceName,
                 })}
               </p>
-              <p>
-                {t("ingredientsCatalog.copyCurrentVersion")}
-              </p>
+              <p>{t("ingredientsCatalog.copyCurrentVersion")}</p>
               {readyState.preview.mappingRequirements.length ? (
                 <fieldset>
                   <legend>{t("ingredientsCatalog.copyMappings")}</legend>
@@ -450,9 +566,16 @@ export function IngredientCopyPanel({
                     );
                     return (
                       <label key={key}>
-                        {t(`ingredientsCatalog.copyRequirement.${requirement.kind}`, {
-                          source: sourceLabel(requirement, readyState.sourceCatalog, t),
-                        })}
+                        {t(
+                          `ingredientsCatalog.copyRequirement.${requirement.kind}`,
+                          {
+                            source: sourceLabel(
+                              requirement,
+                              readyState.sourceCatalog,
+                              t,
+                            ),
+                          },
+                        )}
                         <select
                           onChange={(event) => {
                             const value = event.currentTarget.value || null;
@@ -465,17 +588,29 @@ export function IngredientCopyPanel({
                                       ...current.mappings,
                                       [key]: value,
                                       ...(() => {
-                                        const group = mappingGroupKey(requirement, current.sourceCatalog);
+                                        const group = mappingGroupKey(
+                                          requirement,
+                                          current.sourceCatalog,
+                                        );
                                         if (!group) return {};
                                         return Object.fromEntries(
                                           current.preview.mappingRequirements
-                                            .filter((peer) => mappingGroupKey(peer, current.sourceCatalog) === group)
-                                            .map((peer) => [requirementKey(peer), value]),
+                                            .filter(
+                                              (peer) =>
+                                                mappingGroupKey(
+                                                  peer,
+                                                  current.sourceCatalog,
+                                                ) === group,
+                                            )
+                                            .map((peer) => [
+                                              requirementKey(peer),
+                                              value,
+                                            ]),
                                         );
                                       })(),
                                     },
                                   },
-                            )
+                            );
                           }}
                           value={readyState.mappings[key] ?? ""}
                         >
@@ -511,7 +646,11 @@ export function IngredientCopyPanel({
               </button>
             </div>
           ) : null}
-          <button disabled={state.status === "loading" || state.status === "copying"} onClick={close} type="button">
+          <button
+            disabled={state.status === "loading" || state.status === "copying"}
+            onClick={close}
+            type="button"
+          >
             {t("ingredientsCatalog.copyCancel")}
           </button>
         </>

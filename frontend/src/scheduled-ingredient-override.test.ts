@@ -36,7 +36,11 @@ async function activePlan(
       entityId: event,
       recordSchemaVersion: 1,
       lifecycle,
-      fields: { id: event, organization_id: organization, lifecycle: lifecycle === "active" ? "active" : "archived" },
+      fields: {
+        id: event,
+        organization_id: organization,
+        lifecycle: lifecycle === "active" ? "active" : "archived",
+      },
       fieldClocks: {},
       immutable: false,
       updatedAt: new Date().toISOString(),
@@ -131,30 +135,212 @@ it("queues and replays only valid replacement override intent", async () => {
 it("queues an exact replacement clear and tombstones only that override", async () => {
   await activePlan();
   const overrideId = "cce17d2f-8365-4b1f-a80b-34d10425d51c";
-  await localDb.canonicalRecords.put({ userId: user, organizationId: organization, entityType: "recipe_ingredient_line", entityId: line, recordSchemaVersion: 1, lifecycle: "active", fields: { id: line, organization_id: organization, recipe_version_id: recipeVersion, line_key: line }, fieldClocks: {}, immutable: true, updatedAt: new Date().toISOString() });
-  await localDb.canonicalRecords.put({ userId: user, organizationId: organization, entityType: "scheduled_ingredient_override", entityId: overrideId, recordSchemaVersion: 1, lifecycle: "active", fields: { id: overrideId, organization_id: organization, event_id: event, scheduled_recipe_id: scheduled, override_kind: "replace", target_line_key: line, quantity: "2" }, fieldClocks: { [`replace.${line}`]: { mutationId: "dce17d2f-8365-4b1f-a80b-34d10425d51c", actionAt: "2026-08-08T12:00:00.000000Z" } }, immutable: false, updatedAt: new Date().toISOString() });
-  await queueClearReplacementOverride(user, organization, { eventId: event, scheduledRecipeId: scheduled, targetLineKey: line, overrideId });
-  await expect(localDb.outbox.toArray()).resolves.toEqual([expect.objectContaining({ payload: { override_id: overrideId, event_id: event, scheduled_recipe_id: scheduled, operation: "clear", override_kind: "replace", target_line_key: line } })]);
-  await expect(localDb.optimisticOverlays.get([user, organization, "scheduled_ingredient_override", overrideId])).resolves.toMatchObject({ lifecycle: "retired", fields: { retired_at: expect.any(String) } });
+  await localDb.canonicalRecords.put({
+    userId: user,
+    organizationId: organization,
+    entityType: "recipe_ingredient_line",
+    entityId: line,
+    recordSchemaVersion: 1,
+    lifecycle: "active",
+    fields: {
+      id: line,
+      organization_id: organization,
+      recipe_version_id: recipeVersion,
+      line_key: line,
+    },
+    fieldClocks: {},
+    immutable: true,
+    updatedAt: new Date().toISOString(),
+  });
+  await localDb.canonicalRecords.put({
+    userId: user,
+    organizationId: organization,
+    entityType: "scheduled_ingredient_override",
+    entityId: overrideId,
+    recordSchemaVersion: 1,
+    lifecycle: "active",
+    fields: {
+      id: overrideId,
+      organization_id: organization,
+      event_id: event,
+      scheduled_recipe_id: scheduled,
+      override_kind: "replace",
+      target_line_key: line,
+      quantity: "2",
+    },
+    fieldClocks: {
+      [`replace.${line}`]: {
+        mutationId: "dce17d2f-8365-4b1f-a80b-34d10425d51c",
+        actionAt: "2026-08-08T12:00:00.000000Z",
+      },
+    },
+    immutable: false,
+    updatedAt: new Date().toISOString(),
+  });
+  await queueClearReplacementOverride(user, organization, {
+    eventId: event,
+    scheduledRecipeId: scheduled,
+    targetLineKey: line,
+    overrideId,
+  });
+  await expect(localDb.outbox.toArray()).resolves.toEqual([
+    expect.objectContaining({
+      payload: {
+        override_id: overrideId,
+        event_id: event,
+        scheduled_recipe_id: scheduled,
+        operation: "clear",
+        override_kind: "replace",
+        target_line_key: line,
+      },
+    }),
+  ]);
+  await expect(
+    localDb.optimisticOverlays.get([
+      user,
+      organization,
+      "scheduled_ingredient_override",
+      overrideId,
+    ]),
+  ).resolves.toMatchObject({
+    lifecycle: "retired",
+    fields: { retired_at: expect.any(String) },
+  });
 });
 
 it("replays a replacement clear only for the active pinned override", async () => {
   await activePlan();
   const overrideId = "cce17d2f-8365-4b1f-a80b-34d10425d51c";
-  await localDb.canonicalRecords.put({ userId: user, organizationId: organization, entityType: "recipe_ingredient_line", entityId: line, recordSchemaVersion: 1, lifecycle: "active", fields: { id: line, organization_id: organization, recipe_version_id: recipeVersion, line_key: line }, fieldClocks: {}, immutable: true, updatedAt: new Date().toISOString() });
-  await localDb.optimisticOverlays.put({ userId: user, organizationId: organization, entityType: "scheduled_ingredient_override", entityId: overrideId, recordSchemaVersion: 1, lifecycle: "active", fields: { id: overrideId, organization_id: organization, event_id: event, scheduled_recipe_id: scheduled, override_kind: "replace", target_line_key: line, quantity: "2" }, fieldClocks: { [`replace.${line}`]: { mutationId: "dce17d2f-8365-4b1f-a80b-34d10425d51c", actionAt: "2026-08-08T12:00:00.000000Z" } }, immutable: false, updatedAt: new Date().toISOString() });
-  await replayScheduledIngredientOverride(user, organization, { id: "ece17d2f-8365-4b1f-a80b-34d10425d51c", actionAt: "2026-08-08T12:00:00.000001Z", payload: { override_id: overrideId, event_id: event, scheduled_recipe_id: scheduled, operation: "clear", override_kind: "replace", target_line_key: line } });
-  await expect(localDb.optimisticOverlays.get([user, organization, "scheduled_ingredient_override", overrideId])).resolves.toMatchObject({ lifecycle: "retired", fields: { operation: "clear" } });
+  await localDb.canonicalRecords.put({
+    userId: user,
+    organizationId: organization,
+    entityType: "recipe_ingredient_line",
+    entityId: line,
+    recordSchemaVersion: 1,
+    lifecycle: "active",
+    fields: {
+      id: line,
+      organization_id: organization,
+      recipe_version_id: recipeVersion,
+      line_key: line,
+    },
+    fieldClocks: {},
+    immutable: true,
+    updatedAt: new Date().toISOString(),
+  });
+  await localDb.optimisticOverlays.put({
+    userId: user,
+    organizationId: organization,
+    entityType: "scheduled_ingredient_override",
+    entityId: overrideId,
+    recordSchemaVersion: 1,
+    lifecycle: "active",
+    fields: {
+      id: overrideId,
+      organization_id: organization,
+      event_id: event,
+      scheduled_recipe_id: scheduled,
+      override_kind: "replace",
+      target_line_key: line,
+      quantity: "2",
+    },
+    fieldClocks: {
+      [`replace.${line}`]: {
+        mutationId: "dce17d2f-8365-4b1f-a80b-34d10425d51c",
+        actionAt: "2026-08-08T12:00:00.000000Z",
+      },
+    },
+    immutable: false,
+    updatedAt: new Date().toISOString(),
+  });
+  await replayScheduledIngredientOverride(user, organization, {
+    id: "ece17d2f-8365-4b1f-a80b-34d10425d51c",
+    actionAt: "2026-08-08T12:00:00.000001Z",
+    payload: {
+      override_id: overrideId,
+      event_id: event,
+      scheduled_recipe_id: scheduled,
+      operation: "clear",
+      override_kind: "replace",
+      target_line_key: line,
+    },
+  });
+  await expect(
+    localDb.optimisticOverlays.get([
+      user,
+      organization,
+      "scheduled_ingredient_override",
+      overrideId,
+    ]),
+  ).resolves.toMatchObject({
+    lifecycle: "retired",
+    fields: { operation: "clear" },
+  });
 });
 
 it("does not queue a clear for a retired or foreign pinned line", async () => {
   await activePlan();
   const overrideId = "cce17d2f-8365-4b1f-a80b-34d10425d51c";
-  await localDb.canonicalRecords.put({ userId: user, organizationId: organization, entityType: "scheduled_ingredient_override", entityId: overrideId, recordSchemaVersion: 1, lifecycle: "active", fields: { id: overrideId, organization_id: organization, event_id: event, scheduled_recipe_id: scheduled, override_kind: "replace", target_line_key: line, quantity: "2" }, fieldClocks: {}, immutable: false, updatedAt: new Date().toISOString() });
-  for (const fields of [{ id: line, organization_id: organization, recipe_version_id: recipeVersion, line_key: line }, { id: line, organization_id: "9ce17d2f-8365-4b1f-a80b-34d10425d51c", recipe_version_id: recipeVersion, line_key: line }]) {
-    await localDb.canonicalRecords.put({ userId: user, organizationId: organization, entityType: "recipe_ingredient_line", entityId: line, recordSchemaVersion: 1, lifecycle: fields.organization_id === organization ? "retired" : "active", fields, fieldClocks: {}, immutable: true, updatedAt: new Date().toISOString() });
-    await expect(queueClearReplacementOverride(user, organization, { eventId: event, scheduledRecipeId: scheduled, targetLineKey: line, overrideId })).rejects.toThrow("override");
-    await localDb.canonicalRecords.delete([user, organization, "recipe_ingredient_line", line]);
+  await localDb.canonicalRecords.put({
+    userId: user,
+    organizationId: organization,
+    entityType: "scheduled_ingredient_override",
+    entityId: overrideId,
+    recordSchemaVersion: 1,
+    lifecycle: "active",
+    fields: {
+      id: overrideId,
+      organization_id: organization,
+      event_id: event,
+      scheduled_recipe_id: scheduled,
+      override_kind: "replace",
+      target_line_key: line,
+      quantity: "2",
+    },
+    fieldClocks: {},
+    immutable: false,
+    updatedAt: new Date().toISOString(),
+  });
+  for (const fields of [
+    {
+      id: line,
+      organization_id: organization,
+      recipe_version_id: recipeVersion,
+      line_key: line,
+    },
+    {
+      id: line,
+      organization_id: "9ce17d2f-8365-4b1f-a80b-34d10425d51c",
+      recipe_version_id: recipeVersion,
+      line_key: line,
+    },
+  ]) {
+    await localDb.canonicalRecords.put({
+      userId: user,
+      organizationId: organization,
+      entityType: "recipe_ingredient_line",
+      entityId: line,
+      recordSchemaVersion: 1,
+      lifecycle: fields.organization_id === organization ? "retired" : "active",
+      fields,
+      fieldClocks: {},
+      immutable: true,
+      updatedAt: new Date().toISOString(),
+    });
+    await expect(
+      queueClearReplacementOverride(user, organization, {
+        eventId: event,
+        scheduledRecipeId: scheduled,
+        targetLineKey: line,
+        overrideId,
+      }),
+    ).rejects.toThrow("override");
+    await localDb.canonicalRecords.delete([
+      user,
+      organization,
+      "recipe_ingredient_line",
+      line,
+    ]);
   }
 });
 
@@ -162,12 +348,82 @@ it("keeps a canonical microsecond winner and ignores malformed clear intent", as
   await activePlan();
   const overrideId = "cce17d2f-8365-4b1f-a80b-34d10425d51c";
   await localDb.canonicalRecords.bulkPut([
-    { userId: user, organizationId: organization, entityType: "recipe_ingredient_line", entityId: line, recordSchemaVersion: 1, lifecycle: "active", fields: { id: line, organization_id: organization, recipe_version_id: recipeVersion, line_key: line }, fieldClocks: {}, immutable: true, updatedAt: new Date().toISOString() },
-    { userId: user, organizationId: organization, entityType: "scheduled_ingredient_override", entityId: overrideId, recordSchemaVersion: 1, lifecycle: "active", fields: { id: overrideId, organization_id: organization, event_id: event, scheduled_recipe_id: scheduled, override_kind: "replace", target_line_key: line, quantity: "2" }, fieldClocks: { [`replace.${line}`]: { winning_mutation_id: "00000000-0000-4000-8000-000000000001", winning_client_wall_time: "2026-08-08T12:00:00.000001+00:00" } }, immutable: false, updatedAt: new Date().toISOString() },
+    {
+      userId: user,
+      organizationId: organization,
+      entityType: "recipe_ingredient_line",
+      entityId: line,
+      recordSchemaVersion: 1,
+      lifecycle: "active",
+      fields: {
+        id: line,
+        organization_id: organization,
+        recipe_version_id: recipeVersion,
+        line_key: line,
+      },
+      fieldClocks: {},
+      immutable: true,
+      updatedAt: new Date().toISOString(),
+    },
+    {
+      userId: user,
+      organizationId: organization,
+      entityType: "scheduled_ingredient_override",
+      entityId: overrideId,
+      recordSchemaVersion: 1,
+      lifecycle: "active",
+      fields: {
+        id: overrideId,
+        organization_id: organization,
+        event_id: event,
+        scheduled_recipe_id: scheduled,
+        override_kind: "replace",
+        target_line_key: line,
+        quantity: "2",
+      },
+      fieldClocks: {
+        [`replace.${line}`]: {
+          winning_mutation_id: "00000000-0000-4000-8000-000000000001",
+          winning_client_wall_time: "2026-08-08T12:00:00.000001+00:00",
+        },
+      },
+      immutable: false,
+      updatedAt: new Date().toISOString(),
+    },
   ]);
-  await replayScheduledIngredientOverride(user, organization, { id: "ffffffff-ffff-4fff-8fff-ffffffffffff", actionAt: "2026-08-08T12:00:00.000000Z", payload: { override_id: overrideId, event_id: event, scheduled_recipe_id: scheduled, operation: "clear", override_kind: "replace", target_line_key: line } });
-  await replayScheduledIngredientOverride(user, organization, { id: crypto.randomUUID(), actionAt: "2026-08-08T12:00:00.000002Z", payload: { override_id: overrideId, event_id: event, scheduled_recipe_id: scheduled, operation: "clear", override_kind: "replace", target_line_key: line, extra: true } });
-  await expect(localDb.optimisticOverlays.get([user, organization, "scheduled_ingredient_override", overrideId])).resolves.toBeUndefined();
+  await replayScheduledIngredientOverride(user, organization, {
+    id: "ffffffff-ffff-4fff-8fff-ffffffffffff",
+    actionAt: "2026-08-08T12:00:00.000000Z",
+    payload: {
+      override_id: overrideId,
+      event_id: event,
+      scheduled_recipe_id: scheduled,
+      operation: "clear",
+      override_kind: "replace",
+      target_line_key: line,
+    },
+  });
+  await replayScheduledIngredientOverride(user, organization, {
+    id: crypto.randomUUID(),
+    actionAt: "2026-08-08T12:00:00.000002Z",
+    payload: {
+      override_id: overrideId,
+      event_id: event,
+      scheduled_recipe_id: scheduled,
+      operation: "clear",
+      override_kind: "replace",
+      target_line_key: line,
+      extra: true,
+    },
+  });
+  await expect(
+    localDb.optimisticOverlays.get([
+      user,
+      organization,
+      "scheduled_ingredient_override",
+      overrideId,
+    ]),
+  ).resolves.toBeUndefined();
 });
 
 it("keeps override intent recoverable without reviving it after an archive", async () => {
@@ -273,11 +529,73 @@ it("edits an existing added override in place", async () => {
   await activePlan();
   await activeIngredient();
   const overrideId = "cce17d2f-8365-4b1f-a80b-34d10425d51c";
-  await localDb.canonicalRecords.put({ userId: user, organizationId: organization, entityType: "scheduled_ingredient_override", entityId: overrideId, recordSchemaVersion: 1, lifecycle: "active", fields: { id: overrideId, organization_id: organization, event_id: event, scheduled_recipe_id: scheduled, override_kind: "add", ingredient_id: ingredient, ingredient_version_id: ingredientVersion, quantity: "2", include_in_portion_weight: true, note: "keep this", position_key: "b" }, fieldClocks: { [`add.${overrideId}`]: { mutationId: "dce17d2f-8365-4b1f-a80b-34d10425d51c", actionAt: "2026-08-08T12:00:00.000000Z" } }, immutable: false, updatedAt: new Date().toISOString() });
-  await queueAddedOverride(user, organization, { eventId: event, scheduledRecipeId: scheduled, ingredientId: ingredient, ingredientVersionId: ingredientVersion, quantity: "3.5", includeInPortionWeight: false, overrideId });
+  await localDb.canonicalRecords.put({
+    userId: user,
+    organizationId: organization,
+    entityType: "scheduled_ingredient_override",
+    entityId: overrideId,
+    recordSchemaVersion: 1,
+    lifecycle: "active",
+    fields: {
+      id: overrideId,
+      organization_id: organization,
+      event_id: event,
+      scheduled_recipe_id: scheduled,
+      override_kind: "add",
+      ingredient_id: ingredient,
+      ingredient_version_id: ingredientVersion,
+      quantity: "2",
+      include_in_portion_weight: true,
+      note: "keep this",
+      position_key: "b",
+    },
+    fieldClocks: {
+      [`add.${overrideId}`]: {
+        mutationId: "dce17d2f-8365-4b1f-a80b-34d10425d51c",
+        actionAt: "2026-08-08T12:00:00.000000Z",
+      },
+    },
+    immutable: false,
+    updatedAt: new Date().toISOString(),
+  });
+  await queueAddedOverride(user, organization, {
+    eventId: event,
+    scheduledRecipeId: scheduled,
+    ingredientId: ingredient,
+    ingredientVersionId: ingredientVersion,
+    quantity: "3.5",
+    includeInPortionWeight: false,
+    overrideId,
+  });
   expect(await localDb.optimisticOverlays.count()).toBe(1);
-  await expect(localDb.optimisticOverlays.get([user, organization, "scheduled_ingredient_override", overrideId])).resolves.toMatchObject({ fields: { id: overrideId, quantity: "3.5", include_in_portion_weight: false, note: "keep this", position_key: "b" }, fieldClocks: { [`add.${overrideId}`]: expect.anything() } });
-  await expect(localDb.outbox.toArray()).resolves.toEqual([expect.objectContaining({ payload: expect.objectContaining({ override_id: overrideId, quantity: "3.5", include_in_portion_weight: false, note: "keep this", position_key: "b" }) })]);
+  await expect(
+    localDb.optimisticOverlays.get([
+      user,
+      organization,
+      "scheduled_ingredient_override",
+      overrideId,
+    ]),
+  ).resolves.toMatchObject({
+    fields: {
+      id: overrideId,
+      quantity: "3.5",
+      include_in_portion_weight: false,
+      note: "keep this",
+      position_key: "b",
+    },
+    fieldClocks: { [`add.${overrideId}`]: expect.anything() },
+  });
+  await expect(localDb.outbox.toArray()).resolves.toEqual([
+    expect.objectContaining({
+      payload: expect.objectContaining({
+        override_id: overrideId,
+        quantity: "3.5",
+        include_in_portion_weight: false,
+        note: "keep this",
+        position_key: "b",
+      }),
+    }),
+  ]);
 });
 
 it("does not overwrite a colliding add replay entity", async () => {
@@ -285,18 +603,96 @@ it("does not overwrite a colliding add replay entity", async () => {
   await activeIngredient();
   const overrideId = "cce17d2f-8365-4b1f-a80b-34d10425d51c";
   const otherId = "dce17d2f-8365-4b1f-a80b-34d10425d51c";
-  await localDb.canonicalRecords.put({ userId: user, organizationId: organization, entityType: "scheduled_ingredient_override", entityId: otherId, recordSchemaVersion: 1, lifecycle: "active", fields: { id: otherId, organization_id: organization, event_id: event, scheduled_recipe_id: scheduled, override_kind: "replace", target_line_key: line, quantity: "9" }, fieldClocks: { [`add.${overrideId}`]: { mutationId: crypto.randomUUID(), actionAt: "2026-08-08T12:00:00.000000Z" } }, immutable: false, updatedAt: new Date().toISOString() });
-  await replayScheduledIngredientOverride(user, organization, { id: crypto.randomUUID(), actionAt: "2026-08-08T12:00:01.000000Z", payload: { override_id: overrideId, event_id: event, scheduled_recipe_id: scheduled, operation: "set", override_kind: "add", ingredient_id: ingredient, ingredient_version_id: ingredientVersion, quantity: "3", include_in_portion_weight: false, position_key: "z" } });
+  await localDb.canonicalRecords.put({
+    userId: user,
+    organizationId: organization,
+    entityType: "scheduled_ingredient_override",
+    entityId: otherId,
+    recordSchemaVersion: 1,
+    lifecycle: "active",
+    fields: {
+      id: otherId,
+      organization_id: organization,
+      event_id: event,
+      scheduled_recipe_id: scheduled,
+      override_kind: "replace",
+      target_line_key: line,
+      quantity: "9",
+    },
+    fieldClocks: {
+      [`add.${overrideId}`]: {
+        mutationId: crypto.randomUUID(),
+        actionAt: "2026-08-08T12:00:00.000000Z",
+      },
+    },
+    immutable: false,
+    updatedAt: new Date().toISOString(),
+  });
+  await replayScheduledIngredientOverride(user, organization, {
+    id: crypto.randomUUID(),
+    actionAt: "2026-08-08T12:00:01.000000Z",
+    payload: {
+      override_id: overrideId,
+      event_id: event,
+      scheduled_recipe_id: scheduled,
+      operation: "set",
+      override_kind: "add",
+      ingredient_id: ingredient,
+      ingredient_version_id: ingredientVersion,
+      quantity: "3",
+      include_in_portion_weight: false,
+      position_key: "z",
+    },
+  });
   await expect(localDb.optimisticOverlays.count()).resolves.toBe(0);
-  await expect(localDb.canonicalRecords.get([user, organization, "scheduled_ingredient_override", otherId])).resolves.toMatchObject({ fields: { override_kind: "replace", quantity: "9" } });
+  await expect(
+    localDb.canonicalRecords.get([
+      user,
+      organization,
+      "scheduled_ingredient_override",
+      otherId,
+    ]),
+  ).resolves.toMatchObject({
+    fields: { override_kind: "replace", quantity: "9" },
+  });
 });
 
 it("fails closed when editing an added override without a valid position", async () => {
   await activePlan();
   await activeIngredient();
   const overrideId = "cce17d2f-8365-4b1f-a80b-34d10425d51c";
-  await localDb.canonicalRecords.put({ userId: user, organizationId: organization, entityType: "scheduled_ingredient_override", entityId: overrideId, recordSchemaVersion: 1, lifecycle: "active", fields: { id: overrideId, organization_id: organization, event_id: event, scheduled_recipe_id: scheduled, override_kind: "add", ingredient_id: ingredient, ingredient_version_id: ingredientVersion, quantity: "2" }, fieldClocks: {}, immutable: false, updatedAt: new Date().toISOString() });
-  await expect(queueAddedOverride(user, organization, { eventId: event, scheduledRecipeId: scheduled, ingredientId: ingredient, ingredientVersionId: ingredientVersion, quantity: "3.5", includeInPortionWeight: false, overrideId })).rejects.toThrow("override");
+  await localDb.canonicalRecords.put({
+    userId: user,
+    organizationId: organization,
+    entityType: "scheduled_ingredient_override",
+    entityId: overrideId,
+    recordSchemaVersion: 1,
+    lifecycle: "active",
+    fields: {
+      id: overrideId,
+      organization_id: organization,
+      event_id: event,
+      scheduled_recipe_id: scheduled,
+      override_kind: "add",
+      ingredient_id: ingredient,
+      ingredient_version_id: ingredientVersion,
+      quantity: "2",
+    },
+    fieldClocks: {},
+    immutable: false,
+    updatedAt: new Date().toISOString(),
+  });
+  await expect(
+    queueAddedOverride(user, organization, {
+      eventId: event,
+      scheduledRecipeId: scheduled,
+      ingredientId: ingredient,
+      ingredientVersionId: ingredientVersion,
+      quantity: "3.5",
+      includeInPortionWeight: false,
+      overrideId,
+    }),
+  ).rejects.toThrow("override");
 });
 
 it("does not queue an added override for an ingredient pinned in the recipe", async () => {
@@ -334,21 +730,126 @@ it("does not queue an added override for an ingredient pinned in the recipe", as
 it("queues an exact clear for an active added override and tombstones it", async () => {
   await activePlan();
   const overrideId = "cce17d2f-8365-4b1f-a80b-34d10425d51c";
-  await localDb.canonicalRecords.put({ userId: user, organizationId: organization, entityType: "scheduled_ingredient_override", entityId: overrideId, recordSchemaVersion: 1, lifecycle: "active", fields: { id: overrideId, organization_id: organization, event_id: event, scheduled_recipe_id: scheduled, override_kind: "add", ingredient_id: ingredient, ingredient_version_id: ingredientVersion, quantity: "2" }, fieldClocks: { [`add.${overrideId}`]: { mutationId: "dce17d2f-8365-4b1f-a80b-34d10425d51c", actionAt: "2026-08-08T12:00:00.000000Z" } }, immutable: false, updatedAt: new Date().toISOString() });
-  await queueClearAddedOverride(user, organization, { eventId: event, scheduledRecipeId: scheduled, overrideId });
-  await expect(localDb.outbox.toArray()).resolves.toEqual([expect.objectContaining({ payload: { override_id: overrideId, event_id: event, scheduled_recipe_id: scheduled, operation: "clear", override_kind: "add" } })]);
-  await expect(localDb.optimisticOverlays.get([user, organization, "scheduled_ingredient_override", overrideId])).resolves.toMatchObject({ lifecycle: "retired", fields: { retired_at: expect.any(String), override_kind: "add" } });
+  await localDb.canonicalRecords.put({
+    userId: user,
+    organizationId: organization,
+    entityType: "scheduled_ingredient_override",
+    entityId: overrideId,
+    recordSchemaVersion: 1,
+    lifecycle: "active",
+    fields: {
+      id: overrideId,
+      organization_id: organization,
+      event_id: event,
+      scheduled_recipe_id: scheduled,
+      override_kind: "add",
+      ingredient_id: ingredient,
+      ingredient_version_id: ingredientVersion,
+      quantity: "2",
+    },
+    fieldClocks: {
+      [`add.${overrideId}`]: {
+        mutationId: "dce17d2f-8365-4b1f-a80b-34d10425d51c",
+        actionAt: "2026-08-08T12:00:00.000000Z",
+      },
+    },
+    immutable: false,
+    updatedAt: new Date().toISOString(),
+  });
+  await queueClearAddedOverride(user, organization, {
+    eventId: event,
+    scheduledRecipeId: scheduled,
+    overrideId,
+  });
+  await expect(localDb.outbox.toArray()).resolves.toEqual([
+    expect.objectContaining({
+      payload: {
+        override_id: overrideId,
+        event_id: event,
+        scheduled_recipe_id: scheduled,
+        operation: "clear",
+        override_kind: "add",
+      },
+    }),
+  ]);
+  await expect(
+    localDb.optimisticOverlays.get([
+      user,
+      organization,
+      "scheduled_ingredient_override",
+      overrideId,
+    ]),
+  ).resolves.toMatchObject({
+    lifecycle: "retired",
+    fields: { retired_at: expect.any(String), override_kind: "add" },
+  });
 });
 
 it("replays only a newer clear for an existing active added override", async () => {
   await activePlan();
   const overrideId = "cce17d2f-8365-4b1f-a80b-34d10425d51c";
-  await localDb.canonicalRecords.put({ userId: user, organizationId: organization, entityType: "scheduled_ingredient_override", entityId: overrideId, recordSchemaVersion: 1, lifecycle: "active", fields: { id: overrideId, organization_id: organization, event_id: event, scheduled_recipe_id: scheduled, override_kind: "add", ingredient_id: ingredient, ingredient_version_id: ingredientVersion, quantity: "2" }, fieldClocks: { [`add.${overrideId}`]: { mutationId: "dce17d2f-8365-4b1f-a80b-34d10425d51c", actionAt: "2026-08-08T12:00:00.000001Z" } }, immutable: false, updatedAt: new Date().toISOString() });
-  const payload = { override_id: overrideId, event_id: event, scheduled_recipe_id: scheduled, operation: "clear", override_kind: "add" };
-  await replayScheduledIngredientOverride(user, organization, { id: "ece17d2f-8365-4b1f-a80b-34d10425d51c", actionAt: "2026-08-08T12:00:00.000000Z", payload });
-  expect(await localDb.optimisticOverlays.get([user, organization, "scheduled_ingredient_override", overrideId])).toBeUndefined();
-  await replayScheduledIngredientOverride(user, organization, { id: "ffffffff-ffff-4fff-8fff-ffffffffffff", actionAt: "2026-08-08T12:00:00.000002Z", payload });
-  await expect(localDb.optimisticOverlays.get([user, organization, "scheduled_ingredient_override", overrideId])).resolves.toMatchObject({ lifecycle: "retired", fields: { operation: "clear" } });
+  await localDb.canonicalRecords.put({
+    userId: user,
+    organizationId: organization,
+    entityType: "scheduled_ingredient_override",
+    entityId: overrideId,
+    recordSchemaVersion: 1,
+    lifecycle: "active",
+    fields: {
+      id: overrideId,
+      organization_id: organization,
+      event_id: event,
+      scheduled_recipe_id: scheduled,
+      override_kind: "add",
+      ingredient_id: ingredient,
+      ingredient_version_id: ingredientVersion,
+      quantity: "2",
+    },
+    fieldClocks: {
+      [`add.${overrideId}`]: {
+        mutationId: "dce17d2f-8365-4b1f-a80b-34d10425d51c",
+        actionAt: "2026-08-08T12:00:00.000001Z",
+      },
+    },
+    immutable: false,
+    updatedAt: new Date().toISOString(),
+  });
+  const payload = {
+    override_id: overrideId,
+    event_id: event,
+    scheduled_recipe_id: scheduled,
+    operation: "clear",
+    override_kind: "add",
+  };
+  await replayScheduledIngredientOverride(user, organization, {
+    id: "ece17d2f-8365-4b1f-a80b-34d10425d51c",
+    actionAt: "2026-08-08T12:00:00.000000Z",
+    payload,
+  });
+  expect(
+    await localDb.optimisticOverlays.get([
+      user,
+      organization,
+      "scheduled_ingredient_override",
+      overrideId,
+    ]),
+  ).toBeUndefined();
+  await replayScheduledIngredientOverride(user, organization, {
+    id: "ffffffff-ffff-4fff-8fff-ffffffffffff",
+    actionAt: "2026-08-08T12:00:00.000002Z",
+    payload,
+  });
+  await expect(
+    localDb.optimisticOverlays.get([
+      user,
+      organization,
+      "scheduled_ingredient_override",
+      overrideId,
+    ]),
+  ).resolves.toMatchObject({
+    lifecycle: "retired",
+    fields: { operation: "clear" },
+  });
 });
 
 it("keeps the LWW-winning replacement overlay when replay order is stale", async () => {

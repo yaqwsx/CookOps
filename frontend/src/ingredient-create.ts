@@ -41,15 +41,27 @@ export type IngredientCreateInput = {
   dietaryTagIds: string[];
   defaultStoreSectionId?: string;
 };
-export type IngredientCreateValidationError = "name" | "unit" | "mass" | "tag" | "storeSection";
-export type IngredientCreateResult = { ingredientId: string; ingredientVersionId: string };
+export type IngredientCreateValidationError =
+  | "name"
+  | "unit"
+  | "mass"
+  | "tag"
+  | "storeSection";
+export type IngredientCreateResult = {
+  ingredientId: string;
+  ingredientVersionId: string;
+};
 
 export function validateIngredientCreate(
   input: IngredientCreateInput,
 ): IngredientCreateValidationError | undefined {
   if (!validName(input.name)) return "name";
   if (!uuid.test(input.canonicalUnitId)) return "unit";
-  if (input.defaultStoreSectionId !== undefined && !uuid.test(input.defaultStoreSectionId)) return "storeSection";
+  if (
+    input.defaultStoreSectionId !== undefined &&
+    !uuid.test(input.defaultStoreSectionId)
+  )
+    return "storeSection";
   if (!positiveDecimal(input.massPerCanonicalQuantity)) return "mass";
   if (
     new Set(input.dietaryTagIds).size !== input.dietaryTagIds.length ||
@@ -141,13 +153,26 @@ async function availableDietaryTags(
   );
   return tags.every(
     (tag) =>
-      tag?.lifecycle === "active" && tag.fields.organization_id === organizationId,
+      tag?.lifecycle === "active" &&
+      tag.fields.organization_id === organizationId,
   );
 }
-async function availableStoreSection(userId: string, organizationId: string, id: unknown) {
+async function availableStoreSection(
+  userId: string,
+  organizationId: string,
+  id: unknown,
+) {
   if (typeof id !== "string" || !uuid.test(id)) return false;
-  const section = await localDb.canonicalRecords.get([userId, organizationId, "store_section", id]);
-  return section?.lifecycle === "active" && section.fields.organization_id === organizationId;
+  const section = await localDb.canonicalRecords.get([
+    userId,
+    organizationId,
+    "store_section",
+    id,
+  ]);
+  return (
+    section?.lifecycle === "active" &&
+    section.fields.organization_id === organizationId
+  );
 }
 
 async function queueIngredientCreateResult(
@@ -169,7 +194,9 @@ async function queueIngredientCreateResult(
     canonical_unit_id: input.canonicalUnitId,
     mass_per_canonical_quantity: input.massPerCanonicalQuantity,
     dietary_tag_ids: input.dietaryTagIds,
-    ...(input.defaultStoreSectionId !== undefined ? { default_store_section_id: input.defaultStoreSectionId } : {}),
+    ...(input.defaultStoreSectionId !== undefined
+      ? { default_store_section_id: input.defaultStoreSectionId }
+      : {}),
   };
   await localDb.transaction(
     "rw",
@@ -184,9 +211,23 @@ async function queueIngredientCreateResult(
         input.canonicalUnitId,
       ]);
       if (!availableUnit(unit, organizationId)) throw new Error("unit");
-      if (!(await availableDietaryTags(userId, organizationId, input.dietaryTagIds)))
+      if (
+        !(await availableDietaryTags(
+          userId,
+          organizationId,
+          input.dietaryTagIds,
+        ))
+      )
         throw new Error("tag");
-      if (input.defaultStoreSectionId !== undefined && !(await availableStoreSection(userId, organizationId, input.defaultStoreSectionId))) throw new Error("storeSection");
+      if (
+        input.defaultStoreSectionId !== undefined &&
+        !(await availableStoreSection(
+          userId,
+          organizationId,
+          input.defaultStoreSectionId,
+        ))
+      )
+        throw new Error("storeSection");
       if (
         unit?.fields.dimension === "mass" &&
         unit.fields.base_unit_factor !== input.massPerCanonicalQuantity
@@ -215,7 +256,8 @@ export async function queueIngredientCreate(
   organizationId: string,
   input: IngredientCreateInput,
 ): Promise<string> {
-  return (await queueIngredientCreateResult(userId, organizationId, input)).ingredientId;
+  return (await queueIngredientCreateResult(userId, organizationId, input))
+    .ingredientId;
 }
 
 /** Queue one create while exposing both server-bound immutable identities to a caller selecting the new version. */
@@ -234,7 +276,8 @@ export async function replayIngredientCreate(
   command: { id: string; actionAt: string; payload: Record<string, unknown> },
 ) {
   const payload = command.payload;
-  if (payload === null || typeof payload !== "object" || Array.isArray(payload)) return;
+  if (payload === null || typeof payload !== "object" || Array.isArray(payload))
+    return;
   const dietaryTagIds = payload.dietary_tag_ids;
   if (
     (Object.keys(payload).length !== 7 && Object.keys(payload).length !== 6) ||
@@ -245,7 +288,8 @@ export async function replayIngredientCreate(
         "name",
         "canonical_unit_id",
         "mass_per_canonical_quantity",
-        "dietary_tag_ids", "default_store_section_id",
+        "dietary_tag_ids",
+        "default_store_section_id",
       ].includes(key),
     ) ||
     typeof payload.ingredient_id !== "string" ||
@@ -261,7 +305,8 @@ export async function replayIngredientCreate(
     !Array.isArray(dietaryTagIds) ||
     !dietaryTagIds.every((id) => typeof id === "string") ||
     !positiveDecimal(payload.mass_per_canonical_quantity) ||
-    ("default_store_section_id" in payload && typeof payload.default_store_section_id !== "string")
+    ("default_store_section_id" in payload &&
+      typeof payload.default_store_section_id !== "string")
   )
     return;
   const unit = await localDb.canonicalRecords.get([
@@ -276,8 +321,17 @@ export async function replayIngredientCreate(
     unit.fields.base_unit_factor !== payload.mass_per_canonical_quantity
   )
     return;
-  if (!(await availableDietaryTags(userId, organizationId, dietaryTagIds))) return;
-  if ("default_store_section_id" in payload && !(await availableStoreSection(userId, organizationId, payload.default_store_section_id))) return;
+  if (!(await availableDietaryTags(userId, organizationId, dietaryTagIds)))
+    return;
+  if (
+    "default_store_section_id" in payload &&
+    !(await availableStoreSection(
+      userId,
+      organizationId,
+      payload.default_store_section_id,
+    ))
+  )
+    return;
   await localDb.optimisticOverlays.bulkPut(
     overlays(userId, organizationId, command.id, command.actionAt, payload),
   );

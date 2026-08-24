@@ -2,14 +2,21 @@ import { appendOutboxCommand, localDb, type CanonicalRecord } from "./local-db";
 
 const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 type Operation = "retire" | "restore";
-type Command = { id: string; actionAt: string; payload: Record<string, unknown> };
+type Command = {
+  id: string;
+  actionAt: string;
+  payload: Record<string, unknown>;
+};
 
 function timestampMicros(value: string): bigint | undefined {
   const match = /^(.*?)(?:\.(\d+))?(Z|[+-]\d\d:\d\d)$/.exec(value);
   if (!match) return undefined;
   const milliseconds = Date.parse(`${match[1]}${match[3]}`);
   if (!Number.isFinite(milliseconds)) return undefined;
-  return BigInt(milliseconds) * 1_000n + BigInt((match[2] ?? "").slice(0, 6).padEnd(6, "0"));
+  return (
+    BigInt(milliseconds) * 1_000n +
+    BigInt((match[2] ?? "").slice(0, 6).padEnd(6, "0"))
+  );
 }
 
 function wins(record: CanonicalRecord, id: string, actionAt: string): boolean {
@@ -22,7 +29,11 @@ function wins(record: CanonicalRecord, id: string, actionAt: string): boolean {
   if (typeof clockAt !== "string" || typeof clockId !== "string") return false;
   const left = timestampMicros(actionAt);
   const right = timestampMicros(clockAt);
-  return left !== undefined && right !== undefined && (left > right || (left === right && id > clockId));
+  return (
+    left !== undefined &&
+    right !== undefined &&
+    (left > right || (left === right && id > clockId))
+  );
 }
 
 async function applyLifecycle(
@@ -66,7 +77,10 @@ async function applyLifecycle(
       retired_at: operation === "retire" ? actionAt : null,
       retired_by_user_id: operation === "retire" ? userId : null,
     },
-    fieldClocks: { ...current.fieldClocks, lifecycle: { mutationId, actionAt } },
+    fieldClocks: {
+      ...current.fieldClocks,
+      lifecycle: { mutationId, actionAt },
+    },
     updatedAt: actionAt,
   });
 }
@@ -76,7 +90,11 @@ export async function queueIngredientLifecycle(
   organizationId: string,
   input: { ingredientId: string; operation: Operation },
 ): Promise<void> {
-  if (!uuid.test(userId) || !uuid.test(organizationId) || !uuid.test(input.ingredientId))
+  if (
+    !uuid.test(userId) ||
+    !uuid.test(organizationId) ||
+    !uuid.test(input.ingredientId)
+  )
     throw new Error("selection");
   const mutationId = crypto.randomUUID();
   const actionAt = new Date().toISOString();
@@ -102,7 +120,9 @@ export async function queueIngredientLifecycle(
       const current = overlay ?? canonical;
       if (
         !current ||
-        (!overlay && canonical !== undefined && canonical.lifecycle !== expected) ||
+        (!overlay &&
+          canonical !== undefined &&
+          canonical.lifecycle !== expected) ||
         current.lifecycle !== expected ||
         current.fields.organization_id !== organizationId ||
         typeof current.fields.current_version_id !== "string" ||
@@ -122,7 +142,10 @@ export async function queueIngredientLifecycle(
         userId,
         organizationId,
         commandType: "ingredient.lifecycle",
-        payload: { ingredient_id: input.ingredientId, operation: input.operation },
+        payload: {
+          ingredient_id: input.ingredientId,
+          operation: input.operation,
+        },
         actionAt,
         createdAt: actionAt,
         state: "pending",
