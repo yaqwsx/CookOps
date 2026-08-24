@@ -386,7 +386,7 @@ async def scenario(database_url: str) -> None:
                                 "authorization": f"Bearer {access_token}",
                                 "origin": "https://evil.example",
                             },
-                            json={},
+                            content=b"",
                         )
                     assert wrong_origin.status_code == 403
 
