@@ -81,6 +81,9 @@ test("edits a store-section order from the cached catalog offline", async ({
   await expect(
     page.getByRole("heading", { name: "Správa katalogu" }),
   ).toBeVisible();
+  await expect(
+    page.getByRole("listitem").filter({ hasText: "Pantry" }),
+  ).toBeVisible();
   await page.context().setOffline(true);
   await page.evaluate(() => window.dispatchEvent(new Event("offline")));
   await page.getByText("Upravit", { exact: true }).click();

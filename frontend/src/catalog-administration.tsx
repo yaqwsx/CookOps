@@ -28,10 +28,12 @@ export function CatalogAdministration({
   userId,
   organizationId,
   locale,
+  refreshKey = 0,
 }: {
   userId: string;
   organizationId: string;
   locale: "cs" | "en";
+  refreshKey?: number;
 }) {
   const { t } = useTranslation();
   const [records, setRecords] = useState<
@@ -43,6 +45,7 @@ export function CatalogAdministration({
     unit_definition: [],
     organization_meal_role_preset: [],
   });
+  // biome-ignore lint/correctness/useExhaustiveDependencies: requery after bootstrap completion.
   useEffect(() => {
     const subscription = liveQuery(
       async () =>
@@ -59,7 +62,7 @@ export function CatalogAdministration({
         >,
     ).subscribe({ next: setRecords });
     return () => subscription.unsubscribe();
-  }, [userId, organizationId]);
+  }, [userId, organizationId, refreshKey]);
   return (
     <section aria-label={t("catalogAdministration.heading", { lng: locale })}>
       <h3>{t("catalogAdministration.heading", { lng: locale })}</h3>

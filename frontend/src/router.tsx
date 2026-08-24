@@ -10,7 +10,7 @@ import {
   useRouter,
   useSearch,
 } from "@tanstack/react-router";
-import { useContext } from "react";
+import { useContext, useEffect, useState } from "react";
 import { useTranslation } from "react-i18next";
 
 import { CatalogAdministration } from "./catalog-administration";
@@ -27,6 +27,7 @@ import { OrganizationMetadataSettings } from "./organization-metadata-settings";
 import { RecipeCatalog } from "./recipe-catalog-view";
 import { App, RouteShellContext } from "./App";
 import { SystemOrganizationCreate } from "./system-organization-create";
+import { pullOrganization, SyncRequestError } from "./sync-bootstrap";
 
 const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
@@ -334,6 +335,16 @@ function OrganizationSettingsRoute() {
   const { i18n } = useTranslation();
   const { organizationId, identity, onUnauthenticated, systemAdmin } =
     useOrganization();
+  const [catalogRefreshKey, setCatalogRefreshKey] = useState(0);
+  useEffect(() => {
+    if (!navigator.onLine) return;
+    void pullOrganization(identity.id, organizationId)
+      .then(() => setCatalogRefreshKey((key) => key + 1))
+      .catch((error) => {
+        if (error instanceof SyncRequestError && error.status === 401)
+          onUnauthenticated();
+      });
+  }, [identity.id, onUnauthenticated, organizationId]);
   return (
     <OrganizationGate>
       <OrganizationMetadataSettings
@@ -343,6 +354,7 @@ function OrganizationSettingsRoute() {
       <CatalogAdministration
         locale={(i18n.resolvedLanguage ?? "cs") === "en" ? "en" : "cs"}
         organizationId={organizationId}
+        refreshKey={catalogRefreshKey}
         userId={identity.id}
       />
       <OrganizationMemberships
