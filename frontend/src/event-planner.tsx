@@ -448,7 +448,6 @@ function DayNote({
   const { t } = useTranslation();
   const [note, setNote] = useState(day.note ?? "");
   const [error, setError] = useState(false);
-  useEffect(() => setNote(day.note ?? ""), [day.note]);
   async function submit(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
     try {
@@ -2027,6 +2026,7 @@ export function EventPlanner({
             ) : null}
             {planner.lifecycle === "active" ? (
               <DayNote
+                key={`${day.id}:${day.note ?? ""}`}
                 day={day}
                 eventId={eventId}
                 organizationId={organizationId}
