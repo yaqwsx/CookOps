@@ -59,6 +59,14 @@ test("shows a cached event projection without mobile horizontal overflow", async
     }
     await route.fulfill({ status: 404 });
   });
+  await page.route("**/api/v1/organizations", async (route) => {
+    await route.fulfill({
+      contentType: "application/json",
+      body: JSON.stringify({
+        organizations: [{ id: organizationId, name: "Test kitchen" }],
+      }),
+    });
+  });
   await page.route("**/api/v1/sync/bootstrap", async (route) => {
     await route.fulfill({
       contentType: "application/json",

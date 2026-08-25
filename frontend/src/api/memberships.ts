@@ -99,7 +99,12 @@ export function assignOrganizationAdmin(
   userId: string,
   membershipId: string,
 ) {
-  return mutate(organizationId, userId, `/${membershipId}/assign-organization-admin`, {});
+  return mutate(
+    organizationId,
+    userId,
+    `/${membershipId}/assign-organization-admin`,
+    {},
+  );
 }
 
 export function revokeOrganizationAdmin(
@@ -107,5 +112,10 @@ export function revokeOrganizationAdmin(
   userId: string,
   membershipId: string,
 ) {
-  return mutate(organizationId, userId, `/${membershipId}/revoke-organization-admin`, {});
+  return mutate(
+    organizationId,
+    userId,
+    `/${membershipId}/revoke-organization-admin`,
+    {},
+  );
 }

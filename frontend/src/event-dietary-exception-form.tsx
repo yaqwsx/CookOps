@@ -35,7 +35,12 @@ export function EventDietaryExceptions({
           .where("[userId+organizationId+entityType]")
           .equals([userId, organizationId, "dietary_tag"])
           .toArray(),
-        readVisibleEventDietaryExceptions(userId, organizationId, eventId, true),
+        readVisibleEventDietaryExceptions(
+          userId,
+          organizationId,
+          eventId,
+          true,
+        ),
       ]);
       return {
         available: available
@@ -60,8 +65,18 @@ export function EventDietaryExceptions({
     event.preventDefault();
     try {
       const save = editingId
-        ? queueEventDietaryExceptionUpdate(userId, organizationId, eventId, editingId, { name, note, tagIds })
-        : queueEventDietaryExceptionCreate(userId, organizationId, eventId, { name, note, tagIds });
+        ? queueEventDietaryExceptionUpdate(
+            userId,
+            organizationId,
+            eventId,
+            editingId,
+            { name, note, tagIds },
+          )
+        : queueEventDietaryExceptionCreate(userId, organizationId, eventId, {
+            name,
+            note,
+            tagIds,
+          });
       await save;
       setName("");
       setNote("");
@@ -112,8 +127,25 @@ export function EventDietaryExceptions({
             </label>
           ))}
         </fieldset>
-        <button type="submit">{editingId ? t("eventDietaryExceptions.save") : t("eventDietaryExceptions.create")}</button>
-        {editingId ? <button type="button" aria-label={t("eventDietaryExceptions.cancel")} onClick={() => { setEditingId(null); setName(""); setNote(""); setTagIds([]); }}>{t("eventDietaryExceptions.cancel")}</button> : null}
+        <button type="submit">
+          {editingId
+            ? t("eventDietaryExceptions.save")
+            : t("eventDietaryExceptions.create")}
+        </button>
+        {editingId ? (
+          <button
+            type="button"
+            aria-label={t("eventDietaryExceptions.cancel")}
+            onClick={() => {
+              setEditingId(null);
+              setName("");
+              setNote("");
+              setTagIds([]);
+            }}
+          >
+            {t("eventDietaryExceptions.cancel")}
+          </button>
+        ) : null}
         {error ? <p role="alert">{t("eventDietaryExceptions.error")}</p> : null}
       </form>
       <ul aria-label={t("eventDietaryExceptions.list")}>
@@ -125,9 +157,41 @@ export function EventDietaryExceptions({
               ? ` — ${item.fields.selected_tag_names.join(", ")}`
               : ""}
             {item.fields.note ? ` — ${String(item.fields.note)}` : ""}
-            {item.lifecycle === "active" ? <button type="button" aria-label={t("eventDietaryExceptions.edit")} onClick={() => { setEditingId(item.entityId); setName(String(item.fields.name ?? "")); setNote(String(item.fields.note ?? "")); setTagIds(Array.isArray(item.fields.selected_tag_ids) ? item.fields.selected_tag_ids.filter((id): id is string => typeof id === "string") : []); }}>{t("eventDietaryExceptions.edit")}</button> : null}
-            <button type="button" onClick={() => void queueEventDietaryExceptionLifecycle(userId, organizationId, eventId, item.entityId, item.lifecycle === "active" ? "retire" : "restore").catch(() => setError(true))}>
-              {item.lifecycle === "active" ? t("eventDietaryExceptions.retire") : t("eventDietaryExceptions.restore")}
+            {item.lifecycle === "active" ? (
+              <button
+                type="button"
+                aria-label={t("eventDietaryExceptions.edit")}
+                onClick={() => {
+                  setEditingId(item.entityId);
+                  setName(String(item.fields.name ?? ""));
+                  setNote(String(item.fields.note ?? ""));
+                  setTagIds(
+                    Array.isArray(item.fields.selected_tag_ids)
+                      ? item.fields.selected_tag_ids.filter(
+                          (id): id is string => typeof id === "string",
+                        )
+                      : [],
+                  );
+                }}
+              >
+                {t("eventDietaryExceptions.edit")}
+              </button>
+            ) : null}
+            <button
+              type="button"
+              onClick={() =>
+                void queueEventDietaryExceptionLifecycle(
+                  userId,
+                  organizationId,
+                  eventId,
+                  item.entityId,
+                  item.lifecycle === "active" ? "retire" : "restore",
+                ).catch(() => setError(true))
+              }
+            >
+              {item.lifecycle === "active"
+                ? t("eventDietaryExceptions.retire")
+                : t("eventDietaryExceptions.restore")}
             </button>
           </li>
         ))}

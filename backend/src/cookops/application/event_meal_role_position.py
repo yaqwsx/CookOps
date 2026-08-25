@@ -237,13 +237,15 @@ async def set_event_meal_role_position(
                             "record_schema_version": 1,
                             "record": _record(
                                 meal_role,
-                                *(await session.scalars(
-                                    select(FieldClock).where(
-                                        FieldClock.organization_id == command.organization_id,
-                                        FieldClock.entity_kind == "event_meal_role",
-                                        FieldClock.entity_id == meal_role.id,
+                                *(
+                                    await session.scalars(
+                                        select(FieldClock).where(
+                                            FieldClock.organization_id == command.organization_id,
+                                            FieldClock.entity_kind == "event_meal_role",
+                                            FieldClock.entity_id == meal_role.id,
+                                        )
                                     )
-                                )).all(),
+                                ).all(),
                             ),
                         },
                     )

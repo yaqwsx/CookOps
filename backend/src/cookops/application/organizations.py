@@ -264,9 +264,13 @@ async def _authorize(
             ClientInstallation.disabled_at.is_(None),
             ClientInstallation.installation_kind == expected_installation_kind,
         )
-    lock_targets = (User, SystemRoleAssignment, ClientInstallation) if require_installation else (
-        User,
-        SystemRoleAssignment,
+    lock_targets = (
+        (User, SystemRoleAssignment, ClientInstallation)
+        if require_installation
+        else (
+            User,
+            SystemRoleAssignment,
+        )
     )
     authorized_actor = await session.scalar(
         statement.with_for_update(
@@ -617,9 +621,9 @@ def _lifecycle_request_hash(command: SetOrganizationLifecycleCommand) -> bytes:
     ).digest()
 
 
-def _organization_fields(record: object, error_message: str) -> tuple[
-    UUID, str, str | None, str, datetime | None, UUID | None
-]:
+def _organization_fields(
+    record: object, error_message: str
+) -> tuple[UUID, str, str | None, str, datetime | None, UUID | None]:
     if not isinstance(record, dict):
         raise RuntimeError(error_message)
     try:
@@ -1005,8 +1009,13 @@ async def list_organizations_for_system_admin(
         )
         return tuple(
             OrganizationLifecycleResult(
-                item.id, item.name, item.description, item.default_currency,
-                item.retired_at, item.retired_by_user_id, False,
+                item.id,
+                item.name,
+                item.description,
+                item.default_currency,
+                item.retired_at,
+                item.retired_by_user_id,
+                False,
             )
             for item in rows
         )

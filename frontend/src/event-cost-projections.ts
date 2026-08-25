@@ -2,12 +2,7 @@ import type { CanonicalRecord } from "./local-db";
 import { decimal as parseDecimal } from "./shopping-projections";
 import { readVisibleRecords } from "./visible-records";
 import { readEventScopedRecords } from "./archive-cache";
-import {
-  divide,
-  money,
-  multiply,
-  type Fraction,
-} from "./exact-decimal";
+import { divide, money, multiply, type Fraction } from "./exact-decimal";
 
 const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const unitDimensions = new Set(["mass", "volume", "count", "custom"]);
@@ -110,7 +105,9 @@ function validIngredientRoot(
   record: CanonicalRecord,
   organizationId: string,
 ): boolean {
-  return record.lifecycle === "active" && validRecordIdentity(record, organizationId);
+  return (
+    record.lifecycle === "active" && validRecordIdentity(record, organizationId)
+  );
 }
 
 function validIngredientVersion(
@@ -207,7 +204,13 @@ export async function readEventCosts(
   );
   const ingredientVersions = new Map(
     values("ingredient_version")
-      .map((record) => [record.entityId, validIngredientVersion(record, organizationId)] as const)
+      .map(
+        (record) =>
+          [
+            record.entityId,
+            validIngredientVersion(record, organizationId),
+          ] as const,
+      )
       .filter(
         (entry): entry is [string, NonNullable<(typeof entry)[1]>] =>
           entry[1] !== undefined && ingredients.has(entry[1].ingredientId),
@@ -215,7 +218,10 @@ export async function readEventCosts(
   );
   const units = new Map(
     values("unit_definition")
-      .map((record) => [record.entityId, validUnit(record, organizationId)] as const)
+      .map(
+        (record) =>
+          [record.entityId, validUnit(record, organizationId)] as const,
+      )
       .filter(
         (entry): entry is [string, NonNullable<(typeof entry)[1]>] =>
           entry[1] !== undefined,
@@ -484,10 +490,7 @@ export async function readEventCosts(
         ? ingredientVersions.get(ingredientVersionId)
         : undefined;
       const generated = decimal(snapshot.fields.generated_quantity);
-      const eventPriceSnapshotId = fieldId(
-        snapshot,
-        "event_price_snapshot_id",
-      );
+      const eventPriceSnapshotId = fieldId(snapshot, "event_price_snapshot_id");
       const amount = decimal(snapshot.fields.price_amount);
       const pricedQuantity = decimal(snapshot.fields.priced_quantity);
       const pricedUnitId = fieldId(snapshot, "priced_unit_id");
@@ -511,7 +514,9 @@ export async function readEventCosts(
         (() => {
           const source = eventPriceSnapshots.get(eventPriceSnapshotId);
           const parent = source
-            ? eventPricesById.get(fieldId(source, "event_ingredient_price_id") ?? "")
+            ? eventPricesById.get(
+                fieldId(source, "event_ingredient_price_id") ?? "",
+              )
             : undefined;
           return (
             source !== undefined &&
@@ -520,8 +525,7 @@ export async function readEventCosts(
             fieldId(parent, "ingredient_id") === snapshotIngredientId
           );
         })();
-      const noPrice =
-        !hasAnyPriceField;
+      const noPrice = !hasAnyPriceField;
       if (
         !contribution ||
         !contributionId ||
@@ -603,10 +607,7 @@ export async function readEventCosts(
       else rowCost = add(rowCost, cost);
     }
     if (pricingValid) expectedShopping = add(expectedShopping, rowCost);
-    else
-      missing.add(
-        text(row, "ingredient_name") ?? row.entityId,
-      );
+    else missing.add(text(row, "ingredient_name") ?? row.entityId);
   }
   const actual = values("receipt")
     .filter(

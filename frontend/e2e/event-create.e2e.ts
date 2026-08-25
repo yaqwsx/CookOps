@@ -92,9 +92,11 @@ test("creates an event in the offline outbox without horizontal overflow", async
   await expect(
     page.getByText("Akce je uložena místně a bude synchronizována."),
   ).toBeVisible();
-  await expect(page.getByTestId("synchronization-status")).toHaveText(
-    "Bez připojení",
-  );
+  await expect(
+    page
+      .getByTestId("synchronization-status")
+      .getByText("Bez připojení", { exact: true }),
+  ).toHaveText("Bez připojení");
   await expect
     .poll(() =>
       page.evaluate(

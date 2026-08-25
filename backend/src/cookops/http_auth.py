@@ -144,7 +144,7 @@ class SystemOrganizationResponse(CreatedOrganizationResponse):
 
 
 class OrganizationLifecycleRequest(BaseModel):
-    model_config = ConfigDict(extra="forbid", strict=True)
+    model_config = ConfigDict(extra="forbid")
     operation: Literal["retire", "restore"]
     mutation_id: UUID
     client_installation_id: UUID
@@ -159,7 +159,7 @@ class OrganizationLifecycleRequest(BaseModel):
 
 
 class OrganizationEditRequest(BaseModel):
-    model_config = ConfigDict(extra="forbid", strict=True)
+    model_config = ConfigDict(extra="forbid")
 
     mutation_id: UUID
     client_installation_id: UUID
@@ -423,8 +423,7 @@ def create_organization_administration_router(settings: Settings) -> APIRouter:
                 detail={
                     "code": error.code,
                     "field_violations": [
-                        {"path": item.path, "code": item.code}
-                        for item in error.field_violations
+                        {"path": item.path, "code": item.code} for item in error.field_violations
                     ],
                 },
             )
@@ -437,9 +436,7 @@ def create_organization_administration_router(settings: Settings) -> APIRouter:
         await require_system_admin(actor_id, value)
         return Response(status_code=204)
 
-    @router.post(
-        "/organizations", response_model=CreatedOrganizationResponse, status_code=201
-    )
+    @router.post("/organizations", response_model=CreatedOrganizationResponse, status_code=201)
     async def create(
         body: CreateOrganizationRequest, request: Request
     ) -> CreatedOrganizationResponse:
@@ -464,9 +461,13 @@ def create_organization_administration_router(settings: Settings) -> APIRouter:
             if error.code == "validation_failed":
                 raise HTTPException(
                     status_code=422,
-                    detail={"code": error.code, "field_violations": [
-                        {"path": item.path, "code": item.code} for item in error.field_violations
-                    ]},
+                    detail={
+                        "code": error.code,
+                        "field_violations": [
+                            {"path": item.path, "code": item.code}
+                            for item in error.field_violations
+                        ],
+                    },
                 ) from error
             raise HTTPException(status_code=409, detail={"code": error.code}) from error
         return CreatedOrganizationResponse(
@@ -488,10 +489,14 @@ def create_organization_administration_router(settings: Settings) -> APIRouter:
             raise application_error(error) from error
         return tuple(
             SystemOrganizationResponse(
-                id=item.organization_id, name=item.name, description=item.description,
-                default_currency=item.default_currency, retired_at=item.retired_at,
+                id=item.organization_id,
+                name=item.name,
+                description=item.description,
+                default_currency=item.default_currency,
+                retired_at=item.retired_at,
                 retired_by_user_id=item.retired_by_user_id,
-            ) for item in result
+            )
+            for item in result
         )
 
     @router.patch("/organizations/{organization_id}", response_model=SystemOrganizationResponse)
@@ -516,8 +521,11 @@ def create_organization_administration_router(settings: Settings) -> APIRouter:
         except ApplicationServiceError as error:
             raise application_error(error) from error
         return SystemOrganizationResponse(
-            id=result.organization_id, name=result.name, description=result.description,
-            default_currency=result.default_currency, retired_at=result.retired_at,
+            id=result.organization_id,
+            name=result.name,
+            description=result.description,
+            default_currency=result.default_currency,
+            retired_at=result.retired_at,
             retired_by_user_id=result.retired_by_user_id,
         )
 
@@ -543,8 +551,11 @@ def create_organization_administration_router(settings: Settings) -> APIRouter:
         except ApplicationServiceError as error:
             raise application_error(error) from error
         return SystemOrganizationResponse(
-            id=result.organization_id, name=result.name, description=result.description,
-            default_currency=result.default_currency, retired_at=result.retired_at,
+            id=result.organization_id,
+            name=result.name,
+            description=result.description,
+            default_currency=result.default_currency,
+            retired_at=result.retired_at,
             retired_by_user_id=result.retired_by_user_id,
         )
 

@@ -1,5 +1,6 @@
 import base64
 import os
+import re
 from collections.abc import Iterator
 from dataclasses import dataclass
 from datetime import UTC, datetime
@@ -37,6 +38,8 @@ pytestmark = pytest.mark.skipif(
 )
 
 KEY = base64.urlsafe_b64encode(b"0123456789abcdef0123456789abcdef").rstrip(b"=").decode()
+DETAILS_KEY = base64.urlsafe_b64encode(b"details-key-01234567890123456789").rstrip(b"=").decode()
+GRANTS_KEY = base64.urlsafe_b64encode(b"grants-key-012345678901234567890").rstrip(b"=").decode()
 
 
 @dataclass
@@ -219,6 +222,7 @@ def test_dummy_authentication_only_selects_existing_identities_and_issues_a_secu
             "id": str(dummy_auth_database.authorized_user_id),
             "display_name": "Alice Member",
             "verified_email": "alice@example.test",
+            "preferred_locale": "cs",
         }
         organizations = client.get("/api/v1/organizations")
         assert organizations.status_code == 200
@@ -280,9 +284,10 @@ def test_google_route_issues_the_same_cookie_and_does_not_mount_dummy_routes() -
         google_client_id="test-client.apps.googleusercontent.com",
         browser_session_hmac_key=KEY,
         browser_origin="https://testserver",
-        oauth_interaction_details_api_credential_base64url=KEY[:-1] + "U",
+        oauth_interaction_details_api_credential_base64url=DETAILS_KEY,
         oauth_interaction_approval_api_credential_base64url=KEY,
         oauth_interaction_origin="https://testserver",
+        oauth_grants_api_credential_base64url=GRANTS_KEY,
     )
     google_provider = MagicMock()
     google_provider.complete_id_token = AsyncMock(
@@ -342,9 +347,10 @@ def test_production_google_route_rejects_plain_http_before_token_verification() 
         google_client_id="test-client.apps.googleusercontent.com",
         browser_session_hmac_key=KEY,
         browser_origin="https://testserver",
-        oauth_interaction_details_api_credential_base64url=KEY[:-1] + "U",
+        oauth_interaction_details_api_credential_base64url=DETAILS_KEY,
         oauth_interaction_approval_api_credential_base64url=KEY,
         oauth_interaction_origin="https://testserver",
+        oauth_grants_api_credential_base64url=GRANTS_KEY,
     )
     google_provider = MagicMock()
     app = FastAPI()
@@ -371,9 +377,7 @@ def test_identity_http_sessions_reach_cookie_bound_interaction_bridge(
     app_settings = settings().model_copy(
         update={
             "environment": (
-                Environment.PRODUCTION
-                if provider is HumanAuthProvider.GOOGLE
-                else Environment.TEST
+                Environment.PRODUCTION if provider is HumanAuthProvider.GOOGLE else Environment.TEST
             ),
             "human_auth_provider": provider,
             "google_client_id": "test-client.apps.googleusercontent.com",
@@ -381,6 +385,7 @@ def test_identity_http_sessions_reach_cookie_bound_interaction_bridge(
             "oauth_interaction_origin": "https://testserver",
             "oauth_interaction_details_api_credential_base64url": KEY,
             "oauth_interaction_approval_api_credential_base64url": KEY,
+            "oauth_grants_api_credential_base64url": GRANTS_KEY,
         }
     )
 
@@ -396,15 +401,17 @@ def test_identity_http_sessions_reach_cookie_bound_interaction_bridge(
                 google_identities=GoogleIdentityProvider(
                     services.human_authentication,
                     configured.google_client_id or "",
-                    token_verifier=lambda raw, audience: {
-                        "iss": "https://accounts.google.com",
-                        "aud": audience,
-                        "email_verified": True,
-                        "sub": "google-alice",
-                        "email": "alice@example.test",
-                    }
-                    if raw == "opaque-google-token"
-                    else {},
+                    token_verifier=lambda raw, audience: (
+                        {
+                            "iss": "https://accounts.google.com",
+                            "aud": audience,
+                            "email_verified": True,
+                            "sub": "google-alice",
+                            "email": "alice@example.test",
+                        }
+                        if raw == "opaque-google-token"
+                        else {}
+                    ),
                 ),
             )
         return services
@@ -437,11 +444,14 @@ def test_identity_http_sessions_reach_cookie_bound_interaction_bridge(
             )
         )
         uid = "N9E_oxk7dD9t7rR10dj-3"
-        assert client.get(f"/auth/mcp-interactions/{uid}").status_code == 200
+        consent_page = client.get(f"/auth/mcp-interactions/{uid}")
+        assert consent_page.status_code == 200
+        csrf_token = re.search(r"csrfToken:'([0-9a-f]{64})'", consent_page.text)
+        assert csrf_token is not None
         assert (
             client.post(
                 f"/auth/mcp-interactions/{uid}",
-                json={"decision": "approve"},
+                json={"decision": "approve", "csrfToken": csrf_token.group(1)},
                 headers={"origin": "https://testserver"},
             ).status_code
             == 204

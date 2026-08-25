@@ -71,11 +71,16 @@ async function seedShoppingCost() {
   await record("ingredient", ids.ingredient, {
     current_version_id: ids.ingredientVersion,
   });
-  await record("ingredient_version", ids.ingredientVersion, {
-    ingredient_id: ids.ingredient,
-    canonical_unit_id: ids.unit,
-    name: "Beans",
-  }, true);
+  await record(
+    "ingredient_version",
+    ids.ingredientVersion,
+    {
+      ingredient_id: ids.ingredient,
+      canonical_unit_id: ids.unit,
+      name: "Beans",
+    },
+    true,
+  );
   await record("event_ingredient_price_snapshot", ids.snapshot, {
     event_id: ids.event,
     ingredient_id: ids.ingredient,
@@ -95,11 +100,16 @@ async function seedShoppingCost() {
     event_id: ids.event,
     current_generation_revision_id: ids.revision,
   });
-  await record("shopping_generation_revision", ids.revision, {
-    event_id: ids.event,
-    shopping_list_id: ids.shoppingList,
-    parent_revision_id: null,
-  }, true);
+  await record(
+    "shopping_generation_revision",
+    ids.revision,
+    {
+      event_id: ids.event,
+      shopping_list_id: ids.shoppingList,
+      parent_revision_id: null,
+    },
+    true,
+  );
   await record("shopping_ingredient_row", ids.row, {
     event_id: ids.event,
     shopping_list_id: ids.shoppingList,
@@ -114,21 +124,26 @@ async function seedShoppingCost() {
     shopping_ingredient_row_id: ids.row,
     ingredient_id: ids.ingredient,
   });
-  await record("shopping_contribution_snapshot", ids.shoppingSnapshot, {
-    event_id: ids.event,
-    shopping_list_id: ids.shoppingList,
-    generation_revision_id: ids.revision,
-    shopping_contribution_id: ids.contribution,
-    ingredient_id: ids.ingredient,
-    active_in_revision: true,
-    ingredient_version_id: ids.ingredientVersion,
-    generated_quantity: "2",
-    event_price_snapshot_id: ids.snapshot,
-    price_amount: "3",
-    priced_quantity: "2",
-    priced_unit_id: ids.unit,
-    currency: "CZK",
-  }, true);
+  await record(
+    "shopping_contribution_snapshot",
+    ids.shoppingSnapshot,
+    {
+      event_id: ids.event,
+      shopping_list_id: ids.shoppingList,
+      generation_revision_id: ids.revision,
+      shopping_contribution_id: ids.contribution,
+      ingredient_id: ids.ingredient,
+      active_in_revision: true,
+      ingredient_version_id: ids.ingredientVersion,
+      generated_quantity: "2",
+      event_price_snapshot_id: ids.snapshot,
+      price_amount: "3",
+      priced_quantity: "2",
+      priced_unit_id: ids.unit,
+      currency: "CZK",
+    },
+    true,
+  );
 }
 
 async function updateShoppingSnapshot(fields: Record<string, unknown>) {
@@ -161,11 +176,16 @@ describe("cached event cost projection", () => {
     await record("ingredient", ids.ingredient, {
       current_version_id: ids.ingredientVersion,
     });
-    await record("ingredient_version", ids.ingredientVersion, {
-      ingredient_id: ids.ingredient,
-      canonical_unit_id: ids.unit,
-      name: "Beans",
-    }, true);
+    await record(
+      "ingredient_version",
+      ids.ingredientVersion,
+      {
+        ingredient_id: ids.ingredient,
+        canonical_unit_id: ids.unit,
+        name: "Beans",
+      },
+      true,
+    );
     await record("recipe_version", ids.recipeVersion, {
       base_scaling_amount: "2",
     });
@@ -202,26 +222,36 @@ describe("cached event cost projection", () => {
       event_id: ids.event,
       current_generation_revision_id: ids.revision,
     });
-    await record("shopping_generation_revision", ids.revision, {
-      event_id: ids.event,
-      shopping_list_id: ids.shoppingList,
-      parent_revision_id: null,
-    }, true);
-    await record("shopping_contribution_snapshot", ids.shoppingSnapshot, {
-      event_id: ids.event,
-      shopping_list_id: ids.shoppingList,
-      generation_revision_id: ids.revision,
-      shopping_contribution_id: ids.contribution,
-      active_in_revision: true,
-      ingredient_id: ids.ingredient,
-      ingredient_version_id: ids.ingredientVersion,
-      generated_quantity: "2",
-      event_price_snapshot_id: ids.snapshot,
-      price_amount: "3",
-      priced_quantity: "2",
-      priced_unit_id: ids.unit,
-      currency: "CZK",
-    }, true);
+    await record(
+      "shopping_generation_revision",
+      ids.revision,
+      {
+        event_id: ids.event,
+        shopping_list_id: ids.shoppingList,
+        parent_revision_id: null,
+      },
+      true,
+    );
+    await record(
+      "shopping_contribution_snapshot",
+      ids.shoppingSnapshot,
+      {
+        event_id: ids.event,
+        shopping_list_id: ids.shoppingList,
+        generation_revision_id: ids.revision,
+        shopping_contribution_id: ids.contribution,
+        active_in_revision: true,
+        ingredient_id: ids.ingredient,
+        ingredient_version_id: ids.ingredientVersion,
+        generated_quantity: "2",
+        event_price_snapshot_id: ids.snapshot,
+        price_amount: "3",
+        priced_quantity: "2",
+        priced_unit_id: ids.unit,
+        currency: "CZK",
+      },
+      true,
+    );
     await record("shopping_ingredient_row", ids.row, {
       event_id: ids.event,
       shopping_list_id: ids.shoppingList,
@@ -730,7 +760,9 @@ describe("cached event cost projection", () => {
     ).resolves.toMatchObject({ expectedShopping: "0.00" });
 
     await updateShoppingSnapshot({ shopping_list_id: ids.shoppingList });
-    await updateShoppingSnapshot({ generation_revision_id: ids.retiredRevision });
+    await updateShoppingSnapshot({
+      generation_revision_id: ids.retiredRevision,
+    });
     await expect(
       readEventCosts(userId, organizationId, ids.event),
     ).resolves.toMatchObject({ expectedShopping: "0.00" });
@@ -742,21 +774,26 @@ describe("cached event cost projection", () => {
     ).resolves.toMatchObject({ expectedShopping: "0.00" });
 
     await updateShoppingSnapshot({ event_id: ids.event });
-    await record("shopping_contribution_snapshot", ids.secondShoppingSnapshot, {
-      event_id: ids.event,
-      shopping_list_id: ids.shoppingList,
-      generation_revision_id: ids.revision,
-      shopping_contribution_id: ids.contribution,
-      ingredient_id: ids.ingredient,
-      active_in_revision: true,
-      ingredient_version_id: ids.ingredientVersion,
-      generated_quantity: "1",
-      event_price_snapshot_id: ids.snapshot,
-      price_amount: "3",
-      priced_quantity: "2",
-      priced_unit_id: ids.unit,
-      currency: "EUR",
-    }, true);
+    await record(
+      "shopping_contribution_snapshot",
+      ids.secondShoppingSnapshot,
+      {
+        event_id: ids.event,
+        shopping_list_id: ids.shoppingList,
+        generation_revision_id: ids.revision,
+        shopping_contribution_id: ids.contribution,
+        ingredient_id: ids.ingredient,
+        active_in_revision: true,
+        ingredient_version_id: ids.ingredientVersion,
+        generated_quantity: "1",
+        event_price_snapshot_id: ids.snapshot,
+        price_amount: "3",
+        priced_quantity: "2",
+        priced_unit_id: ids.unit,
+        currency: "EUR",
+      },
+      true,
+    );
     await expect(
       readEventCosts(userId, organizationId, ids.event),
     ).resolves.toMatchObject({ expectedShopping: "3.00" });
@@ -766,11 +803,15 @@ describe("cached event cost projection", () => {
       readEventCosts(userId, organizationId, ids.event),
     ).resolves.toMatchObject({ expectedShopping: "0.00" });
     await updateShoppingSnapshot({ ingredient_id: ids.ingredient });
-    await updateShoppingSnapshot({ ingredient_version_id: ids.retiredRevision });
+    await updateShoppingSnapshot({
+      ingredient_version_id: ids.retiredRevision,
+    });
     await expect(
       readEventCosts(userId, organizationId, ids.event),
     ).resolves.toMatchObject({ expectedShopping: "0.00" });
-    await updateShoppingSnapshot({ ingredient_version_id: ids.ingredientVersion });
+    await updateShoppingSnapshot({
+      ingredient_version_id: ids.ingredientVersion,
+    });
     await updateShoppingSnapshot({ price_amount: "-1" });
     await expect(
       readEventCosts(userId, organizationId, ids.event),
@@ -790,21 +831,26 @@ describe("cached event cost projection", () => {
       shopping_ingredient_row_id: ids.row,
       ingredient_id: ids.ingredient,
     });
-    await record("shopping_contribution_snapshot", ids.secondShoppingSnapshot, {
-      event_id: ids.event,
-      shopping_list_id: ids.shoppingList,
-      generation_revision_id: ids.revision,
-      shopping_contribution_id: ids.secondContribution,
-      ingredient_id: ids.ingredient,
-      active_in_revision: true,
-      ingredient_version_id: ids.ingredientVersion,
-      generated_quantity: "1",
-      event_price_snapshot_id: ids.snapshot,
-      price_amount: "3",
-      priced_quantity: "2",
-      priced_unit_id: ids.unit,
-      currency: "CZK",
-    }, true);
+    await record(
+      "shopping_contribution_snapshot",
+      ids.secondShoppingSnapshot,
+      {
+        event_id: ids.event,
+        shopping_list_id: ids.shoppingList,
+        generation_revision_id: ids.revision,
+        shopping_contribution_id: ids.secondContribution,
+        ingredient_id: ids.ingredient,
+        active_in_revision: true,
+        ingredient_version_id: ids.ingredientVersion,
+        generated_quantity: "1",
+        event_price_snapshot_id: ids.snapshot,
+        price_amount: "3",
+        priced_quantity: "2",
+        priced_unit_id: ids.unit,
+        currency: "CZK",
+      },
+      true,
+    );
     await expect(
       readEventCosts(userId, organizationId, ids.event),
     ).resolves.toMatchObject({ expectedShopping: "4.50" });
@@ -812,21 +858,26 @@ describe("cached event cost projection", () => {
 
   it("omits a contribution with duplicate valid snapshots", async () => {
     await seedShoppingCost();
-    await record("shopping_contribution_snapshot", ids.duplicateShoppingSnapshot, {
-      event_id: ids.event,
-      shopping_list_id: ids.shoppingList,
-      generation_revision_id: ids.revision,
-      shopping_contribution_id: ids.contribution,
-      ingredient_id: ids.ingredient,
-      active_in_revision: true,
-      ingredient_version_id: ids.ingredientVersion,
-      generated_quantity: "2",
-      event_price_snapshot_id: ids.snapshot,
-      price_amount: "3",
-      priced_quantity: "2",
-      priced_unit_id: ids.unit,
-      currency: "CZK",
-    }, true);
+    await record(
+      "shopping_contribution_snapshot",
+      ids.duplicateShoppingSnapshot,
+      {
+        event_id: ids.event,
+        shopping_list_id: ids.shoppingList,
+        generation_revision_id: ids.revision,
+        shopping_contribution_id: ids.contribution,
+        ingredient_id: ids.ingredient,
+        active_in_revision: true,
+        ingredient_version_id: ids.ingredientVersion,
+        generated_quantity: "2",
+        event_price_snapshot_id: ids.snapshot,
+        price_amount: "3",
+        priced_quantity: "2",
+        priced_unit_id: ids.unit,
+        currency: "CZK",
+      },
+      true,
+    );
     await expect(
       readEventCosts(userId, organizationId, ids.event),
     ).resolves.toMatchObject({ expectedShopping: "0.00" });

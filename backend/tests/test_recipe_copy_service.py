@@ -1,11 +1,14 @@
 import asyncio
+from collections.abc import Callable, Iterator
 from dataclasses import replace
 from datetime import UTC, datetime
+from typing import cast
 from uuid import uuid4
 
 import pytest
 from sqlalchemy import insert, select, update
 from test_create_recipe_service import ServiceDatabase, context, recipe_command
+from test_create_recipe_service import service_database as create_recipe_service_database
 
 from cookops.application.organizations import ApplicationServiceError
 from cookops.application.recipe_copy import (
@@ -29,10 +32,20 @@ from cookops.persistence.models import (
 pytest_plugins = ("test_create_recipe_service",)
 
 
+@pytest.fixture
+def recipe_copy_database() -> Iterator[ServiceDatabase]:
+    """Use the recipe fixture without colliding with other plugin fixtures."""
+    fixture = cast(
+        Callable[[], Iterator[ServiceDatabase]],
+        vars(create_recipe_service_database)["__wrapped__"],
+    )
+    yield from fixture()
+
+
 def test_copy_current_recipe_to_destination_admin(
-    service_database: ServiceDatabase,
+    recipe_copy_database: ServiceDatabase,
 ) -> None:
-    database = service_database
+    database = recipe_copy_database
     destination_ingredient_id, destination_version_id = uuid4(), uuid4()
     destination_tag_id = uuid4()
     with database.sync_engine.begin() as connection:
@@ -66,7 +79,7 @@ def test_copy_current_recipe_to_destination_admin(
             )
         )
         connection.execute(
-        insert(IngredientVersion).values(
+            insert(IngredientVersion).values(
                 id=destination_version_id,
                 organization_id=database.other_organization_id,
                 ingredient_id=destination_ingredient_id,
@@ -94,20 +107,22 @@ def test_copy_current_recipe_to_destination_admin(
         preferred_display_unit_mappings={database.grams_id: database.grams_id},
         client_wall_time=datetime.now(UTC),
     )
-    result = asyncio.run(
-        copy_recipe_to_organization(database.sessions, context(database), command)
-    )
+    result = asyncio.run(copy_recipe_to_organization(database.sessions, context(database), command))
     assert result.replayed is False
     with database.sync_engine.connect() as connection:
         assert (
             connection.scalar(select(Recipe.id).where(Recipe.id == destination_recipe_id))
             == destination_recipe_id
         )
-        copied_line = connection.execute(
-            select(RecipeVersionIngredientLine.ingredient_version_id).where(
-                RecipeVersionIngredientLine.recipe_version_id == destination_recipe_version_id
+        copied_line = (
+            connection.execute(
+                select(RecipeVersionIngredientLine.ingredient_version_id).where(
+                    RecipeVersionIngredientLine.recipe_version_id == destination_recipe_version_id
+                )
             )
-        ).scalars().all()
+            .scalars()
+            .all()
+        )
         assert copied_line == [destination_version_id, destination_version_id]
     replay = asyncio.run(copy_recipe_to_organization(database.sessions, context(database), command))
     assert replay.replayed is True
@@ -125,9 +140,9 @@ def test_copy_current_recipe_to_destination_admin(
 
 
 def test_same_organization_rejection_is_retained(
-    service_database: ServiceDatabase,
+    recipe_copy_database: ServiceDatabase,
 ) -> None:
-    database = service_database
+    database = recipe_copy_database
     with database.sync_engine.begin() as connection:
         connection.execute(
             update(OrganizationMembership)
@@ -161,9 +176,9 @@ def test_same_organization_rejection_is_retained(
 
 
 def test_stale_source_current_version_rejects_without_target_graph(
-    service_database: ServiceDatabase,
+    recipe_copy_database: ServiceDatabase,
 ) -> None:
-    database = service_database
+    database = recipe_copy_database
     source = asyncio.run(
         create_recipe(database.sessions, context(database), recipe_command(database))
     )
@@ -238,27 +253,36 @@ def test_stale_source_current_version_rejects_without_target_graph(
             )
             is None
         )
-        assert connection.scalar(
-            select(RecipeVersionIngredientLine.id).where(
-                RecipeVersionIngredientLine.recipe_version_id == destination_version_id
+        assert (
+            connection.scalar(
+                select(RecipeVersionIngredientLine.id).where(
+                    RecipeVersionIngredientLine.recipe_version_id == destination_version_id
+                )
             )
-        ) is None
-        assert connection.scalar(
-            select(RecipeVersionTag.recipe_version_id).where(
-                RecipeVersionTag.recipe_version_id == destination_version_id
+            is None
+        )
+        assert (
+            connection.scalar(
+                select(RecipeVersionTag.recipe_version_id).where(
+                    RecipeVersionTag.recipe_version_id == destination_version_id
+                )
             )
-        ) is None
-        assert connection.scalar(
-            select(OrganizationChange.sequence).where(
-                OrganizationChange.mutation_id == command.mutation_id
+            is None
+        )
+        assert (
+            connection.scalar(
+                select(OrganizationChange.sequence).where(
+                    OrganizationChange.mutation_id == command.mutation_id
+                )
             )
-        ) is None
+            is None
+        )
 
 
 def test_missing_mapping_rejects_replays_without_target_rows(
-    service_database: ServiceDatabase,
+    recipe_copy_database: ServiceDatabase,
 ) -> None:
-    database = service_database
+    database = recipe_copy_database
     source = asyncio.run(
         create_recipe(database.sessions, context(database), recipe_command(database))
     )
@@ -293,9 +317,7 @@ def test_missing_mapping_rejects_replays_without_target_rows(
     assert replay.value.code == "validation_failed"
     with database.sync_engine.connect() as connection:
         assert (
-            connection.scalar(
-                select(Recipe.id).where(Recipe.id == command.destination_recipe_id)
-            )
+            connection.scalar(select(Recipe.id).where(Recipe.id == command.destination_recipe_id))
             is None
         )
         assert (
@@ -306,18 +328,27 @@ def test_missing_mapping_rejects_replays_without_target_rows(
             )
             is None
         )
-        assert connection.scalar(
-            select(RecipeVersionIngredientLine.id).where(
-                RecipeVersionIngredientLine.recipe_id == command.destination_recipe_id
+        assert (
+            connection.scalar(
+                select(RecipeVersionIngredientLine.id).where(
+                    RecipeVersionIngredientLine.recipe_id == command.destination_recipe_id
+                )
             )
-        ) is None
-        assert connection.scalar(
-            select(RecipeVersionTag.recipe_version_id).where(
-                RecipeVersionTag.recipe_version_id == command.destination_recipe_version_id
+            is None
+        )
+        assert (
+            connection.scalar(
+                select(RecipeVersionTag.recipe_version_id).where(
+                    RecipeVersionTag.recipe_version_id == command.destination_recipe_version_id
+                )
             )
-        ) is None
-        assert connection.scalar(
-            select(OrganizationChange.sequence).where(
-                OrganizationChange.mutation_id == command.mutation_id
+            is None
+        )
+        assert (
+            connection.scalar(
+                select(OrganizationChange.sequence).where(
+                    OrganizationChange.mutation_id == command.mutation_id
+                )
             )
-        ) is None
+            is None
+        )

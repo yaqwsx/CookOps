@@ -1,8 +1,192 @@
 import { appendOutboxCommand, localDb } from "./local-db";
 import { readEventPlanner } from "./planner-projections";
+import { timestampNanoseconds } from "./timestamp";
 
 const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const decimal = /^(?:0|[1-9][0-9]*)(?:\.[0-9]+)?$/;
+const normalizeNote = (value: string) =>
+  value.normalize("NFC").replace(/\r\n?/g, "\n");
+const validNote = (value: unknown): value is string | null =>
+  value === null ||
+  (typeof value === "string" &&
+    !value.includes("\0") &&
+    !/[\uD800-\uDFFF]/.test(value) &&
+    [...value].length <= 4000);
+
+export async function queueScheduledRecipeNote(
+  userId: string,
+  organizationId: string,
+  input: { scheduledRecipeId: string; eventId: string; note: string | null },
+): Promise<void> {
+  const note =
+    typeof input.note === "string" ? normalizeNote(input.note) : input.note;
+  if (
+    ![input.scheduledRecipeId, input.eventId].every((id) => uuid.test(id)) ||
+    !validNote(note)
+  )
+    throw new Error("selection");
+  const mutationId = crypto.randomUUID();
+  const actionAt = new Date().toISOString();
+  await localDb.transaction(
+    "rw",
+    localDb.canonicalRecords,
+    localDb.optimisticOverlays,
+    localDb.outbox,
+    async () => {
+      const canonicalEvent = await localDb.canonicalRecords.get([
+        userId,
+        organizationId,
+        "event",
+        input.eventId,
+      ]);
+      const canonicalScheduled = await localDb.canonicalRecords.get([
+        userId,
+        organizationId,
+        "scheduled_recipe",
+        input.scheduledRecipeId,
+      ]);
+      if (
+        canonicalEvent?.lifecycle !== "active" ||
+        canonicalEvent.fields.lifecycle !== "active" ||
+        canonicalScheduled?.lifecycle !== "active"
+      )
+        throw new Error("selection");
+      const event =
+        (await localDb.optimisticOverlays.get([
+          userId,
+          organizationId,
+          "event",
+          input.eventId,
+        ])) ?? canonicalEvent;
+      const scheduled =
+        (await localDb.optimisticOverlays.get([
+          userId,
+          organizationId,
+          "scheduled_recipe",
+          input.scheduledRecipeId,
+        ])) ?? canonicalScheduled;
+      if (
+        event.fields.lifecycle !== "active" ||
+        scheduled.lifecycle !== "active" ||
+        scheduled.fields.event_id !== input.eventId
+      )
+        throw new Error("selection");
+      await localDb.optimisticOverlays.put({
+        ...scheduled,
+        fields: { ...scheduled.fields, note },
+        fieldClocks: {
+          ...scheduled.fieldClocks,
+          note: { mutationId, actionAt },
+        },
+        updatedAt: actionAt,
+      });
+      await appendOutboxCommand({
+        id: mutationId,
+        userId,
+        organizationId,
+        commandType: "scheduled_recipe.note",
+        payload: {
+          scheduled_recipe_id: input.scheduledRecipeId,
+          event_id: input.eventId,
+          note,
+        },
+        actionAt,
+        createdAt: actionAt,
+        state: "pending",
+      });
+    },
+  );
+}
+
+export async function replayScheduledRecipeNote(
+  userId: string,
+  organizationId: string,
+  command: { id: string; actionAt: string; payload: Record<string, unknown> },
+): Promise<void> {
+  const p = command.payload;
+  if (
+    !p ||
+    typeof p !== "object" ||
+    Array.isArray(p) ||
+    Object.keys(p).length !== 3 ||
+    typeof p.scheduled_recipe_id !== "string" ||
+    typeof p.event_id !== "string" ||
+    !uuid.test(command.id) ||
+    !uuid.test(p.scheduled_recipe_id) ||
+    !uuid.test(p.event_id) ||
+    timestampNanoseconds(command.actionAt) === undefined ||
+    !validNote(p.note) ||
+    (typeof p.note === "string" && normalizeNote(p.note) !== p.note)
+  )
+    return;
+  const canonicalEvent = await localDb.canonicalRecords.get([
+    userId,
+    organizationId,
+    "event",
+    p.event_id,
+  ]);
+  const canonicalScheduled = await localDb.canonicalRecords.get([
+    userId,
+    organizationId,
+    "scheduled_recipe",
+    p.scheduled_recipe_id,
+  ]);
+  if (
+    canonicalEvent?.lifecycle === "retired" ||
+    canonicalScheduled?.lifecycle === "retired"
+  )
+    return;
+  const event =
+    (await localDb.optimisticOverlays.get([
+      userId,
+      organizationId,
+      "event",
+      p.event_id,
+    ])) ?? canonicalEvent;
+  const scheduled =
+    (await localDb.optimisticOverlays.get([
+      userId,
+      organizationId,
+      "scheduled_recipe",
+      p.scheduled_recipe_id,
+    ])) ?? canonicalScheduled;
+  if (
+    event?.lifecycle !== "active" ||
+    event.fields.lifecycle !== "active" ||
+    scheduled?.lifecycle !== "active" ||
+    scheduled.fields.lifecycle === "retired" ||
+    scheduled.fields.event_id !== p.event_id
+  )
+    return;
+  const clock = scheduled.fieldClocks.note;
+  if (clock !== undefined) {
+    if (!clock || typeof clock !== "object" || Array.isArray(clock)) return;
+    const c = clock as Record<string, unknown>;
+    const at =
+      typeof c.actionAt === "string" ? c.actionAt : c.winning_client_wall_time;
+    const id =
+      typeof c.mutationId === "string" ? c.mutationId : c.winning_mutation_id;
+    const incoming = timestampNanoseconds(command.actionAt),
+      existing = typeof at === "string" ? timestampNanoseconds(at) : undefined;
+    if (
+      typeof id !== "string" ||
+      incoming === undefined ||
+      existing === undefined ||
+      incoming < existing ||
+      (incoming === existing && command.id <= id)
+    )
+      return;
+  }
+  await localDb.optimisticOverlays.put({
+    ...scheduled,
+    fields: { ...scheduled.fields, note: p.note },
+    fieldClocks: {
+      ...scheduled.fieldClocks,
+      note: { mutationId: command.id, actionAt: command.actionAt },
+    },
+    updatedAt: command.actionAt,
+  });
+}
 
 export type ScheduleRecipeInput = {
   eventId: string;
@@ -16,7 +200,9 @@ export type MoveScheduledRecipeInput = {
   eventId: string;
   eventDayId: string;
   eventMealRoleId: string;
-  positionKey: string;
+  positionKey?: string;
+  placement?: "before" | "after" | "start" | "end";
+  targetScheduledRecipeId?: string;
 };
 
 export type ScheduledRecipeCatalogUpdateInput = {
@@ -32,70 +218,279 @@ export async function queueScheduledRecipeCatalogUpdate(
   organizationId: string,
   input: ScheduledRecipeCatalogUpdateInput,
 ): Promise<void> {
-  if (![input.scheduledRecipeId, input.eventId, input.expectedRecipeVersionId, input.targetRecipeVersionId].every((id) => uuid.test(id)) || typeof input.preserveOverrides !== "boolean") throw new Error("selection");
-  const event = await localDb.canonicalRecords.get([userId, organizationId, "event", input.eventId]);
-  const scheduled = await localDb.canonicalRecords.get([userId, organizationId, "scheduled_recipe", input.scheduledRecipeId]);
-  if (event?.lifecycle !== "active" || event.fields.lifecycle !== "active" || !scheduled || scheduled.lifecycle !== "active" || scheduled.fields.event_id !== input.eventId || scheduled.fields.recipe_version_id !== input.expectedRecipeVersionId) throw new Error("stale");
-  const actionAt = new Date().toISOString();
-  await appendOutboxCommand({ id: crypto.randomUUID(), userId, organizationId, commandType: "scheduled_recipe.catalog_update", payload: { scheduled_recipe_id: input.scheduledRecipeId, event_id: input.eventId, expected_recipe_version_id: input.expectedRecipeVersionId, target_recipe_version_id: input.targetRecipeVersionId, preserve_overrides: input.preserveOverrides }, actionAt, createdAt: actionAt, state: "pending" });
-}
-
-export async function replayScheduledRecipeCatalogUpdate(userId: string, organizationId: string, command: { id: string; actionAt: string; payload: Record<string, unknown> }): Promise<void> {
-  const fail = async (reason: string) => { await localDb.outbox.update(command.id, { state: "failed", failureReason: reason }); };
-  const p = command.payload;
-  if (Object.keys(p).length !== 5 || typeof p.scheduled_recipe_id !== "string" || typeof p.event_id !== "string" || typeof p.expected_recipe_version_id !== "string" || typeof p.target_recipe_version_id !== "string" || typeof p.preserve_overrides !== "boolean" || ![p.scheduled_recipe_id, p.event_id, p.expected_recipe_version_id, p.target_recipe_version_id].every((id) => uuid.test(id)) || !uuid.test(command.id) || !Number.isFinite(Date.parse(command.actionAt))) return fail("invalid_catalog_update_payload");
-  const [event, scheduled, target] = await Promise.all([
-    localDb.canonicalRecords.get([userId, organizationId, "event", p.event_id]),
-    localDb.canonicalRecords.get([userId, organizationId, "scheduled_recipe", p.scheduled_recipe_id]),
-    localDb.canonicalRecords.get([userId, organizationId, "recipe_version", p.target_recipe_version_id]),
+  if (
+    ![
+      input.scheduledRecipeId,
+      input.eventId,
+      input.expectedRecipeVersionId,
+      input.targetRecipeVersionId,
+    ].every((id) => uuid.test(id)) ||
+    typeof input.preserveOverrides !== "boolean"
+  )
+    throw new Error("selection");
+  const event = await localDb.canonicalRecords.get([
+    userId,
+    organizationId,
+    "event",
+    input.eventId,
   ]);
-  if (event?.lifecycle !== "active" || event.fields.lifecycle !== "active" || scheduled?.lifecycle !== "active" || scheduled.fields.event_id !== p.event_id || scheduled.fields.recipe_version_id !== p.expected_recipe_version_id || target?.immutable !== true || target.fields.organization_id !== organizationId || target.fields.recipe_id !== scheduled.fields.recipe_id) return fail("stale_catalog_update_precondition");
-  // Catalog updates never mutate the local canonical pointer before server acceptance.
-}
-
-export async function queueScheduledRecipeLifecycle(userId: string, organizationId: string, input: { scheduledRecipeId: string; eventId: string; operation: "retire" | "restore" }) {
-  if (![input.scheduledRecipeId, input.eventId].every((id) => uuid.test(id))) throw new Error("selection");
-  const id = crypto.randomUUID();
+  const scheduled = await localDb.canonicalRecords.get([
+    userId,
+    organizationId,
+    "scheduled_recipe",
+    input.scheduledRecipeId,
+  ]);
+  if (
+    event?.lifecycle !== "active" ||
+    event.fields.lifecycle !== "active" ||
+    !scheduled ||
+    scheduled.lifecycle !== "active" ||
+    scheduled.fields.event_id !== input.eventId ||
+    scheduled.fields.recipe_version_id !== input.expectedRecipeVersionId
+  )
+    throw new Error("stale");
   const actionAt = new Date().toISOString();
-  await localDb.transaction("rw", localDb.canonicalRecords, localDb.optimisticOverlays, localDb.outbox, async () => {
-    await applyLifecycle(userId, organizationId, input, id, actionAt);
-    await appendOutboxCommand({ id, userId, organizationId, commandType: "scheduled_recipe.lifecycle", payload: { scheduled_recipe_id: input.scheduledRecipeId, event_id: input.eventId, operation: input.operation }, actionAt, createdAt: actionAt, state: "pending" });
+  await appendOutboxCommand({
+    id: crypto.randomUUID(),
+    userId,
+    organizationId,
+    commandType: "scheduled_recipe.catalog_update",
+    payload: {
+      scheduled_recipe_id: input.scheduledRecipeId,
+      event_id: input.eventId,
+      expected_recipe_version_id: input.expectedRecipeVersionId,
+      target_recipe_version_id: input.targetRecipeVersionId,
+      preserve_overrides: input.preserveOverrides,
+    },
+    actionAt,
+    createdAt: actionAt,
+    state: "pending",
   });
 }
 
-async function applyLifecycle(userId: string, organizationId: string, input: { scheduledRecipeId: string; eventId: string; operation: "retire" | "restore" }, id: string, actionAt: string) {
-  const [canonicalEvent, canonical] = await Promise.all([
-    localDb.canonicalRecords.get([userId, organizationId, "event", input.eventId]),
-    localDb.canonicalRecords.get([userId, organizationId, "scheduled_recipe", input.scheduledRecipeId]),
+export async function replayScheduledRecipeCatalogUpdate(
+  userId: string,
+  organizationId: string,
+  command: { id: string; actionAt: string; payload: Record<string, unknown> },
+): Promise<void> {
+  const fail = async (reason: string) => {
+    await localDb.outbox.update(command.id, {
+      state: "failed",
+      failureReason: reason,
+    });
+  };
+  const p = command.payload;
+  if (
+    Object.keys(p).length !== 5 ||
+    typeof p.scheduled_recipe_id !== "string" ||
+    typeof p.event_id !== "string" ||
+    typeof p.expected_recipe_version_id !== "string" ||
+    typeof p.target_recipe_version_id !== "string" ||
+    typeof p.preserve_overrides !== "boolean" ||
+    ![
+      p.scheduled_recipe_id,
+      p.event_id,
+      p.expected_recipe_version_id,
+      p.target_recipe_version_id,
+    ].every((id) => uuid.test(id)) ||
+    !uuid.test(command.id) ||
+    !Number.isFinite(Date.parse(command.actionAt))
+  )
+    return fail("invalid_catalog_update_payload");
+  const [event, scheduled, target] = await Promise.all([
+    localDb.canonicalRecords.get([userId, organizationId, "event", p.event_id]),
+    localDb.canonicalRecords.get([
+      userId,
+      organizationId,
+      "scheduled_recipe",
+      p.scheduled_recipe_id,
+    ]),
+    localDb.canonicalRecords.get([
+      userId,
+      organizationId,
+      "recipe_version",
+      p.target_recipe_version_id,
+    ]),
   ]);
-  const event = (await localDb.optimisticOverlays.get([userId, organizationId, "event", input.eventId])) ?? canonicalEvent;
-  const scheduled = (await localDb.optimisticOverlays.get([userId, organizationId, "scheduled_recipe", input.scheduledRecipeId])) ?? canonical;
-  if (canonicalEvent?.lifecycle === "retired" || event?.lifecycle !== "active" || event.fields.lifecycle !== "active" || !scheduled || scheduled.fields.event_id !== input.eventId || scheduled.lifecycle !== (input.operation === "retire" ? "active" : "retired")) throw new Error("selection");
-  const clock = scheduled.fieldClocks.lifecycle;
-  if (clock !== undefined && clock !== null) {
-    if (typeof clock !== "object" || Array.isArray(clock)) throw new Error("selection");
-    const value = clock as Record<string, unknown>;
-    const at = typeof value.actionAt === "string" ? value.actionAt : value.winning_client_wall_time;
-    const mutationId = typeof value.mutationId === "string" ? value.mutationId : value.winning_mutation_id;
-    if (typeof at !== "string" || typeof mutationId !== "string" || !Number.isFinite(Date.parse(at)) || Date.parse(actionAt) < Date.parse(at) || (Date.parse(actionAt) === Date.parse(at) && id <= mutationId)) return;
-  }
-  await localDb.optimisticOverlays.put({ ...scheduled, lifecycle: input.operation === "retire" ? "retired" : "active", fields: { ...scheduled.fields, retired_at: input.operation === "retire" ? actionAt : null }, fieldClocks: { ...scheduled.fieldClocks, lifecycle: { mutationId: id, actionAt } }, updatedAt: actionAt });
+  if (
+    event?.lifecycle !== "active" ||
+    event.fields.lifecycle !== "active" ||
+    scheduled?.lifecycle !== "active" ||
+    scheduled.fields.event_id !== p.event_id ||
+    scheduled.fields.recipe_version_id !== p.expected_recipe_version_id ||
+    target?.immutable !== true ||
+    target.fields.organization_id !== organizationId ||
+    target.fields.recipe_id !== scheduled.fields.recipe_id
+  )
+    return fail("stale_catalog_update_precondition");
+  // Catalog updates never mutate the local canonical pointer before server acceptance.
 }
 
-export async function replayScheduledRecipeLifecycle(userId: string, organizationId: string, command: { id: string; actionAt: string; payload: Record<string, unknown> }) {
+export async function queueScheduledRecipeLifecycle(
+  userId: string,
+  organizationId: string,
+  input: {
+    scheduledRecipeId: string;
+    eventId: string;
+    operation: "retire" | "restore";
+  },
+) {
+  if (![input.scheduledRecipeId, input.eventId].every((id) => uuid.test(id)))
+    throw new Error("selection");
+  const id = crypto.randomUUID();
+  const actionAt = new Date().toISOString();
+  await localDb.transaction(
+    "rw",
+    localDb.canonicalRecords,
+    localDb.optimisticOverlays,
+    localDb.outbox,
+    async () => {
+      await applyLifecycle(userId, organizationId, input, id, actionAt);
+      await appendOutboxCommand({
+        id,
+        userId,
+        organizationId,
+        commandType: "scheduled_recipe.lifecycle",
+        payload: {
+          scheduled_recipe_id: input.scheduledRecipeId,
+          event_id: input.eventId,
+          operation: input.operation,
+        },
+        actionAt,
+        createdAt: actionAt,
+        state: "pending",
+      });
+    },
+  );
+}
+
+async function applyLifecycle(
+  userId: string,
+  organizationId: string,
+  input: {
+    scheduledRecipeId: string;
+    eventId: string;
+    operation: "retire" | "restore";
+  },
+  id: string,
+  actionAt: string,
+) {
+  const [canonicalEvent, canonical] = await Promise.all([
+    localDb.canonicalRecords.get([
+      userId,
+      organizationId,
+      "event",
+      input.eventId,
+    ]),
+    localDb.canonicalRecords.get([
+      userId,
+      organizationId,
+      "scheduled_recipe",
+      input.scheduledRecipeId,
+    ]),
+  ]);
+  const event =
+    (await localDb.optimisticOverlays.get([
+      userId,
+      organizationId,
+      "event",
+      input.eventId,
+    ])) ?? canonicalEvent;
+  const scheduled =
+    (await localDb.optimisticOverlays.get([
+      userId,
+      organizationId,
+      "scheduled_recipe",
+      input.scheduledRecipeId,
+    ])) ?? canonical;
+  if (
+    canonicalEvent?.lifecycle === "retired" ||
+    event?.lifecycle !== "active" ||
+    event.fields.lifecycle !== "active" ||
+    !scheduled ||
+    scheduled.fields.event_id !== input.eventId ||
+    scheduled.lifecycle !==
+      (input.operation === "retire" ? "active" : "retired")
+  )
+    throw new Error("selection");
+  const clock = scheduled.fieldClocks.lifecycle;
+  if (clock !== undefined && clock !== null) {
+    if (typeof clock !== "object" || Array.isArray(clock))
+      throw new Error("selection");
+    const value = clock as Record<string, unknown>;
+    const at =
+      typeof value.actionAt === "string"
+        ? value.actionAt
+        : value.winning_client_wall_time;
+    const mutationId =
+      typeof value.mutationId === "string"
+        ? value.mutationId
+        : value.winning_mutation_id;
+    if (
+      typeof at !== "string" ||
+      typeof mutationId !== "string" ||
+      !Number.isFinite(Date.parse(at)) ||
+      Date.parse(actionAt) < Date.parse(at) ||
+      (Date.parse(actionAt) === Date.parse(at) && id <= mutationId)
+    )
+      return;
+  }
+  await localDb.optimisticOverlays.put({
+    ...scheduled,
+    lifecycle: input.operation === "retire" ? "retired" : "active",
+    fields: {
+      ...scheduled.fields,
+      retired_at: input.operation === "retire" ? actionAt : null,
+    },
+    fieldClocks: {
+      ...scheduled.fieldClocks,
+      lifecycle: { mutationId: id, actionAt },
+    },
+    updatedAt: actionAt,
+  });
+}
+
+export async function replayScheduledRecipeLifecycle(
+  userId: string,
+  organizationId: string,
+  command: { id: string; actionAt: string; payload: Record<string, unknown> },
+) {
   const payload = command.payload;
-  if (Object.keys(payload).length !== 3 || typeof payload.scheduled_recipe_id !== "string" || typeof payload.event_id !== "string" || (payload.operation !== "retire" && payload.operation !== "restore") || !uuid.test(command.id) || !Number.isFinite(Date.parse(command.actionAt))) return;
-  await applyLifecycle(userId, organizationId, { scheduledRecipeId: payload.scheduled_recipe_id, eventId: payload.event_id, operation: payload.operation }, command.id, command.actionAt);
+  if (
+    Object.keys(payload).length !== 3 ||
+    typeof payload.scheduled_recipe_id !== "string" ||
+    typeof payload.event_id !== "string" ||
+    (payload.operation !== "retire" && payload.operation !== "restore") ||
+    !uuid.test(command.id) ||
+    !Number.isFinite(Date.parse(command.actionAt))
+  )
+    return;
+  await applyLifecycle(
+    userId,
+    organizationId,
+    {
+      scheduledRecipeId: payload.scheduled_recipe_id,
+      eventId: payload.event_id,
+      operation: payload.operation,
+    },
+    command.id,
+    command.actionAt,
+  );
 }
 
 export async function queueScheduledRecipeAttendance(
   userId: string,
   organizationId: string,
-  input: { scheduledRecipeId: string; eventId: string; dinerCount: number | null },
+  input: {
+    scheduledRecipeId: string;
+    eventId: string;
+    dinerCount: number | null;
+  },
 ): Promise<void> {
   if (
     ![input.scheduledRecipeId, input.eventId].every((id) => uuid.test(id)) ||
-    (input.dinerCount !== null && (!Number.isSafeInteger(input.dinerCount) || input.dinerCount < 0))
+    (input.dinerCount !== null &&
+      (!Number.isSafeInteger(input.dinerCount) || input.dinerCount < 0))
   )
     throw new Error("selection");
   const actionAt = new Date().toISOString();
@@ -106,19 +501,79 @@ export async function queueScheduledRecipeAttendance(
     operation: input.dinerCount === null ? "follow_event" : "set_manual",
     diner_count: input.dinerCount,
   };
-  await localDb.transaction("rw", localDb.canonicalRecords, localDb.optimisticOverlays, localDb.outbox, async () => {
-    const canonicalEvent = await localDb.canonicalRecords.get([userId, organizationId, "event", input.eventId]);
-    const canonicalScheduled = await localDb.canonicalRecords.get([userId, organizationId, "scheduled_recipe", input.scheduledRecipeId]);
-    if (canonicalEvent?.lifecycle === "retired" || canonicalScheduled?.lifecycle === "retired") throw new Error("selection");
-    const event = (await localDb.optimisticOverlays.get([userId, organizationId, "event", input.eventId])) ?? canonicalEvent;
-    const scheduled = (await localDb.optimisticOverlays.get([userId, organizationId, "scheduled_recipe", input.scheduledRecipeId])) ?? canonicalScheduled;
-    if (event?.lifecycle !== "active" || event.fields.lifecycle !== "active" || scheduled?.lifecycle !== "active" || scheduled.fields.event_id !== input.eventId)
-      throw new Error("selection");
-    const dinerCount = input.dinerCount ?? event.fields.base_expected_attendance;
-    if (!Number.isSafeInteger(dinerCount)) throw new Error("selection");
-    await localDb.optimisticOverlays.put({ ...scheduled, fields: { ...scheduled.fields, diner_count: dinerCount, attendance_mode: input.dinerCount === null ? "follows_event" : "manual" }, fieldClocks: { ...scheduled.fieldClocks, attendance: { mutationId, actionAt } }, updatedAt: actionAt });
-    await appendOutboxCommand({ id: mutationId, userId, organizationId, commandType: "scheduled_recipe.attendance", payload, actionAt, createdAt: actionAt, state: "pending" });
-  });
+  await localDb.transaction(
+    "rw",
+    localDb.canonicalRecords,
+    localDb.optimisticOverlays,
+    localDb.outbox,
+    async () => {
+      const canonicalEvent = await localDb.canonicalRecords.get([
+        userId,
+        organizationId,
+        "event",
+        input.eventId,
+      ]);
+      const canonicalScheduled = await localDb.canonicalRecords.get([
+        userId,
+        organizationId,
+        "scheduled_recipe",
+        input.scheduledRecipeId,
+      ]);
+      if (
+        canonicalEvent?.lifecycle === "retired" ||
+        canonicalScheduled?.lifecycle === "retired"
+      )
+        throw new Error("selection");
+      const event =
+        (await localDb.optimisticOverlays.get([
+          userId,
+          organizationId,
+          "event",
+          input.eventId,
+        ])) ?? canonicalEvent;
+      const scheduled =
+        (await localDb.optimisticOverlays.get([
+          userId,
+          organizationId,
+          "scheduled_recipe",
+          input.scheduledRecipeId,
+        ])) ?? canonicalScheduled;
+      if (
+        event?.lifecycle !== "active" ||
+        event.fields.lifecycle !== "active" ||
+        scheduled?.lifecycle !== "active" ||
+        scheduled.fields.event_id !== input.eventId
+      )
+        throw new Error("selection");
+      const dinerCount =
+        input.dinerCount ?? event.fields.base_expected_attendance;
+      if (!Number.isSafeInteger(dinerCount)) throw new Error("selection");
+      await localDb.optimisticOverlays.put({
+        ...scheduled,
+        fields: {
+          ...scheduled.fields,
+          diner_count: dinerCount,
+          attendance_mode:
+            input.dinerCount === null ? "follows_event" : "manual",
+        },
+        fieldClocks: {
+          ...scheduled.fieldClocks,
+          attendance: { mutationId, actionAt },
+        },
+        updatedAt: actionAt,
+      });
+      await appendOutboxCommand({
+        id: mutationId,
+        userId,
+        organizationId,
+        commandType: "scheduled_recipe.attendance",
+        payload,
+        actionAt,
+        createdAt: actionAt,
+        state: "pending",
+      });
+    },
+  );
 }
 
 export async function queueScheduledRecipeContext(
@@ -320,40 +775,103 @@ export async function replayScheduledRecipeAttendance(
   const payload = command.payload;
   if (
     Object.keys(payload).length !== 4 ||
-    !["scheduled_recipe_id", "event_id", "operation", "diner_count"].every((key) => key in payload) ||
+    !["scheduled_recipe_id", "event_id", "operation", "diner_count"].every(
+      (key) => key in payload,
+    ) ||
     typeof payload.scheduled_recipe_id !== "string" ||
     typeof payload.event_id !== "string" ||
     !uuid.test(payload.scheduled_recipe_id) ||
     !uuid.test(payload.event_id) ||
-    !((payload.operation === "set_manual" && Number.isSafeInteger(payload.diner_count) && (payload.diner_count as number) >= 0) || (payload.operation === "follow_event" && payload.diner_count === null))
-  ) return;
-  const canonicalEvent = await localDb.canonicalRecords.get([userId, organizationId, "event", payload.event_id]);
-  const canonical = await localDb.canonicalRecords.get([userId, organizationId, "scheduled_recipe", payload.scheduled_recipe_id]);
-  if (canonicalEvent?.lifecycle === "retired" || canonical?.lifecycle === "retired") return;
-  const event = (await localDb.optimisticOverlays.get([userId, organizationId, "event", payload.event_id])) ?? canonicalEvent;
-  const scheduled = (await localDb.optimisticOverlays.get([userId, organizationId, "scheduled_recipe", payload.scheduled_recipe_id])) ?? canonical;
-  if (event?.lifecycle !== "active" || event.fields.lifecycle !== "active" || scheduled?.lifecycle !== "active" || scheduled.fields.event_id !== payload.event_id) return;
+    !(
+      (payload.operation === "set_manual" &&
+        Number.isSafeInteger(payload.diner_count) &&
+        (payload.diner_count as number) >= 0) ||
+      (payload.operation === "follow_event" && payload.diner_count === null)
+    )
+  )
+    return;
+  const canonicalEvent = await localDb.canonicalRecords.get([
+    userId,
+    organizationId,
+    "event",
+    payload.event_id,
+  ]);
+  const canonical = await localDb.canonicalRecords.get([
+    userId,
+    organizationId,
+    "scheduled_recipe",
+    payload.scheduled_recipe_id,
+  ]);
+  if (
+    canonicalEvent?.lifecycle === "retired" ||
+    canonical?.lifecycle === "retired"
+  )
+    return;
+  const event =
+    (await localDb.optimisticOverlays.get([
+      userId,
+      organizationId,
+      "event",
+      payload.event_id,
+    ])) ?? canonicalEvent;
+  const scheduled =
+    (await localDb.optimisticOverlays.get([
+      userId,
+      organizationId,
+      "scheduled_recipe",
+      payload.scheduled_recipe_id,
+    ])) ?? canonical;
+  if (
+    event?.lifecycle !== "active" ||
+    event.fields.lifecycle !== "active" ||
+    scheduled?.lifecycle !== "active" ||
+    scheduled.fields.event_id !== payload.event_id
+  )
+    return;
   const clock = scheduled.fieldClocks.attendance;
   if (clock !== undefined) {
-    if (clock === null || typeof clock !== "object" || Array.isArray(clock)) return;
+    if (clock === null || typeof clock !== "object" || Array.isArray(clock))
+      return;
     const attendanceClock = clock as Record<string, unknown>;
-    const currentAt = typeof attendanceClock.actionAt === "string"
-      ? attendanceClock.actionAt
-      : attendanceClock.winning_client_wall_time;
-    const currentId = typeof attendanceClock.mutationId === "string"
-      ? attendanceClock.mutationId
-      : attendanceClock.winning_mutation_id;
+    const currentAt =
+      typeof attendanceClock.actionAt === "string"
+        ? attendanceClock.actionAt
+        : attendanceClock.winning_client_wall_time;
+    const currentId =
+      typeof attendanceClock.mutationId === "string"
+        ? attendanceClock.mutationId
+        : attendanceClock.winning_mutation_id;
     const candidateTime = Date.parse(command.actionAt);
-    const currentTime = typeof currentAt === "string" ? Date.parse(currentAt) : NaN;
+    const currentTime =
+      typeof currentAt === "string" ? Date.parse(currentAt) : NaN;
     if (
-      typeof currentId !== "string" || !Number.isFinite(candidateTime) ||
+      typeof currentId !== "string" ||
+      !Number.isFinite(candidateTime) ||
       !Number.isFinite(currentTime) ||
-      candidateTime < currentTime || (candidateTime === currentTime && command.id <= currentId)
-    ) return;
+      candidateTime < currentTime ||
+      (candidateTime === currentTime && command.id <= currentId)
+    )
+      return;
   }
-  const dinerCount = payload.operation === "follow_event" ? event.fields.base_expected_attendance : payload.diner_count;
+  const dinerCount =
+    payload.operation === "follow_event"
+      ? event.fields.base_expected_attendance
+      : payload.diner_count;
   if (!Number.isSafeInteger(dinerCount)) return;
-  await localDb.optimisticOverlays.put({ ...scheduled, fields: { ...scheduled.fields, diner_count: dinerCount, attendance_mode: payload.operation === "follow_event" ? "follows_event" : "manual" }, fieldClocks: { ...scheduled.fieldClocks, attendance: { mutationId: command.id, actionAt: command.actionAt } }, updatedAt: command.actionAt });
+  await localDb.optimisticOverlays.put({
+    ...scheduled,
+    fields: {
+      ...scheduled.fields,
+      diner_count: dinerCount,
+      attendance_mode:
+        payload.operation === "follow_event" ? "follows_event" : "manual",
+    },
+    fieldClocks: {
+      ...scheduled.fieldClocks,
+      attendance: { mutationId: command.id, actionAt: command.actionAt },
+    },
+    updatedAt: command.actionAt,
+  });
 }
 
 /** Persist an add-to-plan intent with the immediately visible scheduled card. */
@@ -433,11 +951,26 @@ export async function queueScheduledRecipeMove(
   organizationId: string,
   input: MoveScheduledRecipeInput,
 ): Promise<void> {
+  const relativePlacement = input.placement;
   if (
-    !Object.entries(input)
-      .filter(([key]) => key !== "positionKey")
-      .every(([, value]) => uuid.test(value)) ||
-    !/^[0-9A-Za-z]{1,255}$/.test(input.positionKey)
+    ![
+      input.scheduledRecipeId,
+      input.eventId,
+      input.eventDayId,
+      input.eventMealRoleId,
+    ].every((value) => uuid.test(value)) ||
+    (relativePlacement !== undefined &&
+      !["before", "after", "start", "end"].includes(relativePlacement)) ||
+    (input.positionKey !== undefined &&
+      (input.placement !== undefined ||
+        input.targetScheduledRecipeId !== undefined ||
+        !/^[0-9A-Za-z]{1,255}$/.test(input.positionKey))) ||
+    (input.positionKey === undefined &&
+      (relativePlacement === undefined ||
+        (relativePlacement === "before" || relativePlacement === "after"
+          ? !uuid.test(input.targetScheduledRecipeId ?? "") ||
+            input.targetScheduledRecipeId === input.scheduledRecipeId
+          : input.targetScheduledRecipeId !== undefined)))
   )
     throw new Error("selection");
   const actionAt = new Date().toISOString();
@@ -447,7 +980,11 @@ export async function queueScheduledRecipeMove(
     event_id: input.eventId,
     event_day_id: input.eventDayId,
     event_meal_role_id: input.eventMealRoleId,
-    position_key: input.positionKey,
+    ...(input.positionKey ? { position_key: input.positionKey } : {}),
+    ...(input.placement ? { placement: input.placement } : {}),
+    ...(input.targetScheduledRecipeId
+      ? { target_scheduled_recipe_id: input.targetScheduledRecipeId }
+      : {}),
   };
   await localDb.transaction(
     "rw",
@@ -507,15 +1044,17 @@ export async function queueScheduledRecipeMove(
         role.fields.event_id !== input.eventId
       )
         throw new Error("selection");
-      await localDb.optimisticOverlays.put({
-        ...scheduled,
-        fields: { ...scheduled.fields, ...payload },
-        fieldClocks: {
-          ...scheduled.fieldClocks,
-          placement: { mutationId, actionAt },
-        },
-        updatedAt: actionAt,
-      });
+      if (input.positionKey !== undefined) {
+        await localDb.optimisticOverlays.put({
+          ...scheduled,
+          fields: { ...scheduled.fields, ...payload },
+          fieldClocks: {
+            ...scheduled.fieldClocks,
+            placement: { mutationId, actionAt },
+          },
+          updatedAt: actionAt,
+        });
+      }
       await appendOutboxCommand({
         id: mutationId,
         userId,

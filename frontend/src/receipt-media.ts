@@ -8,6 +8,26 @@ const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const mediaTypes = new Set(["image/jpeg", "image/webp"]);
 const maximumBytes = 2_000_000;
 
+export class ReceiptImageReadabilityError extends Error {
+  readonly code = "receipt_image_readability" as const;
+
+  constructor() {
+    super("receipt image could not be compressed within the readability limit");
+    this.name = "ReceiptImageReadabilityError";
+  }
+}
+
+export function isReceiptImageReadabilityError(
+  reason: unknown,
+): reason is ReceiptImageReadabilityError {
+  return (
+    typeof reason === "object" &&
+    reason !== null &&
+    "code" in reason &&
+    reason.code === "receipt_image_readability"
+  );
+}
+
 /** Decode, orient, resize, and re-encode before the original can enter IndexedDB. */
 export async function prepareReceiptImage(file: File): Promise<Blob> {
   if (!file.type.startsWith("image/")) throw new Error("image");
@@ -20,13 +40,17 @@ export async function prepareReceiptImage(file: File): Promise<Blob> {
     const context = canvas.getContext("2d");
     if (!context) throw new Error("image");
     context.drawImage(bitmap, 0, 0, canvas.width, canvas.height);
+    let encoded = false;
     for (let quality = 0.92; quality >= 0.4; quality -= 0.1) {
       const image = await new Promise<Blob | null>((resolve) =>
         canvas.toBlob(resolve, "image/jpeg", quality),
       );
-      if (image && image.size > 0 && image.size <= maximumBytes) return image;
+      if (image && image.size > 0) {
+        encoded = true;
+        if (image.size <= maximumBytes) return image;
+      }
     }
-    throw new Error("image");
+    throw encoded ? new ReceiptImageReadabilityError() : new Error("image");
   } finally {
     bitmap.close?.();
   }

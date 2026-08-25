@@ -22,6 +22,9 @@ services:
   web:
     build: ../frontend
     ports: ["127.0.0.1:${COOKOPS_WEB_PORT:-8080}:8080"]
+    environment:
+      COOKOPS_HUMAN_AUTH_PROVIDER: google
+      COOKOPS_GOOGLE_CLIENT_ID: ${COOKOPS_GOOGLE_CLIENT_ID:?set COOKOPS_GOOGLE_CLIENT_ID}
     healthcheck:
       test: ["CMD-SHELL", "wget -q -O - http://127.0.0.1:8080/health/live | grep -qx ok"]
       interval: 10s
@@ -42,6 +45,10 @@ services:
       COOKOPS_BROWSER_SESSION_HMAC_KEY: ${COOKOPS_BROWSER_SESSION_HMAC_KEY:?set COOKOPS_BROWSER_SESSION_HMAC_KEY}
       COOKOPS_BROWSER_ORIGIN: ${COOKOPS_BROWSER_ORIGIN:?set COOKOPS_BROWSER_ORIGIN}
       COOKOPS_TRUSTED_PROXY_IPS: ${COOKOPS_TRUSTED_PROXY_IPS:?set COOKOPS_TRUSTED_PROXY_IPS}
+      COOKOPS_OAUTH_ISSUER: ${OAUTH_ISSUER:?set OAUTH_ISSUER}
+      COOKOPS_MCP_RESOURCE: ${MCP_RESOURCE:?set MCP_RESOURCE}
+      COOKOPS_OAUTH_INTROSPECTION_URL: http://oauth-server:3000/oauth/introspect
+      COOKOPS_OAUTH_RESOURCE_SERVER_SECRET: ${OAUTH_RESOURCE_SERVER_SECRET:?set OAUTH_RESOURCE_SERVER_SECRET}
       COOKOPS_OAUTH_INTERACTION_DETAILS_API_CREDENTIAL_BASE64URL: ${OAUTH_INTERACTION_DETAILS_API_CREDENTIAL_BASE64URL:?set OAUTH_INTERACTION_DETAILS_API_CREDENTIAL_BASE64URL}
       COOKOPS_OAUTH_INTERACTION_APPROVAL_API_CREDENTIAL_BASE64URL: ${OAUTH_APPROVAL_API_CREDENTIAL_BASE64URL:?set OAUTH_APPROVAL_API_CREDENTIAL_BASE64URL}
       COOKOPS_OAUTH_GRANTS_API_CREDENTIAL_BASE64URL: ${OAUTH_GRANTS_API_CREDENTIAL_BASE64URL:?set OAUTH_GRANTS_API_CREDENTIAL_BASE64URL}
@@ -72,7 +79,7 @@ services:
       - /bin/sh
       - -c
       - >-
-        exec python /operator-scripts/backup_archive.py
+        check_status=0; /usr/local/bin/cookops-check-disk-space || check_status=$$?; [ "$$check_status" -lt 2 ] || exit "$$check_status"; exec python /operator-scripts/backup_archive.py
         --database-name "$${PGDATABASE}"
         --media-root /var/lib/cookops/receipts
         --output "/var/lib/cookops/backups/$${COOKOPS_BACKUP_ARCHIVE}"
@@ -80,6 +87,8 @@ services:
         --schema-version "$${COOKOPS_SCHEMA_VERSION}"
     volumes:
       - ../scripts:/operator-scripts:ro
+      - ./check-disk-space.sh:/usr/local/bin/cookops-check-disk-space:ro
+      - postgres-data:/var/lib/postgresql:ro
       - receipt-media:/var/lib/cookops/receipts:ro
       - ${COOKOPS_BACKUP_DIR:?set COOKOPS_BACKUP_DIR}:/var/lib/cookops/backups
     environment:
@@ -91,6 +100,9 @@ services:
       COOKOPS_BACKUP_ARCHIVE: ${COOKOPS_BACKUP_ARCHIVE:?set COOKOPS_BACKUP_ARCHIVE}
       COOKOPS_APPLICATION_REVISION: ${COOKOPS_APPLICATION_REVISION:?set COOKOPS_APPLICATION_REVISION}
       COOKOPS_SCHEMA_VERSION: ${COOKOPS_SCHEMA_VERSION:?set COOKOPS_SCHEMA_VERSION}
+      COOKOPS_POSTGRES_DATA_TARGET: /var/lib/postgresql
+      COOKOPS_RECEIPT_MEDIA_TARGET: /var/lib/cookops/receipts
+      COOKOPS_BACKUP_DIR_TARGET: /var/lib/cookops/backups
     logging: *logging
 
   restore:

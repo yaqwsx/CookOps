@@ -270,8 +270,7 @@ def test_event_price_schema_parity_and_downgrade(migration_database: MigrationDa
     command.upgrade(configuration, "head")
     assert set(inspect(engine).get_table_names()) >= PRICE_TABLES
     shopping_columns = {
-        column["name"]
-        for column in inspect(engine).get_columns("shopping_contribution_snapshots")
+        column["name"] for column in inspect(engine).get_columns("shopping_contribution_snapshots")
     }
     checks = {
         check["name"]

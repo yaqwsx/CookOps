@@ -6,7 +6,9 @@ const ids = {
   section: "6ce17d2f-8365-4b1f-a80b-34d10425d51c",
 };
 
-test("edits a store-section order from the cached catalog offline", async ({ page }) => {
+test("edits a store-section order from the cached catalog offline", async ({
+  page,
+}) => {
   await page.addInitScript(() => {
     window.COOKOPS_RUNTIME_CONFIG = { authentication: { provider: "dummy" } };
   });
@@ -76,7 +78,12 @@ test("edits a store-section order from the cached catalog offline", async ({ pag
   });
 
   await page.goto(`/organizations/${ids.organization}/settings`);
-  await expect(page.getByRole("heading", { name: "Správa katalogu" })).toBeVisible();
+  await expect(
+    page.getByRole("heading", { name: "Správa katalogu" }),
+  ).toBeVisible();
+  await expect(
+    page.getByRole("listitem").filter({ hasText: "Pantry" }),
+  ).toBeVisible();
   await page.context().setOffline(true);
   await page.evaluate(() => window.dispatchEvent(new Event("offline")));
   await page.getByText("Upravit", { exact: true }).click();
@@ -86,7 +93,9 @@ test("edits a store-section order from the cached catalog offline", async ({ pag
   await expect
     .poll(() =>
       page.evaluate(
-        () => document.documentElement.scrollWidth <= document.documentElement.clientWidth,
+        () =>
+          document.documentElement.scrollWidth <=
+          document.documentElement.clientWidth,
       ),
     )
     .toBe(true);

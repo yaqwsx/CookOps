@@ -869,7 +869,12 @@ async def finalize_receipt_attachment(
                 command_kind="receipt_attachment.finalize",
                 target_identities=[
                     {"entity_kind": "receipt_attachment", "entity_id": str(attachment.id)}
-                ],
+                ]
+                + (
+                    [{"entity_kind": "receipt_attachment", "entity_id": str(replaced.id)}]
+                    if replaced
+                    else []
+                ),
                 request_hash=request_hash,
                 outcome="accepted",
                 outcome_payload={"attachment": _record(attachment)},

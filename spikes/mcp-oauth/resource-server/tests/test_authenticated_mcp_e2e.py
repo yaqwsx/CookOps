@@ -5,6 +5,7 @@ import json
 import os
 import socket
 import subprocess
+import sys
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
 from pathlib import Path
@@ -13,18 +14,27 @@ from typing import Self
 from urllib.parse import urljoin, urlsplit
 
 import httpx
-import httpx2
 import pytest
 import uvicorn
 from mcp.client.session import ClientSession
 from mcp.client.streamable_http import streamable_http_client
 from starlette.types import Receive, Scope, Send
 
-from cookops_mcp_oauth_spike import ResourceServerSettings, create_app
-
 CODE_VERIFIER = "cookops-authenticated-mcp-verifier-long-enough-for-pkce"
 RESOURCE_SERVER_CLIENT_ID = "cookops-resource-server"
 RESOURCE_SERVER_SECRET = "c" * 32
+MCP_ROOT = Path(__file__).resolve().parents[2]
+
+
+def stop_process(process: subprocess.Popen[str]) -> None:
+    if process.poll() is not None:
+        return
+    process.terminate()
+    try:
+        process.wait(5)
+    except subprocess.TimeoutExpired:
+        process.kill()
+        process.wait(5)
 
 
 def reserved_listener() -> socket.socket:
@@ -140,6 +150,63 @@ async def resource_server(
     resource_url = configuration["resource"]
     issuer = configuration["issuer"]
     assert isinstance(resource_url, str) and isinstance(issuer, str)
+    if os.environ.get("COOKOPS_BACKEND_MCP") == "1":
+        resource_port = listener.getsockname()[1]
+        listener.close()
+        database_url = os.environ["OAUTH_E2E_DATABASE_URL"].replace(
+            "postgresql://", "postgresql+psycopg://", 1
+        )
+        environment = os.environ | {
+            "COOKOPS_DATABASE_URL": database_url,
+            "COOKOPS_ENVIRONMENT": "test",
+            "COOKOPS_MCP_RESOURCE": resource_url,
+            "COOKOPS_OAUTH_ISSUER": issuer,
+            "COOKOPS_OAUTH_INTROSPECTION_URL": (
+                f"http://127.0.0.1:{private_port}/oauth/introspect"
+            ),
+            "COOKOPS_OAUTH_RESOURCE_SERVER_SECRET": "c" * 32,
+        }
+        backend = await asyncio.to_thread(
+            subprocess.Popen,
+            [
+                "uv",
+                "run",
+                "--project",
+                str(MCP_ROOT / "../../backend"),
+                "uvicorn",
+                "backend_mcp_app:app",
+                "--host",
+                "127.0.0.1",
+                "--port",
+                str(resource_port),
+            ],
+            cwd=MCP_ROOT,
+            env=environment,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+        )
+        try:
+            async with asyncio.timeout(20):
+                while True:
+                    if backend.poll() is not None:
+                        error = backend.stderr.read() if backend.stderr else ""
+                        raise RuntimeError(f"backend MCP exited early: {error}")
+                    try:
+                        with socket.create_connection(
+                            ("127.0.0.1", resource_port), 0.2
+                        ):
+                            break
+                    except OSError:
+                        await asyncio.sleep(0.05)
+            yield
+        finally:
+            stop_process(backend)
+            if backend.returncode != 0 and backend.stderr is not None:
+                print(f"Backend stderr:\n{backend.stderr.read()}", file=sys.stderr)
+        return
+    from cookops_mcp_oauth_spike import ResourceServerSettings, create_app
+
     settings = ResourceServerSettings(
         resource_url=resource_url,
         authorization_server_url=issuer,
@@ -164,6 +231,7 @@ async def resource_server(
             else primary_app
         )
         await target(scope, receive, send)
+
     server = uvicorn.Server(
         uvicorn.Config(
             app,
@@ -310,19 +378,21 @@ async def scenario(database_url: str) -> None:
                         },
                         json={},
                     )
-                    assert wrong_host.status_code == 421
-                    wrong_origin = await client.post(
-                        resource,
-                        headers={
-                            "authorization": f"Bearer {access_token}",
-                            "origin": "https://evil.example",
-                        },
-                        json={},
-                    )
+                    assert wrong_host.status_code in (400, 421)
+                    async with httpx.AsyncClient() as wrong_origin_client:
+                        wrong_origin = await wrong_origin_client.post(
+                            resource,
+                            headers={
+                                "authorization": f"Bearer {access_token}",
+                                "origin": "https://evil.example",
+                                "content-type": "application/json",
+                            },
+                            content=b"",
+                        )
                     assert wrong_origin.status_code == 403
 
                 async with (
-                    httpx2.AsyncClient(
+                    httpx.AsyncClient(
                         headers={"authorization": f"Bearer {access_token}"}
                     ) as mcp_http,
                     streamable_http_client(resource, http_client=mcp_http) as (
@@ -341,7 +411,7 @@ async def scenario(database_url: str) -> None:
                     "subject": subject,
                 }
 
-                await asyncio.sleep(1.2)
+                await asyncio.sleep(5.2)
                 async with httpx.AsyncClient() as expiry_client:
                     expired = await expiry_client.post(
                         resource,
@@ -398,11 +468,12 @@ async def scenario(database_url: str) -> None:
                     assert fresh_token_response.status_code == 200
                     fresh_access_token = fresh_token_response.json()["access_token"]
                     assert fresh_access_token and "." not in fresh_access_token
-                    fresh_valid = await refresh_client.post(
-                        resource,
-                        headers={"authorization": f"Bearer {fresh_access_token}"},
-                        json={},
-                    )
+                    async with httpx.AsyncClient() as fresh_resource_client:
+                        fresh_valid = await fresh_resource_client.post(
+                            resource,
+                            headers={"authorization": f"Bearer {fresh_access_token}"},
+                            json={"jsonrpc": "2.0", "id": 1, "method": "ping"},
+                        )
                     assert fresh_valid.status_code == 200
                     mixed_up = await refresh_client.post(
                         f"{public_origin}/other-mcp",

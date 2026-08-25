@@ -9,7 +9,12 @@ export type DevelopmentIdentity = {
   subject: string;
   display_name: string;
 };
-export type AuthorizedGrant = { handle: string; clientId: string; issuedAt?: number; expiresAt?: number };
+export type AuthorizedGrant = {
+  handle: string;
+  clientId: string;
+  issuedAt?: number;
+  expiresAt?: number;
+};
 
 export class AuthenticationRequestError extends Error {
   constructor(readonly status: number) {
@@ -41,11 +46,13 @@ export async function getCurrentIdentity(): Promise<CurrentIdentity | null> {
 export async function setCurrentIdentityLocale(
   preferred_locale: "cs" | "en",
 ): Promise<CurrentIdentity> {
-  const response = await requireSuccess(await request("/auth/session/locale", {
-    method: "PATCH",
-    headers: { "content-type": "application/json" },
-    body: JSON.stringify({ preferred_locale }),
-  }));
+  const response = await requireSuccess(
+    await request("/auth/session/locale", {
+      method: "PATCH",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ preferred_locale }),
+    }),
+  );
   return (await response.json()) as CurrentIdentity;
 }
 
@@ -93,5 +100,7 @@ export async function getAuthorizedGrants(): Promise<AuthorizedGrant[]> {
 }
 
 export async function revokeAuthorizedGrant(handle: string): Promise<void> {
-  await requireSuccess(await request(`/auth/mcp-grants/${handle}`, { method: "DELETE" }));
+  await requireSuccess(
+    await request(`/auth/mcp-grants/${handle}`, { method: "DELETE" }),
+  );
 }

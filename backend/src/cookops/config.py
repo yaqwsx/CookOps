@@ -32,6 +32,27 @@ def _validate_https_origin(value: str, setting_name: str) -> None:
         raise ValueError(f"{setting_name} must be a credential-free HTTPS origin")
 
 
+def _validate_mcp_resource(value: str) -> None:
+    try:
+        parsed = urlsplit(value)
+        port = parsed.port
+    except ValueError as error:
+        raise ValueError("MCP resource must be a canonical HTTPS URL ending in /mcp") from error
+    if (
+        any(character.isspace() for character in value)
+        or parsed.scheme != "https"
+        or not parsed.hostname
+        or parsed.username
+        or parsed.password
+        or parsed.path != "/mcp"
+        or parsed.query
+        or parsed.fragment
+        or port is None
+        and parsed.netloc.endswith(":")
+    ):
+        raise ValueError("MCP resource must be a canonical HTTPS URL ending in /mcp")
+
+
 class Environment(StrEnum):
     DEVELOPMENT = "development"
     TEST = "test"
@@ -113,16 +134,18 @@ class Settings(BaseSettings):
         if self.browser_origin is not None:
             _validate_https_origin(self.browser_origin, "browser origin")
 
-        oauth_values = (
+        mcp_values = (
             self.oauth_issuer,
             self.mcp_resource,
             self.oauth_introspection_url,
             self.oauth_resource_server_secret,
         )
-        if any(value is not None for value in oauth_values) and any(
-            not isinstance(value, str) or not value for value in oauth_values
+        if any(value is not None for value in mcp_values) and any(
+            not isinstance(value, str) or not value for value in mcp_values
         ):
             raise ValueError("MCP OAuth verification settings must be configured together")
+        if self.mcp_resource is not None:
+            _validate_mcp_resource(self.mcp_resource)
 
         if self.browser_session_hmac_key is not None:
             # Parse configured keys at configuration time rather than leaving a
@@ -191,10 +214,14 @@ class Settings(BaseSettings):
             or grants_url.fragment
         ):
             raise ValueError("OAuth grants private API URL is invalid")
-        if self.environment is Environment.PRODUCTION and self.oauth_grants_private_url != "http://oauth-server:3000/oauth/private/grants":
+        if (
+            self.environment is Environment.PRODUCTION
+            and self.oauth_grants_private_url != "http://oauth-server:3000/oauth/private/grants"
+        ):
             raise ValueError("OAuth grants private API must use the Compose oauth-server authority")
         if self.oauth_grants_api_credential_base64url is not None:
             from cookops.application.browser_sessions import decode_browser_session_hmac_key
+
             decode_browser_session_hmac_key(self.oauth_grants_api_credential_base64url)
             if self.oauth_grants_api_credential_base64url in {
                 self.oauth_interaction_details_api_credential_base64url,

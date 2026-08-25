@@ -1,5 +1,7 @@
 """Browser session consent page for validated private OAuth interaction details."""
 
+import hashlib
+import hmac
 import re
 from dataclasses import dataclass
 from html import escape
@@ -7,8 +9,9 @@ from typing import Literal
 
 from fastapi import APIRouter, HTTPException, Request, Response, status
 from fastapi.responses import HTMLResponse
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, Field
 
+from cookops.application.browser_sessions import decode_browser_session_hmac_key
 from cookops.application.oauth_interactions import OAuthInteractionApprovalService
 from cookops.config import Settings
 from cookops.oauth_interaction_client import OAuthInteractionUnavailable
@@ -22,8 +25,9 @@ class OAuthInteractionHttpServices:
 
 
 class ApprovalRequest(BaseModel):
-    model_config = ConfigDict(extra="forbid", strict=True)
+    model_config = ConfigDict(extra="forbid", populate_by_name=True, strict=True)
     decision: Literal["approve", "deny"]
+    csrf_token: str | None = Field(default=None, alias="csrfToken", min_length=64, max_length=64)
 
 
 class GrantResponse(BaseModel):
@@ -47,6 +51,17 @@ def _secret(request: Request, settings: Settings) -> str:
     return secret
 
 
+def _csrf_token(secret: str, interaction_uid: str, settings: Settings) -> str:
+    key = decode_browser_session_hmac_key(settings.resolved_browser_session_hmac_key)
+    message = (
+        b"cookops:oauth-interaction-csrf:v1\0"
+        + secret.encode("ascii")
+        + b"\0"
+        + interaction_uid.encode("ascii")
+    )
+    return hmac.new(key, message, hashlib.sha256).hexdigest()
+
+
 def create_oauth_interaction_router(settings: Settings) -> APIRouter:
     router = APIRouter(prefix="/auth/mcp-interactions", tags=["authentication"])
 
@@ -54,9 +69,10 @@ def create_oauth_interaction_router(settings: Settings) -> APIRouter:
     async def show(interaction_uid: str, request: Request) -> HTMLResponse:
         if not _UID.fullmatch(interaction_uid):
             raise HTTPException(status_code=404, detail="not found")
+        session_secret = _secret(request, settings)
         try:
             detail = await _services(request).approvals.details(
-                browser_session_secret=_secret(request, settings), interaction_uid=interaction_uid
+                browser_session_secret=session_secret, interaction_uid=interaction_uid
             )
         except OAuthInteractionUnavailable as error:
             raise HTTPException(status_code=503, detail="OAuth is unavailable") from error
@@ -66,6 +82,7 @@ def create_oauth_interaction_router(settings: Settings) -> APIRouter:
         completion_url = (
             f"{settings.oauth_interaction_origin}/oauth/interaction/{interaction_uid}/complete"
         )
+        csrf_token = _csrf_token(session_secret, interaction_uid, settings)
         page = "".join(
             [
                 "<!doctype html><title>CookOps consent</title>",
@@ -76,7 +93,7 @@ def create_oauth_interaction_router(settings: Settings) -> APIRouter:
                 "<script>async function decide(decision){",
                 f"const response=await fetch({request.url.path!r},{{",
                 "method:'POST',headers:{'content-type':'application/json'},",
-                "credentials:'same-origin',body:JSON.stringify({decision})});",
+                f"credentials:'same-origin',body:JSON.stringify({{decision,csrfToken:{csrf_token!r}}})}});",
                 f"if(response.ok)location.assign({completion_url!r});}}</script>",
             ]
         )
@@ -91,9 +108,13 @@ def create_oauth_interaction_router(settings: Settings) -> APIRouter:
             raise HTTPException(status_code=404, detail="not found")
         if request.headers.get("origin") != settings.oauth_interaction_origin:
             raise HTTPException(status_code=403, detail="forbidden")
+        session_secret = _secret(request, settings)
+        expected_token = _csrf_token(session_secret, interaction_uid, settings)
+        if body.csrf_token is None or not hmac.compare_digest(body.csrf_token, expected_token):
+            raise HTTPException(status_code=403, detail="forbidden")
         try:
             recorded = await _services(request).approvals.submit(
-                browser_session_secret=_secret(request, settings),
+                browser_session_secret=session_secret,
                 interaction_uid=interaction_uid,
                 decision=body.decision,
             )

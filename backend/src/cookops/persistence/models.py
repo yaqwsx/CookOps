@@ -634,7 +634,9 @@ class IngredientVersion(Base):
     )
 
     id: Mapped[UUID] = mapped_column(Uuid, primary_key=True)
-    organization_id: Mapped[UUID] = mapped_column(ForeignKey("organizations.id", ondelete="RESTRICT"))
+    organization_id: Mapped[UUID] = mapped_column(
+        ForeignKey("organizations.id", ondelete="RESTRICT")
+    )
     ingredient_id: Mapped[UUID] = mapped_column(Uuid)
     based_on_version_id: Mapped[UUID | None] = mapped_column(Uuid)
     name: Mapped[str] = mapped_column(String(200))
@@ -671,7 +673,9 @@ class IngredientVersionDietaryTag(Base):
 
     ingredient_version_id: Mapped[UUID] = mapped_column(Uuid, primary_key=True)
     dietary_tag_id: Mapped[UUID] = mapped_column(Uuid, primary_key=True)
-    organization_id: Mapped[UUID] = mapped_column(ForeignKey("organizations.id", ondelete="RESTRICT"))
+    organization_id: Mapped[UUID] = mapped_column(
+        ForeignKey("organizations.id", ondelete="RESTRICT")
+    )
 
 
 class IngredientPriceEstimate(Base):

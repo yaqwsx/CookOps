@@ -21,6 +21,15 @@
     # API routes must precede the single-page application catch-all route.
     ProxyPass        /health/ http://127.0.0.1:8000/health/
     ProxyPassReverse /health/ http://127.0.0.1:8000/health/
+    # Streamable HTTP MCP is authenticated by FastAPI; preserve public Host/proto headers above.
+    ProxyPass        /mcp http://127.0.0.1:8000/mcp
+    ProxyPassReverse /mcp http://127.0.0.1:8000/mcp
+    ProxyPass        /.well-known/oauth-protected-resource/mcp http://127.0.0.1:8000/.well-known/oauth-protected-resource/mcp
+    ProxyPassReverse /.well-known/oauth-protected-resource/mcp http://127.0.0.1:8000/.well-known/oauth-protected-resource/mcp
+    # Only the browser consent UI is public; grant management stays private.
+    ProxyPass        /auth/mcp-interactions/ http://127.0.0.1:8000/auth/mcp-interactions/
+    ProxyPassReverse /auth/mcp-interactions/ http://127.0.0.1:8000/auth/mcp-interactions/
+    ProxyPass        /auth/mcp-grants !
     ProxyPass        /auth/ http://127.0.0.1:8000/auth/
     ProxyPassReverse /auth/ http://127.0.0.1:8000/auth/
     # The interaction completion flow needs the protocol service. MCP stays absent
@@ -32,8 +41,8 @@
     ProxyPassReverse /.well-known/oauth-authorization-server/oauth http://127.0.0.1:3000/.well-known/oauth-authorization-server/oauth
     ProxyPass        /oauth/ http://127.0.0.1:3000/oauth/
     ProxyPassReverse /oauth/ http://127.0.0.1:3000/oauth/
-    ProxyPass        /api/v1/sync/notifications http://127.0.0.1:8000/api/v1/sync/notifications upgrade=websocket
-    ProxyPassReverse /api/v1/sync/notifications http://127.0.0.1:8000/api/v1/sync/notifications
+    ProxyPass        /api/v1/sync/hints http://127.0.0.1:8000/api/v1/sync/hints upgrade=websocket
+    ProxyPassReverse /api/v1/sync/hints http://127.0.0.1:8000/api/v1/sync/hints
     ProxyPass        /api/ http://127.0.0.1:8000/api/
     ProxyPassReverse /api/ http://127.0.0.1:8000/api/
     ProxyPass        /media/ http://127.0.0.1:8000/media/

@@ -1,0 +1,23 @@
+services:
+  api-migrate:
+    environment:
+      COOKOPS_ENVIRONMENT: test
+      COOKOPS_HUMAN_AUTH_PROVIDER: dummy
+  api:
+    environment:
+      COOKOPS_ENVIRONMENT: test
+      COOKOPS_HUMAN_AUTH_PROVIDER: dummy
+  web:
+    environment:
+      COOKOPS_HUMAN_AUTH_PROVIDER: dummy
+  edge:
+    build:
+      context: ./apache
+      dockerfile: Dockerfile.shopping-sync-smoke
+    depends_on:
+      api: { condition: service_started }
+      web: { condition: service_started }
+    ports: ["127.0.0.1:${COOKOPS_EDGE_PORT}:443"]
+    volumes:
+      - ${SMOKE_TMP}/certificate.pem:/run/cookops-smoke/certificate.pem:ro
+      - ${SMOKE_TMP}/key.pem:/run/cookops-smoke/key.pem:ro

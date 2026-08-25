@@ -4,6 +4,7 @@ const ids = {
   organization: "5ce17d2f-8365-4b1f-a80b-34d10425d51c",
   user: "a6a58bd6-214e-49af-8fae-e5f974bf8e08",
   unit: "6ce17d2f-8365-4b1f-a80b-34d10425d51c",
+  section: "8ce17d2f-8365-4b1f-a80b-34d10425d51c",
 };
 
 function record(entity_id: string, entity_kind: string, value: object) {
@@ -64,6 +65,14 @@ test("creates and immediately reads an ingredient from the cached catalog offlin
             dimension: "mass",
             base_unit_factor: "1",
             allows_ingredient_quantity: true,
+            retired_at: null,
+          }),
+          record(ids.section, "store_section", {
+            id: ids.section,
+            organization_id: ids.organization,
+            name: "Pantry",
+            normalized_name: "pantry",
+            position_key: "a",
             retired_at: null,
           }),
           record("7ce17d2f-8365-4b1f-a80b-34d10425d51c", "dietary_tag", {

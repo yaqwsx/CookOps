@@ -4,6 +4,7 @@ from collections.abc import Iterator
 from dataclasses import dataclass, replace
 from datetime import UTC, datetime
 from decimal import Decimal
+from typing import cast
 from uuid import UUID, uuid4
 
 import pytest
@@ -842,4 +843,5 @@ def test_publish_preserves_recipe_root_author_for_a_different_member(
             )
         )
     assert record is not None
-    assert record["record"]["created_by_user_id"] == str(service_database.actor_id)
+    record_body = cast(dict[str, object], record["record"])
+    assert record_body["created_by_user_id"] == str(service_database.actor_id)

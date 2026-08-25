@@ -234,8 +234,18 @@ async function applyUpdate(
   };
   const { name, note } = checked(input);
   const [canonicalItem, canonicalList] = await Promise.all([
-    localDb.canonicalRecords.get([userId, organizationId, "ad_hoc_shopping_item", input.adHocShoppingItemId]),
-    localDb.canonicalRecords.get([userId, organizationId, "shopping_list", input.shoppingListId]),
+    localDb.canonicalRecords.get([
+      userId,
+      organizationId,
+      "ad_hoc_shopping_item",
+      input.adHocShoppingItemId,
+    ]),
+    localDb.canonicalRecords.get([
+      userId,
+      organizationId,
+      "shopping_list",
+      input.shoppingListId,
+    ]),
   ]);
   const item = await readVisibleCanonicalRecord(
     userId,
@@ -243,14 +253,25 @@ async function applyUpdate(
     "ad_hoc_shopping_item",
     input.adHocShoppingItemId,
   );
-  const list = await readVisibleCanonicalRecord(userId, organizationId, "shopping_list", input.shoppingListId);
+  const list = await readVisibleCanonicalRecord(
+    userId,
+    organizationId,
+    "shopping_list",
+    input.shoppingListId,
+  );
   const eventId = item?.fields.event_id;
-  const [canonicalEvent, visibleEvent] = typeof eventId === "string"
-    ? await Promise.all([
-        localDb.canonicalRecords.get([userId, organizationId, "event", eventId]),
-        readVisibleCanonicalRecord(userId, organizationId, "event", eventId),
-      ])
-    : [undefined, undefined];
+  const [canonicalEvent, visibleEvent] =
+    typeof eventId === "string"
+      ? await Promise.all([
+          localDb.canonicalRecords.get([
+            userId,
+            organizationId,
+            "event",
+            eventId,
+          ]),
+          readVisibleCanonicalRecord(userId, organizationId, "event", eventId),
+        ])
+      : [undefined, undefined];
   if (
     canonicalItem?.lifecycle === "retired" ||
     canonicalList?.lifecycle === "retired" ||
@@ -275,14 +296,22 @@ async function applyUpdate(
       if (clock === undefined || clock === null) return true;
       if (typeof clock !== "object" || Array.isArray(clock)) return false;
       const value = clock as Record<string, unknown>;
-      const currentAt = typeof value.actionAt === "string" ? value.actionAt : value.winning_client_wall_time;
-      const currentId = typeof value.mutationId === "string" ? value.mutationId : value.winning_mutation_id;
-      const currentTime = typeof currentAt === "string" ? Date.parse(currentAt) : NaN;
+      const currentAt =
+        typeof value.actionAt === "string"
+          ? value.actionAt
+          : value.winning_client_wall_time;
+      const currentId =
+        typeof value.mutationId === "string"
+          ? value.mutationId
+          : value.winning_mutation_id;
+      const currentTime =
+        typeof currentAt === "string" ? Date.parse(currentAt) : NaN;
       return (
         typeof currentId === "string" &&
         Number.isFinite(currentTime) &&
         (Date.parse(command.actionAt) > currentTime ||
-          (Date.parse(command.actionAt) === currentTime && command.id > currentId))
+          (Date.parse(command.actionAt) === currentTime &&
+            command.id > currentId))
       );
     }),
   );
@@ -292,7 +321,12 @@ async function applyUpdate(
     fields: { ...item.fields, ...winning },
     fieldClocks: {
       ...item.fieldClocks,
-      ...Object.fromEntries(Object.keys(winning).map((field) => [field, { mutationId: command.id, actionAt: command.actionAt }])),
+      ...Object.fromEntries(
+        Object.keys(winning).map((field) => [
+          field,
+          { mutationId: command.id, actionAt: command.actionAt },
+        ]),
+      ),
     },
     updatedAt: command.actionAt,
   });
@@ -304,7 +338,8 @@ export async function queueAdHocShoppingItemUpdate(
   input: UpdateAdHocShoppingItemInput,
 ) {
   const { name, note } = checked(input);
-  if (!uuid.test(input.adHocShoppingItemId)) throw new Error("ad_hoc_shopping_item");
+  if (!uuid.test(input.adHocShoppingItemId))
+    throw new Error("ad_hoc_shopping_item");
   const id = crypto.randomUUID();
   const actionAt = new Date().toISOString();
   const payload = {
@@ -316,13 +351,25 @@ export async function queueAdHocShoppingItemUpdate(
     store_section_id: input.storeSectionId,
     note,
   };
-  await localDb.transaction("rw", localDb.canonicalRecords, localDb.optimisticOverlays, localDb.outbox, async () => {
-    await applyUpdate(userId, organizationId, { id, actionAt, payload });
-    await appendOutboxCommand({
-      id, userId, organizationId, commandType: "shopping_list.update_ad_hoc_item", payload,
-      actionAt, createdAt: actionAt, state: "pending",
-    });
-  });
+  await localDb.transaction(
+    "rw",
+    localDb.canonicalRecords,
+    localDb.optimisticOverlays,
+    localDb.outbox,
+    async () => {
+      await applyUpdate(userId, organizationId, { id, actionAt, payload });
+      await appendOutboxCommand({
+        id,
+        userId,
+        organizationId,
+        commandType: "shopping_list.update_ad_hoc_item",
+        payload,
+        actionAt,
+        createdAt: actionAt,
+        state: "pending",
+      });
+    },
+  );
 }
 
 export async function replayAdHocShoppingItemUpdate(
@@ -356,7 +403,10 @@ async function applyFulfilment(
       shoppingListId,
     ]),
   ]);
-  if (canonicalItem?.lifecycle === "retired" || canonicalList?.lifecycle === "retired")
+  if (
+    canonicalItem?.lifecycle === "retired" ||
+    canonicalList?.lifecycle === "retired"
+  )
     throw new Error("ad_hoc_shopping_item");
   const list =
     (await localDb.optimisticOverlays.get([
@@ -365,16 +415,32 @@ async function applyFulfilment(
       "shopping_list",
       shoppingListId,
     ])) ?? canonicalList;
-  const item = await readVisibleCanonicalRecord(userId, organizationId, "ad_hoc_shopping_item", itemId);
+  const item = await readVisibleCanonicalRecord(
+    userId,
+    organizationId,
+    "ad_hoc_shopping_item",
+    itemId,
+  );
   const eventId = item?.fields.event_id;
   const canonicalEvent =
     typeof eventId === "string"
-      ? await localDb.canonicalRecords.get([userId, organizationId, "event", eventId])
+      ? await localDb.canonicalRecords.get([
+          userId,
+          organizationId,
+          "event",
+          eventId,
+        ])
       : undefined;
-  if (canonicalEvent?.lifecycle === "retired") throw new Error("ad_hoc_shopping_item");
+  if (canonicalEvent?.lifecycle === "retired")
+    throw new Error("ad_hoc_shopping_item");
   const event =
     typeof eventId === "string"
-      ? (await localDb.optimisticOverlays.get([userId, organizationId, "event", eventId])) ?? canonicalEvent
+      ? ((await localDb.optimisticOverlays.get([
+          userId,
+          organizationId,
+          "event",
+          eventId,
+        ])) ?? canonicalEvent)
       : undefined;
   if (
     !uuid.test(shoppingListId) ||
@@ -392,10 +458,17 @@ async function applyFulfilment(
     if (typeof clock !== "object" || Array.isArray(clock))
       throw new Error("ad_hoc_shopping_item");
     const value = clock as Record<string, unknown>;
-    const currentAt = typeof value.actionAt === "string" ? value.actionAt : value.winning_client_wall_time;
-    const currentId = typeof value.mutationId === "string" ? value.mutationId : value.winning_mutation_id;
+    const currentAt =
+      typeof value.actionAt === "string"
+        ? value.actionAt
+        : value.winning_client_wall_time;
+    const currentId =
+      typeof value.mutationId === "string"
+        ? value.mutationId
+        : value.winning_mutation_id;
     const candidateTime = Date.parse(actionAt);
-    const currentTime = typeof currentAt === "string" ? Date.parse(currentAt) : NaN;
+    const currentTime =
+      typeof currentAt === "string" ? Date.parse(currentAt) : NaN;
     if (
       typeof currentId !== "string" ||
       !Number.isFinite(candidateTime) ||
@@ -410,6 +483,8 @@ async function applyFulfilment(
     fields: {
       ...item.fields,
       fulfilment_credit: fulfilled ? item.fields.target_amount : "0",
+      fulfilment_updated_at: actionAt,
+      fulfilment_updated_by_user_id: userId,
     },
     fieldClocks: {
       ...item.fieldClocks,
@@ -422,20 +497,47 @@ async function applyFulfilment(
 export async function queueAdHocShoppingItemFulfilment(
   userId: string,
   organizationId: string,
-  input: { shoppingListId: string; adHocShoppingItemId: string; fulfilled: boolean },
+  input: {
+    shoppingListId: string;
+    adHocShoppingItemId: string;
+    fulfilled: boolean;
+  },
 ) {
-  if (typeof input.fulfilled !== "boolean") throw new Error("ad_hoc_shopping_item");
+  if (typeof input.fulfilled !== "boolean")
+    throw new Error("ad_hoc_shopping_item");
   const mutationId = crypto.randomUUID();
   const actionAt = new Date().toISOString();
-  await localDb.transaction("rw", localDb.canonicalRecords, localDb.optimisticOverlays, localDb.outbox, async () => {
-    await applyFulfilment(userId, organizationId, input.shoppingListId, input.adHocShoppingItemId, input.fulfilled, mutationId, actionAt);
-    await appendOutboxCommand({
-      id: mutationId, userId, organizationId,
-      commandType: "shopping_list.set_ad_hoc_item_fulfilment",
-      payload: { shopping_list_id: input.shoppingListId, ad_hoc_shopping_item_id: input.adHocShoppingItemId, fulfilled: input.fulfilled },
-      actionAt, createdAt: actionAt, state: "pending",
-    });
-  });
+  await localDb.transaction(
+    "rw",
+    localDb.canonicalRecords,
+    localDb.optimisticOverlays,
+    localDb.outbox,
+    async () => {
+      await applyFulfilment(
+        userId,
+        organizationId,
+        input.shoppingListId,
+        input.adHocShoppingItemId,
+        input.fulfilled,
+        mutationId,
+        actionAt,
+      );
+      await appendOutboxCommand({
+        id: mutationId,
+        userId,
+        organizationId,
+        commandType: "shopping_list.set_ad_hoc_item_fulfilment",
+        payload: {
+          shopping_list_id: input.shoppingListId,
+          ad_hoc_shopping_item_id: input.adHocShoppingItemId,
+          fulfilled: input.fulfilled,
+        },
+        actionAt,
+        createdAt: actionAt,
+        state: "pending",
+      });
+    },
+  );
 }
 
 export async function replayAdHocShoppingItemFulfilment(
@@ -443,10 +545,16 @@ export async function replayAdHocShoppingItemFulfilment(
   organizationId: string,
   command: { id: string; actionAt: string; payload: Record<string, unknown> },
 ) {
-  const { shopping_list_id: listId, ad_hoc_shopping_item_id: itemId, fulfilled } = command.payload;
+  const {
+    shopping_list_id: listId,
+    ad_hoc_shopping_item_id: itemId,
+    fulfilled,
+  } = command.payload;
   if (
     Object.keys(command.payload).length !== 3 ||
-    !["shopping_list_id", "ad_hoc_shopping_item_id", "fulfilled"].every((key) => key in command.payload) ||
+    !["shopping_list_id", "ad_hoc_shopping_item_id", "fulfilled"].every(
+      (key) => key in command.payload,
+    ) ||
     typeof listId !== "string" ||
     typeof itemId !== "string" ||
     typeof fulfilled !== "boolean" ||
@@ -454,7 +562,15 @@ export async function replayAdHocShoppingItemFulfilment(
     !Number.isFinite(Date.parse(command.actionAt))
   )
     return;
-  await applyFulfilment(userId, organizationId, listId, itemId, fulfilled, command.id, command.actionAt);
+  await applyFulfilment(
+    userId,
+    organizationId,
+    listId,
+    itemId,
+    fulfilled,
+    command.id,
+    command.actionAt,
+  );
 }
 
 async function applyLifecycle(
@@ -467,8 +583,18 @@ async function applyLifecycle(
   actionAt: string,
 ) {
   const [canonicalItem, canonicalList] = await Promise.all([
-    localDb.canonicalRecords.get([userId, organizationId, "ad_hoc_shopping_item", itemId]),
-    localDb.canonicalRecords.get([userId, organizationId, "shopping_list", shoppingListId]),
+    localDb.canonicalRecords.get([
+      userId,
+      organizationId,
+      "ad_hoc_shopping_item",
+      itemId,
+    ]),
+    localDb.canonicalRecords.get([
+      userId,
+      organizationId,
+      "shopping_list",
+      shoppingListId,
+    ]),
   ]);
   const current =
     (await localDb.optimisticOverlays.get([
@@ -480,11 +606,21 @@ async function applyLifecycle(
   const eventId = current?.fields.event_id;
   const canonicalEvent =
     typeof eventId === "string"
-      ? await localDb.canonicalRecords.get([userId, organizationId, "event", eventId])
+      ? await localDb.canonicalRecords.get([
+          userId,
+          organizationId,
+          "event",
+          eventId,
+        ])
       : undefined;
   const event =
     typeof eventId === "string"
-      ? (await localDb.optimisticOverlays.get([userId, organizationId, "event", eventId])) ?? canonicalEvent
+      ? ((await localDb.optimisticOverlays.get([
+          userId,
+          organizationId,
+          "event",
+          eventId,
+        ])) ?? canonicalEvent)
       : undefined;
   if (
     !uuid.test(shoppingListId) ||
@@ -503,10 +639,17 @@ async function applyLifecycle(
     if (typeof clock !== "object" || Array.isArray(clock))
       throw new Error("ad_hoc_shopping_item");
     const value = clock as Record<string, unknown>;
-    const currentAt = typeof value.actionAt === "string" ? value.actionAt : value.winning_client_wall_time;
-    const currentId = typeof value.mutationId === "string" ? value.mutationId : value.winning_mutation_id;
+    const currentAt =
+      typeof value.actionAt === "string"
+        ? value.actionAt
+        : value.winning_client_wall_time;
+    const currentId =
+      typeof value.mutationId === "string"
+        ? value.mutationId
+        : value.winning_mutation_id;
     const candidateTime = Date.parse(actionAt);
-    const currentTime = typeof currentAt === "string" ? Date.parse(currentAt) : NaN;
+    const currentTime =
+      typeof currentAt === "string" ? Date.parse(currentAt) : NaN;
     if (
       typeof currentId !== "string" ||
       !Number.isFinite(candidateTime) ||
@@ -521,9 +664,16 @@ async function applyLifecycle(
     lifecycle: operation === "retire" ? "retired" : "active",
     fields:
       operation === "retire"
-        ? { ...current.fields, retired_at: actionAt, retired_by_user_id: userId }
+        ? {
+            ...current.fields,
+            retired_at: actionAt,
+            retired_by_user_id: userId,
+          }
         : { ...current.fields, retired_at: null, retired_by_user_id: null },
-    fieldClocks: { ...current.fieldClocks, lifecycle: { mutationId, actionAt } },
+    fieldClocks: {
+      ...current.fieldClocks,
+      lifecycle: { mutationId, actionAt },
+    },
     updatedAt: actionAt,
   });
 }
@@ -582,7 +732,9 @@ export async function replayAdHocShoppingItemLifecycle(
   const payload = command.payload;
   if (
     Object.keys(payload).length !== 3 ||
-    !["shopping_list_id", "ad_hoc_shopping_item_id", "operation"].every((key) => key in payload) ||
+    !["shopping_list_id", "ad_hoc_shopping_item_id", "operation"].every(
+      (key) => key in payload,
+    ) ||
     typeof payload.shopping_list_id !== "string" ||
     typeof payload.ad_hoc_shopping_item_id !== "string" ||
     !uuid.test(command.id) ||

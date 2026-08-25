@@ -8,10 +8,7 @@ vi.mock("../local-db", () => ({
   readOrCreateBrowserInstallationId: readInstallationId,
 }));
 
-import {
-  copyIngredient,
-  getIngredientCopyPreview,
-} from "./ingredient-copy";
+import { copyIngredient, getIngredientCopyPreview } from "./ingredient-copy";
 
 const sourceOrganizationId = "5ce17d2f-8365-4b1f-a80b-34d10425d51c";
 const destinationOrganizationId = "6ce17d2f-8365-4b1f-a80b-34d10425d51c";
@@ -47,16 +44,25 @@ beforeEach(() => {
 describe("ingredient copy HTTP API", () => {
   it("rejects malformed preview responses instead of exposing partial data", async () => {
     vi.mocked(fetch).mockResolvedValue(
-      new Response(JSON.stringify({ ...preview, source_version_id: "not-a-uuid" }), { status: 200 }),
+      new Response(
+        JSON.stringify({ ...preview, source_version_id: "not-a-uuid" }),
+        { status: 200 },
+      ),
     );
     await expect(
-      getIngredientCopyPreview(destinationOrganizationId, sourceOrganizationId, ingredientId),
+      getIngredientCopyPreview(
+        destinationOrganizationId,
+        sourceOrganizationId,
+        ingredientId,
+      ),
     ).rejects.toThrow("Invalid ingredient copy response.");
   });
 
   it("parses preview and sends the typed online command without an Origin header", async () => {
     vi.mocked(fetch)
-      .mockResolvedValueOnce(new Response(JSON.stringify(preview), { status: 200 }))
+      .mockResolvedValueOnce(
+        new Response(JSON.stringify(preview), { status: 200 }),
+      )
       .mockResolvedValueOnce(
         new Response(
           JSON.stringify({
@@ -79,15 +85,24 @@ describe("ingredient copy HTTP API", () => {
         ),
       );
     await expect(
-      getIngredientCopyPreview(destinationOrganizationId, sourceOrganizationId, ingredientId),
-    ).resolves.toMatchObject({ sourceName: "Flour", mappingRequirements: [{ sourceId: unitId }] });
+      getIngredientCopyPreview(
+        destinationOrganizationId,
+        sourceOrganizationId,
+        ingredientId,
+      ),
+    ).resolves.toMatchObject({
+      sourceName: "Flour",
+      mappingRequirements: [{ sourceId: unitId }],
+    });
     const result = await copyIngredient("user-id", destinationOrganizationId, {
       sourceOrganizationId,
       ingredientId,
       mutationId,
       clientWallTime,
       preconditionFingerprint: "fingerprint",
-      mappings: [{ kind: "canonical_unit", sourceId: unitId, destinationId: unitId }],
+      mappings: [
+        { kind: "canonical_unit", sourceId: unitId, destinationId: unitId },
+      ],
     });
     expect(result.destinationIngredientId).toBe(destinationIngredientId);
     expect(readInstallationId).toHaveBeenCalledTimes(1);
@@ -102,7 +117,9 @@ describe("ingredient copy HTTP API", () => {
       mutation_id: mutationId,
       client_wall_time: clientWallTime,
       precondition_fingerprint: "fingerprint",
-      mappings: [{ kind: "canonical_unit", source_id: unitId, destination_id: unitId }],
+      mappings: [
+        { kind: "canonical_unit", source_id: unitId, destination_id: unitId },
+      ],
     });
   });
 });

@@ -1,9 +1,13 @@
 import { liveQuery } from "dexie";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 
 import {
   readSynchronizationSummary,
+  discardFailedOutboxCommand,
+  readFailedOutboxCommands,
+  toRecoverableIntent,
+  type OutboxCommand,
   type SynchronizationSummary,
 } from "./local-db";
 
@@ -86,6 +90,33 @@ function useStoragePersistenceWarning() {
   return warning;
 }
 
+function useFailedCommands(organizationId?: string, userId?: string) {
+  const [commands, setCommands] = useState<OutboxCommand[]>([]);
+  useEffect(() => {
+    if (!organizationId || !userId) return setCommands([]);
+    const subscription = liveQuery(() =>
+      readFailedOutboxCommands(userId, organizationId),
+    ).subscribe({ next: setCommands, error: () => setCommands([]) });
+    return () => subscription.unsubscribe();
+  }, [organizationId, userId]);
+  return commands;
+}
+
+function downloadIntent(command: OutboxCommand) {
+  const blob = new Blob(
+    [JSON.stringify(toRecoverableIntent(command), null, 2)],
+    { type: "application/json" },
+  );
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = `cookops-recoverable-${command.id}.json`;
+  document.body.append(link);
+  link.click();
+  link.remove();
+  window.setTimeout(() => URL.revokeObjectURL(url), 0);
+}
+
 export function SynchronizationStatus({
   organizationId,
   userId,
@@ -100,6 +131,24 @@ export function SynchronizationStatus({
     userId,
   );
   const storagePersistenceWarning = useStoragePersistenceWarning();
+  const failedCommands = useFailedCommands(organizationId, userId);
+  const [dialogOpen, setDialogOpen] = useState(false);
+  const opener = useRef<HTMLButtonElement>(null);
+  const dialog = useRef<HTMLDialogElement>(null);
+  const closeButton = useRef<HTMLButtonElement>(null);
+  useEffect(() => {
+    if (!dialogOpen || !dialog.current) return;
+    if (typeof dialog.current.showModal === "function") {
+      dialog.current.showModal();
+    } else {
+      dialog.current.setAttribute("open", "");
+    }
+    closeButton.current?.focus();
+  }, [dialogOpen]);
+  function restoreDialogFocus() {
+    setDialogOpen(false);
+    opener.current?.focus();
+  }
   const pendingCount =
     (summary?.pendingCommands ?? 0) + (summary?.pendingUploads ?? 0);
   const failedCount =
@@ -158,6 +207,82 @@ export function SynchronizationStatus({
         >
           {t(`synchronization.storagePersistence.${storagePersistenceWarning}`)}
         </span>
+      ) : null}
+      {failedCommands.length > 0 ? (
+        <>
+          <button
+            ref={opener}
+            type="button"
+            onClick={() => setDialogOpen(true)}
+          >
+            {t("synchronization.reviewFailed", {
+              count: failedCommands.length,
+            })}
+          </button>
+          {dialogOpen ? (
+            <dialog
+              aria-labelledby="recoverable-work-title"
+              className="synchronization-dialog"
+              ref={dialog}
+              onCancel={(event) => {
+                if (typeof dialog.current?.close !== "function") {
+                  event.preventDefault();
+                  restoreDialogFocus();
+                }
+              }}
+              onClose={restoreDialogFocus}
+            >
+              <h2 id="recoverable-work-title">
+                {t("synchronization.recoverableTitle")}
+              </h2>
+              <p>{t("synchronization.recoverableDescription")}</p>
+              <ul>
+                {failedCommands.map((command) => (
+                  <li key={command.id}>
+                    <strong>
+                      {t(
+                        `synchronization.commandTypes.${command.commandType}`,
+                        { defaultValue: t("synchronization.unknownCommand") },
+                      )}
+                    </strong>
+                    <span>{new Date(command.actionAt).toLocaleString()}</span>
+                    <span>{command.failureReason ?? "unknown"}</span>
+                    <button
+                      type="button"
+                      onClick={() => downloadIntent(command)}
+                    >
+                      {t("synchronization.export")}
+                    </button>
+                    <button
+                      type="button"
+                      onClick={async () => {
+                        if (window.confirm(t("synchronization.discardConfirm")))
+                          await discardFailedOutboxCommand(
+                            command.userId,
+                            command.organizationId,
+                            command.id,
+                          );
+                      }}
+                    >
+                      {t("synchronization.discard")}
+                    </button>
+                  </li>
+                ))}
+              </ul>
+              <button
+                ref={closeButton}
+                type="button"
+                onClick={() => {
+                  if (typeof dialog.current?.close === "function")
+                    dialog.current.close();
+                  else restoreDialogFocus();
+                }}
+              >
+                {t("synchronization.close")}
+              </button>
+            </dialog>
+          ) : null}
+        </>
       ) : null}
     </aside>
   );

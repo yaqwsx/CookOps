@@ -2,18 +2,21 @@
 
 import asyncio
 import os
+from collections.abc import Iterator
 from datetime import UTC, datetime
 from types import SimpleNamespace
+from typing import Any, cast
 from uuid import UUID, uuid4
 
 import pytest
 from alembic.config import Config
 from fastapi.testclient import TestClient
-from sqlalchemy import create_engine, insert, select
+from sqlalchemy import create_engine, delete, insert, select, update
 from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 from sqlalchemy.pool import NullPool
 
 from alembic import command
+from cookops.application.browser_sessions import BrowserSessionService
 from cookops.application.ingredient_copy import (
     CopyIngredientToOrganizationCommand,
     IngredientCopyMapping,
@@ -51,7 +54,7 @@ pytestmark = pytest.mark.skipif(
 
 
 @pytest.fixture
-def copy_database():
+def copy_database() -> Iterator[Any]:
     url = os.environ["TEST_DATABASE_URL"]
     configuration = Config("alembic.ini")
     configuration.set_main_option("sqlalchemy.url", url)
@@ -181,11 +184,11 @@ def copy_database():
     async_engine.sync_engine.dispose()
 
 
-def context(db):
+def context(db: Any) -> ExecutionContext:
     return ExecutionContext(db.actor, db.installation)
 
 
-def test_allowed_preview_is_scoped_and_does_not_mutate(copy_database):
+def test_allowed_preview_is_scoped_and_does_not_mutate(copy_database: Any) -> None:
     db = copy_database
     with db.engine.connect() as connection:
         before = connection.execute(
@@ -206,14 +209,15 @@ def test_allowed_preview_is_scoped_and_does_not_mutate(copy_database):
     }
     with db.engine.connect() as connection:
         assert (
-                connection.execute(select(Ingredient.id).where(Ingredient.id == db.ingredient))
-            .scalar_one()
+            connection.execute(
+                select(Ingredient.id).where(Ingredient.id == db.ingredient)
+            ).scalar_one()
             == before
         )
         assert connection.execute(select(OrganizationChange)).first() is None
 
 
-def test_preview_includes_retired_historical_dependencies(copy_database):
+def test_preview_includes_retired_historical_dependencies(copy_database: Any) -> None:
     db = copy_database
     historical_version, historical_unit, historical_section, historical_tag = (
         uuid4() for _ in range(4)
@@ -297,22 +301,22 @@ def test_preview_includes_retired_historical_dependencies(copy_database):
             )
         )
         connection.execute(
-            Ingredient.__table__.update()
+            update(Ingredient)
             .where(Ingredient.id == db.ingredient)
             .values(current_version_id=current_version)
         )
         connection.execute(
-            UnitDefinition.__table__.update()
+            update(UnitDefinition)
             .where(UnitDefinition.id == historical_unit)
             .values(retired_at=now, retired_by_user_id=db.actor)
         )
         connection.execute(
-            StoreSection.__table__.update()
+            update(StoreSection)
             .where(StoreSection.id == historical_section)
             .values(retired_at=now, retired_by_user_id=db.actor)
         )
         connection.execute(
-            DietaryTag.__table__.update()
+            update(DietaryTag)
             .where(DietaryTag.id == historical_tag)
             .values(retired_at=now, retired_by_user_id=db.actor)
         )
@@ -340,9 +344,7 @@ def test_preview_includes_retired_historical_dependencies(copy_database):
 
     with db.engine.begin() as connection:
         connection.execute(
-            DietaryTag.__table__.update()
-            .where(DietaryTag.id == historical_tag)
-            .values(seed_key="vegetarian")
+            update(DietaryTag).where(DietaryTag.id == historical_tag).values(seed_key="vegetarian")
         )
         connection.execute(
             insert(DietaryTag).values(
@@ -365,11 +367,11 @@ def test_preview_includes_retired_historical_dependencies(copy_database):
     }
 
 
-def test_retired_source_is_stale_broken_graph(copy_database):
+def test_retired_source_is_stale_broken_graph(copy_database: Any) -> None:
     db = copy_database
     with db.engine.begin() as connection:
         connection.execute(
-            Ingredient.__table__.update()
+            update(Ingredient)
             .where(Ingredient.id == db.ingredient)
             .values(retired_at=datetime.now(UTC), retired_by_user_id=db.actor)
         )
@@ -383,11 +385,11 @@ def test_retired_source_is_stale_broken_graph(copy_database):
         )
 
 
-def test_source_member_or_destination_member_is_denied(copy_database):
+def test_source_member_or_destination_member_is_denied(copy_database: Any) -> None:
     db = copy_database
     with db.engine.begin() as connection:
         connection.execute(
-            OrganizationMembership.__table__.update()
+            update(OrganizationMembership)
             .where(OrganizationMembership.organization_id == db.destination)
             .values(role="member")
         )
@@ -402,11 +404,11 @@ def test_source_member_or_destination_member_is_denied(copy_database):
     assert error.value.code == "forbidden"
 
 
-def test_disabled_user_is_denied_without_mutation(copy_database):
+def test_disabled_user_is_denied_without_mutation(copy_database: Any) -> None:
     db = copy_database
     with db.engine.begin() as connection:
         connection.execute(
-            User.__table__.update()
+            update(User)
             .where(User.id == db.actor)
             .values(disabled_at=datetime.now(UTC), disabled_by_user_id=db.actor)
         )
@@ -423,13 +425,11 @@ def test_disabled_user_is_denied_without_mutation(copy_database):
         assert connection.execute(select(OrganizationChange)).first() is None
 
 
-def test_system_admin_can_preview_without_memberships(copy_database):
+def test_system_admin_can_preview_without_memberships(copy_database: Any) -> None:
     db = copy_database
     with db.engine.begin() as connection:
         connection.execute(
-            OrganizationMembership.__table__.delete().where(
-                OrganizationMembership.user_id == db.actor
-            )
+            delete(OrganizationMembership).where(OrganizationMembership.user_id == db.actor)
         )
         connection.execute(
             insert(SystemRoleAssignment).values(
@@ -451,11 +451,11 @@ def test_system_admin_can_preview_without_memberships(copy_database):
     assert preview.source_ingredient_id == db.ingredient
 
 
-def test_retired_source_tag_remains_previewable_and_fingerprint_changes(copy_database):
+def test_retired_source_tag_remains_previewable_and_fingerprint_changes(copy_database: Any) -> None:
     db = copy_database
     with db.engine.begin() as connection:
         connection.execute(
-            DietaryTag.__table__.update()
+            update(DietaryTag)
             .where(DietaryTag.id == db.tag)
             .values(retired_at=datetime.now(UTC), retired_by_user_id=db.actor)
         )
@@ -469,9 +469,7 @@ def test_retired_source_tag_remains_previewable_and_fingerprint_changes(copy_dat
     assert any(item.kind == "dietary_tag" for item in first.mapping_requirements)
     with db.engine.begin() as connection:
         connection.execute(
-            DietaryTag.__table__.update()
-            .where(DietaryTag.id == db.tag)
-            .values(seed_key="vegetarian")
+            update(DietaryTag).where(DietaryTag.id == db.tag).values(seed_key="vegetarian")
         )
     changed_tag = asyncio.run(
         preview_ingredient_copy(
@@ -500,7 +498,7 @@ def test_retired_source_tag_remains_previewable_and_fingerprint_changes(copy_dat
     assert second.precondition_fingerprint != first.precondition_fingerprint
     with db.engine.begin() as connection:
         connection.execute(
-            Ingredient.__table__.update()
+            update(Ingredient)
             .where(Ingredient.id == db.ingredient)
             .values(retired_at=datetime.now(UTC), retired_by_user_id=db.actor)
         )
@@ -514,16 +512,16 @@ def test_retired_source_tag_remains_previewable_and_fingerprint_changes(copy_dat
         )
 
 
-def test_authenticated_http_preview_route(copy_database):
+def test_authenticated_http_preview_route(copy_database: Any) -> None:
     db = copy_database
     settings = Settings(browser_session_cookie_name="cookops_session")
     app = create_app(settings, readiness_probe=lambda: _ready())
 
-    async def authenticate(_: str):
+    async def authenticate(_: str) -> SimpleNamespace:
         return _authenticated(db.actor)
 
     app.state.ingredient_copy = IngredientCopyHttpServices(
-        browser_sessions=SimpleNamespace(authenticate=authenticate),
+        browser_sessions=cast(BrowserSessionService, SimpleNamespace(authenticate=authenticate)),
         session_factory=db.sessions,
     )
     with TestClient(app) as client:
@@ -539,11 +537,11 @@ async def _ready() -> bool:
     return True
 
 
-def _authenticated(user_id):
+def _authenticated(user_id: UUID) -> SimpleNamespace:
     return SimpleNamespace(user_id=user_id)
 
 
-def _copy_http_app(db, *, authenticated_user_id=None):
+def _copy_http_app(db: Any, *, authenticated_user_id: UUID | None = None) -> Any:
     settings = Settings(
         browser_session_cookie_name="cookops_session",
         browser_origin="https://testserver",
@@ -551,17 +549,17 @@ def _copy_http_app(db, *, authenticated_user_id=None):
     app = create_app(settings, readiness_probe=lambda: _ready())
     user_id = db.actor if authenticated_user_id is None else authenticated_user_id
 
-    async def authenticate(secret: str):
+    async def authenticate(secret: str) -> SimpleNamespace | None:
         return _authenticated(user_id) if secret == "session" else None
 
     app.state.ingredient_copy = IngredientCopyHttpServices(
-        browser_sessions=SimpleNamespace(authenticate=authenticate),
+        browser_sessions=cast(BrowserSessionService, SimpleNamespace(authenticate=authenticate)),
         session_factory=db.sessions,
     )
     return app
 
 
-def _http_copy_payload(db, *, mutation_id=None):
+def _http_copy_payload(db: Any, *, mutation_id: UUID | None = None) -> dict[str, object]:
     destination_section, destination_tag = uuid4(), uuid4()
     with db.engine.begin() as connection:
         connection.execute(
@@ -611,7 +609,7 @@ def _http_copy_payload(db, *, mutation_id=None):
     }
 
 
-def test_authenticated_http_copy_route_and_replay(copy_database):
+def test_authenticated_http_copy_route_and_replay(copy_database: Any) -> None:
     db = copy_database
     payload = _http_copy_payload(db)
     app = _copy_http_app(db)
@@ -639,32 +637,29 @@ def test_authenticated_http_copy_route_and_replay(copy_database):
     with db.engine.connect() as connection:
         changes = connection.execute(
             select(OrganizationChange).where(
-                OrganizationChange.mutation_id == UUID(payload["mutation_id"])
+                OrganizationChange.mutation_id == UUID(str(payload["mutation_id"]))
             )
         ).all()
-        assert len(changes) == first_body["last_change_sequence"] - first_body[
-            "first_change_sequence"
-        ] + 1
+        assert (
+            len(changes)
+            == first_body["last_change_sequence"] - first_body["first_change_sequence"] + 1
+        )
 
 
-def test_http_copy_requires_session_and_exact_origin_without_mutation(copy_database):
+def test_http_copy_requires_session_and_exact_origin_without_mutation(copy_database: Any) -> None:
     db = copy_database
     payload = _http_copy_payload(db)
     app = _copy_http_app(db)
     route = f"/api/v1/organizations/{db.destination}/ingredient-copy"
     with TestClient(app) as client:
-        missing_session = client.post(
-            route, json=payload, headers={"origin": "https://testserver"}
-        )
+        missing_session = client.post(route, json=payload, headers={"origin": "https://testserver"})
         wrong_origin = client.post(
             route,
             json=payload,
             cookies={"cookops_session": "session"},
             headers={"origin": "https://attacker.example"},
         )
-        absent_origin = client.post(
-            route, json=payload, cookies={"cookops_session": "session"}
-        )
+        absent_origin = client.post(route, json=payload, cookies={"cookops_session": "session"})
     assert missing_session.status_code == 401
     assert wrong_origin.status_code == absent_origin.status_code == 403
     assert wrong_origin.json() == absent_origin.json() == {"detail": {"code": "forbidden"}}
@@ -672,7 +667,7 @@ def test_http_copy_requires_session_and_exact_origin_without_mutation(copy_datab
         assert connection.execute(select(OrganizationChange)).first() is None
 
 
-def test_http_copy_forbidden_is_non_enumerating_and_payload_is_strict(copy_database):
+def test_http_copy_forbidden_is_non_enumerating_and_payload_is_strict(copy_database: Any) -> None:
     db = copy_database
     payload = _http_copy_payload(db)
     app = _copy_http_app(db, authenticated_user_id=uuid4())
@@ -703,7 +698,7 @@ def test_http_copy_forbidden_is_non_enumerating_and_payload_is_strict(copy_datab
 
 
 @pytest.mark.parametrize("field", ["client_installation_id", "mutation_id"])
-def test_http_copy_rejects_zero_identity_without_mutation(copy_database, field):
+def test_http_copy_rejects_zero_identity_without_mutation(copy_database: Any, field: str) -> None:
     db = copy_database
     payload = {**_http_copy_payload(db), field: "00000000-0000-0000-0000-000000000000"}
     app = _copy_http_app(db)
@@ -719,7 +714,7 @@ def test_http_copy_rejects_zero_identity_without_mutation(copy_database, field):
         assert connection.execute(select(OrganizationChange)).first() is None
 
 
-def test_http_command_error_preserves_validation_contract():
+def test_http_command_error_preserves_validation_contract() -> None:
     from cookops.http_ingredient_copy import _command_error
 
     error = ApplicationServiceError(
@@ -729,14 +724,16 @@ def test_http_command_error_preserves_validation_contract():
     )
     response = _command_error(error)
     assert response.status_code == 422
-    assert response.detail == {
+    assert cast(dict[str, object], response.detail) == {
         "code": "validation_failed",
         "field_violations": [{"path": "mappings", "code": "missing"}],
         "retry_same_identity": False,
     }
 
 
-def test_http_copy_rejects_unowned_disabled_and_non_browser_installations(copy_database):
+def test_http_copy_rejects_unowned_disabled_and_non_browser_installations(
+    copy_database: Any,
+) -> None:
     db = copy_database
     route = f"/api/v1/organizations/{db.destination}/ingredient-copy"
     app = _copy_http_app(db)
@@ -796,12 +793,12 @@ def test_http_copy_rejects_unowned_disabled_and_non_browser_installations(copy_d
         assert connection.execute(select(OrganizationChange)).first() is None
 
 
-def _prepare_multiversion_copy(db):
+def _prepare_multiversion_copy(db: Any) -> SimpleNamespace:
     historical_version, historical_unit, destination_unit = (uuid4() for _ in range(3))
     destination_section, destination_tag = (uuid4() for _ in range(2))
     with db.engine.begin() as connection:
         connection.execute(
-            DietaryTag.__table__.update()
+            update(DietaryTag)
             .where(DietaryTag.id == db.tag)
             .values(seed_key=None, name="Seasonal", normalized_name="seasonal")
         )
@@ -876,7 +873,7 @@ def _prepare_multiversion_copy(db):
             )
         )
         connection.execute(
-            Ingredient.__table__.update()
+            update(Ingredient)
             .where(Ingredient.id == db.ingredient)
             .values(current_version_id=historical_version)
         )
@@ -887,7 +884,9 @@ def _prepare_multiversion_copy(db):
     )
 
 
-def _copy_command(db, setup, *, create_custom_tag=False):
+def _copy_command(
+    db: Any, setup: Any, *, create_custom_tag: bool = False
+) -> CopyIngredientToOrganizationCommand:
     preview = asyncio.run(
         preview_ingredient_copy(
             db.sessions,
@@ -913,13 +912,11 @@ def _copy_command(db, setup, *, create_custom_tag=False):
     )
 
 
-def test_copy_multiversion_graph_has_only_destination_references(copy_database):
+def test_copy_multiversion_graph_has_only_destination_references(copy_database: Any) -> None:
     db = copy_database
     setup = _prepare_multiversion_copy(db)
     with db.engine.begin() as connection:
-        connection.execute(
-            DietaryTag.__table__.delete().where(DietaryTag.id == setup.destination_tag)
-        )
+        connection.execute(delete(DietaryTag).where(DietaryTag.id == setup.destination_tag))
     result = asyncio.run(
         copy_ingredient_to_organization(
             db.sessions, context(db), _copy_command(db, setup, create_custom_tag=True)
@@ -961,17 +958,20 @@ def test_copy_multiversion_graph_has_only_destination_references(copy_database):
             .scalars()
             .all()
         )
-        copied_tag_rows = connection.execute(
-            select(DietaryTag.organization_id).where(DietaryTag.id.in_(copied_tags))
-        ).scalars().all()
+        copied_tag_rows = (
+            connection.execute(
+                select(DietaryTag.organization_id).where(DietaryTag.id.in_(copied_tags))
+            )
+            .scalars()
+            .all()
+        )
         assert set(copied_tag_rows) == {db.destination}
         copied_tag_id = copied_tags[0]
         assert copied_tag_id != setup.destination_tag
         assert (
             connection.execute(
                 select(DietaryTag.organization_id).where(DietaryTag.id == copied_tag_id)
-            )
-            .scalar_one()
+            ).scalar_one()
             == db.destination
         )
         changes = connection.execute(
@@ -985,9 +985,16 @@ def test_copy_multiversion_graph_has_only_destination_references(copy_database):
             if item.entity_kind != "ingredient_version"
         }
         ingredient_record = change_records["ingredient"]
-        assert ingredient_record["created_at"] == connection.execute(
-            select(Ingredient.created_at).where(Ingredient.id == result.destination_ingredient_id)
-        ).scalar_one().isoformat()
+        assert (
+            ingredient_record["created_at"]
+            == connection.execute(
+                select(Ingredient.created_at).where(
+                    Ingredient.id == result.destination_ingredient_id
+                )
+            )
+            .scalar_one()
+            .isoformat()
+        )
         assert set(ingredient_record["field_clocks"]) == {
             "lifecycle",
             "current_version_id",
@@ -999,9 +1006,14 @@ def test_copy_multiversion_graph_has_only_destination_references(copy_database):
         assert len(version_records) == 2
         assert all(record["published_at"] for record in version_records)
         tag_record = change_records["dietary_tag"]
-        assert tag_record["created_at"] == connection.execute(
-            select(DietaryTag.created_at).where(DietaryTag.id == copied_tag_id)
-        ).scalar_one().isoformat()
+        assert (
+            tag_record["created_at"]
+            == connection.execute(
+                select(DietaryTag.created_at).where(DietaryTag.id == copied_tag_id)
+            )
+            .scalar_one()
+            .isoformat()
+        )
         assert set(tag_record["field_clocks"]) == {"name", "color", "lifecycle"}
         assert {item.entity_kind for item in changes} >= {
             "ingredient",
@@ -1018,7 +1030,7 @@ def test_copy_multiversion_graph_has_only_destination_references(copy_database):
         assert set(clocks) == {"lifecycle", "name", "color"}
 
 
-def test_copy_allows_many_to_one_explicit_dietary_tag_mapping(copy_database):
+def test_copy_allows_many_to_one_explicit_dietary_tag_mapping(copy_database: Any) -> None:
     db = copy_database
     setup = _prepare_multiversion_copy(db)
     source_tag, new_version = uuid4(), uuid4()
@@ -1054,7 +1066,7 @@ def test_copy_allows_many_to_one_explicit_dietary_tag_mapping(copy_database):
             )
         )
         connection.execute(
-            Ingredient.__table__.update()
+            update(Ingredient)
             .where(Ingredient.id == db.ingredient)
             .values(current_version_id=new_version)
         )
@@ -1063,18 +1075,23 @@ def test_copy_allows_many_to_one_explicit_dietary_tag_mapping(copy_database):
     assert sum(item.kind == "dietary_tag" for item in command.mappings) == 2
     result = asyncio.run(copy_ingredient_to_organization(db.sessions, context(db), command))
     with db.engine.connect() as connection:
-        copied_tag_ids = connection.execute(
-            select(IngredientVersionDietaryTag.dietary_tag_id).join(
-                IngredientVersion,
-                IngredientVersion.id
-                == IngredientVersionDietaryTag.ingredient_version_id,
-            ).where(IngredientVersion.ingredient_id == result.destination_ingredient_id)
-        ).scalars().all()
+        copied_tag_ids = (
+            connection.execute(
+                select(IngredientVersionDietaryTag.dietary_tag_id)
+                .join(
+                    IngredientVersion,
+                    IngredientVersion.id == IngredientVersionDietaryTag.ingredient_version_id,
+                )
+                .where(IngredientVersion.ingredient_id == result.destination_ingredient_id)
+            )
+            .scalars()
+            .all()
+        )
     assert len(copied_tag_ids) == 3
     assert set(copied_tag_ids) == {setup.destination_tag}
 
 
-def test_copy_reuses_active_seeded_destination_tag_without_mapping(copy_database):
+def test_copy_reuses_active_seeded_destination_tag_without_mapping(copy_database: Any) -> None:
     db = copy_database
     destination_section = uuid4()
     destination_tag = uuid4()
@@ -1130,7 +1147,7 @@ def test_copy_reuses_active_seeded_destination_tag_without_mapping(copy_database
         assert set(copied_tags) == {destination_tag}
 
 
-def test_copy_accepted_retry_replays_without_duplicate_graph_or_feed(copy_database):
+def test_copy_accepted_retry_replays_without_duplicate_graph_or_feed(copy_database: Any) -> None:
     db = copy_database
     setup = _prepare_multiversion_copy(db)
     command = _copy_command(db, setup)
@@ -1159,14 +1176,14 @@ def test_copy_accepted_retry_replays_without_duplicate_graph_or_feed(copy_databa
         )
 
 
-def test_copy_replay_after_role_revocation_is_forbidden(copy_database):
+def test_copy_replay_after_role_revocation_is_forbidden(copy_database: Any) -> None:
     db = copy_database
     setup = _prepare_multiversion_copy(db)
     command = _copy_command(db, setup)
     asyncio.run(copy_ingredient_to_organization(db.sessions, context(db), command))
     with db.engine.begin() as connection:
         connection.execute(
-            OrganizationMembership.__table__.update()
+            update(OrganizationMembership)
             .where(OrganizationMembership.organization_id == db.destination)
             .values(role="member")
         )
@@ -1174,13 +1191,13 @@ def test_copy_replay_after_role_revocation_is_forbidden(copy_database):
         asyncio.run(copy_ingredient_to_organization(db.sessions, context(db), command))
 
 
-def test_copy_stale_mapping_leaves_no_copy(copy_database):
+def test_copy_stale_mapping_leaves_no_copy(copy_database: Any) -> None:
     db = copy_database
     setup = _prepare_multiversion_copy(db)
     command = _copy_command(db, setup)
     with db.engine.begin() as connection:
         connection.execute(
-            DietaryTag.__table__.update()
+            update(DietaryTag)
             .where(DietaryTag.id == db.tag)
             .values(name="Renamed", normalized_name="renamed")
         )
@@ -1199,13 +1216,13 @@ def test_copy_stale_mapping_leaves_no_copy(copy_database):
         )
 
 
-def test_copy_authorization_error_leaves_no_copy(copy_database):
+def test_copy_authorization_error_leaves_no_copy(copy_database: Any) -> None:
     db = copy_database
     setup = _prepare_multiversion_copy(db)
     command = _copy_command(db, setup)
     with db.engine.begin() as connection:
         connection.execute(
-            OrganizationMembership.__table__.update()
+            update(OrganizationMembership)
             .where(OrganizationMembership.organization_id == db.destination)
             .values(role="member")
         )
@@ -1213,7 +1230,7 @@ def test_copy_authorization_error_leaves_no_copy(copy_database):
         asyncio.run(copy_ingredient_to_organization(db.sessions, context(db), command))
 
 
-def test_copy_invalid_mapping_rolls_back(copy_database):
+def test_copy_invalid_mapping_rolls_back(copy_database: Any) -> None:
     db = copy_database
     setup = _prepare_multiversion_copy(db)
     command = _copy_command(db, setup)
@@ -1241,7 +1258,7 @@ def test_copy_invalid_mapping_rolls_back(copy_database):
         )
 
 
-def test_copy_custom_tag_name_collision_is_retained_rejection(copy_database):
+def test_copy_custom_tag_name_collision_is_retained_rejection(copy_database: Any) -> None:
     db = copy_database
     setup = _prepare_multiversion_copy(db)
     command = _copy_command(db, setup, create_custom_tag=True)
@@ -1259,7 +1276,7 @@ def test_copy_custom_tag_name_collision_is_retained_rejection(copy_database):
         )
 
 
-def test_copy_name_collision_rolls_back(copy_database):
+def test_copy_name_collision_rolls_back(copy_database: Any) -> None:
     db = copy_database
     setup = _prepare_multiversion_copy(db)
     command = _copy_command(db, setup)

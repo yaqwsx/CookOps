@@ -75,7 +75,13 @@ const payload = {
     { id: dayId, event_id: eventId, calendar_date: "2026-08-16", note: null },
   ],
   event_meal_roles: [
-    { id: roleId, event_id: eventId, position_key: "a", custom_name: "Dinner", built_in_translation_key: null },
+    {
+      id: roleId,
+      event_id: eventId,
+      position_key: "a",
+      custom_name: "Dinner",
+      built_in_translation_key: null,
+    },
   ],
   shopping_revision_sources: [
     {
@@ -112,9 +118,22 @@ const payload = {
       position_key: "a",
     },
   ],
-  recipes: [{ id: recipeId, organization_id: organizationId, current_version_id: recipeVersionId }],
+  recipes: [
+    {
+      id: recipeId,
+      organization_id: organizationId,
+      current_version_id: recipeVersionId,
+    },
+  ],
   ingredients: [{ id: ingredientId, organization_id: organizationId }],
-  dietary_tags: [{ id: dietaryTagId, organization_id: organizationId, seed_key: "vegan", name: null }],
+  dietary_tags: [
+    {
+      id: dietaryTagId,
+      organization_id: organizationId,
+      seed_key: "vegan",
+      name: null,
+    },
+  ],
   recipe_tags: [{ id: recipeTagId, organization_id: organizationId }],
   recipe_versions: [
     {
@@ -147,7 +166,14 @@ const payload = {
       organization_id: organizationId,
     },
   ],
-  units: [{ id: unitId, organization_id: organizationId, code: "portion", custom_name: "portion" }],
+  units: [
+    {
+      id: unitId,
+      organization_id: organizationId,
+      code: "portion",
+      custom_name: "portion",
+    },
+  ],
   resolved_dietary_warnings: [
     {
       id: scheduledId,
@@ -155,7 +181,13 @@ const payload = {
       event_id: eventId,
       organization_id: organizationId,
       warnings: [
-        { exception_name: "Alex", tag_descriptors: [{ id: dietaryTagId, seed_key: "vegan", name: null }], ingredient_names: ["Tofu"] },
+        {
+          exception_name: "Alex",
+          tag_descriptors: [
+            { id: dietaryTagId, seed_key: "vegan", name: null },
+          ],
+          ingredient_names: ["Tofu"],
+        },
       ],
     },
   ],
@@ -295,46 +327,62 @@ describe("archived event cache", () => {
   });
 
   it("surfaces archive authentication failures without caching records", async () => {
-    const fetcher = vi.fn().mockResolvedValue(new Response(null, { status: 401 }));
+    const fetcher = vi
+      .fn()
+      .mockResolvedValue(new Response(null, { status: 401 }));
     await expect(
       ensureArchivedEventCached(userId, organizationId, eventId, fetcher),
-    ).rejects.toSatisfy((error) => error instanceof SyncRequestError && error.status === 401);
+    ).rejects.toSatisfy(
+      (error) => error instanceof SyncRequestError && error.status === 401,
+    );
     await expect(localDb.archiveRecords.toArray()).resolves.toHaveLength(0);
   });
 
   it("maps cached snake-case warnings into the archived planner projection", async () => {
     const fetcher = vi.fn().mockResolvedValue(
-      response({ archive_schema_version: 1, content_hash: await hash(payload), payload }),
+      response({
+        archive_schema_version: 1,
+        content_hash: await hash(payload),
+        payload,
+      }),
     );
     await ensureArchivedEventCached(userId, organizationId, eventId, fetcher);
-    readVisibleRecords.mockImplementation(async (_user: string, _org: string, kind: string) =>
-      kind === "event"
-        ? [{
-            userId,
-            organizationId,
-            entityType: "event",
-            entityId: eventId,
-            recordSchemaVersion: 1,
-            lifecycle: "retired",
-            immutable: false,
-            updatedAt: "2026-08-16T00:00:00Z",
-            fields: {
-              ...payload.event,
-              lifecycle: "archived",
-              name: "Archive",
-              start_date: "2026-08-16",
-              end_date: "2026-08-16",
-              base_expected_attendance: 4,
-              current_archive_snapshot_id: snapshotId,
-            },
-            fieldClocks: {},
-          }]
-        : [],
+    readVisibleRecords.mockImplementation(
+      async (_user: string, _org: string, kind: string) =>
+        kind === "event"
+          ? [
+              {
+                userId,
+                organizationId,
+                entityType: "event",
+                entityId: eventId,
+                recordSchemaVersion: 1,
+                lifecycle: "retired",
+                immutable: false,
+                updatedAt: "2026-08-16T00:00:00Z",
+                fields: {
+                  ...payload.event,
+                  lifecycle: "archived",
+                  name: "Archive",
+                  start_date: "2026-08-16",
+                  end_date: "2026-08-16",
+                  base_expected_attendance: 4,
+                  current_archive_snapshot_id: snapshotId,
+                },
+                fieldClocks: {},
+              },
+            ]
+          : [],
     );
     const planner = await readEventPlanner(userId, organizationId, eventId);
     expect(planner?.lifecycle).toBe("archived");
     expect(planner?.scheduled[0]?.dietaryWarnings).toEqual([
-      { exceptionName: "Alex", tagNames: ["vegan"], ingredientNames: ["Tofu"], tagDescriptors: [{ id: dietaryTagId, seedKey: "vegan" }] },
+      {
+        exceptionName: "Alex",
+        tagNames: ["vegan"],
+        ingredientNames: ["Tofu"],
+        tagDescriptors: [{ id: dietaryTagId, seedKey: "vegan" }],
+      },
     ]);
   });
 
@@ -387,15 +435,13 @@ describe("archived event cache", () => {
 
   it("rejects a missing organization scope before writing", async () => {
     const invalidPayload = { ...payload, recipes: [{ id: recipeId }] };
-    const fetcher = vi
-      .fn()
-      .mockResolvedValue(
-        response({
-          archive_schema_version: 1,
-          content_hash: await hash(invalidPayload),
-          payload: invalidPayload,
-        }),
-      );
+    const fetcher = vi.fn().mockResolvedValue(
+      response({
+        archive_schema_version: 1,
+        content_hash: await hash(invalidPayload),
+        payload: invalidPayload,
+      }),
+    );
     await expect(
       ensureArchivedEventCached(userId, organizationId, eventId, fetcher),
     ).rejects.toThrow("Invalid archive");
@@ -477,27 +523,46 @@ describe("archived event cache", () => {
       "invalid dietary tag descriptor",
       {
         ...payload,
-        resolved_dietary_warnings: [{
-          ...payload.resolved_dietary_warnings[0],
-          warnings: [{
-            ...payload.resolved_dietary_warnings[0].warnings[0],
-            tag_descriptors: [{ id: dietaryTagId, seed_key: "unknown", name: null }],
-          }],
-        }],
+        resolved_dietary_warnings: [
+          {
+            ...payload.resolved_dietary_warnings[0],
+            warnings: [
+              {
+                ...payload.resolved_dietary_warnings[0].warnings[0],
+                tag_descriptors: [
+                  { id: dietaryTagId, seed_key: "unknown", name: null },
+                ],
+              },
+            ],
+          },
+        ],
       },
     ],
     [
       "forged dietary tag descriptor",
       {
         ...payload,
-        resolved_dietary_warnings: [{
-          ...payload.resolved_dietary_warnings[0],
-          warnings: [{
-            ...payload.resolved_dietary_warnings[0].warnings[0],
-            tag_descriptors: [{ id: dietaryTagId, seed_key: "vegan", name: null }],
-          }],
-        }],
-        dietary_tags: [{ id: dietaryTagId, organization_id: organizationId, seed_key: "vegan", name: "Forged" }],
+        resolved_dietary_warnings: [
+          {
+            ...payload.resolved_dietary_warnings[0],
+            warnings: [
+              {
+                ...payload.resolved_dietary_warnings[0].warnings[0],
+                tag_descriptors: [
+                  { id: dietaryTagId, seed_key: "vegan", name: null },
+                ],
+              },
+            ],
+          },
+        ],
+        dietary_tags: [
+          {
+            id: dietaryTagId,
+            organization_id: organizationId,
+            seed_key: "vegan",
+            name: "Forged",
+          },
+        ],
       },
     ],
   ])("rejects %s atomically", async (_name, invalidPayload) => {

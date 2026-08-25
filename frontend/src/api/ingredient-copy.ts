@@ -65,12 +65,14 @@ function nullableUuid(value: unknown): string | null {
 }
 
 function stringValue(value: unknown): string {
-  if (typeof value !== "string" || !value) throw new Error("Invalid ingredient copy response.");
+  if (typeof value !== "string" || !value)
+    throw new Error("Invalid ingredient copy response.");
   return value;
 }
 
 function uuidList(value: unknown): string[] {
-  if (!Array.isArray(value)) throw new Error("Invalid ingredient copy response.");
+  if (!Array.isArray(value))
+    throw new Error("Invalid ingredient copy response.");
   return value.map(requiredUuid);
 }
 
@@ -108,11 +110,20 @@ function parsePreview(value: unknown): IngredientCopyPreview {
 
 function parseResult(value: unknown): IngredientCopyResult {
   if (!record(value)) throw new Error("Invalid ingredient copy response.");
-  if (typeof value.first_change_sequence !== "number" || !Number.isSafeInteger(value.first_change_sequence) || value.first_change_sequence < 0)
+  if (
+    typeof value.first_change_sequence !== "number" ||
+    !Number.isSafeInteger(value.first_change_sequence) ||
+    value.first_change_sequence < 0
+  )
     throw new Error("Invalid ingredient copy response.");
-  if (typeof value.last_change_sequence !== "number" || !Number.isSafeInteger(value.last_change_sequence) || value.last_change_sequence < value.first_change_sequence)
+  if (
+    typeof value.last_change_sequence !== "number" ||
+    !Number.isSafeInteger(value.last_change_sequence) ||
+    value.last_change_sequence < value.first_change_sequence
+  )
     throw new Error("Invalid ingredient copy response.");
-  if (typeof value.replayed !== "boolean") throw new Error("Invalid ingredient copy response.");
+  if (typeof value.replayed !== "boolean")
+    throw new Error("Invalid ingredient copy response.");
   return {
     mutationId: requiredUuid(value.mutation_id),
     sourceOrganizationId: requiredUuid(value.source_organization_id),
@@ -156,7 +167,8 @@ export async function copyIngredient(
     mappings: IngredientCopyMapping[];
   },
 ): Promise<IngredientCopyResult> {
-  if (!uuid.test(input.mutationId)) throw new Error("Invalid ingredient copy request.");
+  if (!uuid.test(input.mutationId))
+    throw new Error("Invalid ingredient copy request.");
   const response = await fetch(
     `/api/v1/organizations/${destinationOrganizationId}/ingredient-copy`,
     {

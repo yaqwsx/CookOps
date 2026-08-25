@@ -18,37 +18,58 @@ import {
   queueScheduledRecipeLifecycle,
   queueScheduledRecipeMove,
   queueScheduledRecipeCatalogUpdate,
+  queueScheduledRecipeNote,
 } from "./scheduled-recipe";
 import {
   queueAddedOverride,
+  queueClearAddedOverride,
+  queueClearReplacementOverride,
   queueReplacementOverride,
 } from "./scheduled-ingredient-override";
-import { queueEventDayCreate, queueEventDayLifecycle, queueEventDayNote, queueEventDayVisibility } from "./event-day";
-import { queueEventMealRoleCreate, queueEventMealRoleLifecycle, queueEventMealRoleName, queueEventMealRolePosition } from "./event-meal-role";
+import {
+  queueEventDayCreate,
+  queueEventDayLifecycle,
+  queueEventDayNote,
+  queueEventDayVisibility,
+} from "./event-day";
+import {
+  queueEventMealRoleCreate,
+  queueEventMealRoleLifecycle,
+  queueEventMealRoleName,
+  queueEventMealRolePosition,
+} from "./event-meal-role";
 import { pullOrganization, SyncRequestError } from "./sync-bootstrap";
 import { dietaryTagSeedKeys, ensureArchivedEventCached } from "./archive-cache";
 import { mealRoleLabels } from "./meal-role-labels";
-import { localDb } from "./local-db";
-import { readRecipeCatalog, type RecipeCatalogProjection } from "./recipe-catalog";
-import { assertPlannerTarget, queueRecipeCreate, type RecipeCreateInput } from "./recipe-create";
+import {
+  readRecipeCatalog,
+  type RecipeCatalogProjection,
+} from "./recipe-catalog";
+import {
+  assertPlannerTarget,
+  queueRecipeCreate,
+  type RecipeCreateInput,
+} from "./recipe-create";
+import {
+  EventSummary,
+  formattedDate,
+  useEventPendingSync,
+} from "./event-summary";
+import { EventSectionNavigation } from "./event-section-navigation";
+import { ShoppingCreate } from "./shopping-create";
 
 const plannerDragMime = "application/x-cookops-planner";
 type PlannerDragPayload = { kind: "recipe" | "scheduled"; id: string };
 const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
-function formattedDate(value: string, locale: string): string {
-  const date = new Date(`${value}T00:00:00Z`);
-  if (Number.isNaN(date.valueOf())) return value;
-  return new Intl.DateTimeFormat(locale, {
-    day: "numeric",
-    month: "long",
-    year: "numeric",
-    timeZone: "UTC",
-  }).format(date);
-}
-
-function roleName(role: EventPlannerProjection["roles"][number], language: string) {
-  return mealRoleLabels[role.name]?.[language.startsWith("en") ? "en" : "cs"] ?? role.name;
+function roleName(
+  role: EventPlannerProjection["roles"][number],
+  language: string,
+) {
+  return (
+    mealRoleLabels[role.name]?.[language.startsWith("en") ? "en" : "cs"] ??
+    role.name
+  );
 }
 
 function writePlannerDrag(event: React.DragEvent, payload: PlannerDragPayload) {
@@ -56,12 +77,18 @@ function writePlannerDrag(event: React.DragEvent, payload: PlannerDragPayload) {
   event.dataTransfer.effectAllowed = "move";
 }
 
-function readPlannerDrag(event: React.DragEvent): PlannerDragPayload | undefined {
+function readPlannerDrag(
+  event: React.DragEvent,
+): PlannerDragPayload | undefined {
   try {
-    const payload = JSON.parse(event.dataTransfer.getData(plannerDragMime)) as unknown;
+    const payload = JSON.parse(
+      event.dataTransfer.getData(plannerDragMime),
+    ) as unknown;
     if (typeof payload !== "object" || payload === null) return undefined;
     const value = payload as Record<string, unknown>;
-    return (value.kind === "recipe" || value.kind === "scheduled") && typeof value.id === "string" && uuid.test(value.id)
+    return (value.kind === "recipe" || value.kind === "scheduled") &&
+      typeof value.id === "string" &&
+      uuid.test(value.id)
       ? { kind: value.kind, id: value.id }
       : undefined;
   } catch {
@@ -71,58 +98,111 @@ function readPlannerDrag(event: React.DragEvent): PlannerDragPayload | undefined
 
 type PlannerState = "loading" | "ready" | "offline" | "error";
 
-function EventSummary({ planner, costs, pendingSync }: { planner: EventPlannerProjection; costs?: EventCostsProjection; pendingSync: { pending: number; failed: number } }) {
-  const { i18n, t } = useTranslation();
-  const locale = i18n.resolvedLanguage ?? "cs";
-  return (
-    <header className="event-workspace__summary">
-      <div>
-        <h2>{planner.name}</h2>
-        <p>
-          {t("planner.dateRange", {
-            start: formattedDate(planner.startDate, locale),
-            end: formattedDate(planner.endDate, locale),
-          })}
-        </p>
-      </div>
-      <dl>
-        <div>
-          <dt>{t("planner.attendance")}</dt>
-          <dd>{planner.attendance}</dd>
-        </div>
-        <div>
-          <dt>{t("planner.lifecycle")}</dt>
-          <dd>{t(`eventsOverview.lifecycle.${planner.lifecycle}`)}</dd>
-        </div>
-        {costs ? <>
-          <div><dt>{t("costs.budget")}</dt><dd>{t("costs.amount", { amount: costs.budget, currency: costs.currency })}</dd></div>
-          <div><dt>{t("costs.scheduled")}</dt><dd>{t("costs.amount", { amount: costs.total, currency: costs.currency })}</dd></div>
-          <div><dt>{t("costs.actual")}</dt><dd>{t("costs.amount", { amount: costs.actual, currency: costs.currency })}</dd></div>
-          <div><dt>{t("costs.remaining")}</dt><dd>{t("costs.amount", { amount: costs.remaining, currency: costs.currency })}</dd></div>
-        </> : null}
-        <div>
-          <dt>{t("planner.pendingSync")}</dt>
-          <dd>{pendingSync.failed ? t("planner.pendingSyncFailed", { count: pendingSync.failed }) : t("planner.pendingSyncCount", { count: pendingSync.pending })}</dd>
-        </div>
-      </dl>
-    </header>
-  );
-}
-
-function CatalogUpdateChoice({ item, planner, eventId, organizationId, userId }: { item: EventPlannerProjection["scheduled"][number]; planner: EventPlannerProjection; eventId: string; organizationId: string; userId: string }) {
+function CatalogUpdateChoice({
+  item,
+  planner,
+  eventId,
+  organizationId,
+  userId,
+}: {
+  item: EventPlannerProjection["scheduled"][number];
+  planner: EventPlannerProjection;
+  eventId: string;
+  organizationId: string;
+  userId: string;
+}) {
   const { t } = useTranslation();
-  const target = planner.recipes.find((recipe) => recipe.id === item.recipeId)?.versionId;
+  const target = planner.recipes.find(
+    (recipe) => recipe.id === item.recipeId,
+  )?.versionId;
   const [error, setError] = useState(false);
-  if (planner.lifecycle !== "active" || !item.catalogUpdateAvailable || !target || target === item.recipeVersionId || item.retired) return null;
+  if (
+    planner.lifecycle !== "active" ||
+    !item.catalogUpdateAvailable ||
+    !target ||
+    target === item.recipeVersionId ||
+    item.retired
+  )
+    return null;
   async function queue(preserveOverrides: boolean) {
     if (!target) return;
     try {
-      await queueScheduledRecipeCatalogUpdate(userId, organizationId, { scheduledRecipeId: item.id, eventId, expectedRecipeVersionId: item.recipeVersionId, targetRecipeVersionId: target, preserveOverrides });
+      await queueScheduledRecipeCatalogUpdate(userId, organizationId, {
+        scheduledRecipeId: item.id,
+        eventId,
+        expectedRecipeVersionId: item.recipeVersionId,
+        targetRecipeVersionId: target,
+        preserveOverrides,
+      });
       setError(false);
-    } catch { setError(true); }
+    } catch {
+      setError(true);
+    }
   }
   const scale = item.catalogScaleImpact;
-  return <details><summary>{t("planner.catalogUpdatePreview")}</summary><p>{t("planner.catalogUpdateDiff", item.catalogUpdateChanges)}</p>{scale.reset ? (scale.suggestedAmount ? <p>{t("planner.catalogUpdateScaleReset", { current: scale.currentUnitName ?? "—", target: scale.targetUnitName ?? "—", suggestion: scale.suggestedAmount })}</p> : <p>{t("planner.catalogUpdateScaleDeferred")}</p>) : <p>{t("planner.catalogUpdateScaleKept", { unit: scale.targetUnitName ?? scale.currentUnitName ?? "—" })}</p>}<p>{t("planner.catalogUpdateChoice")}</p><button type="button" onClick={() => void queue(true)}>{t("planner.preserveOverrides")}</button><button type="button" onClick={() => void queue(false)}>{t("planner.discardOverrides")}</button>{error ? <p role="alert">{t("planner.errors.unavailable")}</p> : null}</details>;
+  const details = item.catalogUpdateDetails;
+  return (
+    <details>
+      <summary>{t("planner.catalogUpdatePreview")}</summary>
+      <p>{t("planner.catalogUpdateDiff", item.catalogUpdateChanges)}</p>
+      {details ? (
+        <ul>
+          {details.map((line) => (
+            <li key={`${line.kind}-${line.id}`}>
+              <strong>{t(`planner.catalogUpdateKinds.${line.kind}`)}</strong>:{" "}
+              {line.oldName && line.newName && line.oldName !== line.newName
+                ? `${line.oldName} → ${line.newName}`
+                : (line.newName ?? line.oldName)}{" "}
+              ·{" "}
+              {line.oldQuantity
+                ? `${line.oldQuantity} ${line.oldUnitName ?? ""}`
+                : "—"}{" "}
+              →{" "}
+              {line.newQuantity
+                ? `${line.newQuantity} ${line.newUnitName ?? ""}`
+                : "—"}
+              {line.localOverride
+                ? ` · ${t("planner.localOverrideMarker")}`
+                : ""}
+            </li>
+          ))}
+        </ul>
+      ) : (
+        <p role="status">{t("planner.catalogUpdateUnavailable")}</p>
+      )}
+      {scale.reset ? (
+        scale.suggestedAmount ? (
+          <p>
+            {t("planner.catalogUpdateScaleReset", {
+              current: scale.currentUnitName ?? "—",
+              target: scale.targetUnitName ?? "—",
+              suggestion: scale.suggestedAmount,
+            })}
+          </p>
+        ) : (
+          <p>{t("planner.catalogUpdateScaleDeferred")}</p>
+        )
+      ) : (
+        <p>
+          {t("planner.catalogUpdateScaleKept", {
+            unit: scale.targetUnitName ?? scale.currentUnitName ?? "—",
+          })}
+        </p>
+      )}
+      {details ? (
+        <>
+          <p>{t("planner.catalogUpdateChoice")}</p>
+          <button type="button" onClick={() => void queue(true)}>
+            {t("planner.preserveOverrides")}
+          </button>
+          <button type="button" onClick={() => void queue(false)}>
+            {t("planner.discardOverrides")}
+          </button>
+        </>
+      ) : null}
+      {error ? <p role="alert">{t("planner.errors.unavailable")}</p> : null}
+    </details>
+  );
 }
 
 export function EventCosts({
@@ -199,7 +279,11 @@ export function EventCosts({
         </p>
       ) : null}
       {planner.lifecycle === "active" ? (
-        <EventPriceRefreshControl eventId={eventId} organizationId={organizationId} userId={userId} />
+        <EventPriceRefreshControl
+          eventId={eventId}
+          organizationId={organizationId}
+          userId={userId}
+        />
       ) : null}
       {planner.scheduled.length ? (
         <ul className="event-costs__recipes">
@@ -240,56 +324,212 @@ function DayVisibility({
   const [error, setError] = useState(false);
   async function setVisibility(isVisible: boolean) {
     try {
-      await queueEventDayVisibility(userId, organizationId, { eventDayId: day.id, eventId, isVisible });
+      await queueEventDayVisibility(userId, organizationId, {
+        eventDayId: day.id,
+        eventId,
+        isVisible,
+      });
       setError(false);
     } catch {
       setError(true);
     }
   }
-  return <><button onClick={() => void setVisibility(!day.visible)} type="button">{t(day.visible ? "planner.hideDay" : "planner.restoreDay")}</button>{error ? <p role="alert">{t("planner.errors.unavailable")}</p> : null}</>;
+  return (
+    <>
+      <button onClick={() => void setVisibility(!day.visible)} type="button">
+        {t(day.visible ? "planner.hideDay" : "planner.restoreDay")}
+      </button>
+      {error ? <p role="alert">{t("planner.errors.unavailable")}</p> : null}
+    </>
+  );
 }
 
-function DayLifecycle({ day, eventId, organizationId, userId }: { day: EventPlannerProjection["days"][number]; eventId: string; organizationId: string; userId: string }) {
+function DayLifecycle({
+  day,
+  eventId,
+  organizationId,
+  userId,
+}: {
+  day: EventPlannerProjection["days"][number];
+  eventId: string;
+  organizationId: string;
+  userId: string;
+}) {
   const { t } = useTranslation();
   const [error, setError] = useState(false);
-  return <><button onClick={() => void queueEventDayLifecycle(userId, organizationId, { eventDayId: day.id, eventId, operation: "retire" }).then(() => setError(false)).catch(() => setError(true))} type="button">{t("planner.retireDay")}</button>{error ? <p role="alert">{t("planner.errors.unavailable")}</p> : null}</>;
+  return (
+    <>
+      <button
+        onClick={() =>
+          void queueEventDayLifecycle(userId, organizationId, {
+            eventDayId: day.id,
+            eventId,
+            operation: "retire",
+          })
+            .then(() => setError(false))
+            .catch(() => setError(true))
+        }
+        type="button"
+      >
+        {t("planner.retireDay")}
+      </button>
+      {error ? <p role="alert">{t("planner.errors.unavailable")}</p> : null}
+    </>
+  );
 }
 
-function RestoreDay({ planner, eventId, organizationId, userId }: { planner: EventPlannerProjection; eventId: string; organizationId: string; userId: string }) {
+function RestoreDay({
+  planner,
+  eventId,
+  organizationId,
+  userId,
+}: {
+  planner: EventPlannerProjection;
+  eventId: string;
+  organizationId: string;
+  userId: string;
+}) {
   const { i18n, t } = useTranslation();
   const [dayId, setDayId] = useState(planner.retiredDays[0]?.id ?? "");
   const [error, setError] = useState(false);
-  useEffect(() => setDayId((current) => planner.retiredDays.some((day) => day.id === current) ? current : (planner.retiredDays[0]?.id ?? "")), [planner.retiredDays]);
+  useEffect(
+    () =>
+      setDayId((current) =>
+        planner.retiredDays.some((day) => day.id === current)
+          ? current
+          : (planner.retiredDays[0]?.id ?? ""),
+      ),
+    [planner.retiredDays],
+  );
   if (planner.lifecycle !== "active" || !dayId) return null;
-  return <form onSubmit={(event) => { event.preventDefault(); void queueEventDayLifecycle(userId, organizationId, { eventDayId: dayId, eventId, operation: "restore" }).then(() => setError(false)).catch(() => setError(true)); }}><label>{t("planner.day")}<select value={dayId} onChange={(event) => setDayId(event.target.value)}>{planner.retiredDays.map((day) => <option key={day.id} value={day.id}>{formattedDate(day.date, i18n.resolvedLanguage ?? "cs")}</option>)}</select></label><button type="submit">{t("planner.restoreDay")}</button>{error ? <p role="alert">{t("planner.errors.unavailable")}</p> : null}</form>;
+  return (
+    <form
+      onSubmit={(event) => {
+        event.preventDefault();
+        void queueEventDayLifecycle(userId, organizationId, {
+          eventDayId: dayId,
+          eventId,
+          operation: "restore",
+        })
+          .then(() => setError(false))
+          .catch(() => setError(true));
+      }}
+    >
+      <label>
+        {t("planner.day")}
+        <select
+          value={dayId}
+          onChange={(event) => setDayId(event.target.value)}
+        >
+          {planner.retiredDays.map((day) => (
+            <option key={day.id} value={day.id}>
+              {formattedDate(day.date, i18n.resolvedLanguage ?? "cs")}
+            </option>
+          ))}
+        </select>
+      </label>
+      <button type="submit">{t("planner.restoreDay")}</button>
+      {error ? <p role="alert">{t("planner.errors.unavailable")}</p> : null}
+    </form>
+  );
 }
 
-function DayNote({ day, eventId, organizationId, userId }: { day: EventPlannerProjection["days"][number]; eventId: string; organizationId: string; userId: string }) {
+function DayNote({
+  day,
+  eventId,
+  organizationId,
+  userId,
+}: {
+  day: EventPlannerProjection["days"][number];
+  eventId: string;
+  organizationId: string;
+  userId: string;
+}) {
   const { t } = useTranslation();
   const [note, setNote] = useState(day.note ?? "");
   const [error, setError] = useState(false);
-  useEffect(() => setNote(day.note ?? ""), [day.note]);
   async function submit(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
     try {
-      await queueEventDayNote(userId, organizationId, { eventDayId: day.id, eventId, note: note || null });
+      await queueEventDayNote(userId, organizationId, {
+        eventDayId: day.id,
+        eventId,
+        note: note || null,
+      });
       setError(false);
     } catch {
       setError(true);
     }
   }
-  return <form onSubmit={(event) => void submit(event)}><label>{t("planner.dayNote")}<textarea maxLength={4000} onChange={(event) => setNote(event.target.value)} value={note} /></label><button type="submit">{t("planner.saveDayNote")}</button>{error ? <p role="alert">{t("planner.errors.unavailable")}</p> : null}</form>;
+  return (
+    <form onSubmit={(event) => void submit(event)}>
+      <label>
+        {t("planner.dayNote")}
+        <textarea
+          maxLength={4000}
+          onChange={(event) => setNote(event.target.value)}
+          value={note}
+        />
+      </label>
+      <button type="submit">{t("planner.saveDayNote")}</button>
+      {error ? <p role="alert">{t("planner.errors.unavailable")}</p> : null}
+    </form>
+  );
 }
 
-function AddDay({ eventId, organizationId, userId, active }: { eventId: string; organizationId: string; userId: string; active: boolean }) {
+function AddDay({
+  eventId,
+  organizationId,
+  userId,
+  active,
+}: {
+  eventId: string;
+  organizationId: string;
+  userId: string;
+  active: boolean;
+}) {
   const { t } = useTranslation();
   const [calendarDate, setCalendarDate] = useState("");
   const [error, setError] = useState(false);
   if (!active) return null;
-  return <form onSubmit={(event) => { event.preventDefault(); void queueEventDayCreate(userId, organizationId, { eventId, calendarDate }).then(() => setError(false)).catch(() => setError(true)); }}><label>{t("planner.day")}<input type="date" required value={calendarDate} onChange={(event) => setCalendarDate(event.target.value)} /></label><button type="submit">{t("planner.addDay")}</button>{error ? <p role="alert">{t("planner.errors.unavailable")}</p> : null}</form>;
+  return (
+    <form
+      onSubmit={(event) => {
+        event.preventDefault();
+        void queueEventDayCreate(userId, organizationId, {
+          eventId,
+          calendarDate,
+        })
+          .then(() => setError(false))
+          .catch(() => setError(true));
+      }}
+    >
+      <label>
+        {t("planner.day")}
+        <input
+          type="date"
+          required
+          value={calendarDate}
+          onChange={(event) => setCalendarDate(event.target.value)}
+        />
+      </label>
+      <button type="submit">{t("planner.addDay")}</button>
+      {error ? <p role="alert">{t("planner.errors.unavailable")}</p> : null}
+    </form>
+  );
 }
 
-function AddMealRole({ eventId, organizationId, userId, active }: { eventId: string; organizationId: string; userId: string; active: boolean }) {
+function AddMealRole({
+  eventId,
+  organizationId,
+  userId,
+  active,
+}: {
+  eventId: string;
+  organizationId: string;
+  userId: string;
+  active: boolean;
+}) {
   const { t } = useTranslation();
   const [customName, setCustomName] = useState("");
   const [error, setError] = useState(false);
@@ -297,52 +537,244 @@ function AddMealRole({ eventId, organizationId, userId, active }: { eventId: str
   async function submit(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault();
     try {
-      await queueEventMealRoleCreate(userId, organizationId, { eventId, customName });
+      await queueEventMealRoleCreate(userId, organizationId, {
+        eventId,
+        customName,
+      });
       setCustomName("");
       setError(false);
     } catch {
       setError(true);
     }
   }
-  return <form onSubmit={(event) => void submit(event)}><label>{t("planner.mealRoleName")}<input maxLength={200} onChange={(event) => setCustomName(event.target.value)} required value={customName} /></label><button type="submit">{t("planner.addMealRole")}</button>{error ? <p role="alert">{t("planner.errors.unavailable")}</p> : null}</form>;
+  return (
+    <form onSubmit={(event) => void submit(event)}>
+      <label>
+        {t("planner.mealRoleName")}
+        <input
+          maxLength={200}
+          onChange={(event) => setCustomName(event.target.value)}
+          required
+          value={customName}
+        />
+      </label>
+      <button type="submit">{t("planner.addMealRole")}</button>
+      {error ? <p role="alert">{t("planner.errors.unavailable")}</p> : null}
+    </form>
+  );
 }
 
-function OrderMealRoles({ planner, eventId, organizationId, userId }: { planner: EventPlannerProjection; eventId: string; organizationId: string; userId: string }) {
+function OrderMealRoles({
+  planner,
+  eventId,
+  organizationId,
+  userId,
+}: {
+  planner: EventPlannerProjection;
+  eventId: string;
+  organizationId: string;
+  userId: string;
+}) {
   const { t, i18n } = useTranslation();
   const [roleId, setRoleId] = useState(planner.roles[0]?.id ?? "");
-  const [positionKey, setPositionKey] = useState(planner.roles[0]?.position ?? "");
+  const [positionKey, setPositionKey] = useState(
+    planner.roles[0]?.position ?? "",
+  );
   const [error, setError] = useState(false);
   useEffect(() => {
-    const role = planner.roles.find((item) => item.id === roleId) ?? planner.roles[0];
-    if (role) { setRoleId(role.id); setPositionKey(role.position); }
+    const role =
+      planner.roles.find((item) => item.id === roleId) ?? planner.roles[0];
+    if (role) {
+      setRoleId(role.id);
+      setPositionKey(role.position);
+    }
   }, [planner.roles, roleId]);
   if (planner.lifecycle !== "active" || !planner.roles.length) return null;
-  return <form onSubmit={(event) => { event.preventDefault(); void queueEventMealRolePosition(userId, organizationId, { eventId, eventMealRoleId: roleId, positionKey }).then(() => setError(false)).catch(() => setError(true)); }}><label>{t("planner.role")}<select value={roleId} onChange={(event) => setRoleId(event.target.value)}>{planner.roles.map((role) => <option key={role.id} value={role.id}>{roleName(role, i18n.language)}</option>)}</select></label><label>{t("planner.rolePosition")}<input maxLength={255} pattern="[0-9A-Za-z]+" required value={positionKey} onChange={(event) => setPositionKey(event.target.value)} /></label><button type="submit">{t("planner.saveRolePosition")}</button>{error ? <p role="alert">{t("planner.errors.unavailable")}</p> : null}</form>;
+  return (
+    <form
+      onSubmit={(event) => {
+        event.preventDefault();
+        void queueEventMealRolePosition(userId, organizationId, {
+          eventId,
+          eventMealRoleId: roleId,
+          positionKey,
+        })
+          .then(() => setError(false))
+          .catch(() => setError(true));
+      }}
+    >
+      <label>
+        {t("planner.role")}
+        <select
+          value={roleId}
+          onChange={(event) => setRoleId(event.target.value)}
+        >
+          {planner.roles.map((role) => (
+            <option key={role.id} value={role.id}>
+              {roleName(role, i18n.language)}
+            </option>
+          ))}
+        </select>
+      </label>
+      <label>
+        {t("planner.rolePosition")}
+        <input
+          maxLength={255}
+          pattern="[0-9A-Za-z]+"
+          required
+          value={positionKey}
+          onChange={(event) => setPositionKey(event.target.value)}
+        />
+      </label>
+      <button type="submit">{t("planner.saveRolePosition")}</button>
+      {error ? <p role="alert">{t("planner.errors.unavailable")}</p> : null}
+    </form>
+  );
 }
 
-function RenameMealRole({ planner, eventId, organizationId, userId }: { planner: EventPlannerProjection; eventId: string; organizationId: string; userId: string }) {
+function RenameMealRole({
+  planner,
+  eventId,
+  organizationId,
+  userId,
+}: {
+  planner: EventPlannerProjection;
+  eventId: string;
+  organizationId: string;
+  userId: string;
+}) {
   const { t, i18n } = useTranslation();
   const roles = planner.roles.filter((role) => role.custom);
   const [roleId, setRoleId] = useState(roles[0]?.id ?? "");
   const [name, setName] = useState(roles[0]?.name ?? "");
   const [error, setError] = useState(false);
+  const previousRoleId = useRef("");
+  const previousProjectedName = useRef("");
   const selectedRole = roles.find((item) => item.id === roleId) ?? roles[0];
   const selectedRoleId = selectedRole?.id;
   const selectedRoleName = selectedRole?.name;
-  useEffect(() => { if (selectedRoleId && selectedRoleName) { setRoleId(selectedRoleId); setName(selectedRoleName); } else { setRoleId(""); setName(""); } }, [selectedRoleId, selectedRoleName]);
+  useEffect(() => {
+    if (selectedRoleId && selectedRoleName) {
+      const roleChanged = selectedRoleId !== previousRoleId.current;
+      setRoleId(selectedRoleId);
+      setName((current) =>
+        roleChanged || current === previousProjectedName.current
+          ? selectedRoleName
+          : current,
+      );
+      previousRoleId.current = selectedRoleId;
+      previousProjectedName.current = selectedRoleName;
+    } else {
+      setRoleId("");
+      setName("");
+      previousRoleId.current = "";
+      previousProjectedName.current = "";
+    }
+  }, [selectedRoleId, selectedRoleName]);
   if (planner.lifecycle !== "active" || !roleId) return null;
-  return <form onSubmit={(event) => { event.preventDefault(); void queueEventMealRoleName(userId, organizationId, { eventId, eventMealRoleId: roleId, customName: name }).then(() => setError(false)).catch(() => setError(true)); }}><label>{t("planner.role")}<select value={roleId} onChange={(event) => setRoleId(event.target.value)}>{roles.map((role) => <option key={role.id} value={role.id}>{roleName(role, i18n.language)}</option>)}</select></label><label>{t("planner.mealRoleName")}<input maxLength={200} required value={name} onChange={(event) => setName(event.target.value)} /></label><button type="submit">{t("planner.saveMealRoleName")}</button>{error ? <p role="alert">{t("planner.errors.unavailable")}</p> : null}</form>;
+  return (
+    <form
+      onSubmit={(event) => {
+        event.preventDefault();
+        void queueEventMealRoleName(userId, organizationId, {
+          eventId,
+          eventMealRoleId: roleId,
+          customName: name,
+        })
+          .then(() => setError(false))
+          .catch(() => setError(true));
+      }}
+    >
+      <label>
+        {t("planner.role")}
+        <select
+          value={roleId}
+          onChange={(event) => setRoleId(event.target.value)}
+        >
+          {roles.map((role) => (
+            <option key={role.id} value={role.id}>
+              {roleName(role, i18n.language)}
+            </option>
+          ))}
+        </select>
+      </label>
+      <label>
+        {t("planner.mealRoleName")}
+        <input
+          maxLength={200}
+          required
+          value={name}
+          onChange={(event) => setName(event.target.value)}
+        />
+      </label>
+      <button type="submit">{t("planner.saveMealRoleName")}</button>
+      {error ? <p role="alert">{t("planner.errors.unavailable")}</p> : null}
+    </form>
+  );
 }
 
-function MealRoleLifecycle({ planner, eventId, organizationId, userId }: { planner: EventPlannerProjection; eventId: string; organizationId: string; userId: string }) {
+function MealRoleLifecycle({
+  planner,
+  eventId,
+  organizationId,
+  userId,
+}: {
+  planner: EventPlannerProjection;
+  eventId: string;
+  organizationId: string;
+  userId: string;
+}) {
   const { t } = useTranslation();
-  const roles = useMemo(() => [...planner.roles, ...planner.retiredRoles], [planner.roles, planner.retiredRoles]);
+  const roles = useMemo(
+    () => [...planner.roles, ...planner.retiredRoles],
+    [planner.roles, planner.retiredRoles],
+  );
   const [roleId, setRoleId] = useState(roles[0]?.id ?? "");
   const [error, setError] = useState(false);
-  useEffect(() => setRoleId((current) => roles.some((role) => role.id === current) ? current : (roles[0]?.id ?? "")), [roles]);
+  useEffect(
+    () =>
+      setRoleId((current) =>
+        roles.some((role) => role.id === current)
+          ? current
+          : (roles[0]?.id ?? ""),
+      ),
+    [roles],
+  );
   const role = roles.find((item) => item.id === roleId);
   if (planner.lifecycle !== "active" || !role) return null;
-  return <form onSubmit={(event) => { event.preventDefault(); void queueEventMealRoleLifecycle(userId, organizationId, { eventId, eventMealRoleId: role.id, operation: role.retired ? "restore" : "retire" }).then(() => setError(false)).catch(() => setError(true)); }}><label>{t("planner.role")}<select value={roleId} onChange={(event) => setRoleId(event.target.value)}>{roles.map((item) => <option key={item.id} value={item.id}>{item.name}{item.retired ? ` (${t("planner.retired")})` : ""}</option>)}</select></label><button type="submit">{t(role.retired ? "planner.restoreMealRole" : "planner.retireMealRole")}</button>{error ? <p role="alert">{t("planner.errors.unavailable")}</p> : null}</form>;
+  return (
+    <form
+      onSubmit={(event) => {
+        event.preventDefault();
+        void queueEventMealRoleLifecycle(userId, organizationId, {
+          eventId,
+          eventMealRoleId: role.id,
+          operation: role.retired ? "restore" : "retire",
+        })
+          .then(() => setError(false))
+          .catch(() => setError(true));
+      }}
+    >
+      <label>
+        {t("planner.role")}
+        <select
+          value={roleId}
+          onChange={(event) => setRoleId(event.target.value)}
+        >
+          {roles.map((item) => (
+            <option key={item.id} value={item.id}>
+              {item.name}
+              {item.retired ? ` (${t("planner.retired")})` : ""}
+            </option>
+          ))}
+        </select>
+      </label>
+      <button type="submit">
+        {t(role.retired ? "planner.restoreMealRole" : "planner.retireMealRole")}
+      </button>
+      {error ? <p role="alert">{t("planner.errors.unavailable")}</p> : null}
+    </form>
+  );
 }
 
 function AddRecipe({
@@ -367,7 +799,47 @@ function AddRecipe({
   const [error, setError] = useState<string>();
   const [saved, setSaved] = useState(false);
   const [creating, setCreating] = useState(false);
+  const [mobile, setMobile] = useState(false);
+  const [catalogOpen, setCatalogOpen] = useState(false);
+  const catalogDialog = useRef<HTMLDialogElement>(null);
+  const catalogTrigger = useRef<HTMLButtonElement>(null);
   const inFlight = useRef(false);
+
+  useEffect(() => {
+    const query = window.matchMedia?.("(max-width: 46rem)");
+    if (!query) return;
+    const update = () => setMobile(query.matches);
+    update();
+    if (query.addEventListener) query.addEventListener("change", update);
+    else query.addListener?.(update);
+    return () => {
+      if (query.removeEventListener)
+        query.removeEventListener("change", update);
+      else query.removeListener?.(update);
+    };
+  }, []);
+
+  useEffect(() => {
+    const dialog = catalogDialog.current;
+    if (!dialog || !mobile || !catalogOpen) return;
+    if (typeof dialog.showModal === "function") dialog.showModal();
+    else dialog.setAttribute("open", "");
+    return () => {
+      if (dialog.open && typeof dialog.close === "function") dialog.close();
+      else dialog.removeAttribute("open");
+    };
+  }, [catalogOpen, mobile]);
+
+  function closeCatalog() {
+    setCatalogOpen(false);
+    if (
+      catalogDialog.current?.open &&
+      typeof catalogDialog.current.close === "function"
+    )
+      catalogDialog.current.close();
+    else catalogDialog.current?.removeAttribute("open");
+    catalogTrigger.current?.focus();
+  }
 
   useEffect(() => {
     setDayId((current) =>
@@ -411,8 +883,7 @@ function AddRecipe({
   if (planner.lifecycle !== "active") return null;
   if (!planner.days.length || !planner.roles.length)
     return <p role="status">{t("planner.noAddOptions")}</p>;
-  return (
-    <>
+  const catalog = (
     <form className="planner-add" onSubmit={(event) => void submit(event)}>
       <h3>{t("planner.addHeading")}</h3>
       <label>
@@ -441,21 +912,27 @@ function AddRecipe({
           ))}
         </select>
       </label>
-      {planner.recipes.length ? <label>
-        {t("planner.recipe")}
-        <select
-          onChange={(event) => setRecipeId(event.target.value)}
-          value={recipeId}
-        >
-          {planner.recipes.map((recipe) => (
-            <option key={recipe.id} value={recipe.id}>
-              {recipe.name}
-            </option>
-          ))}
-        </select>
-      </label> : null}
-      {planner.recipes.length ? <button type="submit">{t("planner.add")}</button> : null}
-      <button type="button" onClick={() => setCreating((value) => !value)}>{t("planner.createRecipe")}</button>
+      {planner.recipes.length ? (
+        <label>
+          {t("planner.recipe")}
+          <select
+            onChange={(event) => setRecipeId(event.target.value)}
+            value={recipeId}
+          >
+            {planner.recipes.map((recipe) => (
+              <option key={recipe.id} value={recipe.id}>
+                {recipe.name}
+              </option>
+            ))}
+          </select>
+        </label>
+      ) : null}
+      {planner.recipes.length ? (
+        <button type="submit">{t("planner.add")}</button>
+      ) : null}
+      <button type="button" onClick={() => setCreating((value) => !value)}>
+        {t("planner.createRecipe")}
+      </button>
       {error ? <p role="alert">{t(`planner.errors.${error}`)}</p> : null}
       {saved ? <p role="status">{t("planner.saved")}</p> : null}
       <p>{t("planner.dragInstructions")}</p>
@@ -472,25 +949,118 @@ function AddRecipe({
         ))}
       </ul>
     </form>
-    {creating ? <PlannerRecipeCreateForm eventId={eventId} eventDayId={dayId} eventMealRoleId={roleId} organizationId={organizationId} userId={userId} /> : null}
+  );
+  const createForm = creating ? (
+    <PlannerRecipeCreateForm
+      eventId={eventId}
+      eventDayId={dayId}
+      eventMealRoleId={roleId}
+      organizationId={organizationId}
+      userId={userId}
+    />
+  ) : null;
+  if (!mobile)
+    return (
+      <>
+        {catalog}
+        {createForm}
+      </>
+    );
+  return (
+    <>
+      <button
+        aria-controls="planner-recipe-catalog"
+        aria-expanded={catalogOpen}
+        ref={catalogTrigger}
+        type="button"
+        onClick={() => setCatalogOpen(true)}
+      >
+        {t("planner.openRecipeCatalog")}
+      </button>
+      <dialog
+        aria-labelledby="planner-recipe-catalog-heading"
+        className="planner-recipe-catalog-dialog"
+        id="planner-recipe-catalog"
+        ref={catalogDialog}
+        onCancel={(event) => {
+          event.preventDefault();
+          closeCatalog();
+        }}
+        onClose={() => {
+          setCatalogOpen(false);
+          catalogTrigger.current?.focus();
+        }}
+      >
+        <div className="planner-recipe-catalog-dialog__header">
+          <h3 id="planner-recipe-catalog-heading">
+            {t("planner.openRecipeCatalog")}
+          </h3>
+          <button
+            aria-label={t("planner.closeRecipeCatalog")}
+            type="button"
+            onClick={closeCatalog}
+          >
+            ×
+          </button>
+        </div>
+        {catalog}
+        {createForm}
+      </dialog>
     </>
   );
 }
 
-function PlannerRecipeCreateForm({ eventId, eventDayId, eventMealRoleId, organizationId, userId }: { eventId: string; eventDayId: string; eventMealRoleId: string; organizationId: string; userId: string }) {
+function PlannerRecipeCreateForm({
+  eventId,
+  eventDayId,
+  eventMealRoleId,
+  organizationId,
+  userId,
+}: {
+  eventId: string;
+  eventDayId: string;
+  eventMealRoleId: string;
+  organizationId: string;
+  userId: string;
+}) {
   const { t } = useTranslation();
   const [catalog, setCatalog] = useState<RecipeCatalogProjection>();
-  const [input, setInput] = useState<RecipeCreateInput>({ name: "", description: "", scalingUnitId: "", baseScalingAmount: "1" });
+  const [input, setInput] = useState<RecipeCreateInput>({
+    name: "",
+    description: "",
+    scalingUnitId: "",
+    baseScalingAmount: "1",
+  });
   const [error, setError] = useState<string>();
   const [saved, setSaved] = useState(false);
   const [createdRecipeId, setCreatedRecipeId] = useState<string>();
   const [isSubmitting, setIsSubmitting] = useState(false);
   const submitting = useRef(false);
-  useEffect(() => { void readRecipeCatalog(userId, organizationId).then(setCatalog).catch(() => setCatalog(undefined)); }, [organizationId, userId]);
-  useEffect(() => { const id = catalog?.scalingUnits[0]?.id; if (id && !catalog?.scalingUnits.some((unit) => unit.id === input.scalingUnitId)) setInput((current) => ({ ...current, scalingUnitId: id })); }, [catalog, input.scalingUnitId]);
-  function change(field: keyof RecipeCreateInput, value: string) { setInput((current) => ({ ...current, [field]: value })); setError(undefined); setSaved(false); }
+  useEffect(() => {
+    void readRecipeCatalog(userId, organizationId)
+      .then(setCatalog)
+      .catch(() => setCatalog(undefined));
+  }, [organizationId, userId]);
+  useEffect(() => {
+    const id = catalog?.scalingUnits[0]?.id;
+    if (
+      id &&
+      !catalog?.scalingUnits.some((unit) => unit.id === input.scalingUnitId)
+    )
+      setInput((current) => ({ ...current, scalingUnitId: id }));
+  }, [catalog, input.scalingUnitId]);
+  function change(field: keyof RecipeCreateInput, value: string) {
+    setInput((current) => ({ ...current, [field]: value }));
+    setError(undefined);
+    setSaved(false);
+  }
   async function schedule(recipeId: string) {
-    await queueRecipeSchedule(userId, organizationId, { eventId, eventDayId, eventMealRoleId, recipeId });
+    await queueRecipeSchedule(userId, organizationId, {
+      eventId,
+      eventDayId,
+      eventMealRoleId,
+      recipeId,
+    });
     setCreatedRecipeId(undefined);
     setSaved(true);
     setError(undefined);
@@ -501,7 +1071,13 @@ function PlannerRecipeCreateForm({ eventId, eventDayId, eventMealRoleId, organiz
     submitting.current = true;
     setIsSubmitting(true);
     try {
-      await assertPlannerTarget(userId, organizationId, eventId, eventDayId, eventMealRoleId);
+      await assertPlannerTarget(
+        userId,
+        organizationId,
+        eventId,
+        eventDayId,
+        eventMealRoleId,
+      );
       const recipeId = await queueRecipeCreate(userId, organizationId, input);
       setCreatedRecipeId(recipeId);
       await schedule(recipeId);
@@ -518,15 +1094,92 @@ function PlannerRecipeCreateForm({ eventId, eventDayId, eventMealRoleId, organiz
     if (createdRecipeId) setCreatedRecipeId(undefined);
   }
   return (
-    <form className="recipe-create planner-recipe-create" onSubmit={(event) => void submit(event)}>
+    <form
+      className="recipe-create planner-recipe-create"
+      onSubmit={(event) => void submit(event)}
+    >
       <h4>{t("planner.createRecipeHeading")}</h4>
-      <label>{t("recipesCatalog.name")}<input maxLength={200} required value={input.name} onChange={(event) => changeAndReset("name", event.target.value)} /></label>
-      <label>{t("recipesCatalog.scalingUnit")}<select required disabled={!catalog?.scalingUnits.length} value={input.scalingUnitId} onChange={(event) => changeAndReset("scalingUnitId", event.target.value)}>{catalog?.scalingUnits.map((unit) => <option key={unit.id} value={unit.id}>{unit.name}</option>)}</select></label>
-      <label>{t("recipesCatalog.baseScalingAmount")}<input required inputMode="decimal" pattern="(?:0|[1-9][0-9]*)(?:\.[0-9]+)?" value={input.baseScalingAmount} onChange={(event) => changeAndReset("baseScalingAmount", event.target.value)} /></label>
-      <label>{t("recipesCatalog.description")}<textarea value={input.description} onChange={(event) => changeAndReset("description", event.target.value)} /></label>
-      {error ? <p role="alert">{t(`recipesCatalog.errors.${error}`, { defaultValue: t("planner.errors.unavailable") })}</p> : null}
+      <label>
+        {t("recipesCatalog.name")}
+        <input
+          maxLength={200}
+          required
+          value={input.name}
+          onChange={(event) => changeAndReset("name", event.target.value)}
+        />
+      </label>
+      <label>
+        {t("recipesCatalog.scalingUnit")}
+        <select
+          required
+          disabled={!catalog?.scalingUnits.length}
+          value={input.scalingUnitId}
+          onChange={(event) =>
+            changeAndReset("scalingUnitId", event.target.value)
+          }
+        >
+          {catalog?.scalingUnits.map((unit) => (
+            <option key={unit.id} value={unit.id}>
+              {unit.name}
+            </option>
+          ))}
+        </select>
+      </label>
+      <label>
+        {t("recipesCatalog.baseScalingAmount")}
+        <input
+          required
+          inputMode="decimal"
+          pattern="(?:0|[1-9][0-9]*)(?:\.[0-9]+)?"
+          value={input.baseScalingAmount}
+          onChange={(event) =>
+            changeAndReset("baseScalingAmount", event.target.value)
+          }
+        />
+      </label>
+      <label>
+        {t("recipesCatalog.description")}
+        <textarea
+          value={input.description}
+          onChange={(event) =>
+            changeAndReset("description", event.target.value)
+          }
+        />
+      </label>
+      {error ? (
+        <p role="alert">
+          {t(`recipesCatalog.errors.${error}`, {
+            defaultValue: t("planner.errors.unavailable"),
+          })}
+        </p>
+      ) : null}
       {saved ? <p role="status">{t("planner.createdAndScheduled")}</p> : null}
-      {createdRecipeId ? <button disabled={isSubmitting} type="button" onClick={() => { if (isSubmitting) return; setIsSubmitting(true); void schedule(createdRecipeId).catch((reason) => setError(reason instanceof Error ? reason.message : "unavailable")).finally(() => setIsSubmitting(false)); }}>{t("planner.retrySchedule")}</button> : <button disabled={!catalog?.scalingUnits.length || isSubmitting} type="submit">{t("planner.createAndSchedule")}</button>}
+      {createdRecipeId ? (
+        <button
+          disabled={isSubmitting}
+          type="button"
+          onClick={() => {
+            if (isSubmitting) return;
+            setIsSubmitting(true);
+            void schedule(createdRecipeId)
+              .catch((reason) =>
+                setError(
+                  reason instanceof Error ? reason.message : "unavailable",
+                ),
+              )
+              .finally(() => setIsSubmitting(false));
+          }}
+        >
+          {t("planner.retrySchedule")}
+        </button>
+      ) : (
+        <button
+          disabled={!catalog?.scalingUnits.length || isSubmitting}
+          type="submit"
+        >
+          {t("planner.createAndSchedule")}
+        </button>
+      )}
     </form>
   );
 }
@@ -547,7 +1200,10 @@ function MoveRecipe({
   const { t, i18n } = useTranslation();
   const [dayId, setDayId] = useState(scheduled.dayId);
   const [roleId, setRoleId] = useState(scheduled.roleId);
-  const [positionKey, setPositionKey] = useState(scheduled.position);
+  const [placement, setPlacement] = useState<
+    "start" | "end" | "before" | "after"
+  >("end");
+  const [targetId, setTargetId] = useState("");
   const [error, setError] = useState(false);
   const inFlight = useRef(false);
 
@@ -563,7 +1219,8 @@ function MoveRecipe({
         eventId,
         eventDayId: dayId,
         eventMealRoleId: roleId,
-        positionKey,
+        placement,
+        ...(targetId ? { targetScheduledRecipeId: targetId } : {}),
       });
       setError(false);
     } catch {
@@ -605,14 +1262,43 @@ function MoveRecipe({
         </label>
         <label>
           {t("planner.position")}
-          <input
-            maxLength={255}
-            onChange={(event) => setPositionKey(event.target.value)}
-            pattern="[0-9A-Za-z]+"
-            required
-            value={positionKey}
-          />
+          <select
+            value={placement}
+            onChange={(event) =>
+              setPlacement(event.target.value as typeof placement)
+            }
+          >
+            <option value="start">{t("planner.moveToStart")}</option>
+            <option value="end">{t("planner.moveToEnd")}</option>
+            <option value="before">{t("planner.moveBefore")}</option>
+            <option value="after">{t("planner.moveAfter")}</option>
+          </select>
         </label>
+        {placement === "before" || placement === "after" ? (
+          <label>
+            {t("planner.target")}
+            <select
+              required
+              value={targetId}
+              onChange={(event) => setTargetId(event.target.value)}
+            >
+              <option value="">—</option>
+              {planner.scheduled
+                .filter(
+                  (item) =>
+                    item.dayId === dayId &&
+                    item.roleId === roleId &&
+                    item.id !== scheduled.id &&
+                    !item.retired,
+                )
+                .map((item) => (
+                  <option key={item.id} value={item.id}>
+                    {item.name}
+                  </option>
+                ))}
+            </select>
+          </label>
+        ) : null}
         <button type="submit">{t("planner.moveTo")}</button>
         {error ? <p role="alert">{t("planner.errors.unavailable")}</p> : null}
       </form>
@@ -620,15 +1306,56 @@ function MoveRecipe({
   );
 }
 
-function Attendance({ eventId, organizationId, userId, scheduled, active }: { eventId: string; organizationId: string; userId: string; scheduled: EventPlannerProjection["scheduled"][number]; active: boolean }) {
+function Attendance({
+  eventId,
+  organizationId,
+  userId,
+  scheduled,
+  active,
+}: {
+  eventId: string;
+  organizationId: string;
+  userId: string;
+  scheduled: EventPlannerProjection["scheduled"][number];
+  active: boolean;
+}) {
   const { t } = useTranslation();
   const [count, setCount] = useState(String(scheduled.dinerCount));
   const [error, setError] = useState(false);
   if (!active) return null;
   async function save(dinerCount: number | null) {
-    try { await queueScheduledRecipeAttendance(userId, organizationId, { scheduledRecipeId: scheduled.id, eventId, dinerCount }); setError(false); } catch { setError(true); }
+    try {
+      await queueScheduledRecipeAttendance(userId, organizationId, {
+        scheduledRecipeId: scheduled.id,
+        eventId,
+        dinerCount,
+      });
+      setError(false);
+    } catch {
+      setError(true);
+    }
   }
-  return <details><summary>{t("planner.attendanceEdit")}</summary><label>{t("planner.attendance")}<input value={count} inputMode="numeric" pattern="[0-9]+" onChange={(event) => setCount(event.target.value)} /></label><button type="button" onClick={() => void save(Number(count))}>{t("planner.saveAttendance")}</button><button type="button" onClick={() => void save(null)}>{t("planner.followEvent")}</button>{error ? <p role="alert">{t("planner.errors.unavailable")}</p> : null}</details>;
+  return (
+    <details>
+      <summary>{t("planner.attendanceEdit")}</summary>
+      <label>
+        {t("planner.attendance")}
+        <input
+          value={count}
+          inputMode="numeric"
+          pattern="[0-9]+"
+          onChange={(event) => setCount(event.target.value)}
+        />
+      </label>
+      <button type="button" onClick={() => void save(Number(count))}>
+        {t("planner.saveAttendance")}
+      </button>
+      <button type="button" onClick={() => void save(null)}>
+        {t("planner.followEvent")}
+      </button>
+      {error ? <p role="alert">{t("planner.errors.unavailable")}</p> : null}
+    </details>
+  );
 }
 
 function Scaling({
@@ -768,6 +1495,175 @@ function ReplacementOverride({
   );
 }
 
+function ResetReplacementOverride({
+  eventId,
+  organizationId,
+  userId,
+  scheduledRecipeId,
+  line,
+}: {
+  eventId: string;
+  organizationId: string;
+  userId: string;
+  scheduledRecipeId: string;
+  line: NonNullable<
+    EventPlannerProjection["scheduled"][number]["detailLines"]
+  >[number];
+}) {
+  const { t } = useTranslation();
+  const [error, setError] = useState(false);
+  const inFlight = useRef(false);
+  if (!line.replacementOverrideId || !line.replacementOverrideActive)
+    return null;
+  async function reset() {
+    if (inFlight.current) return;
+    inFlight.current = true;
+    try {
+      await queueClearReplacementOverride(userId, organizationId, {
+        eventId,
+        scheduledRecipeId,
+        targetLineKey: line.id,
+        overrideId: line.replacementOverrideId as string,
+      });
+      setError(false);
+    } catch {
+      setError(true);
+    } finally {
+      inFlight.current = false;
+    }
+  }
+  return (
+    <>
+      <button type="button" onClick={() => void reset()}>
+        {t("planner.resetToCatalog")}
+      </button>
+      {error ? (
+        <span role="alert"> {t("planner.errors.unavailable")}</span>
+      ) : null}
+    </>
+  );
+}
+
+function RemoveAddedOverride({
+  eventId,
+  organizationId,
+  userId,
+  scheduledRecipeId,
+  line,
+}: {
+  eventId: string;
+  organizationId: string;
+  userId: string;
+  scheduledRecipeId: string;
+  line: NonNullable<
+    EventPlannerProjection["scheduled"][number]["detailLines"]
+  >[number];
+}) {
+  const { t } = useTranslation();
+  const [error, setError] = useState(false);
+  const inFlight = useRef(false);
+  if (!line.addedOverrideId || !line.addedOverrideActive) return null;
+  async function remove() {
+    if (inFlight.current) return;
+    inFlight.current = true;
+    try {
+      await queueClearAddedOverride(userId, organizationId, {
+        eventId,
+        scheduledRecipeId,
+        overrideId: line.addedOverrideId as string,
+      });
+      setError(false);
+    } catch {
+      setError(true);
+    } finally {
+      inFlight.current = false;
+    }
+  }
+  return (
+    <>
+      <button type="button" onClick={() => void remove()}>
+        {t("planner.removeAddedIngredient")}
+      </button>
+      {error ? (
+        <span role="alert"> {t("planner.errors.unavailable")}</span>
+      ) : null}
+    </>
+  );
+}
+
+function EditAddedOverride({
+  eventId,
+  organizationId,
+  userId,
+  scheduledRecipeId,
+  line,
+}: {
+  eventId: string;
+  organizationId: string;
+  userId: string;
+  scheduledRecipeId: string;
+  line: NonNullable<
+    EventPlannerProjection["scheduled"][number]["detailLines"]
+  >[number];
+}) {
+  const { t } = useTranslation();
+  const [amount, setAmount] = useState(line.quantity);
+  const [included, setIncluded] = useState(
+    line.includeInPortionWeight !== false,
+  );
+  const [error, setError] = useState(false);
+  const inFlight = useRef(false);
+  if (!line.addedOverrideId || !line.addedOverrideActive) return null;
+  async function submit(event: React.FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (inFlight.current) return;
+    inFlight.current = true;
+    try {
+      await queueAddedOverride(userId, organizationId, {
+        eventId,
+        scheduledRecipeId,
+        ingredientId: line.ingredientId as string,
+        ingredientVersionId: line.ingredientVersionId as string,
+        quantity: amount,
+        includeInPortionWeight: included,
+        overrideId: line.addedOverrideId,
+      });
+      setError(false);
+    } catch {
+      setError(true);
+    } finally {
+      inFlight.current = false;
+    }
+  }
+  return (
+    <details>
+      <summary>{t("planner.editAddedIngredient")}</summary>
+      <form onSubmit={(event) => void submit(event)}>
+        <label>
+          {t("planner.quantity")}{" "}
+          <input
+            value={amount}
+            onChange={(event) => setAmount(event.target.value)}
+            inputMode="decimal"
+            pattern="(?:0|[1-9][0-9]*)(?:\.[0-9]+)?"
+            required
+          />
+        </label>
+        <label>
+          <input
+            checked={included}
+            onChange={(event) => setIncluded(event.target.checked)}
+            type="checkbox"
+          />{" "}
+          {t("planner.includeInPortionWeight")}
+        </label>
+        <button type="submit">{t("planner.saveAddedIngredient")}</button>
+        {error ? <p role="alert">{t("planner.errors.unavailable")}</p> : null}
+      </form>
+    </details>
+  );
+}
+
 function AddedOverride({
   eventId,
   active,
@@ -869,25 +1765,29 @@ export function EventPlanner({
   organizationId,
   userId,
   onUnauthenticated,
-  onOpenShopping,
-  onOpenReceipts,
-  onOpenCosts,
+  onShoppingListCreated,
+  onOpenRecipe,
 }: {
   eventId: string;
   organizationId: string;
   userId: string;
   onUnauthenticated: () => void;
-  onOpenShopping?: () => void;
-  onOpenReceipts?: () => void;
-  onOpenCosts?: () => void;
+  onShoppingListCreated?: (shoppingListId: string) => void;
+  onOpenRecipe?: (recipeId: string, recipeVersionId: string) => void;
 }) {
   const { t, i18n } = useTranslation();
   const [state, setState] = useState<PlannerState>("loading");
   const [planner, setPlanner] = useState<EventPlannerProjection>();
   const identity = `${userId}:${organizationId}:${eventId}`;
-  const [recipeCosts, setRecipeCosts] = useState<{ identity: string; costs?: EventCostsProjection }>();
-  const [pendingSync, setPendingSync] = useState({ pending: 0, failed: 0 });
-  const [recipeCostsError, setRecipeCostsError] = useState({ identity, error: false });
+  const [recipeCosts, setRecipeCosts] = useState<{
+    identity: string;
+    costs?: EventCostsProjection;
+  }>();
+  const pendingSync = useEventPendingSync(userId, organizationId, eventId);
+  const [recipeCostsError, setRecipeCostsError] = useState({
+    identity,
+    error: false,
+  });
   const [dropTarget, setDropTarget] = useState<string>();
   const generation = useRef(0);
   const synchronize = useCallback(async () => {
@@ -915,16 +1815,15 @@ export function EventPlanner({
     const effectIdentity = identity;
     setRecipeCosts(undefined);
     setRecipeCostsError({ identity: effectIdentity, error: false });
-    const costSubscription = liveQuery(() => readEventCosts(userId, organizationId, eventId)).subscribe({ next: (next) => active && setRecipeCosts({ identity: effectIdentity, costs: next }), error: () => active && setRecipeCostsError({ identity: effectIdentity, error: true }) });
-    const pendingSubscription = liveQuery(async () => {
-      const commands = await localDb.outbox.where("organizationId").equals(organizationId).toArray();
-      return commands.reduce((result, command) => {
-        if (command.userId !== userId || command.payload.event_id !== eventId) return result;
-        if (command.state === "pending") result.pending += 1;
-        else result.failed += 1;
-        return result;
-      }, { pending: 0, failed: 0 });
-    }).subscribe({ next: (next) => active && setPendingSync(next) });
+    const costSubscription = liveQuery(() =>
+      readEventCosts(userId, organizationId, eventId),
+    ).subscribe({
+      next: (next) =>
+        active && setRecipeCosts({ identity: effectIdentity, costs: next }),
+      error: () =>
+        active &&
+        setRecipeCostsError({ identity: effectIdentity, error: true }),
+    });
     const offline = () => setState("offline");
     window.addEventListener("online", synchronize);
     window.addEventListener("offline", offline);
@@ -934,7 +1833,6 @@ export function EventPlanner({
       generation.current += 1;
       subscription.unsubscribe();
       costSubscription.unsubscribe();
-      pendingSubscription.unsubscribe();
       window.removeEventListener("online", synchronize);
       window.removeEventListener("offline", offline);
     };
@@ -951,13 +1849,19 @@ export function EventPlanner({
       </div>
     );
   function startRecipeDrag(event: React.DragEvent, recipeId: string) {
-    if (planner?.lifecycle !== "active" || !planner?.recipes.some((recipe) => recipe.id === recipeId)) return;
+    if (
+      planner?.lifecycle !== "active" ||
+      !planner?.recipes.some((recipe) => recipe.id === recipeId)
+    )
+      return;
     const payload = { kind: "recipe" as const, id: recipeId };
     writePlannerDrag(event, payload);
   }
   function startScheduledDrag(event: React.DragEvent, scheduledId: string) {
     if (!planner) return;
-    const item = planner.scheduled.find((candidate) => candidate.id === scheduledId);
+    const item = planner.scheduled.find(
+      (candidate) => candidate.id === scheduledId,
+    );
     if (planner.lifecycle !== "active" || !item || item.retired) return;
     const payload = { kind: "scheduled" as const, id: scheduledId };
     writePlannerDrag(event, payload);
@@ -965,13 +1869,24 @@ export function EventPlanner({
   function clearDrag() {
     setDropTarget(undefined);
   }
-  function validDrop(payload: PlannerDragPayload | undefined, dayId: string, roleId: string) {
+  function validDrop(
+    payload: PlannerDragPayload | undefined,
+    dayId: string,
+    roleId: string,
+  ) {
     if (!planner) return false;
-    if (planner.lifecycle !== "active" || !planner.days.some((day) => day.id === dayId) || !planner.roles.some((role) => role.id === roleId)) return false;
+    if (
+      planner.lifecycle !== "active" ||
+      !planner.days.some((day) => day.id === dayId) ||
+      !planner.roles.some((role) => role.id === roleId)
+    )
+      return false;
     if (!payload) return false;
     return payload.kind === "recipe"
       ? planner.recipes.some((recipe) => recipe.id === payload.id)
-      : planner.scheduled.some((item) => item.id === payload.id && !item.retired);
+      : planner.scheduled.some(
+          (item) => item.id === payload.id && !item.retired,
+        );
   }
   function allowDrop(event: React.DragEvent, dayId: string, roleId: string) {
     const payload = readPlannerDrag(event);
@@ -987,9 +1902,20 @@ export function EventPlanner({
     if (!validDrop(payload, dayId, roleId) || !payload) return;
     try {
       if (payload.kind === "recipe") {
-        await queueRecipeSchedule(userId, organizationId, { eventId, eventDayId: dayId, eventMealRoleId: roleId, recipeId: payload.id });
+        await queueRecipeSchedule(userId, organizationId, {
+          eventId,
+          eventDayId: dayId,
+          eventMealRoleId: roleId,
+          recipeId: payload.id,
+        });
       } else {
-        await queueScheduledRecipeMove(userId, organizationId, { scheduledRecipeId: payload.id, eventId, eventDayId: dayId, eventMealRoleId: roleId, positionKey: "a" });
+        await queueScheduledRecipeMove(userId, organizationId, {
+          scheduledRecipeId: payload.id,
+          eventId,
+          eventDayId: dayId,
+          eventMealRoleId: roleId,
+          placement: "end",
+        });
       }
     } catch {
       // The existing planner remains authoritative when a drop races with a lifecycle change.
@@ -997,7 +1923,21 @@ export function EventPlanner({
   }
   return (
     <section className="event-workspace" aria-labelledby="planner-heading">
-      <EventSummary planner={planner} costs={recipeCosts?.identity === identity ? recipeCosts.costs : undefined} pendingSync={pendingSync} />
+      <EventSummary
+        eventId={eventId}
+        organizationId={organizationId}
+        userId={userId}
+        planner={planner}
+        costs={
+          recipeCosts?.identity === identity ? recipeCosts.costs : undefined
+        }
+        pendingSync={pendingSync}
+      />
+      <EventSectionNavigation
+        current="planner"
+        eventId={eventId}
+        organizationId={organizationId}
+      />
       {planner.lifecycle === "archived" ? (
         <p className="planner-archived" role="status">
           {t("planner.archived")}
@@ -1005,29 +1945,25 @@ export function EventPlanner({
       ) : null}
       {state === "offline" ? <p role="status">{t("planner.offline")}</p> : null}
       <h2 id="planner-heading">{t("planner.heading")}</h2>
-      {onOpenShopping ? (
-        <button onClick={onOpenShopping} type="button">
-          {t("planner.shopping")}
-        </button>
-      ) : null}
-      {onOpenReceipts ? (
-        <button onClick={onOpenReceipts} type="button">
-          {t("planner.receipts")}
-        </button>
-      ) : null}
-      {onOpenCosts ? (
-        <button onClick={onOpenCosts} type="button">
-          {t("planner.costs")}
-        </button>
-      ) : null}
+      <ShoppingCreate
+        eventId={eventId}
+        onCreated={onShoppingListCreated}
+        organizationId={organizationId}
+        planner={planner}
+        userId={userId}
+      />
       <EventCosts
         eventId={eventId}
         organizationId={organizationId}
         planner={planner}
         userId={userId}
-        providedCosts={recipeCosts?.identity === identity ? recipeCosts.costs : undefined}
+        providedCosts={
+          recipeCosts?.identity === identity ? recipeCosts.costs : undefined
+        }
       />
-      {recipeCostsError.identity === identity && recipeCostsError.error ? <p role="alert">{t("costs.unavailable")}</p> : null}
+      {recipeCostsError.identity === identity && recipeCostsError.error ? (
+        <p role="alert">{t("costs.unavailable")}</p>
+      ) : null}
       <AddRecipe
         eventId={eventId}
         organizationId={organizationId}
@@ -1036,12 +1972,42 @@ export function EventPlanner({
         onRecipeDragStart={startRecipeDrag}
         onDragEnd={clearDrag}
       />
-      <AddDay eventId={eventId} organizationId={organizationId} userId={userId} active={planner.lifecycle === "active"} />
-      <RestoreDay eventId={eventId} organizationId={organizationId} planner={planner} userId={userId} />
-      <AddMealRole eventId={eventId} organizationId={organizationId} userId={userId} active={planner.lifecycle === "active"} />
-      <OrderMealRoles eventId={eventId} organizationId={organizationId} planner={planner} userId={userId} />
-      <RenameMealRole eventId={eventId} organizationId={organizationId} planner={planner} userId={userId} />
-      <MealRoleLifecycle eventId={eventId} organizationId={organizationId} planner={planner} userId={userId} />
+      <AddDay
+        eventId={eventId}
+        organizationId={organizationId}
+        userId={userId}
+        active={planner.lifecycle === "active"}
+      />
+      <RestoreDay
+        eventId={eventId}
+        organizationId={organizationId}
+        planner={planner}
+        userId={userId}
+      />
+      <AddMealRole
+        eventId={eventId}
+        organizationId={organizationId}
+        userId={userId}
+        active={planner.lifecycle === "active"}
+      />
+      <OrderMealRoles
+        eventId={eventId}
+        organizationId={organizationId}
+        planner={planner}
+        userId={userId}
+      />
+      <RenameMealRole
+        eventId={eventId}
+        organizationId={organizationId}
+        planner={planner}
+        userId={userId}
+      />
+      <MealRoleLifecycle
+        eventId={eventId}
+        organizationId={organizationId}
+        planner={planner}
+        userId={userId}
+      />
       <div className="planner-days">
         {planner.days.map((day) => (
           <section
@@ -1049,11 +2015,35 @@ export function EventPlanner({
             key={day.id}
             aria-labelledby={`day-${day.id}`}
           >
-            <h3 id={`day-${day.id}`}>{formattedDate(day.date, i18n.resolvedLanguage ?? "cs")}</h3>
+            <h3 id={`day-${day.id}`}>
+              {formattedDate(day.date, i18n.resolvedLanguage ?? "cs")}
+            </h3>
             {day.note ? <p>{day.note}</p> : null}
-            {planner.lifecycle === "active" ? <DayVisibility day={day} eventId={eventId} organizationId={organizationId} userId={userId} /> : null}
-            {planner.lifecycle === "active" ? <DayLifecycle day={day} eventId={eventId} organizationId={organizationId} userId={userId} /> : null}
-            {planner.lifecycle === "active" ? <DayNote day={day} eventId={eventId} organizationId={organizationId} userId={userId} /> : null}
+            {planner.lifecycle === "active" ? (
+              <DayVisibility
+                day={day}
+                eventId={eventId}
+                organizationId={organizationId}
+                userId={userId}
+              />
+            ) : null}
+            {planner.lifecycle === "active" ? (
+              <DayLifecycle
+                day={day}
+                eventId={eventId}
+                organizationId={organizationId}
+                userId={userId}
+              />
+            ) : null}
+            {planner.lifecycle === "active" ? (
+              <DayNote
+                key={`${day.id}:${day.note ?? ""}`}
+                day={day}
+                eventId={eventId}
+                organizationId={organizationId}
+                userId={userId}
+              />
+            ) : null}
             {planner.roles.map((role) => {
               const scheduled = planner.scheduled.filter(
                 (item) => item.dayId === day.id && item.roleId === role.id,
@@ -1063,83 +2053,284 @@ export function EventPlanner({
                   className={`planner-role${dropTarget === `${day.id}:${role.id}` ? " planner-role--drop-target" : ""}`}
                   key={role.id}
                   aria-labelledby={`role-${day.id}-${role.id}`}
-                  onDragLeave={() => dropTarget === `${day.id}:${role.id}` && setDropTarget(undefined)}
+                  onDragLeave={() =>
+                    dropTarget === `${day.id}:${role.id}` &&
+                    setDropTarget(undefined)
+                  }
                   onDragOver={(event) => allowDrop(event, day.id, role.id)}
                   onDrop={(event) => void drop(event, day.id, role.id)}
                 >
-                  <h4 id={`role-${day.id}-${role.id}`}>{roleName(role, i18n.language)}</h4>
-                  {dropTarget === `${day.id}:${role.id}` ? <p role="status">{t("planner.dropHere")}</p> : null}
+                  <h4 id={`role-${day.id}-${role.id}`}>
+                    {roleName(role, i18n.language)}
+                  </h4>
+                  {dropTarget === `${day.id}:${role.id}` ? (
+                    <p role="status">{t("planner.dropHere")}</p>
+                  ) : null}
                   {scheduled.length ? (
                     <ul>
                       {scheduled.map((item) => (
-                        <li draggable={!item.retired && planner.lifecycle === "active"} key={item.id} onDragEnd={clearDrag} onDragStart={(event) => startScheduledDrag(event, item.id)}>
+                        <li
+                          draggable={
+                            !item.retired && planner.lifecycle === "active"
+                          }
+                          key={item.id}
+                          onDragEnd={clearDrag}
+                          onDragStart={(event) =>
+                            startScheduledDrag(event, item.id)
+                          }
+                        >
                           {item.name} ·{" "}
                           {t("planner.diners", { count: item.dinerCount })}
                           {item.retired ? ` · ${t("planner.retired")}` : null}
+                          {item.note ? (
+                            <p className="planner-recipe-note">{item.note}</p>
+                          ) : null}
+                          {!item.retired && planner.lifecycle === "active" ? (
+                            <ScheduledRecipeNoteControl
+                              item={item}
+                              eventId={eventId}
+                              organizationId={organizationId}
+                              userId={userId}
+                            />
+                          ) : null}
                           {item.catalogUpdateAvailable ? (
-                            <span role="status"> · {t("planner.catalogUpdateAvailable")}</span>
+                            <span role="status">
+                              {" "}
+                              · {t("planner.catalogUpdateAvailable")}
+                            </span>
                           ) : null}
                           <details className="planner-recipe-detail">
                             <summary>{t("planner.recipeDetail")}</summary>
-                            {item.recipeVersionName ? <p><strong>{t("planner.recipeVersion")}</strong>: {item.recipeVersionName}</p> : null}
-                            {item.recipeDescription ? <><p><strong>{t("planner.recipeDescriptionMarkdown")}</strong></p><pre>{item.recipeDescription}</pre></> : null}
-                            <p>{t("planner.scaleDetail", { amount: item.selectedScaleAmount, unit: item.scalingUnitName ?? "—" })}{item.scaleMode ? ` · ${t(`planner.scaleMode.${item.scaleMode}`)}` : ""}</p>
-                            <p>{item.preparedWeight && item.perDinerWeight ? t("planner.weightDetail", { total: item.preparedWeight, perDiner: item.perDinerWeight }) : t("planner.weightUnavailable")}</p>
-                            {recipeCosts?.identity === identity && recipeCosts.costs?.scheduled.get(item.id) ? <p>{t("planner.recipeCost", { total: recipeCosts.costs.scheduled.get(item.id)?.total ?? "—", perDiner: recipeCosts.costs.scheduled.get(item.id)?.perDiner ?? "—" })}{recipeCosts.costs.scheduled.get(item.id)?.missing ? ` · ${t("planner.recipeCostMissing")}` : ""}</p> : null}
-                            {item.hasLocalOverrides ? <p role="status">{t("planner.localOverrides")}</p> : null}
-                            {item.detailLines.length ? <ul aria-label={t("planner.ingredients")}>
-                              {item.detailLines.map((line) => <li key={line.id}>{line.name}: {line.quantity}{line.unitName ? ` ${line.unitName}` : ""}{line.note ? ` · ${line.note}` : ""}{line.localOverride ? <span className="planner-local-override"> · {t("planner.localOverrideMarker")}</span> : null}</li>)}
-                            </ul> : null}
+                            {item.recipeVersionName ? (
+                              <p>
+                                <strong>{t("planner.recipeVersion")}</strong>:{" "}
+                                {item.recipeVersionName}
+                              </p>
+                            ) : null}
+                            {item.recipeDescription ? (
+                              <>
+                                <p>
+                                  <strong>
+                                    {t("planner.recipeDescriptionMarkdown")}
+                                  </strong>
+                                </p>
+                                <pre>{item.recipeDescription}</pre>
+                              </>
+                            ) : null}
+                            <p>
+                              {t("planner.scaleDetail", {
+                                amount: item.selectedScaleAmount,
+                                unit: item.scalingUnitName ?? "—",
+                              })}
+                              {item.scaleMode
+                                ? ` · ${t(`planner.scaleMode.${item.scaleMode}`)}`
+                                : ""}
+                            </p>
+                            {item.scaleMode === "manual" ? (
+                              <p>
+                                {t("planner.manualScaleAmount", {
+                                  amount: item.selectedScaleAmount,
+                                  unit: item.scalingUnitName ?? "—",
+                                })}
+                              </p>
+                            ) : null}
+                            {item.scaleMode === "manual" &&
+                            typeof item.suggestedScaleAmount === "string" ? (
+                              <p role="status">
+                                {t("planner.suggestedScaleAmount", {
+                                  amount: item.suggestedScaleAmount,
+                                  unit: item.scalingUnitName ?? "—",
+                                })}
+                              </p>
+                            ) : null}
+                            <p>
+                              {item.preparedWeight && item.perDinerWeight
+                                ? t("planner.weightDetail", {
+                                    total: item.preparedWeight,
+                                    perDiner: item.perDinerWeight,
+                                  })
+                                : t("planner.weightUnavailable")}
+                            </p>
+                            {recipeCosts?.identity === identity &&
+                            recipeCosts.costs?.scheduled.get(item.id) ? (
+                              <p>
+                                {t("planner.recipeCost", {
+                                  total:
+                                    recipeCosts.costs.scheduled.get(item.id)
+                                      ?.total ?? "—",
+                                  perDiner:
+                                    recipeCosts.costs.scheduled.get(item.id)
+                                      ?.perDiner ?? "—",
+                                })}
+                                {recipeCosts.costs.scheduled.get(item.id)
+                                  ?.missing
+                                  ? ` · ${t("planner.recipeCostMissing")}`
+                                  : ""}
+                              </p>
+                            ) : null}
+                            {item.hasLocalOverrides ? (
+                              <p role="status">{t("planner.localOverrides")}</p>
+                            ) : null}
+                            {item.detailLines.length ? (
+                              <ul aria-label={t("planner.ingredients")}>
+                                {item.detailLines.map((line) => (
+                                  <li key={line.id}>
+                                    {line.name}: {line.quantity}
+                                    {line.unitName ? ` ${line.unitName}` : ""}
+                                    {line.note ? ` · ${line.note}` : ""}
+                                    {line.localOverride ? (
+                                      <span className="planner-local-override">
+                                        {" "}
+                                        · {t("planner.localOverrideMarker")}
+                                      </span>
+                                    ) : null}{" "}
+                                    <ResetReplacementOverride
+                                      eventId={eventId}
+                                      organizationId={organizationId}
+                                      userId={userId}
+                                      scheduledRecipeId={item.id}
+                                      line={line}
+                                    />
+                                    <EditAddedOverride
+                                      eventId={eventId}
+                                      organizationId={organizationId}
+                                      userId={userId}
+                                      scheduledRecipeId={item.id}
+                                      line={line}
+                                    />
+                                    <RemoveAddedOverride
+                                      eventId={eventId}
+                                      organizationId={organizationId}
+                                      userId={userId}
+                                      scheduledRecipeId={item.id}
+                                      line={line}
+                                    />
+                                  </li>
+                                ))}
+                              </ul>
+                            ) : null}
                           </details>
                           {(item.dietaryWarnings?.length ?? 0) ? (
-                            <ul role="alert" aria-label={t("planner.dietaryWarnings")}>
+                            <ul
+                              role="alert"
+                              aria-label={t("planner.dietaryWarnings")}
+                            >
                               {(item.dietaryWarnings ?? []).map((warning) => {
-                                const tags = warning.tagDescriptors
-                                  ?.map((tag) => tag.name ?? (tag.seedKey && dietaryTagSeedKeys.has(tag.seedKey) ? t(`planner.dietaryTagSeeds.${tag.seedKey}`) : undefined))
-                                  .filter((tag): tag is string => Boolean(tag)) ?? warning.tagNames;
+                                const tags =
+                                  warning.tagDescriptors
+                                    ?.map(
+                                      (tag) =>
+                                        tag.name ??
+                                        (tag.seedKey &&
+                                        dietaryTagSeedKeys.has(tag.seedKey)
+                                          ? t(
+                                              `planner.dietaryTagSeeds.${tag.seedKey}`,
+                                            )
+                                          : undefined),
+                                    )
+                                    .filter((tag): tag is string =>
+                                      Boolean(tag),
+                                    ) ?? warning.tagNames;
                                 if (!tags.length) return null;
-                                return <li key={`${warning.exceptionName}:${tags.join(",")}:${warning.ingredientNames.join(",")}`}>
-                                  {t("planner.dietaryWarning", {
-                                    exception: warning.exceptionName,
-                                    tags: tags.join(", "),
-                                    ingredients: warning.ingredientNames.join(", "),
-                                  })}
-                                </li>;
+                                return (
+                                  <li
+                                    key={`${warning.exceptionName}:${tags.join(",")}:${warning.ingredientNames.join(",")}`}
+                                  >
+                                    {t("planner.dietaryWarning", {
+                                      exception: warning.exceptionName,
+                                      tags: tags.join(", "),
+                                      ingredients:
+                                        warning.ingredientNames.join(", "),
+                                    })}
+                                  </li>
+                                );
                               })}
                             </ul>
                           ) : null}
-                          <CatalogUpdateChoice item={item} planner={planner} eventId={eventId} organizationId={organizationId} userId={userId} />
-                          {planner.lifecycle === "active" ? <button onClick={() => void queueScheduledRecipeLifecycle(userId, organizationId, { scheduledRecipeId: item.id, eventId, operation: item.retired ? "restore" : "retire" })} type="button">{t(item.retired ? "planner.restoreRecipe" : "planner.retireRecipe")}</button> : null}
-                          {!item.retired && <>
-                          <MoveRecipe
-                            eventId={eventId}
-                            organizationId={organizationId}
+                          <CatalogUpdateChoice
+                            item={item}
                             planner={planner}
-                            scheduled={item}
-                            userId={userId}
-                          />
-                          <Attendance
                             eventId={eventId}
                             organizationId={organizationId}
                             userId={userId}
-                            scheduled={item}
-                            active={planner.lifecycle === "active"}
                           />
-                          <Scaling
-                            eventId={eventId}
-                            organizationId={organizationId}
-                            userId={userId}
-                            scheduled={item}
-                            active={planner.lifecycle === "active"}
-                          />
-                          <ReplacementOverride
-                            active={planner.lifecycle === "active"}
-                            eventId={eventId}
-                            organizationId={organizationId}
-                            userId={userId}
-                            scheduled={item}
-                          />
-                          </>}
+                          {planner.lifecycle === "active" &&
+                          !item.retired &&
+                          onOpenRecipe &&
+                          uuid.test(item.recipeId) &&
+                          uuid.test(item.recipeVersionId) &&
+                          item.recipeVersionName &&
+                          planner.recipes.some(
+                            (recipe) => recipe.id === item.recipeId,
+                          ) ? (
+                            <button
+                              type="button"
+                              onClick={() =>
+                                onOpenRecipe(
+                                  item.recipeId,
+                                  item.recipeVersionId,
+                                )
+                              }
+                            >
+                              {t("planner.editCatalogRecipe")}
+                            </button>
+                          ) : null}
+                          {planner.lifecycle === "active" ? (
+                            <button
+                              onClick={() =>
+                                void queueScheduledRecipeLifecycle(
+                                  userId,
+                                  organizationId,
+                                  {
+                                    scheduledRecipeId: item.id,
+                                    eventId,
+                                    operation: item.retired
+                                      ? "restore"
+                                      : "retire",
+                                  },
+                                )
+                              }
+                              type="button"
+                            >
+                              {t(
+                                item.retired
+                                  ? "planner.restoreRecipe"
+                                  : "planner.retireRecipe",
+                              )}
+                            </button>
+                          ) : null}
+                          {!item.retired && (
+                            <>
+                              <MoveRecipe
+                                eventId={eventId}
+                                organizationId={organizationId}
+                                planner={planner}
+                                scheduled={item}
+                                userId={userId}
+                              />
+                              <Attendance
+                                eventId={eventId}
+                                organizationId={organizationId}
+                                userId={userId}
+                                scheduled={item}
+                                active={planner.lifecycle === "active"}
+                              />
+                              <Scaling
+                                eventId={eventId}
+                                organizationId={organizationId}
+                                userId={userId}
+                                scheduled={item}
+                                active={planner.lifecycle === "active"}
+                              />
+                              <ReplacementOverride
+                                active={planner.lifecycle === "active"}
+                                eventId={eventId}
+                                organizationId={organizationId}
+                                userId={userId}
+                                scheduled={item}
+                              />
+                            </>
+                          )}
                           <AddedOverride
                             active={planner.lifecycle === "active"}
                             eventId={eventId}
@@ -1160,7 +2351,24 @@ export function EventPlanner({
           </section>
         ))}
       </div>
-      {planner.lifecycle === "active" && planner.hiddenDays.length ? <details><summary>{t("planner.hiddenDays")}</summary><ul>{planner.hiddenDays.map((day) => <li key={day.id}>{formattedDate(day.date, i18n.resolvedLanguage ?? "cs")} <DayVisibility day={day} eventId={eventId} organizationId={organizationId} userId={userId} /></li>)}</ul></details> : null}
+      {planner.lifecycle === "active" && planner.hiddenDays.length ? (
+        <details>
+          <summary>{t("planner.hiddenDays")}</summary>
+          <ul>
+            {planner.hiddenDays.map((day) => (
+              <li key={day.id}>
+                {formattedDate(day.date, i18n.resolvedLanguage ?? "cs")}{" "}
+                <DayVisibility
+                  day={day}
+                  eventId={eventId}
+                  organizationId={organizationId}
+                  userId={userId}
+                />
+              </li>
+            ))}
+          </ul>
+        </details>
+      ) : null}
       {state === "error" ? (
         <div role="alert">
           <p>{t("planner.error")}</p>
@@ -1170,5 +2378,66 @@ export function EventPlanner({
         </div>
       ) : null}
     </section>
+  );
+}
+
+function ScheduledRecipeNoteControl({
+  item,
+  eventId,
+  organizationId,
+  userId,
+}: {
+  item: EventPlannerProjection["scheduled"][number];
+  eventId: string;
+  organizationId: string;
+  userId: string;
+}) {
+  const { t } = useTranslation();
+  const [value, setValue] = useState(item.note ?? "");
+  const [error, setError] = useState(false);
+  const [busy, setBusy] = useState(false);
+  async function save(note: string | null) {
+    if (busy) return;
+    setBusy(true);
+    try {
+      await queueScheduledRecipeNote(userId, organizationId, {
+        scheduledRecipeId: item.id,
+        eventId,
+        note,
+      });
+      setValue(note ?? "");
+      setError(false);
+    } catch {
+      setError(true);
+    } finally {
+      setBusy(false);
+    }
+  }
+  return (
+    <form
+      onSubmit={(event) => {
+        event.preventDefault();
+        void save(value || null);
+      }}
+    >
+      <label>
+        {t("planner.recipeNote")}
+        <textarea
+          aria-label={t("planner.recipeNote")}
+          value={value}
+          onChange={(event) => setValue(event.target.value)}
+          maxLength={4000}
+        />
+      </label>
+      <button disabled={busy} type="submit">
+        {t("planner.saveNote")}
+      </button>
+      {value ? (
+        <button disabled={busy} type="button" onClick={() => void save(null)}>
+          {t("planner.clearNote")}
+        </button>
+      ) : null}
+      {error ? <p role="alert">{t("planner.errors.unavailable")}</p> : null}
+    </form>
   );
 }

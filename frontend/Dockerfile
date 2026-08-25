@@ -10,4 +10,7 @@ FROM nginxinc/nginx-unprivileged:1.29-alpine@sha256:8059701048a6cc7d64e8ab2812a4
 
 COPY nginx.conf /etc/nginx/conf.d/default.conf
 COPY --from=build /app/dist /usr/share/nginx/html
+COPY runtime-config-entrypoint.sh /usr/local/bin/runtime-config-entrypoint.sh
+ENTRYPOINT ["/usr/local/bin/runtime-config-entrypoint.sh"]
+CMD ["nginx", "-g", "daemon off;"]
 EXPOSE 8080

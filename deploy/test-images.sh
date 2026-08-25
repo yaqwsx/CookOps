@@ -6,6 +6,36 @@ docker build --quiet --tag cookops-api-image-test "$root/backend" >/dev/null
 docker build --quiet --tag cookops-web-image-test "$root/frontend" >/dev/null
 docker build --quiet --tag cookops-oauth-image-test "$root/oauth-server" >/dev/null
 docker run --rm --entrypoint=nginx cookops-web-image-test -t
+
+assert_runtime_config() (
+    provider=$1
+    expected=$2
+    client_id=${3-}
+    container_id=$(docker run --detach --publish 127.0.0.1::8080 \
+        --env "COOKOPS_HUMAN_AUTH_PROVIDER=$provider" \
+        --env "COOKOPS_GOOGLE_CLIENT_ID=$client_id" \
+        cookops-web-image-test)
+    cleanup() {
+        docker rm --force "$container_id" >/dev/null 2>&1 || true
+    }
+    trap cleanup EXIT HUP INT TERM
+    port=$(docker port "$container_id" 8080/tcp | sed -n 's/.*:\([0-9][0-9]*\)$/\1/p')
+    test -n "$port"
+    runtime_config=
+    for attempt in 1 2 3 4 5; do
+        runtime_config=$(curl --silent "http://127.0.0.1:$port/runtime-config.js" || true)
+        [ "$runtime_config" = "$expected" ] && break
+        sleep 1
+    done
+    test "$runtime_config" = "$expected"
+)
+
+assert_runtime_config dummy \
+    'window.COOKOPS_RUNTIME_CONFIG = { authentication: { provider: "dummy" } };'
+assert_runtime_config google \
+    'window.COOKOPS_RUNTIME_CONFIG = { authentication: { provider: "google", googleClientId: "example.apps.googleusercontent.com" } };' \
+    example.apps.googleusercontent.com
+
 docker run --rm --entrypoint=node cookops-oauth-image-test --version | grep -q '^v22\.'
 docker run --rm --entrypoint=pg_dump cookops-api-image-test --version | grep -Eq '^pg_dump \(PostgreSQL\) 18\.'
 docker run --rm --entrypoint=pg_restore cookops-api-image-test --version | grep -Eq '^pg_restore \(PostgreSQL\) 18\.'
@@ -26,7 +56,9 @@ prohibited_proxy_route() {
     awk '
         $1 ~ /^ProxyPass(Match|Reverse)?$/ {
             route = $2
-            if (route ~ /(^|[^[:alnum:]_])\/?mcp(\/|[^[:alnum:]_]|$)/) {
+            sub(/^\^/, "", route)
+            sub(/\(\?:\/\|\$\)$/, "", route)
+            if (route ~ /^\/mcp(\/|$)/ || route ~ /^\/auth\/mcp-grants(\/|$)/) {
                 prohibited = 1
                 exit
             }
@@ -36,18 +68,28 @@ prohibited_proxy_route() {
 }
 for proxy_rule in \
     'ProxyPass /mcp http://127.0.0.1:8000/' \
-    'ProxyPassMatch ^/mcp http://127.0.0.1:8000/'; do
+    'ProxyPassMatch ^/mcp http://127.0.0.1:8000/' \
+    'ProxyPassMatch ^/mcp(?:/|$) http://127.0.0.1:8000/' \
+    'ProxyPassMatch ^/auth/mcp-grants(?:/|$) http://127.0.0.1:8000/'; do
     if ! printf '%s\n' "$proxy_rule" | prohibited_proxy_route; then
         echo "OAuth/MCP proxy guard failed to recognize $proxy_rule" >&2
         exit 1
     fi
 done
+if printf '%s\n' 'ProxyPassMatch ^/mcpack(?:/|$) http://127.0.0.1:8000/' | prohibited_proxy_route; then
+    echo 'OAuth/MCP proxy guard incorrectly rejected a near-miss route' >&2
+    exit 1
+fi
 if printf '%s\n' 'ProxyPass /api/ http://oauth-server:3000/health/' | prohibited_proxy_route; then
     echo 'OAuth/MCP proxy guard incorrectly inspected an upstream target' >&2
     exit 1
 fi
-if prohibited_proxy_route "$root/deploy/apache/cookops.conf.example"; then
-    echo 'MCP routes must stay unmounted until the resource verifier exists' >&2
+if ! awk '$1 == "ProxyPass" && $2 == "/mcp" && $3 == "http://127.0.0.1:8000/mcp" { found = 1 } END { exit found ? 0 : 1 }' "$root/deploy/apache/cookops.conf.example"; then
+    echo 'MCP must proxy exactly to the authenticated API resource' >&2
+    exit 1
+fi
+if ! awk '$1 == "ProxyPass" && $2 == "/.well-known/oauth-protected-resource/mcp" && $3 == "http://127.0.0.1:8000/.well-known/oauth-protected-resource/mcp" { found = 1 } END { exit found ? 0 : 1 }' "$root/deploy/apache/cookops.conf.example"; then
+    echo 'MCP protected-resource metadata must proxy to the API' >&2
     exit 1
 fi
 if ! awk '$1 == "ProxyPass" && $2 == "/oauth/" && $3 == "http://127.0.0.1:3000/oauth/" { found = 1 } END { exit found ? 0 : 1 }' "$root/deploy/apache/cookops.conf.example"; then
@@ -58,6 +100,24 @@ if ! awk '$1 == "ProxyPass" && $2 == "/oauth/private" && $3 == "!" { found = 1 }
     echo 'OAuth private bridge must be excluded before the public OAuth proxy' >&2
     exit 1
 fi
+for apache_config in cookops.conf.example oauth-consent-smoke.conf; do
+    if ! awk '$1 == "ProxyPass" && $2 == "/mcp" && $3 ~ /\/mcp$/ { found = 1 } END { exit found ? 0 : 1 }' "$root/deploy/apache/$apache_config"; then
+        echo "MCP resource proxy is missing: $apache_config" >&2
+        exit 1
+    fi
+    if ! awk '$1 == "ProxyPass" && $2 == "/.well-known/oauth-protected-resource/mcp" && $3 ~ /oauth-protected-resource\/mcp$/ { found = 1 } END { exit found ? 0 : 1 }' "$root/deploy/apache/$apache_config"; then
+        echo "MCP protected-resource metadata proxy is missing: $apache_config" >&2
+        exit 1
+    fi
+    if ! awk '$1 == "ProxyPass" && $2 == "/auth/mcp-interactions/" && $3 ~ /\/auth\/mcp-interactions\/$/ { found = NR } $1 == "ProxyPass" && $2 == "/auth/" { ordinary = NR } END { exit found && ordinary && found < ordinary ? 0 : 1 }' "$root/deploy/apache/$apache_config"; then
+        echo "MCP consent UI must proxy to the API before ordinary auth proxy: $apache_config" >&2
+        exit 1
+    fi
+    if ! awk '$1 == "ProxyPass" && $2 == "/auth/mcp-grants" && $3 == "!" { excluded = NR } $1 == "ProxyPass" && $2 == "/auth/" { ordinary = NR } END { exit excluded && ordinary && excluded < ordinary ? 0 : 1 }' "$root/deploy/apache/$apache_config"; then
+        echo "MCP grants route must stay excluded before ordinary auth proxy: $apache_config" >&2
+        exit 1
+    fi
+done
 for discovery in \
     '/.well-known/openid-configuration/oauth' \
     '/.well-known/oauth-authorization-server/oauth'; do
@@ -66,6 +126,18 @@ for discovery in \
         exit 1
     fi
 done
+if ! awk '$1 == "ProxyPass" && $2 == "/api/v1/sync/hints" && $3 == "http://127.0.0.1:8000/api/v1/sync/hints" && $4 == "upgrade=websocket" { found = 1 } END { exit found ? 0 : 1 }' "$root/deploy/apache/cookops.conf.example"; then
+    echo 'Sync hints WebSocket proxy is missing or not loopback' >&2
+    exit 1
+fi
+if ! awk '$1 == "ProxyPassReverse" && $2 == "/api/v1/sync/hints" && $3 == "http://127.0.0.1:8000/api/v1/sync/hints" { found = 1 } END { exit found ? 0 : 1 }' "$root/deploy/apache/cookops.conf.example"; then
+    echo 'Sync hints WebSocket reverse proxy is missing' >&2
+    exit 1
+fi
+if awk '$1 ~ /^ProxyPass(Reverse)?$/ && $2 == "/api/v1/sync/notifications" { found = 1 } END { exit found ? 0 : 1 }' "$root/deploy/apache/cookops.conf.example"; then
+    echo 'Stale sync notifications WebSocket route must not be proxied' >&2
+    exit 1
+fi
 
 if docker run --rm --env 'COOKOPS_TRUSTED_PROXY_IPS=*' cookops-api-image-test; then
     echo 'wildcard proxy trust unexpectedly accepted' >&2

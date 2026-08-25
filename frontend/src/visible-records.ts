@@ -34,15 +34,22 @@ export async function readVisibleRecords(
     .where("[userId+organizationId+entityType]")
     .equals(key)
     .toArray();
-  const overlays = await localDb.optimisticOverlays
-    .where("[userId+organizationId+entityType]")
-    .equals(key)
-    .toArray();
+  const overlays = (
+    await localDb.optimisticOverlays
+      .where("[userId+organizationId]")
+      .equals([userId, organizationId])
+      .toArray()
+  ).filter((record) => record.entityType === entityType);
   const result = new Map(records.map((record) => [record.entityId, record]));
   for (const overlay of overlays) {
     const canonical = result.get(overlay.entityId);
     const explicitLifecycleRestore =
-      (entityType === "receipt" || entityType === "ad_hoc_shopping_item" || entityType === "event_day" || entityType === "event_meal_role" || entityType === "recipe" || entityType === "ingredient") &&
+      (entityType === "receipt" ||
+        entityType === "ad_hoc_shopping_item" ||
+        entityType === "event_day" ||
+        entityType === "event_meal_role" ||
+        entityType === "recipe" ||
+        entityType === "ingredient") &&
       isExplicitLifecycleRestore(overlay);
     if (
       !canonical ||
@@ -66,5 +73,7 @@ export async function readCanonicalRecords(
     .where("[userId+organizationId+entityType]")
     .equals([userId, organizationId, entityType])
     .toArray();
-  return records.filter((record) => includeRetired || record.lifecycle === "active");
+  return records.filter(
+    (record) => includeRetired || record.lifecycle === "active",
+  );
 }

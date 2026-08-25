@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it } from "vitest";
+import { liveQuery } from "dexie";
 
 import {
   queueReceiptCreate,
@@ -132,6 +133,63 @@ describe("offline receipt metadata", () => {
       "receipt.lifecycle",
       "receipt.lifecycle",
     ]);
+  });
+
+  it("uses the cached organization currency when an event cache lacks currency", async () => {
+    await localDb.canonicalRecords.bulkPut([
+      {
+        userId,
+        organizationId,
+        entityType: "organization",
+        entityId: organizationId,
+        recordSchemaVersion: 1,
+        lifecycle: "active",
+        fields: { id: organizationId, default_currency: "CZK" },
+        fieldClocks: {},
+        immutable: false,
+        updatedAt: "2026-08-07T12:00:00.000Z",
+      },
+      {
+        userId,
+        organizationId,
+        entityType: "event",
+        entityId: eventId,
+        recordSchemaVersion: 1,
+        lifecycle: "active",
+        fields: { id: eventId, organization_id: organizationId },
+        fieldClocks: {},
+        immutable: false,
+        updatedAt: "2026-08-07T12:00:00.000Z",
+      },
+    ]);
+    const receiptId = await queueReceiptCreate(
+      userId,
+      organizationId,
+      eventId,
+      input,
+    );
+    await expect(
+      readEventReceipts(userId, organizationId, eventId),
+    ).resolves.toEqual([
+      expect.objectContaining({ id: receiptId, currency: "CZK" }),
+    ]);
+  });
+
+  it("notifies a live receipt projection after an optimistic create", async () => {
+    await addEvent();
+    let subscription: { unsubscribe: () => void } | undefined;
+    const observed = new Promise<void>((resolve) => {
+      subscription = liveQuery(() =>
+        readEventReceipts(userId, organizationId, eventId),
+      ).subscribe({
+        next: (items) => {
+          if (items.length === 1) resolve();
+        },
+      });
+    });
+    await queueReceiptCreate(userId, organizationId, eventId, input);
+    await observed;
+    subscription?.unsubscribe();
   });
 
   it("does not leave a spoofed event or receipt update in the outbox", async () => {

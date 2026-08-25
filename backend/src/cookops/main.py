@@ -37,6 +37,7 @@ from cookops.http_oauth_interactions import (
 from cookops.http_recipe_copy import RecipeCopyHttpServices, create_recipe_copy_router
 from cookops.http_shopping import ShoppingHttpServices, create_shopping_router
 from cookops.http_sync import SynchronizationHttpServices, create_sync_router
+from cookops.mcp_resource import create_mcp_protected_resource_from_settings
 from cookops.media_storage import LocalReceiptMediaStorage
 from cookops.oauth_interaction_client import OAuthPrivateInteractionClient
 
@@ -134,6 +135,15 @@ def create_app(
     ),
 ) -> FastAPI:
     app_settings = settings or Settings()
+    oauth_bridge_configured = all(
+        value is not None
+        for value in (
+            app_settings.oauth_interaction_details_api_credential_base64url,
+            app_settings.oauth_interaction_approval_api_credential_base64url,
+            app_settings.oauth_interaction_origin,
+            app_settings.oauth_grants_api_credential_base64url,
+        )
+    )
 
     @asynccontextmanager
     async def lifespan(application: FastAPI) -> AsyncIterator[None]:
@@ -148,6 +158,9 @@ def create_app(
         session_factory = cast(
             async_sessionmaker[AsyncSession], getattr(runtime, "session_factory", None)
         )
+        mcp_resource = create_mcp_protected_resource_from_settings(app_settings, session_factory)
+        if mcp_resource is not None:
+            application.mount("/", mcp_resource)
         application.state.browser_authentication = browser_authentication_factory(
             app_settings, session_factory
         )
@@ -155,7 +168,11 @@ def create_app(
             browser_sessions=application.state.browser_authentication.browser_sessions,
             session_factory=session_factory,
         )
-        if app_settings.oauth_interaction_details_api_credential_base64url is not None:
+        if oauth_bridge_configured:
+            assert app_settings.oauth_interaction_details_api_credential_base64url is not None
+            assert app_settings.oauth_interaction_approval_api_credential_base64url is not None
+            assert app_settings.oauth_interaction_origin is not None
+            assert app_settings.oauth_grants_api_credential_base64url is not None
             application.state.oauth_interactions = OAuthInteractionHttpServices(
                 OAuthInteractionApprovalService(
                     application.state.browser_authentication.browser_sessions,
@@ -208,7 +225,15 @@ def create_app(
         )
         application.state.readiness_probe = runtime.is_ready
         try:
-            yield
+            if mcp_resource is None:
+                yield
+            else:
+                mcp_router = getattr(mcp_resource, "router", None)
+                mcp_lifespan = getattr(mcp_router, "lifespan_context", None)
+                if not callable(mcp_lifespan):
+                    raise RuntimeError("MCP resource lifespan is unavailable")
+                async with mcp_lifespan(mcp_resource):
+                    yield
         finally:
             await runtime.close()
 
@@ -217,8 +242,9 @@ def create_app(
     application.state.readiness_probe = readiness_probe or not_ready
     application.include_router(health_router)
     application.include_router(create_auth_router(app_settings))
-    application.include_router(create_oauth_interaction_router(app_settings))
-    application.include_router(create_oauth_grants_router(app_settings))
+    if oauth_bridge_configured:
+        application.include_router(create_oauth_interaction_router(app_settings))
+        application.include_router(create_oauth_grants_router(app_settings))
     application.include_router(create_organization_access_router(app_settings))
     application.include_router(create_organization_administration_router(app_settings))
     application.include_router(create_events_router(app_settings))

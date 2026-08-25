@@ -17,6 +17,7 @@ from alembic import command as alembic_command
 from cookops.config import Environment, HumanAuthProvider, Settings
 from cookops.development_seed import (
     _ADVISORY_LOCK_KEY,
+    DEVELOPMENT_EVENT_ID,
     DEVELOPMENT_IDENTITIES,
     MEMBER,
     MULTI_ORGANIZATION_MEMBER,
@@ -31,10 +32,27 @@ from cookops.development_seed import (
 )
 from cookops.main import create_app
 from cookops.persistence.models import (
+    Event,
+    EventDay,
+    EventMealRole,
     ExternalIdentity,
+    Ingredient,
+    IngredientVersion,
     Organization,
     OrganizationMembership,
+    Recipe,
+    RecipeVersion,
+    RecipeVersionIngredientLine,
+    ScheduledRecipe,
+    ShoppingContribution,
+    ShoppingContributionSnapshot,
+    ShoppingGenerationRevision,
+    ShoppingIngredientRow,
+    ShoppingList,
+    ShoppingRevisionSource,
+    StoreSection,
     SystemRoleAssignment,
+    UnitDefinition,
     User,
 )
 
@@ -43,6 +61,8 @@ pytestmark = pytest.mark.skipif(
 )
 
 KEY = base64.urlsafe_b64encode(b"0123456789abcdef0123456789abcdef").rstrip(b"=").decode()
+DETAILS_KEY = base64.urlsafe_b64encode(b"details-key-01234567890123456789").rstrip(b"=").decode()
+GRANTS_KEY = base64.urlsafe_b64encode(b"grants-key-012345678901234567890").rstrip(b"=").decode()
 
 
 @dataclass
@@ -101,6 +121,155 @@ def test_provisioning_is_idempotent_and_covers_all_required_dummy_authorities(
         assert connection.scalar(select(func.count()).select_from(Organization)) == 2
         assert connection.scalar(select(func.count()).select_from(OrganizationMembership)) == 4
         assert connection.scalar(select(func.count()).select_from(SystemRoleAssignment)) == 1
+        assert (
+            connection.scalar(
+                select(func.count()).select_from(Event).where(Event.id == DEVELOPMENT_EVENT_ID)
+            )
+            == 1
+        )
+        event_day_id = connection.scalar(
+            select(EventDay.id).where(EventDay.event_id == DEVELOPMENT_EVENT_ID)
+        )
+        meal_role_id = connection.scalar(
+            select(EventMealRole.id).where(EventMealRole.event_id == DEVELOPMENT_EVENT_ID)
+        )
+        ingredient_id = connection.scalar(
+            select(Ingredient.id).where(Ingredient.organization_id == PRIMARY_ORGANIZATION_ID)
+        )
+        ingredient_version_id = connection.scalar(
+            select(IngredientVersion.id).where(IngredientVersion.ingredient_id == ingredient_id)
+        )
+        recipe_id = connection.scalar(
+            select(Recipe.id).where(Recipe.organization_id == PRIMARY_ORGANIZATION_ID)
+        )
+        recipe_version_id = connection.scalar(
+            select(RecipeVersion.id).where(RecipeVersion.recipe_id == recipe_id)
+        )
+        assert None not in (event_day_id, meal_role_id, ingredient_id, ingredient_version_id)
+        assert None not in (recipe_id, recipe_version_id)
+        assert (
+            connection.scalar(
+                select(func.count())
+                .select_from(ScheduledRecipe)
+                .where(
+                    ScheduledRecipe.event_id == DEVELOPMENT_EVENT_ID,
+                    ScheduledRecipe.event_day_id == event_day_id,
+                    ScheduledRecipe.event_meal_role_id == meal_role_id,
+                    ScheduledRecipe.recipe_id == recipe_id,
+                    ScheduledRecipe.recipe_version_id == recipe_version_id,
+                )
+            )
+            == 1
+        )
+        scheduled_recipe_id = connection.scalar(
+            select(ScheduledRecipe.id).where(ScheduledRecipe.event_id == DEVELOPMENT_EVENT_ID)
+        )
+        assert scheduled_recipe_id is not None
+        assert (
+            connection.scalar(
+                select(func.count())
+                .select_from(RecipeVersionIngredientLine)
+                .where(
+                    RecipeVersionIngredientLine.recipe_version_id == recipe_version_id,
+                    RecipeVersionIngredientLine.recipe_id == recipe_id,
+                    RecipeVersionIngredientLine.ingredient_version_id == ingredient_version_id,
+                )
+            )
+            == 1
+        )
+        assert (
+            connection.scalar(
+                select(func.count())
+                .select_from(StoreSection)
+                .where(StoreSection.organization_id == PRIMARY_ORGANIZATION_ID)
+            )
+            == 1
+        )
+        assert (
+            connection.scalar(
+                select(func.count())
+                .select_from(UnitDefinition)
+                .where(
+                    UnitDefinition.code == "portion",
+                    UnitDefinition.organization_id == PRIMARY_ORGANIZATION_ID,
+                )
+            )
+            == 1
+        )
+        scaling_unit_id = connection.scalar(
+            select(RecipeVersion.scaling_unit_id).where(RecipeVersion.id == recipe_version_id)
+        )
+        assert (
+            connection.scalar(
+                select(UnitDefinition.organization_id).where(UnitDefinition.id == scaling_unit_id)
+            )
+            == PRIMARY_ORGANIZATION_ID
+        )
+        shopping_list_id = connection.scalar(
+            select(ShoppingList.id).where(ShoppingList.event_id == DEVELOPMENT_EVENT_ID)
+        )
+        assert shopping_list_id is not None
+        revision_id = connection.scalar(
+            select(ShoppingList.current_generation_revision_id).where(
+                ShoppingList.id == shopping_list_id
+            )
+        )
+        assert revision_id is not None
+        assert (
+            connection.scalar(
+                select(func.count())
+                .select_from(ShoppingGenerationRevision)
+                .where(
+                    ShoppingGenerationRevision.id == revision_id,
+                    ShoppingGenerationRevision.shopping_list_id == shopping_list_id,
+                    ShoppingGenerationRevision.event_id == DEVELOPMENT_EVENT_ID,
+                )
+            )
+            == 1
+        )
+        assert (
+            connection.scalar(
+                select(func.count())
+                .select_from(ShoppingRevisionSource)
+                .where(
+                    ShoppingRevisionSource.generation_revision_id == revision_id,
+                    ShoppingRevisionSource.shopping_list_id == shopping_list_id,
+                    ShoppingRevisionSource.event_id == DEVELOPMENT_EVENT_ID,
+                    ShoppingRevisionSource.scheduled_recipe_id == scheduled_recipe_id,
+                )
+            )
+            == 1
+        )
+        assert (
+            connection.scalar(
+                select(func.count())
+                .select_from(ShoppingIngredientRow)
+                .where(ShoppingIngredientRow.shopping_list_id == shopping_list_id)
+            )
+            == 1
+        )
+        contribution_id = connection.scalar(
+            select(ShoppingContribution.id).where(
+                ShoppingContribution.shopping_list_id == shopping_list_id
+            )
+        )
+        assert contribution_id is not None
+        assert (
+            connection.scalar(
+                select(func.count())
+                .select_from(ShoppingContributionSnapshot)
+                .where(ShoppingContributionSnapshot.shopping_contribution_id == contribution_id)
+            )
+            == 1
+        )
+        assert (
+            connection.scalar(
+                select(func.count())
+                .select_from(ShoppingList)
+                .where(ShoppingList.organization_id == SECONDARY_ORGANIZATION_ID)
+            )
+            == 0
+        )
 
         system_role = connection.execute(
             select(SystemRoleAssignment.user_id, SystemRoleAssignment.invited_email).where(
@@ -263,6 +432,7 @@ def test_seeded_dummy_identities_use_the_existing_browser_session_authentication
             "id": str(ORGANIZATION_ADMIN.id),
             "display_name": ORGANIZATION_ADMIN.display_name,
             "verified_email": ORGANIZATION_ADMIN.verified_email,
+            "preferred_locale": "cs",
         }
 
 
@@ -274,9 +444,10 @@ def test_provisioning_refuses_production_before_acquiring_a_database_session() -
         database_url=PostgresDsn(os.environ["TEST_DATABASE_URL"]),
         browser_session_hmac_key=KEY,
         browser_origin="https://testserver",
-        oauth_interaction_details_api_credential_base64url=KEY[:-1] + "U",
+        oauth_interaction_details_api_credential_base64url=DETAILS_KEY,
         oauth_interaction_approval_api_credential_base64url=KEY,
         oauth_interaction_origin="https://testserver",
+        oauth_grants_api_credential_base64url=GRANTS_KEY,
     )
 
     def unexpected_session_factory() -> AsyncSession:

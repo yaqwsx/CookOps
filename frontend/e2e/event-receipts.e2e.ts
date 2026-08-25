@@ -297,7 +297,7 @@ test("keeps a normalized receipt photo queued offline", async ({ page }) => {
 
   await page.goto(`/organizations/${organizationId}/events`);
   await page.getByRole("button", { name: "Otevřít plán" }).click();
-  await page.getByRole("button", { name: "Účtenky" }).click();
+  await page.getByRole("link", { name: "Účtenky" }).click();
   await expect(page.getByRole("heading", { name: "Účtenky" })).toBeVisible();
   await page.context().setOffline(true);
   await page.evaluate(() => window.dispatchEvent(new Event("offline")));
@@ -305,7 +305,12 @@ test("keeps a normalized receipt photo queued offline", async ({ page }) => {
   await page.getByLabel("Celková částka").fill("12.50");
   await page.getByRole("button", { name: "Uložit účtenku" }).click();
   await expect(page.getByRole("heading", { name: "Pekárna" })).toBeVisible();
-  await expect(page.getByText("12.50 CZK")).toBeVisible();
+  await expect(
+    page
+      .getByRole("listitem")
+      .filter({ has: page.getByRole("heading", { name: "Pekárna" }) })
+      .getByText(/12,50\s*Kč/),
+  ).toBeVisible();
   const picker = page.getByLabel("Přidat fotografii účtenky");
   await expect(picker).toBeVisible();
   await picker.setInputFiles({

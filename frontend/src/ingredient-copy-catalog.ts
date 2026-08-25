@@ -11,7 +11,10 @@ export type IngredientCopyCatalog = {
 
 export type IngredientCopyCatalogMode = "source" | "destination";
 
-function text(fields: Record<string, unknown>, key: string): string | undefined {
+function text(
+  fields: Record<string, unknown>,
+  key: string,
+): string | undefined {
   return typeof fields[key] === "string" ? fields[key] : undefined;
 }
 
@@ -48,14 +51,20 @@ export async function readIngredientCopyCatalog(
       })
       .map((record) => ({
         id: record.entityId,
-        name: text(record.fields, "custom_name") ?? text(record.fields, "code") ?? "",
+        name:
+          text(record.fields, "custom_name") ??
+          text(record.fields, "code") ??
+          "",
         dimension: text(record.fields, "dimension") ?? "",
         baseUnitFactor: text(record.fields, "base_unit_factor"),
       }))
       .filter((unit) => unit.name && unit.dimension),
     sections: sections
       .filter((record) => ownedBy(record, false))
-      .map((record) => ({ id: record.entityId, name: text(record.fields, "name") ?? "" }))
+      .map((record) => ({
+        id: record.entityId,
+        name: text(record.fields, "name") ?? "",
+      }))
       .filter((section) => section.name),
     dietaryTags: tags
       .filter((record) => ownedBy(record, false))

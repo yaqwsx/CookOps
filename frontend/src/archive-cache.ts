@@ -5,14 +5,33 @@ import { SyncRequestError } from "./sync-bootstrap";
 const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const MAX_ARCHIVE_BYTES = 8 * 1024 * 1024;
 const MAX_ARCHIVE_RECORDS = 20_000;
-export const dietaryTagSeedKeys: ReadonlySet<string> = new Set(["vegetarian", "vegan", "gluten", "lactose"]);
-export type ArchivedDietaryTagDescriptor = { id: string; seedKey?: string; name?: string };
+export const dietaryTagSeedKeys: ReadonlySet<string> = new Set([
+  "vegetarian",
+  "vegan",
+  "gluten",
+  "lactose",
+]);
+export type ArchivedDietaryTagDescriptor = {
+  id: string;
+  seedKey?: string;
+  name?: string;
+};
 
-export function parseArchivedDietaryTagDescriptor(value: unknown): ArchivedDietaryTagDescriptor | undefined {
-  if (!object(value) || typeof value.id !== "string" || !uuid.test(value.id)) return undefined;
+export function parseArchivedDietaryTagDescriptor(
+  value: unknown,
+): ArchivedDietaryTagDescriptor | undefined {
+  if (!object(value) || typeof value.id !== "string" || !uuid.test(value.id))
+    return undefined;
   const hasName = typeof value.name === "string" && value.name.length > 0;
-  const hasSeed = typeof value.seed_key === "string" && dietaryTagSeedKeys.has(value.seed_key);
-  if (hasName === hasSeed || (value.name !== undefined && value.name !== null && !hasName) || (value.seed_key !== undefined && value.seed_key !== null && !hasSeed)) return undefined;
+  const hasSeed =
+    typeof value.seed_key === "string" &&
+    dietaryTagSeedKeys.has(value.seed_key);
+  if (
+    hasName === hasSeed ||
+    (value.name !== undefined && value.name !== null && !hasName) ||
+    (value.seed_key !== undefined && value.seed_key !== null && !hasSeed)
+  )
+    return undefined;
   return hasName
     ? { id: value.id, name: value.name as string }
     : { id: value.id, seedKey: value.seed_key as string };
@@ -308,19 +327,35 @@ function validateRelations(
     requireRef(row, "scheduled_recipe_id", scheduledIds);
     requireRef(row, "ingredient_id", ingredientIds);
     requireRef(row, "ingredient_version_id", ingredientVersionIds);
-    sameScope(row, scheduled.get(row.scheduled_recipe_id as string), ["event_id", "organization_id"]);
-    sameScope(row, ingredients.get(row.ingredient_id as string), ["organization_id"]);
-    sameScope(row, ingredientVersions.get(row.ingredient_version_id as string), ["organization_id", "ingredient_id"]);
+    sameScope(row, scheduled.get(row.scheduled_recipe_id as string), [
+      "event_id",
+      "organization_id",
+    ]);
+    sameScope(row, ingredients.get(row.ingredient_id as string), [
+      "organization_id",
+    ]);
+    sameScope(
+      row,
+      ingredientVersions.get(row.ingredient_version_id as string),
+      ["organization_id", "ingredient_id"],
+    );
   }
   for (const row of rows("event_ingredient_prices")) {
     requireRef(row, "ingredient_id", ingredientIds);
-    sameScope(row, ingredients.get(row.ingredient_id as string), ["organization_id"]);
+    sameScope(row, ingredients.get(row.ingredient_id as string), [
+      "organization_id",
+    ]);
     if (row.current_snapshot_id != null) {
       requireRef(row, "current_snapshot_id", priceSnapshotIds);
       const snapshot = priceSnapshots.get(row.current_snapshot_id as string);
       if (!snapshot) throw new Error("Invalid archive relation.");
-      sameScope(snapshot, row, ["event_id", "organization_id", "ingredient_id"]);
-      if (snapshot?.event_ingredient_price_id !== row.id) throw new Error("Invalid archive relation.");
+      sameScope(snapshot, row, [
+        "event_id",
+        "organization_id",
+        "ingredient_id",
+      ]);
+      if (snapshot?.event_ingredient_price_id !== row.id)
+        throw new Error("Invalid archive relation.");
     }
   }
   for (const row of rows("event_ingredient_price_snapshots")) {
@@ -362,9 +397,12 @@ function validateRelations(
   for (const row of rows("shopping_lists"))
     if (row.current_generation_revision_id != null) {
       requireRef(row, "current_generation_revision_id", revisionIds);
-      const revision = revisions.get(row.current_generation_revision_id as string);
+      const revision = revisions.get(
+        row.current_generation_revision_id as string,
+      );
       sameScope(row, revision, ["event_id", "organization_id"]);
-      if (revision?.shopping_list_id !== row.id) throw new Error("Invalid archive relation scope.");
+      if (revision?.shopping_list_id !== row.id)
+        throw new Error("Invalid archive relation scope.");
     }
   for (const row of rows("shopping_revision_sources")) {
     requireRef(row, "generation_revision_id", revisionIds);
@@ -444,26 +482,42 @@ function validateRelations(
     requireRef(row, "recipe_version_id", recipeVersionIds);
     if (row.event_day_id != null) {
       requireRef(row, "event_day_id", ids("event_days"));
-      sameScope(row, byId("event_days").get(row.event_day_id as string), ["event_id"]);
+      sameScope(row, byId("event_days").get(row.event_day_id as string), [
+        "event_id",
+      ]);
     }
     if (row.event_meal_role_id != null) {
       requireRef(row, "event_meal_role_id", ids("event_meal_roles"));
-      sameScope(row, byId("event_meal_roles").get(row.event_meal_role_id as string), ["event_id"]);
+      sameScope(
+        row,
+        byId("event_meal_roles").get(row.event_meal_role_id as string),
+        ["event_id"],
+      );
     }
     sameScope(row, recipes.get(row.recipe_id as string), ["organization_id"]);
-    sameScope(row, recipeVersions.get(row.recipe_version_id as string), ["organization_id", "recipe_id"]);
+    sameScope(row, recipeVersions.get(row.recipe_version_id as string), [
+      "organization_id",
+      "recipe_id",
+    ]);
   }
   for (const row of rows("recipe_version_lines")) {
     requireRef(row, "recipe_version_id", recipeVersionIds);
     requireRef(row, "recipe_id", recipeIds);
-    sameScope(row, recipeVersions.get(row.recipe_version_id as string), ["recipe_id", "organization_id"]);
+    sameScope(row, recipeVersions.get(row.recipe_version_id as string), [
+      "recipe_id",
+      "organization_id",
+    ]);
     sameScope(row, recipes.get(row.recipe_id as string), ["organization_id"]);
   }
   for (const row of rows("recipe_version_tags")) {
     requireRef(row, "recipe_version_id", recipeVersionIds);
     requireRef(row, "recipe_tag_id", ids("recipe_tags"));
-    sameScope(row, recipeVersions.get(row.recipe_version_id as string), ["organization_id"]);
-    sameScope(row, byId("recipe_tags").get(row.recipe_tag_id as string), ["organization_id"]);
+    sameScope(row, recipeVersions.get(row.recipe_version_id as string), [
+      "organization_id",
+    ]);
+    sameScope(row, byId("recipe_tags").get(row.recipe_tag_id as string), [
+      "organization_id",
+    ]);
   }
   for (const row of rows("ingredient_versions")) {
     requireRef(row, "ingredient_id", ids("ingredients"));
@@ -474,7 +528,10 @@ function validateRelations(
   for (const row of rows("recipe_versions"))
     if (row.based_on_version_id != null) {
       requireRef(row, "based_on_version_id", recipeVersionIds);
-      sameScope(row, recipeVersions.get(row.based_on_version_id as string), ["recipe_id", "organization_id"]);
+      sameScope(row, recipeVersions.get(row.based_on_version_id as string), [
+        "recipe_id",
+        "organization_id",
+      ]);
     }
   for (const row of rows("ingredient_version_dietary_tags")) {
     requireRef(row, "ingredient_version_id", ingredientVersionIds);
@@ -492,9 +549,21 @@ function validateRelations(
     requireRef(row, "scheduled_recipe_id", scheduledIds);
     if (row.id !== row.scheduled_recipe_id || !Array.isArray(row.warnings))
       throw new Error("Invalid archive relation.");
-    sameScope(row, scheduled.get(row.scheduled_recipe_id as string), ["event_id", "organization_id"]);
+    sameScope(row, scheduled.get(row.scheduled_recipe_id as string), [
+      "event_id",
+      "organization_id",
+    ]);
     for (const warning of row.warnings) {
-      if (!object(warning) || typeof warning.exception_name !== "string" || !Array.isArray(warning.tag_descriptors) || !warning.tag_descriptors.every((tag) => parseArchivedDietaryTagDescriptor(tag) !== undefined) || !Array.isArray(warning.ingredient_names) || !warning.ingredient_names.every((name) => typeof name === "string"))
+      if (
+        !object(warning) ||
+        typeof warning.exception_name !== "string" ||
+        !Array.isArray(warning.tag_descriptors) ||
+        !warning.tag_descriptors.every(
+          (tag) => parseArchivedDietaryTagDescriptor(tag) !== undefined,
+        ) ||
+        !Array.isArray(warning.ingredient_names) ||
+        !warning.ingredient_names.every((name) => typeof name === "string")
+      )
         throw new Error("Invalid archive relation.");
       for (const tag of warning.tag_descriptors) {
         const descriptor = parseArchivedDietaryTagDescriptor(tag);
@@ -502,9 +571,13 @@ function validateRelations(
         requireRef(tag, "id", dietaryTagIds);
         const archivedTag = byId("dietary_tags").get(descriptor.id);
         if (!archivedTag) throw new Error("Invalid archive relation.");
-        if (descriptor.seedKey !== undefined
-          ? archivedTag.seed_key !== descriptor.seedKey || archivedTag.name != null
-          : archivedTag.name !== descriptor.name || archivedTag.seed_key != null)
+        if (
+          descriptor.seedKey !== undefined
+            ? archivedTag.seed_key !== descriptor.seedKey ||
+              archivedTag.name != null
+            : archivedTag.name !== descriptor.name ||
+              archivedTag.seed_key != null
+        )
           throw new Error("Invalid archive relation.");
       }
     }
@@ -516,6 +589,7 @@ export async function ensureArchivedEventCached(
   organizationId: string,
   eventId: string,
   fetcher: typeof fetch = fetch,
+  signal?: AbortSignal,
 ): Promise<boolean> {
   if (!uuid.test(eventId) || !uuid.test(organizationId)) return false;
   const event = await localDb.canonicalRecords.get([
@@ -545,7 +619,7 @@ export async function ensureArchivedEventCached(
     return true;
   const response = await fetcher(
     `/api/v1/organizations/${encodeURIComponent(organizationId)}/events/${encodeURIComponent(eventId)}/archive/${encodeURIComponent(snapshotId)}`,
-    { credentials: "same-origin", cache: "no-store" },
+    { credentials: "same-origin", cache: "no-store", signal },
   );
   if (response.status === 401) throw new SyncRequestError(401);
   if (!response.ok)
@@ -559,11 +633,7 @@ export async function ensureArchivedEventCached(
   validateRelations(parsed.payload, eventId);
   const records: ArchiveRecord[] = [];
   for (const [key, items] of Object.entries(parsed.payload)) {
-    if (
-      key === "event" ||
-      key === "schema_version"
-    )
-      continue;
+    if (key === "event" || key === "schema_version") continue;
     if (key === "field_clocks") {
       for (const item of items as unknown[]) {
         if (

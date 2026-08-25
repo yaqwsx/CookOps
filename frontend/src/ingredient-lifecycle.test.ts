@@ -86,27 +86,35 @@ describe("offline ingredient lifecycle", () => {
       ingredientId,
       operation: "retire",
     });
-    await expect(readIngredientCatalog(userId, organizationId)).resolves.toMatchObject({
+    await expect(
+      readIngredientCatalog(userId, organizationId),
+    ).resolves.toMatchObject({
       ingredients: [],
     });
     await expect(
       readIngredientCatalog(userId, organizationId, true),
     ).resolves.toMatchObject({
-      ingredients: [expect.objectContaining({ id: ingredientId, retired: true })],
+      ingredients: [
+        expect.objectContaining({ id: ingredientId, retired: true }),
+      ],
     });
     await queueIngredientLifecycle(userId, organizationId, {
       ingredientId,
       operation: "restore",
     });
-    await expect(readIngredientCatalog(userId, organizationId)).resolves.toMatchObject({
+    await expect(
+      readIngredientCatalog(userId, organizationId),
+    ).resolves.toMatchObject({
       ingredients: [expect.objectContaining({ id: ingredientId })],
     });
-    await expect(localDb.canonicalRecords.get([
-      userId,
-      organizationId,
-      "ingredient_version",
-      versionId,
-    ])).resolves.toBeDefined();
+    await expect(
+      localDb.canonicalRecords.get([
+        userId,
+        organizationId,
+        "ingredient_version",
+        versionId,
+      ]),
+    ).resolves.toBeDefined();
   });
 
   it("does not replay a stale command over a newer canonical lifecycle clock", async () => {

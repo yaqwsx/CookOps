@@ -139,6 +139,7 @@ from cookops.application.ingredients import (
     CreateIngredientResult,
     create_ingredient,
 )
+from cookops.application.organization_update import OrganizationUpdateCommand, update_organization
 from cookops.application.organizations import ApplicationServiceError, ExecutionContext
 from cookops.application.receipt_media import _record as _attachment_record
 from cookops.application.receipts import (
@@ -191,6 +192,11 @@ from cookops.application.scheduled_recipe_moves import (
     MoveScheduledRecipeCommand,
     MoveScheduledRecipeResult,
     move_scheduled_recipe,
+)
+from cookops.application.scheduled_recipe_note import (
+    ScheduledRecipeNoteResult,
+    SetScheduledRecipeNoteCommand,
+    set_scheduled_recipe_note,
 )
 from cookops.application.scheduled_recipe_overrides import (
     ScheduledIngredientOverrideResult,
@@ -411,6 +417,7 @@ SyncCommand = (
     | MoveScheduledRecipeCommand
     | SetScheduledRecipeAttendanceCommand
     | SetScheduledRecipeContextCommand
+    | SetScheduledRecipeNoteCommand
     | UpdateScheduledRecipeCatalogCommand
     | SetScheduledRecipeLifecycleCommand
     | SetScheduledIngredientOverrideCommand
@@ -428,6 +435,7 @@ SyncCommand = (
     | UpdateReceiptCommand
     | SetReceiptLifecycleCommand
     | CatalogConfigurationCommand
+    | OrganizationUpdateCommand
     | UnsupportedSyncCommand
 )
 
@@ -463,6 +471,7 @@ def _command_kind(
         | MoveScheduledRecipeCommand
         | SetScheduledRecipeAttendanceCommand
         | SetScheduledRecipeContextCommand
+        | SetScheduledRecipeNoteCommand
         | UpdateScheduledRecipeCatalogCommand
         | SetScheduledRecipeLifecycleCommand
         | SetScheduledIngredientOverrideCommand
@@ -480,6 +489,7 @@ def _command_kind(
         | UpdateReceiptCommand
         | SetReceiptLifecycleCommand
         | CatalogConfigurationCommand
+        | OrganizationUpdateCommand
     ),
 ) -> str:
     if isinstance(command, CreateEventCommand):
@@ -542,6 +552,8 @@ def _command_kind(
         return "scheduled_recipe.attendance"
     if isinstance(command, SetScheduledRecipeContextCommand):
         return "scheduled_recipe.context"
+    if isinstance(command, SetScheduledRecipeNoteCommand):
+        return "scheduled_recipe.note"
     if isinstance(command, UpdateScheduledRecipeCatalogCommand):
         return "scheduled_recipe.catalog_update"
     if isinstance(command, SetScheduledRecipeLifecycleCommand):
@@ -576,6 +588,8 @@ def _command_kind(
         return "receipt.lifecycle"
     if isinstance(command, CatalogConfigurationCommand):
         return "catalog_configuration.mutate"
+    if isinstance(command, OrganizationUpdateCommand):
+        return "organization.update"
     return "shopping_list.create"
 
 
@@ -900,6 +914,7 @@ class SynchronizationCommandService:
                 | MoveScheduledRecipeResult
                 | ScheduledRecipeAttendanceResult
                 | ScheduledRecipeContextResult
+                | ScheduledRecipeNoteResult
                 | UpdateScheduledRecipeCatalogResult
                 | ScheduledRecipeLifecycleResult
                 | ScheduledIngredientOverrideResult
@@ -932,7 +947,9 @@ class SynchronizationCommandService:
                     self._session_factory, context, command
                 )
             elif isinstance(command, UpdateEventDietaryExceptionCommand):
-                result = await update_event_dietary_exception(self._session_factory, context, command)
+                result = await update_event_dietary_exception(
+                    self._session_factory, context, command
+                )
             elif isinstance(command, SetEventDietaryExceptionLifecycleCommand):
                 result = await set_event_dietary_exception_lifecycle(
                     self._session_factory, context, command
@@ -977,6 +994,8 @@ class SynchronizationCommandService:
                 )
             elif isinstance(command, SetScheduledRecipeContextCommand):
                 result = await set_scheduled_recipe_context(self._session_factory, context, command)
+            elif isinstance(command, SetScheduledRecipeNoteCommand):
+                result = await set_scheduled_recipe_note(self._session_factory, context, command)
             elif isinstance(command, UpdateScheduledRecipeCatalogCommand):
                 result = await update_scheduled_recipe_catalog(  # noqa: E501
                     self._session_factory, context, command
@@ -1033,6 +1052,8 @@ class SynchronizationCommandService:
                 )
             elif isinstance(command, CatalogConfigurationCommand):
                 result = await mutate_catalog_configuration(self._session_factory, context, command)
+            elif isinstance(command, OrganizationUpdateCommand):
+                result = await update_organization(self._session_factory, context, command)
             else:
                 result = await create_shopping_list(self._session_factory, context, command)
         except ApplicationServiceError as error:
@@ -1722,6 +1743,14 @@ async def _bootstrap_records(
     organization = await session.get(Organization, organization_id)
     if organization is None:  # authorization already established this invariant.
         raise RuntimeError("Authorized organization disappeared")
+    organization_clocks = {
+        (clock.entity_kind, clock.entity_id, clock.field_name): clock
+        for clock in (
+            await session.execute(
+                select(FieldClock).where(FieldClock.organization_id == organization_id)
+            )
+        ).scalars()
+    }
     append(
         "organization",
         organization.id,
@@ -1734,6 +1763,7 @@ async def _bootstrap_records(
             "created_by_user_id": str(organization.created_by_user_id),
             "retired_at": _time(organization.retired_at),
             "retired_by_user_id": _uuid(organization.retired_by_user_id),
+            "field_clocks": _clock_fields(organization_clocks, "organization", organization.id),
         },
     )
     append(
@@ -1904,8 +1934,8 @@ async def _bootstrap_records(
                 "retired_at": _time(item.retired_at),
                 "retired_by_user_id": _uuid(item.retired_by_user_id),
                 "lifecycle": "retired" if item.retired_at else "active",
-                    "field_clocks": {
-                        "lifecycle": (
+                "field_clocks": {
+                    "lifecycle": (
                         {
                             "winning_client_wall_time": clock.winning_client_wall_time.isoformat(),
                             "winning_mutation_id": str(clock.winning_mutation_id),

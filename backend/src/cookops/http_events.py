@@ -236,9 +236,7 @@ def create_events_router(settings: Settings) -> APIRouter:
             next_cursor=next_cursor,
         )
 
-    @router.get(
-        "/{event_id}/archive/{snapshot_id}", response_model=EventArchiveSnapshotResponse
-    )
+    @router.get("/{event_id}/archive/{snapshot_id}", response_model=EventArchiveSnapshotResponse)
     async def get_archived_event(
         organization_id: UUID,
         event_id: UUID,

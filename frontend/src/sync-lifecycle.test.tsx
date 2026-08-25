@@ -379,12 +379,18 @@ describe("authenticated outbox synchronization lifecycle", () => {
     await addPendingCommand("organization-a");
     await addPendingCommand("organization-b");
     pullOrganization
-      .mockRejectedValueOnce(new UpgradeRequiredError("entity_kind", "future_entity"))
+      .mockRejectedValueOnce(
+        new UpgradeRequiredError("entity_kind", "future_entity"),
+      )
       .mockResolvedValue(false);
     render(<Lifecycle userId="user-a" />);
     await waitFor(() =>
-      expect(dispatchOutbox).toHaveBeenCalledWith("organization-b", { userId: "user-a" }),
+      expect(dispatchOutbox).toHaveBeenCalledWith("organization-b", {
+        userId: "user-a",
+      }),
     );
-    expect(dispatchOutbox).not.toHaveBeenCalledWith("organization-a", { userId: "user-a" });
+    expect(dispatchOutbox).not.toHaveBeenCalledWith("organization-a", {
+      userId: "user-a",
+    });
   });
 });

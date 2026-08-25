@@ -8,7 +8,8 @@ deployments cannot run it successfully.
 import asyncio
 from collections.abc import Mapping
 from dataclasses import dataclass
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime
+from decimal import Decimal
 from typing import cast
 from uuid import UUID, uuid5
 
@@ -19,10 +20,27 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from cookops.config import Environment, HumanAuthProvider, Settings
 from cookops.database import create_database_runtime
 from cookops.persistence.models import (
+    Event,
+    EventDay,
+    EventMealRole,
     ExternalIdentity,
+    Ingredient,
+    IngredientVersion,
     Organization,
     OrganizationMembership,
+    Recipe,
+    RecipeVersion,
+    RecipeVersionIngredientLine,
+    ScheduledRecipe,
+    ShoppingContribution,
+    ShoppingContributionSnapshot,
+    ShoppingGenerationRevision,
+    ShoppingIngredientRow,
+    ShoppingList,
+    ShoppingRevisionSource,
+    StoreSection,
     SystemRoleAssignment,
+    UnitDefinition,
     User,
 )
 
@@ -95,6 +113,7 @@ DEVELOPMENT_IDENTITIES = (
 
 PRIMARY_ORGANIZATION_ID = _seed_id("organization:primary")
 SECONDARY_ORGANIZATION_ID = _seed_id("organization:secondary")
+DEVELOPMENT_EVENT_ID = _seed_id("event:primary:shopping")
 
 
 @dataclass(frozen=True, slots=True)
@@ -209,6 +228,335 @@ async def provision_dummy_development_identities(
                 },
             ),
         )
+        grams_id = await session.scalar(
+            select(UnitDefinition.id).where(
+                UnitDefinition.organization_id.is_(None), UnitDefinition.code == "g"
+            )
+        )
+        if grams_id is None:
+            raise DevelopmentSeedConflict("required system unit g is missing")
+        scaling_unit_id = _seed_id("unit:primary:shopping:portion")
+        await _insert_if_absent(
+            session,
+            table=cast(Table, UnitDefinition.__table__),
+            rows=(
+                {
+                    "id": scaling_unit_id,
+                    "organization_id": PRIMARY_ORGANIZATION_ID,
+                    "code": "portion",
+                    "custom_name": "Portion",
+                    "normalized_custom_name": "portion",
+                    "dimension": "count",
+                    "rounds_up_to_whole_unit": True,
+                    "allows_ingredient_quantity": False,
+                    "allows_recipe_scaling": True,
+                    "created_by_user_id": ORGANIZATION_ADMIN.id,
+                },
+            ),
+        )
+        event_day_id = _seed_id("event-day:primary:shopping")
+        meal_role_id = _seed_id("event-meal-role:primary:shopping")
+        ingredient_id = _seed_id("ingredient:primary:shopping")
+        ingredient_version_id = _seed_id("ingredient-version:primary:shopping")
+        recipe_id = _seed_id("recipe:primary:shopping")
+        recipe_version_id = _seed_id("recipe-version:primary:shopping")
+        recipe_line_id = _seed_id("recipe-line:primary:shopping")
+        scheduled_recipe_id = _seed_id("scheduled-recipe:primary:shopping")
+        section_id = _seed_id("store-section:primary:shopping")
+        shopping_list_id = _seed_id("shopping-list:primary:shopping")
+        revision_id = _seed_id("shopping-revision:primary:shopping")
+        row_id = _seed_id("shopping-row:primary:shopping")
+        contribution_id = _seed_id("shopping-contribution:primary:shopping")
+        snapshot_id = _seed_id("shopping-snapshot:primary:shopping")
+        await _insert_if_absent(
+            session,
+            table=cast(Table, Event.__table__),
+            rows=(
+                {
+                    "id": DEVELOPMENT_EVENT_ID,
+                    "organization_id": PRIMARY_ORGANIZATION_ID,
+                    "name": "CookOps Development Shopping",
+                    "start_date": date(2030, 1, 1),
+                    "end_date": date(2030, 1, 1),
+                    "base_expected_attendance": 10,
+                    "budget_amount": Decimal("1000"),
+                    "currency": "CZK",
+                    "created_by_user_id": ORGANIZATION_ADMIN.id,
+                    "lifecycle": "active",
+                },
+            ),
+        )
+        await _insert_if_absent(
+            session,
+            table=cast(Table, EventDay.__table__),
+            rows=(
+                {
+                    "id": event_day_id,
+                    "event_id": DEVELOPMENT_EVENT_ID,
+                    "calendar_date": date(2030, 1, 1),
+                    "is_visible": True,
+                    "provenance": "range_generated",
+                    "created_by_user_id": ORGANIZATION_ADMIN.id,
+                },
+            ),
+        )
+        await _insert_if_absent(
+            session,
+            table=cast(Table, EventMealRole.__table__),
+            rows=(
+                {
+                    "id": meal_role_id,
+                    "event_id": DEVELOPMENT_EVENT_ID,
+                    "built_in_translation_key": "meal_role.lunch",
+                    "position_key": "a",
+                    "created_by_user_id": ORGANIZATION_ADMIN.id,
+                },
+            ),
+        )
+        await _insert_if_absent(
+            session,
+            table=cast(Table, StoreSection.__table__),
+            rows=(
+                {
+                    "id": section_id,
+                    "organization_id": PRIMARY_ORGANIZATION_ID,
+                    "name": "Produce",
+                    "normalized_name": "produce",
+                    "position_key": "a",
+                    "created_by_user_id": ORGANIZATION_ADMIN.id,
+                },
+            ),
+        )
+        await _insert_if_absent(
+            session,
+            table=cast(Table, Ingredient.__table__),
+            rows=(
+                {
+                    "id": ingredient_id,
+                    "organization_id": PRIMARY_ORGANIZATION_ID,
+                    "current_version_id": ingredient_version_id,
+                    "created_by_user_id": ORGANIZATION_ADMIN.id,
+                },
+            ),
+        )
+        await _insert_if_absent(
+            session,
+            table=cast(Table, IngredientVersion.__table__),
+            rows=(
+                {
+                    "id": ingredient_version_id,
+                    "organization_id": PRIMARY_ORGANIZATION_ID,
+                    "ingredient_id": ingredient_id,
+                    "name": "Tomatoes",
+                    "normalized_name": "tomatoes",
+                    "canonical_unit_id": grams_id,
+                    "mass_per_canonical_quantity": Decimal("1"),
+                    "default_store_section_id": section_id,
+                    "published_by_user_id": ORGANIZATION_ADMIN.id,
+                },
+            ),
+        )
+        await _insert_if_absent(
+            session,
+            table=cast(Table, Recipe.__table__),
+            rows=(
+                {
+                    "id": recipe_id,
+                    "organization_id": PRIMARY_ORGANIZATION_ID,
+                    "current_version_id": recipe_version_id,
+                    "created_by_user_id": ORGANIZATION_ADMIN.id,
+                },
+            ),
+        )
+        recipe_line = {
+            "id": recipe_line_id,
+            "organization_id": PRIMARY_ORGANIZATION_ID,
+            "recipe_id": recipe_id,
+            "recipe_version_id": recipe_version_id,
+            "line_key": recipe_line_id,
+            "ingredient_version_id": ingredient_version_id,
+            "base_quantity": Decimal("100"),
+            "preferred_display_unit_id": grams_id,
+            "position_key": "a",
+            "scaling_behavior": "proportional",
+            "include_in_portion_weight": True,
+        }
+        existing_recipe_line = (
+            (
+                await session.execute(
+                    select(RecipeVersionIngredientLine.__table__).where(
+                        RecipeVersionIngredientLine.id == recipe_line_id
+                    )
+                )
+            )
+            .mappings()
+            .one_or_none()
+        )
+        if existing_recipe_line is None:
+            await session.execute(insert(RecipeVersionIngredientLine).values(recipe_line))
+        elif any(existing_recipe_line[key] != value for key, value in recipe_line.items()):
+            raise DevelopmentSeedConflict(
+                "reserved development seed row conflicts in recipe_version_ingredient_lines"
+            )
+        await _insert_if_absent(
+            session,
+            table=cast(Table, RecipeVersion.__table__),
+            rows=(
+                {
+                    "id": recipe_version_id,
+                    "organization_id": PRIMARY_ORGANIZATION_ID,
+                    "recipe_id": recipe_id,
+                    "name": "Tomato Salad",
+                    "scaling_unit_id": scaling_unit_id,
+                    "base_scaling_amount": Decimal("100"),
+                    "published_by_user_id": ORGANIZATION_ADMIN.id,
+                },
+            ),
+        )
+        await _insert_if_absent(
+            session,
+            table=cast(Table, ScheduledRecipe.__table__),
+            rows=(
+                {
+                    "id": scheduled_recipe_id,
+                    "organization_id": PRIMARY_ORGANIZATION_ID,
+                    "event_id": DEVELOPMENT_EVENT_ID,
+                    "event_day_id": event_day_id,
+                    "event_meal_role_id": meal_role_id,
+                    "recipe_id": recipe_id,
+                    "recipe_version_id": recipe_version_id,
+                    "diner_count": 10,
+                    "attendance_mode": "follows_event",
+                    "consumption_percentage": Decimal("100"),
+                    "selected_scale_amount": Decimal("100"),
+                    "scale_mode": "suggested",
+                    "position_key": "a",
+                    "created_by_user_id": ORGANIZATION_ADMIN.id,
+                },
+            ),
+        )
+        await _insert_if_absent(
+            session,
+            table=cast(Table, ShoppingList.__table__),
+            rows=(
+                {
+                    "id": shopping_list_id,
+                    "organization_id": PRIMARY_ORGANIZATION_ID,
+                    "event_id": DEVELOPMENT_EVENT_ID,
+                    "name": "Development shopping",
+                    "current_generation_revision_id": revision_id,
+                    "created_by_user_id": ORGANIZATION_ADMIN.id,
+                },
+            ),
+        )
+        await _insert_if_absent(
+            session,
+            table=cast(Table, ShoppingGenerationRevision.__table__),
+            rows=(
+                {
+                    "id": revision_id,
+                    "organization_id": PRIMARY_ORGANIZATION_ID,
+                    "event_id": DEVELOPMENT_EVENT_ID,
+                    "shopping_list_id": shopping_list_id,
+                    "generated_by_user_id": ORGANIZATION_ADMIN.id,
+                },
+            ),
+        )
+        await _insert_if_absent(
+            session,
+            table=cast(Table, ShoppingIngredientRow.__table__),
+            rows=(
+                {
+                    "id": row_id,
+                    "organization_id": PRIMARY_ORGANIZATION_ID,
+                    "event_id": DEVELOPMENT_EVENT_ID,
+                    "shopping_list_id": shopping_list_id,
+                    "ingredient_id": ingredient_id,
+                    "ingredient_name": "Tomatoes",
+                    "calculation_unit_id": grams_id,
+                    "default_store_section_id": section_id,
+                    "default_store_section_name": "Produce",
+                    "created_by_user_id": ORGANIZATION_ADMIN.id,
+                },
+            ),
+        )
+        await _insert_if_absent(
+            session,
+            table=cast(Table, ShoppingContribution.__table__),
+            rows=(
+                {
+                    "id": contribution_id,
+                    "organization_id": PRIMARY_ORGANIZATION_ID,
+                    "event_id": DEVELOPMENT_EVENT_ID,
+                    "shopping_list_id": shopping_list_id,
+                    "shopping_ingredient_row_id": row_id,
+                    "ingredient_id": ingredient_id,
+                    "scheduled_recipe_id": scheduled_recipe_id,
+                    "fulfilment_credit": Decimal("0"),
+                },
+            ),
+        )
+        await _insert_if_absent(
+            session,
+            table=cast(Table, ShoppingContributionSnapshot.__table__),
+            rows=(
+                {
+                    "id": snapshot_id,
+                    "organization_id": PRIMARY_ORGANIZATION_ID,
+                    "event_id": DEVELOPMENT_EVENT_ID,
+                    "shopping_list_id": shopping_list_id,
+                    "generation_revision_id": revision_id,
+                    "shopping_contribution_id": contribution_id,
+                    "ingredient_id": ingredient_id,
+                    "active_in_revision": True,
+                    "generated_quantity": Decimal("1000"),
+                    "ingredient_version_id": ingredient_version_id,
+                    "ingredient_name": "Tomatoes",
+                    "source_details": {"recipe_name": "Tomato Salad"},
+                },
+            ),
+        )
+        await session.execute(
+            insert(ShoppingRevisionSource)
+            .values(
+                generation_revision_id=revision_id,
+                shopping_list_id=shopping_list_id,
+                organization_id=PRIMARY_ORGANIZATION_ID,
+                event_id=DEVELOPMENT_EVENT_ID,
+                scheduled_recipe_id=scheduled_recipe_id,
+            )
+            .on_conflict_do_nothing(
+                index_elements=[
+                    ShoppingRevisionSource.generation_revision_id,
+                    ShoppingRevisionSource.scheduled_recipe_id,
+                ]
+            )
+        )
+        expected_source = {
+            "generation_revision_id": revision_id,
+            "shopping_list_id": shopping_list_id,
+            "organization_id": PRIMARY_ORGANIZATION_ID,
+            "event_id": DEVELOPMENT_EVENT_ID,
+            "scheduled_recipe_id": scheduled_recipe_id,
+        }
+        actual_source = (
+            (
+                await session.execute(
+                    select(ShoppingRevisionSource.__table__).where(
+                        ShoppingRevisionSource.generation_revision_id == revision_id,
+                        ShoppingRevisionSource.scheduled_recipe_id == scheduled_recipe_id,
+                    )
+                )
+            )
+            .mappings()
+            .one_or_none()
+        )
+        if actual_source is None or any(
+            actual_source[key] != value for key, value in expected_source.items()
+        ):
+            raise DevelopmentSeedConflict(
+                "reserved development seed row conflicts in shopping_revision_sources"
+            )
         await _insert_if_absent(
             session,
             table=cast(Table, SystemRoleAssignment.__table__),

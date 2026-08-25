@@ -5,7 +5,7 @@ import json
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from decimal import Decimal
-from typing import Literal
+from typing import Literal, cast
 from uuid import UUID
 
 from iso4217 import Currency
@@ -133,10 +133,7 @@ async def publish_ingredient_price_estimate(
             and decimal_value.is_finite()
             and abs(decimal_value.adjusted()) <= 100
         )
-        if (
-            not bounded
-            or (decimal_value < 0 if not positive else decimal_value <= 0)
-        ):
+        if not bounded or (decimal_value < 0 if not positive else decimal_value <= 0):
             violations.append(FieldViolation(name, "must_be_positive_finite_decimal"))
     currency = command.currency.strip().upper() if isinstance(command.currency, str) else ""
     if currency not in Currency.__members__:
@@ -177,7 +174,7 @@ async def publish_ingredient_price_estimate(
                     retained.first_change_sequence or 0,
                     retained.last_change_sequence or 0,
                     True,
-                    retained.outcome,
+                    cast(Literal["accepted", "partially_superseded"], retained.outcome),
                 )
             raise _retained_price_error(retained)
         if violations:

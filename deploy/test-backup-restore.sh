@@ -9,6 +9,9 @@ restore_dir="$work/restore"
 mkdir -m 700 "$archive_dir" "$restore_dir"
 
 cleanup() {
+    compose run --rm --no-deps --user 0:0 --entrypoint sh restore -c \
+        'rm -rf -- "/var/lib/cookops/restore/$COOKOPS_RESTORE_MEDIA_SUBDIR"' \
+        >/dev/null 2>&1 || true
     docker compose --project-name "$project" --env-file "$root/deploy/.env.example" \
         -f "$root/deploy/compose.yaml" down --volumes --remove-orphans >/dev/null 2>&1 || true
     rm -rf "$work"
@@ -21,7 +24,6 @@ export COOKOPS_BACKUP_ARCHIVE=cookops-roundtrip.zip
 export COOKOPS_RESTORE_MEDIA_SUBDIR=restored-media
 # Use syntactically valid disposable credentials; no service is exposed publicly by this test.
 export COOKOPS_GOOGLE_CLIENT_ID=backup-restore-test-client
-export COOKOPS_BROWSER_SESSION_HMAC_KEY=BwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwc
 export OAUTH_COOKIE_KEYS=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa,bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
 export OAUTH_RESOURCE_SERVER_SECRET=backup-restore-resource-secret-32-characters
 export OAUTH_JWKS='{"keys":[{}]}'
@@ -29,7 +31,7 @@ export OAUTH_ADAPTER_SECRET_BASE64URL=BwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBw
 export OAUTH_INTERACTION_APPROVAL_SECRET_BASE64URL=CAgICAgICAgICAgICAgICAgICAgICAgICAgICAgICAg
 export OAUTH_APPROVAL_API_CREDENTIAL_BASE64URL=CQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQkJCQk
 export OAUTH_INTERACTION_DETAILS_API_CREDENTIAL_BASE64URL=CgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgoKCgo
-export OAUTH_GRANTS_API_CREDENTIAL_BASE64URL=DAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDA
+export OAUTH_GRANTS_API_CREDENTIAL_BASE64URL=DAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAw
 
 compose() {
     docker compose --project-name "$project" --env-file "$root/deploy/.env.example" \

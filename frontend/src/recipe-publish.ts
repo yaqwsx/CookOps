@@ -32,7 +32,10 @@ export type RecipeVersionInput = {
   estimatedDinersPerScalingUnit?: string | null;
   roundSuggestionsUp?: boolean;
   catalogUpdate?: boolean;
-  expectedCurrentIngredientVersions?: { ingredientId: string; versionId: string }[];
+  expectedCurrentIngredientVersions?: {
+    ingredientId: string;
+    versionId: string;
+  }[];
 };
 
 export function validateRecipeVersion(
@@ -56,19 +59,25 @@ export function validateRecipeVersion(
     return "tags";
   if (
     input.expectedCurrentIngredientVersions?.some(
-      ({ ingredientId, versionId }) => !uuid.test(ingredientId) || !uuid.test(versionId),
+      ({ ingredientId, versionId }) =>
+        !uuid.test(ingredientId) || !uuid.test(versionId),
     ) ||
     (input.expectedCurrentIngredientVersions &&
-      new Set(input.expectedCurrentIngredientVersions.map(({ ingredientId }) => ingredientId)).size !==
-        input.expectedCurrentIngredientVersions.length)
+      new Set(
+        input.expectedCurrentIngredientVersions.map(
+          ({ ingredientId }) => ingredientId,
+        ),
+      ).size !== input.expectedCurrentIngredientVersions.length)
   )
     return "ingredientLines";
   for (const line of input.ingredientLines) {
     if (
       !uuid.test(line.ingredientVersionId) ||
       (line.lineKey !== undefined && !uuid.test(line.lineKey)) ||
-      (line.positionKey !== undefined && !/^[0-9A-Za-z]+$/.test(line.positionKey)) ||
-      (line.preferredDisplayUnitId !== undefined && !uuid.test(line.preferredDisplayUnitId)) ||
+      (line.positionKey !== undefined &&
+        !/^[0-9A-Za-z]+$/.test(line.positionKey)) ||
+      (line.preferredDisplayUnitId !== undefined &&
+        !uuid.test(line.preferredDisplayUnitId)) ||
       !decimal.test(line.baseQuantity) ||
       (line.scalingBehavior !== "proportional" &&
         line.scalingBehavior !== "fixed") ||
@@ -109,6 +118,7 @@ async function writeRecipePublication(
   mutationId: string,
   actionAt: string,
   payload: Record<string, unknown>,
+  tagRecordIds: string[],
 ) {
   const recipeId = payload.recipe_id as string;
   const basedOn = payload.based_on_version_id as string;
@@ -121,7 +131,25 @@ async function writeRecipePublication(
   );
   if (
     current?.lifecycle !== "active" ||
-    current.fields.current_version_id !== basedOn
+    current.fields.organization_id !== organizationId ||
+    current.fields.id !== recipeId
+  )
+    throw new Error("recipe");
+  const currentVersionId = current.fields.current_version_id;
+  const currentVersion =
+    typeof currentVersionId === "string"
+      ? await readVisibleCanonicalRecord(
+          userId,
+          organizationId,
+          "recipe_version",
+          currentVersionId,
+        )
+      : undefined;
+  if (
+    currentVersion?.immutable !== true ||
+    currentVersion.fields.organization_id !== organizationId ||
+    currentVersion.fields.recipe_id !== recipeId ||
+    currentVersion.fields.id !== currentVersionId
   )
     throw new Error("recipe");
   const version = await readVisibleCanonicalRecord(
@@ -130,7 +158,12 @@ async function writeRecipePublication(
     "recipe_version",
     basedOn,
   );
-  if (!version || version.fields.recipe_id !== recipeId)
+  if (
+    version?.immutable !== true ||
+    version.fields.organization_id !== organizationId ||
+    version.fields.recipe_id !== recipeId ||
+    version.fields.id !== basedOn
+  )
     throw new Error("recipe");
   const unit = await localDb.canonicalRecords.get([
     userId,
@@ -146,7 +179,19 @@ async function writeRecipePublication(
   const lines = payload.ingredient_lines as Array<Record<string, unknown>>;
   const tags = payload.recipe_tag_ids as string[];
   for (const tagId of tags) {
-    const tag = (await localDb.optimisticOverlays.get([userId, organizationId, "recipe_tag", tagId])) ?? (await localDb.canonicalRecords.get([userId, organizationId, "recipe_tag", tagId]));
+    const tag =
+      (await localDb.optimisticOverlays.get([
+        userId,
+        organizationId,
+        "recipe_tag",
+        tagId,
+      ])) ??
+      (await localDb.canonicalRecords.get([
+        userId,
+        organizationId,
+        "recipe_tag",
+        tagId,
+      ]));
     if (tag?.lifecycle !== "active") throw new Error("tags");
   }
   for (const line of lines) {
@@ -158,26 +203,24 @@ async function writeRecipePublication(
     ]);
     if (!ingredient) throw new Error("ingredientLines");
   }
-  const tagRecords = await Promise.all(
-    tags.map(async (tagId) => {
-      const id = await recipeVersionTagId(versionId, tagId);
-      return overlay(
-        userId,
-        organizationId,
-        "recipe_version_tag",
+  const tagRecords = tags.map((tagId, index) => {
+    const id = tagRecordIds[index];
+    return overlay(
+      userId,
+      organizationId,
+      "recipe_version_tag",
+      id,
+      {
         id,
-        {
-          id,
-          recipe_version_id: versionId,
-          recipe_tag_id: tagId,
-          organization_id: organizationId,
-        },
-        mutationId,
-        actionAt,
-        true,
-      );
-    }),
-  );
+        recipe_version_id: versionId,
+        recipe_tag_id: tagId,
+        organization_id: organizationId,
+      },
+      mutationId,
+      actionAt,
+      true,
+    );
+  });
   const records: CanonicalRecord[] = [
     overlay(
       userId,
@@ -203,7 +246,10 @@ async function writeRecipePublication(
         scaling_unit_id: payload.scaling_unit_id,
         base_scaling_amount: payload.base_scaling_amount,
         ...(payload.estimated_diners_per_scaling_unit !== undefined
-          ? { estimated_diners_per_scaling_unit: payload.estimated_diners_per_scaling_unit }
+          ? {
+              estimated_diners_per_scaling_unit:
+                payload.estimated_diners_per_scaling_unit,
+            }
           : {}),
         ...(payload.round_suggestions_up !== undefined
           ? { round_suggestions_up: payload.round_suggestions_up }
@@ -276,7 +322,10 @@ export async function queueRecipeVersionPublish(
         : {}),
     })),
     ...(input.estimatedDinersPerScalingUnit !== undefined
-      ? { estimated_diners_per_scaling_unit: input.estimatedDinersPerScalingUnit }
+      ? {
+          estimated_diners_per_scaling_unit:
+            input.estimatedDinersPerScalingUnit,
+        }
       : {}),
     ...(input.roundSuggestionsUp !== undefined
       ? { round_suggestions_up: input.roundSuggestionsUp }
@@ -285,10 +334,15 @@ export async function queueRecipeVersionPublish(
     ...(input.expectedCurrentIngredientVersions?.length
       ? {
           expected_current_ingredient_versions:
-            input.expectedCurrentIngredientVersions.map(({ ingredientId, versionId }) => [ingredientId, versionId]),
+            input.expectedCurrentIngredientVersions.map(
+              ({ ingredientId, versionId }) => [ingredientId, versionId],
+            ),
         }
       : {}),
   };
+  const tagRecordIds = await Promise.all(
+    input.recipeTagIds.map((tagId) => recipeVersionTagId(versionId, tagId)),
+  );
   await localDb.transaction(
     "rw",
     localDb.canonicalRecords,
@@ -301,6 +355,7 @@ export async function queueRecipeVersionPublish(
         mutationId,
         actionAt,
         payload,
+        tagRecordIds,
       );
       await appendOutboxCommand({
         id: mutationId,
@@ -333,14 +388,27 @@ export async function replayRecipeVersionPublish(
     !Array.isArray(payload.ingredient_lines)
   )
     return;
-  if (!Array.isArray(payload.recipe_tag_ids) || new Set(payload.recipe_tag_ids).size !== payload.recipe_tag_ids.length || !payload.recipe_tag_ids.every((id): id is string => typeof id === "string" && uuid.test(id))) return;
+  if (
+    !Array.isArray(payload.recipe_tag_ids) ||
+    new Set(payload.recipe_tag_ids).size !== payload.recipe_tag_ids.length ||
+    !payload.recipe_tag_ids.every(
+      (id): id is string => typeof id === "string" && uuid.test(id),
+    )
+  )
+    return;
   try {
+    const tagRecordIds = await Promise.all(
+      (payload.recipe_tag_ids as string[]).map((tagId) =>
+        recipeVersionTagId(payload.recipe_version_id as string, tagId),
+      ),
+    );
     await writeRecipePublication(
       userId,
       organizationId,
       command.id,
       command.actionAt,
       payload,
+      tagRecordIds,
     );
   } catch {
     /* Retain malformed or stale intent for recovery. */

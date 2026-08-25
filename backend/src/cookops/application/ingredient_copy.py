@@ -1011,9 +1011,7 @@ async def _copy_ingredient_to_organization_once(
         if len(new_tag_names) != len(new_destination_tags):
             raise _copy_error(FieldViolation("mappings", "custom_tag_names_must_be_unique"))
         for normalized_name in sorted(new_tag_names):
-            name_identity = UUID(
-                bytes=hashlib.sha256(normalized_name.encode()).digest()[:16]
-            )
+            name_identity = UUID(bytes=hashlib.sha256(normalized_name.encode()).digest()[:16])
             await session.execute(
                 text("SELECT pg_advisory_xact_lock(:key)"),
                 {
@@ -1077,7 +1075,7 @@ async def _copy_ingredient_to_organization_once(
                                 UTC
                             ).isoformat(),
                             "winning_mutation_id": str(command.mutation_id),
-                        }
+                        },
                     },
                 },
             )
@@ -1408,9 +1406,7 @@ async def _authorized(
             ClientInstallation.disabled_at.is_(None),
             ClientInstallation.installation_kind == kind,
         )
-        actor = await session.scalar(
-            actor_statement.with_for_update(of=(User, ClientInstallation))
-        )
+        actor = await session.scalar(actor_statement.with_for_update(of=(User, ClientInstallation)))
     else:
         actor = await session.scalar(actor_statement.with_for_update(of=User))
     organizations = set(
@@ -1428,11 +1424,13 @@ async def _authorized(
     if actor is None or len(organizations) != 2:
         return False
     system_admin = await session.scalar(
-        select(SystemRoleAssignment.id).where(
+        select(SystemRoleAssignment.id)
+        .where(
             SystemRoleAssignment.user_id == context.actor_user_id,
             SystemRoleAssignment.role == "system_admin",
             SystemRoleAssignment.revoked_at.is_(None),
-        ).with_for_update(of=SystemRoleAssignment)
+        )
+        .with_for_update(of=SystemRoleAssignment)
     )
     if system_admin is not None:
         return True
@@ -1441,7 +1439,8 @@ async def _authorized(
             select(
                 OrganizationMembership.organization_id,
                 OrganizationMembership.role,
-            ).where(
+            )
+            .where(
                 OrganizationMembership.user_id == context.actor_user_id,
                 OrganizationMembership.organization_id.in_(organizations),
                 OrganizationMembership.state == "active",

@@ -1,9 +1,10 @@
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { RouterProvider } from "@tanstack/react-router";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-import { App } from "./App";
 import i18n, { defaultLocale } from "./i18n";
+import { createAppRouter } from "./router";
 
 vi.mock("./event-costs-page", () => ({
   EventCostsPage: ({
@@ -126,6 +127,14 @@ function response(body: object | null, status = 200) {
   });
 }
 
+function requestPath(input: RequestInfo | URL): string {
+  const url = new URL(
+    input instanceof Request ? input.url : input,
+    window.location.origin,
+  );
+  return url.pathname + url.search;
+}
+
 function mockAnonymousDevelopmentSession({
   logoutFails = false,
   localePersistFails = false,
@@ -139,7 +148,7 @@ function mockAnonymousDevelopmentSession({
   let accessRevoked = false;
   const fetchMock = vi.fn(
     async (input: RequestInfo | URL, init?: RequestInit) => {
-      const path = String(input);
+      const path = requestPath(input);
       if (path === "/auth/session") {
         return signedIn && !accessRevoked
           ? response({ ...alice, preferred_locale: preferredLocale })
@@ -150,7 +159,8 @@ function mockAnonymousDevelopmentSession({
         accessRevoked = true;
         return response({ detail: "not authenticated" }, 401);
       }
-      if (path === "/api/v1/system/organizations/access") return response(null, 403);
+      if (path === "/api/v1/system/organizations/access")
+        return response(null, 403);
       if (path === "/auth/dummy/identities") {
         return response({
           identities: [
@@ -170,7 +180,9 @@ function mockAnonymousDevelopmentSession({
       }
       if (path === "/auth/session/locale" && init?.method === "PATCH") {
         if (localePersistFails) return response({ detail: "unavailable" }, 503);
-        const body = JSON.parse(init.body as string) as { preferred_locale: "cs" | "en" };
+        const body = JSON.parse(init.body as string) as {
+          preferred_locale: "cs" | "en";
+        };
         return response({ ...alice, preferred_locale: body.preferred_locale });
       }
       throw new Error(`Unexpected request: ${path}`);
@@ -184,14 +196,15 @@ function mockAnonymousGoogleSession() {
   let signedIn = false;
   const fetchMock = vi.fn(
     async (input: RequestInfo | URL, init?: RequestInit) => {
-      const path = String(input);
+      const path = requestPath(input);
       if (path === "/auth/session") {
         return signedIn
           ? response(alice)
           : response({ detail: "not authenticated" }, 401);
       }
       if (path === "/api/v1/organizations") return response(organizations);
-      if (path === "/api/v1/system/organizations/access") return response(null, 403);
+      if (path === "/api/v1/system/organizations/access")
+        return response(null, 403);
       if (path === "/auth/google/session" && init?.method === "POST") {
         signedIn = true;
         return response(null, 204);
@@ -220,7 +233,7 @@ describe("development authentication", () => {
   it("starts in Czech and presents only named development identities", async () => {
     const user = userEvent.setup();
     const fetchMock = mockAnonymousDevelopmentSession();
-    render(<App />);
+    render(<RouterProvider router={createAppRouter()} />);
 
     expect(
       await screen.findByRole("heading", { name: "Vývojové přihlášení" }),
@@ -245,7 +258,9 @@ describe("development authentication", () => {
     expect(screen.getByRole("combobox", { name: "Language" })).toHaveValue(
       "en",
     );
-    expect(fetchMock.mock.calls.some(([path]) => path === "/auth/session/locale")).toBe(false);
+    expect(
+      fetchMock.mock.calls.some(([path]) => path === "/auth/session/locale"),
+    ).toBe(false);
   });
 
   it("renders a localized recoverable error when the session check cannot start", async () => {
@@ -254,21 +269,21 @@ describe("development authentication", () => {
     vi.stubGlobal(
       "fetch",
       vi.fn(async (input: RequestInfo | URL) => {
-        if (String(input) === "/auth/session" && !failed) {
+        if (requestPath(input) === "/auth/session" && !failed) {
           failed = true;
           throw new Error("network unavailable");
         }
-        if (String(input) === "/auth/session") {
+        if (requestPath(input) === "/auth/session") {
           return response({ detail: "not authenticated" }, 401);
         }
-        if (String(input) === "/auth/dummy/identities") {
+        if (requestPath(input) === "/auth/dummy/identities") {
           return response({ identities: [] });
         }
-        throw new Error(`Unexpected request: ${String(input)}`);
+        throw new Error(`Unexpected request: ${requestPath(input)}`);
       }),
     );
     const user = userEvent.setup();
-    render(<App />);
+    render(<RouterProvider router={createAppRouter()} />);
 
     expect(
       await screen.findByRole("heading", {
@@ -283,13 +298,13 @@ describe("development authentication", () => {
 
   it("requires an explicit runtime authentication provider", async () => {
     const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
-      if (String(input) === "/auth/session") {
+      if (requestPath(input) === "/auth/session") {
         return response({ detail: "not authenticated" }, 401);
       }
-      throw new Error(`Unexpected request: ${String(input)}`);
+      throw new Error(`Unexpected request: ${requestPath(input)}`);
     });
     vi.stubGlobal("fetch", fetchMock);
-    render(<App />);
+    render(<RouterProvider router={createAppRouter()} />);
 
     expect(
       await screen.findByRole("heading", {
@@ -305,10 +320,10 @@ describe("development authentication", () => {
     vi.stubGlobal(
       "fetch",
       vi.fn(async (input: RequestInfo | URL) => {
-        if (String(input) === "/auth/session") {
+        if (requestPath(input) === "/auth/session") {
           return response({ detail: "not authenticated" }, 401);
         }
-        if (String(input) === "/auth/dummy/identities") {
+        if (requestPath(input) === "/auth/dummy/identities") {
           listAttempts += 1;
           return listAttempts === 1
             ? response({ detail: "unavailable" }, 503)
@@ -318,11 +333,11 @@ describe("development authentication", () => {
                 ],
               });
         }
-        throw new Error(`Unexpected request: ${String(input)}`);
+        throw new Error(`Unexpected request: ${requestPath(input)}`);
       }),
     );
     const user = userEvent.setup();
-    render(<App />);
+    render(<RouterProvider router={createAppRouter()} />);
 
     expect(
       await screen.findByText("Vývojová autentizace není k dispozici."),
@@ -339,7 +354,7 @@ describe("development authentication", () => {
   it("establishes a cookie-backed session and renders the authenticated shell", async () => {
     const user = userEvent.setup();
     const fetchMock = mockAnonymousDevelopmentSession();
-    render(<App />);
+    render(<RouterProvider router={createAppRouter()} />);
 
     await user.click(
       await screen.findByRole("button", {
@@ -378,24 +393,40 @@ describe("development authentication", () => {
   it("applies the server locale after signing in from the Czech login UI", async () => {
     const user = userEvent.setup();
     mockAnonymousDevelopmentSession({ preferredLocale: "en" });
-    render(<App />);
+    render(<RouterProvider router={createAppRouter()} />);
 
-    expect(await screen.findByRole("heading", { name: "Vývojové přihlášení" })).toBeInTheDocument();
-    await user.click(screen.getByRole("button", { name: "Přihlásit se jako Alice Member" }));
+    expect(
+      await screen.findByRole("heading", { name: "Vývojové přihlášení" }),
+    ).toBeInTheDocument();
+    await user.click(
+      screen.getByRole("button", { name: "Přihlásit se jako Alice Member" }),
+    );
 
     expect(await screen.findByText("Alice Member")).toBeInTheDocument();
-    expect(await screen.findByRole("button", { name: "Log out" })).toBeInTheDocument();
-    expect(screen.getByRole("combobox", { name: "Language" })).toHaveValue("en");
+    expect(
+      await screen.findByRole("button", { name: "Log out" }),
+    ).toBeInTheDocument();
+    expect(screen.getByRole("combobox", { name: "Language" })).toHaveValue(
+      "en",
+    );
     await waitFor(() => {
-      expect(window.location.pathname).toBe(`/organizations/${primaryOrganization.id}/events`);
+      expect(window.location.pathname).toBe(
+        `/organizations/${primaryOrganization.id}/events`,
+      );
     });
   });
 
   it("persists authenticated locale changes and shows failures", async () => {
     const user = userEvent.setup();
-    const fetchMock = mockAnonymousDevelopmentSession({ localePersistFails: true });
-    render(<App />);
-    await user.click(await screen.findByRole("button", { name: "Přihlásit se jako Alice Member" }));
+    const fetchMock = mockAnonymousDevelopmentSession({
+      localePersistFails: true,
+    });
+    render(<RouterProvider router={createAppRouter()} />);
+    await user.click(
+      await screen.findByRole("button", {
+        name: "Přihlásit se jako Alice Member",
+      }),
+    );
     const picker = await screen.findByRole("combobox", { name: "Jazyk" });
     await user.selectOptions(picker, "en");
     expect(picker).toHaveValue("en");
@@ -407,7 +438,9 @@ describe("development authentication", () => {
       expect.objectContaining({
         method: "PATCH",
         body: JSON.stringify({ preferred_locale: "en" }),
-        headers: expect.objectContaining({ "content-type": "application/json" }),
+        headers: expect.objectContaining({
+          "content-type": "application/json",
+        }),
       }),
     );
     expect(
@@ -415,14 +448,25 @@ describe("development authentication", () => {
         (localeRequest?.[1]?.headers ?? {}) as Record<string, unknown>,
       ).some((key) => key.toLowerCase() === "origin"),
     ).toBe(false);
-    expect(await screen.findByText("The language could not be saved. Please try again.")).toBeInTheDocument();
+    expect(
+      await screen.findByText(
+        "The language could not be saved. Please try again.",
+      ),
+    ).toBeInTheDocument();
   });
 
   it("applies the persisted locale on session boot and does not persist login selection", async () => {
-    const fetchMock = mockAnonymousDevelopmentSession({ preferredLocale: "en", initiallySignedIn: true });
-    render(<App />);
-    expect(await screen.findByRole("combobox", { name: "Language" })).toHaveValue("en");
-    expect(fetchMock.mock.calls.some(([path]) => path === "/auth/session/locale")).toBe(false);
+    const fetchMock = mockAnonymousDevelopmentSession({
+      preferredLocale: "en",
+      initiallySignedIn: true,
+    });
+    render(<RouterProvider router={createAppRouter()} />);
+    expect(
+      await screen.findByRole("combobox", { name: "Language" }),
+    ).toHaveValue("en");
+    expect(
+      fetchMock.mock.calls.some(([path]) => path === "/auth/session/locale"),
+    ).toBe(false);
   });
 
   it("switches organizations through the existing events route", async () => {
@@ -436,7 +480,7 @@ describe("development authentication", () => {
         organizations: [...organizations.organizations, secondOrganization],
       },
     });
-    render(<App />);
+    render(<RouterProvider router={createAppRouter()} />);
 
     await user.click(
       await screen.findByRole("button", {
@@ -460,7 +504,7 @@ describe("development authentication", () => {
       `/organizations/${primaryOrganization.id.toUpperCase()}/recipes`,
     );
     mockAnonymousDevelopmentSession();
-    render(<App />);
+    render(<RouterProvider router={createAppRouter()} />);
 
     await user.click(
       await screen.findByRole("button", {
@@ -482,18 +526,22 @@ describe("development authentication", () => {
       `/organizations/${primaryOrganization.id}/recipes/${recipeId}/edit`,
     );
     mockAnonymousDevelopmentSession();
-    render(<App />);
+    render(<RouterProvider router={createAppRouter()} />);
     await user.click(
       await screen.findByRole("button", {
         name: "Přihlásit se jako Alice Member",
       }),
     );
-    expect(await screen.findByRole("region", { name: "recipe-route" })).toHaveTextContent(recipeId);
+    expect(
+      await screen.findByRole("region", { name: "recipe-route" }),
+    ).toHaveTextContent(recipeId);
     expect(screen.getByRole("button", { name: "Make dirty" })).toBeVisible();
-    expect(screen.queryByRole("heading", { name: "Přehled akcí" })).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("heading", { name: "Přehled akcí" }),
+    ).not.toBeInTheDocument();
   });
 
-  it("keeps malformed recipe ids in the recipe route and rejects a non-UUID organization", async () => {
+  it("rejects malformed recipe and organization ids at the route boundary", async () => {
     const user = userEvent.setup();
     window.history.replaceState(
       null,
@@ -501,23 +549,23 @@ describe("development authentication", () => {
       `/organizations/${primaryOrganization.id}/recipes/not-a-uuid`,
     );
     mockAnonymousDevelopmentSession();
-    render(<App />);
+    render(<RouterProvider router={createAppRouter()} />);
     await user.click(
       await screen.findByRole("button", {
         name: "Přihlásit se jako Alice Member",
       }),
     );
-    expect(await screen.findByRole("region", { name: "recipe-route" })).toHaveTextContent("not-a-uuid");
+    expect(
+      await screen.findByText("Požadovaná stránka nebyla nalezena."),
+    ).toBeVisible();
     window.history.replaceState(null, "", "/organizations/not-an-id/recipes");
     fireEvent(window, new PopStateEvent("popstate"));
-    await waitFor(() =>
-      expect(window.location.pathname).toBe(
-        `/organizations/${primaryOrganization.id}/events`,
-      ),
-    );
+    expect(
+      await screen.findByText("Požadovaná stránka nebyla nalezena."),
+    ).toBeVisible();
   });
 
-  it("routes direct ingredient detail and keeps malformed ids in the ingredient shell", async () => {
+  it("routes direct ingredient detail and rejects malformed ids", async () => {
     const user = userEvent.setup();
     const ingredientId = "7ce17d2f-8365-4b1f-a80b-34d10425d51c";
     window.history.replaceState(
@@ -526,15 +574,21 @@ describe("development authentication", () => {
       `/organizations/${primaryOrganization.id}/ingredients/${ingredientId}`,
     );
     mockAnonymousDevelopmentSession();
-    render(<App />);
+    render(<RouterProvider router={createAppRouter()} />);
     await user.click(
       await screen.findByRole("button", {
         name: "Přihlásit se jako Alice Member",
       }),
     );
-    expect(await screen.findByRole("region", { name: "ingredient-route" })).toHaveTextContent(ingredientId);
-    await user.click(screen.getByRole("button", { name: "Back to ingredient catalog" }));
-    expect(window.location.pathname).toBe(`/organizations/${primaryOrganization.id}/ingredients`);
+    expect(
+      await screen.findByRole("region", { name: "ingredient-route" }),
+    ).toHaveTextContent(ingredientId);
+    await user.click(
+      screen.getByRole("button", { name: "Back to ingredient catalog" }),
+    );
+    expect(window.location.pathname).toBe(
+      `/organizations/${primaryOrganization.id}/ingredients`,
+    );
 
     window.history.replaceState(
       null,
@@ -542,24 +596,65 @@ describe("development authentication", () => {
       `/organizations/${primaryOrganization.id}/ingredients/not-a-uuid`,
     );
     fireEvent(window, new PopStateEvent("popstate"));
-    expect(await screen.findByRole("region", { name: "ingredient-route" })).toHaveTextContent("__invalid__");
+    expect(
+      await screen.findByText("Požadovaná stránka nebyla nalezena."),
+    ).toBeVisible();
+  });
+
+  it("shows a generic access state for a valid but unavailable organization", async () => {
+    const user = userEvent.setup();
+    window.history.replaceState(
+      null,
+      "",
+      "/organizations/9ce17d2f-8365-4b1f-a80b-34d10425d51c/events",
+    );
+    mockAnonymousDevelopmentSession();
+    render(<RouterProvider router={createAppRouter()} />);
+    await user.click(
+      await screen.findByRole("button", {
+        name: "Přihlásit se jako Alice Member",
+      }),
+    );
+    expect(
+      await screen.findByText("Tato organizace není v tomto účtu dostupná."),
+    ).toBeVisible();
+    expect(
+      screen.queryByRole("region", { name: "events-route" }),
+    ).not.toBeInTheDocument();
   });
 
   it("guards ingredient detail navigation when an editor is dirty", async () => {
     const user = userEvent.setup();
     const ingredientId = "7ce17d2f-8365-4b1f-a80b-34d10425d51c";
-    window.history.replaceState(null, "", `/organizations/${primaryOrganization.id}/ingredients/${ingredientId}`);
+    window.history.replaceState(
+      null,
+      "",
+      `/organizations/${primaryOrganization.id}/ingredients/${ingredientId}`,
+    );
     mockAnonymousDevelopmentSession();
     const confirmMock = vi.spyOn(window, "confirm");
-    render(<App />);
-    await user.click(await screen.findByRole("button", { name: "Přihlásit se jako Alice Member" }));
-    await user.click(await screen.findByRole("button", { name: "Make ingredient dirty" }));
+    render(<RouterProvider router={createAppRouter()} />);
+    await user.click(
+      await screen.findByRole("button", {
+        name: "Přihlásit se jako Alice Member",
+      }),
+    );
+    await user.click(
+      await screen.findByRole("button", { name: "Make ingredient dirty" }),
+    );
     confirmMock.mockReturnValue(false);
-    await user.click(screen.getByRole("button", { name: "Back to ingredient catalog" }));
+    await user.click(
+      screen.getByRole("button", { name: "Back to ingredient catalog" }),
+    );
     expect(window.location.pathname).toContain(`/ingredients/${ingredientId}`);
+    expect(confirmMock).toHaveBeenCalledWith("Zahodit neuložené změny?");
     confirmMock.mockReturnValue(true);
-    await user.click(screen.getByRole("button", { name: "Back to ingredient catalog" }));
-    expect(window.location.pathname).toBe(`/organizations/${primaryOrganization.id}/ingredients`);
+    await user.click(
+      screen.getByRole("button", { name: "Back to ingredient catalog" }),
+    );
+    expect(window.location.pathname).toBe(
+      `/organizations/${primaryOrganization.id}/ingredients`,
+    );
     confirmMock.mockRestore();
   });
 
@@ -573,7 +668,8 @@ describe("development authentication", () => {
     );
     mockAnonymousDevelopmentSession();
     const confirmMock = vi.spyOn(window, "confirm");
-    render(<App />);
+    const appRouter = createAppRouter();
+    render(<RouterProvider router={appRouter} />);
     await user.click(
       await screen.findByRole("button", {
         name: "Přihlásit se jako Alice Member",
@@ -581,15 +677,55 @@ describe("development authentication", () => {
     );
     await user.click(await screen.findByRole("button", { name: "Make dirty" }));
     confirmMock.mockReturnValue(false);
-    window.history.pushState(null, "", `/organizations/${primaryOrganization.id}/recipes`);
-    fireEvent(window, new PopStateEvent("popstate"));
-    expect(window.location.pathname).toContain(`/recipes/${recipeId}/edit`);
+    void appRouter.navigate({
+      to: "/organizations/$organizationId/recipes",
+      params: { organizationId: primaryOrganization.id },
+    });
+    await waitFor(() =>
+      expect(window.location.pathname).toContain(`/recipes/${recipeId}/edit`),
+    );
     confirmMock.mockReturnValue(true);
-    window.history.pushState(null, "", `/organizations/${primaryOrganization.id}/recipes`);
-    fireEvent(window, new PopStateEvent("popstate"));
+    await appRouter.navigate({
+      to: "/organizations/$organizationId/recipes",
+      params: { organizationId: primaryOrganization.id },
+    });
     await waitFor(() =>
       expect(window.location.pathname).toBe(
         `/organizations/${primaryOrganization.id}/recipes`,
+      ),
+    );
+    confirmMock.mockRestore();
+  });
+
+  it("blocks dirty navigation between editor params on the same route", async () => {
+    const user = userEvent.setup();
+    const recipeA = "6ce17d2f-8365-4b1f-a80b-34d10425d51c";
+    const recipeB = "7ce17d2f-8365-4b1f-a80b-34d10425d51c";
+    window.history.replaceState(
+      null,
+      "",
+      `/organizations/${primaryOrganization.id}/recipes/${recipeA}/edit`,
+    );
+    mockAnonymousDevelopmentSession();
+    const confirmMock = vi.spyOn(window, "confirm").mockReturnValue(false);
+    const appRouter = createAppRouter();
+    render(<RouterProvider router={appRouter} />);
+    await user.click(
+      await screen.findByRole("button", {
+        name: "Přihlásit se jako Alice Member",
+      }),
+    );
+    await user.click(await screen.findByRole("button", { name: "Make dirty" }));
+    void appRouter.navigate({
+      to: "/organizations/$organizationId/recipes/$recipeId/edit",
+      params: { organizationId: primaryOrganization.id, recipeId: recipeB },
+    });
+    await waitFor(() =>
+      expect(window.location.pathname).toContain(`/recipes/${recipeA}/edit`),
+    );
+    await waitFor(() =>
+      expect(confirmMock).toHaveBeenCalledWith(
+        "Zahodit neuložené změny receptu?",
       ),
     );
     confirmMock.mockRestore();
@@ -605,7 +741,7 @@ describe("development authentication", () => {
     );
     mockAnonymousDevelopmentSession();
     const confirmMock = vi.spyOn(window, "confirm").mockReturnValue(true);
-    render(<App />);
+    render(<RouterProvider router={createAppRouter()} />);
     await user.click(
       await screen.findByRole("button", {
         name: "Přihlásit se jako Alice Member",
@@ -639,7 +775,7 @@ describe("development authentication", () => {
       `/organizations/${primaryOrganization.id}/events/${eventId}/costs`,
     );
     mockAnonymousDevelopmentSession();
-    render(<App />);
+    render(<RouterProvider router={createAppRouter()} />);
 
     await user.click(
       await screen.findByRole("button", {
@@ -673,7 +809,7 @@ describe("development authentication", () => {
       `/organizations/${primaryOrganization.id}/events/${eventId}/settings`,
     );
     mockAnonymousDevelopmentSession();
-    render(<App />);
+    render(<RouterProvider router={createAppRouter()} />);
     await user.click(
       await screen.findByRole("button", {
         name: "Přihlásit se jako Alice Member",
@@ -706,7 +842,7 @@ describe("development authentication", () => {
       `/organizations/${primaryOrganization.id}/events/${eventId}/settings/${eventId}`,
     );
     mockAnonymousDevelopmentSession();
-    render(<App />);
+    render(<RouterProvider router={createAppRouter()} />);
     await user.click(
       await screen.findByRole("button", {
         name: "Přihlásit se jako Alice Member",
@@ -729,7 +865,7 @@ describe("development authentication", () => {
       `/organizations/${primaryOrganization.id}/events/${eventId}/shopping/${shoppingListId}`,
     );
     mockAnonymousDevelopmentSession();
-    render(<App />);
+    render(<RouterProvider router={createAppRouter()} />);
     await user.click(
       await screen.findByRole("button", {
         name: "Přihlásit se jako Alice Member",
@@ -743,7 +879,7 @@ describe("development authentication", () => {
   it("returns to authentication when current organization access is revoked", async () => {
     const user = userEvent.setup();
     mockAnonymousDevelopmentSession({ organizationUnauthorized: true });
-    render(<App />);
+    render(<RouterProvider router={createAppRouter()} />);
 
     await user.click(
       await screen.findByRole("button", {
@@ -784,7 +920,7 @@ describe("development authentication", () => {
     };
     const user = userEvent.setup();
     const fetchMock = mockAnonymousGoogleSession();
-    render(<App />);
+    render(<RouterProvider router={createAppRouter()} />);
 
     await user.click(
       await screen.findByRole("button", { name: "Continue with Google" }),
@@ -835,7 +971,7 @@ describe("development authentication", () => {
     vi.stubGlobal(
       "fetch",
       vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
-        const path = String(input);
+        const path = requestPath(input);
         if (path === "/auth/session") {
           return tokenAttempts > 1
             ? response(alice)
@@ -851,7 +987,7 @@ describe("development authentication", () => {
       }),
     );
     const user = userEvent.setup();
-    render(<App />);
+    render(<RouterProvider router={createAppRouter()} />);
 
     await user.click(
       await screen.findByRole("button", { name: "Continue with Google" }),
@@ -871,7 +1007,7 @@ describe("development authentication", () => {
   it("keeps the authenticated shell and reports a distinct logout failure", async () => {
     const user = userEvent.setup();
     mockAnonymousDevelopmentSession({ logoutFails: true });
-    render(<App />);
+    render(<RouterProvider router={createAppRouter()} />);
     await user.click(
       await screen.findByRole("button", {
         name: "Přihlásit se jako Alice Member",
@@ -888,7 +1024,7 @@ describe("development authentication", () => {
   it("switches authenticated controls to English and logs out", async () => {
     const user = userEvent.setup();
     mockAnonymousDevelopmentSession();
-    render(<App />);
+    render(<RouterProvider router={createAppRouter()} />);
     await user.click(
       await screen.findByRole("button", {
         name: "Přihlásit se jako Alice Member",
@@ -924,18 +1060,21 @@ describe("development authentication", () => {
     vi.stubGlobal(
       "fetch",
       vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
-        const path = String(input);
+        const path = requestPath(input);
         if (path === "/auth/session") {
           return signedIn ? response({ ...alice }) : response(null, 401);
         }
         if (path === "/auth/dummy/identities") {
-          return response({ identities: [{ subject: "dummy-admin", display_name: "Admin" }] });
+          return response({
+            identities: [{ subject: "dummy-admin", display_name: "Admin" }],
+          });
         }
         if (path === "/auth/dummy/session" && init?.method === "POST") {
           signedIn = true;
           return response(null, 204);
         }
-        if (path === "/api/v1/system/organizations/access") return response(null, 204);
+        if (path === "/api/v1/system/organizations/access")
+          return response(null, 204);
         if (path === "/api/v1/system/organizations" && !init?.method) {
           lifecycleReads += 1;
           return response([
@@ -954,11 +1093,17 @@ describe("development authentication", () => {
           return response({
             organizations:
               organizationReads > 1
-                ? [...organizations.organizations, { id: createdId, name: "New kitchen" }]
+                ? [
+                    ...organizations.organizations,
+                    { id: createdId, name: "New kitchen" },
+                  ]
                 : organizations.organizations,
           });
         }
-        if (path === "/api/v1/system/organizations" && init?.method === "POST") {
+        if (
+          path === "/api/v1/system/organizations" &&
+          init?.method === "POST"
+        ) {
           return response({ id: createdId, name: "New kitchen" }, 201);
         }
         if (
@@ -966,9 +1111,13 @@ describe("development authentication", () => {
           init?.method === "POST"
         ) {
           const lifecycleBody = JSON.parse(init.body as string);
-          expect(lifecycleBody.operation).toBe(lifecycleRetired ? "restore" : "retire");
+          expect(lifecycleBody.operation).toBe(
+            lifecycleRetired ? "restore" : "retire",
+          );
           expect(lifecycleBody.mutation_id).toEqual(expect.any(String));
-          expect(lifecycleBody.client_installation_id).toEqual(expect.any(String));
+          expect(lifecycleBody.client_installation_id).toEqual(
+            expect.any(String),
+          );
           expect(lifecycleBody.client_wall_time).toEqual(expect.any(String));
           lifecycleRetired = !lifecycleRetired;
           return response({
@@ -984,12 +1133,20 @@ describe("development authentication", () => {
       }),
     );
 
-    render(<App />);
-    await user.click(await screen.findByRole("button", { name: "Přihlásit se jako Admin" }));
-    expect(await screen.findByRole("heading", { name: "Nová organizace" })).toBeInTheDocument();
+    render(<RouterProvider router={createAppRouter()} />);
+    await user.click(
+      await screen.findByRole("button", { name: "Přihlásit se jako Admin" }),
+    );
+    expect(
+      await screen.findByRole("heading", { name: "Nová organizace" }),
+    ).toBeInTheDocument();
     await user.type(screen.getByLabelText("Název"), "New kitchen");
-    await user.click(screen.getByRole("button", { name: "Vytvořit organizaci" }));
-    expect(await screen.findByText("Organizace byla vytvořena.")).toBeInTheDocument();
+    await user.click(
+      screen.getByRole("button", { name: "Vytvořit organizaci" }),
+    );
+    expect(
+      await screen.findByText("Organizace byla vytvořena."),
+    ).toBeInTheDocument();
     await waitFor(() =>
       expect(
         screen.getByRole("option", { name: "New kitchen" }),
@@ -997,11 +1154,21 @@ describe("development authentication", () => {
     );
     expect(lifecycleReads).toBeGreaterThan(0);
     const confirm = vi.spyOn(window, "confirm").mockReturnValue(true);
-    await user.click(screen.getByRole("button", { name: "Ukončit organizaci New kitchen" }));
-    expect(confirm).toHaveBeenCalledWith("Opravdu chcete ukončit organizaci New kitchen?");
-    expect(await screen.findByText("New kitchen — Ukončená")).toBeInTheDocument();
-    await user.click(screen.getByRole("button", { name: "Obnovit organizaci New kitchen" }));
-    expect(await screen.findByText("New kitchen — Aktivní")).toBeInTheDocument();
+    await user.click(
+      screen.getByRole("button", { name: "Ukončit organizaci New kitchen" }),
+    );
+    expect(confirm).toHaveBeenCalledWith(
+      "Opravdu chcete ukončit organizaci New kitchen?",
+    );
+    expect(
+      await screen.findByText("New kitchen — Ukončená"),
+    ).toBeInTheDocument();
+    await user.click(
+      screen.getByRole("button", { name: "Obnovit organizaci New kitchen" }),
+    );
+    expect(
+      await screen.findByText("New kitchen — Aktivní"),
+    ).toBeInTheDocument();
     confirm.mockRestore();
   });
 
@@ -1009,13 +1176,19 @@ describe("development authentication", () => {
     const user = userEvent.setup();
     window.history.replaceState(null, "", "/system/organizations");
     mockAnonymousDevelopmentSession();
-    render(<App />);
+    render(<RouterProvider router={createAppRouter()} />);
     await user.click(
-      await screen.findByRole("button", { name: "Přihlásit se jako Alice Member" }),
+      await screen.findByRole("button", {
+        name: "Přihlásit se jako Alice Member",
+      }),
     );
     expect(
-      await screen.findByText("Tato stránka je dostupná jen systémovým administrátorům."),
+      await screen.findByText(
+        "Tato stránka je dostupná jen systémovým administrátorům.",
+      ),
     ).toBeInTheDocument();
-    expect(screen.queryByRole("heading", { name: "Nová organizace" })).toBeNull();
+    expect(
+      screen.queryByRole("heading", { name: "Nová organizace" }),
+    ).toBeNull();
   });
 });

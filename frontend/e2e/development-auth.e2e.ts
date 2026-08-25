@@ -5,6 +5,10 @@ const alice = {
   display_name: "Alice Member",
   verified_email: "alice@example.test",
 };
+const developmentOrganization = {
+  id: "5ce17d2f-8365-4b1f-a80b-34d10425d51c",
+  name: "CookOps test organization",
+};
 
 async function installDevelopmentAuthFixture(page: Page) {
   await page.addInitScript(() => {
@@ -53,6 +57,17 @@ async function installDevelopmentAuthFixture(page: Page) {
       return;
     }
     await route.fulfill({ status: 404 });
+  });
+  await page.route("**/api/v1/organizations", async (route) => {
+    const request = route.request();
+    if (request.method() !== "GET") {
+      await route.fallback();
+      return;
+    }
+    await route.fulfill({
+      contentType: "application/json",
+      body: JSON.stringify({ organizations: [developmentOrganization] }),
+    });
   });
 }
 
@@ -168,18 +183,29 @@ test("selects a development identity, switches locale, and logs out accessibly",
   await expect(page.getByRole("button", { name: "Odhlásit se" })).toBeVisible();
   await expectNoPageOverflow(page);
 
+  const primaryNavigation = page.getByRole("navigation", {
+    name: "Navigace organizace",
+  });
   await page.getByRole("link", { name: "CookOps" }).focus();
   await page.keyboard.press("Tab");
-  await expectVisibleKeyboardFocus(page.getByRole("link", { name: "Akce" }));
-  await page.keyboard.press("Tab");
-  await expectVisibleKeyboardFocus(page.getByRole("link", { name: "Recepty" }));
-  await page.keyboard.press("Tab");
   await expectVisibleKeyboardFocus(
-    page.getByRole("link", { name: "Suroviny" }),
+    primaryNavigation.getByRole("link", { name: "Akce" }),
   );
   await page.keyboard.press("Tab");
   await expectVisibleKeyboardFocus(
-    page.getByRole("link", { name: "Nastavení organizace" }),
+    primaryNavigation.getByRole("link", { name: "Recepty" }),
+  );
+  await page.keyboard.press("Tab");
+  await expectVisibleKeyboardFocus(
+    primaryNavigation.getByRole("link", { name: "Suroviny" }),
+  );
+  await page.keyboard.press("Tab");
+  await expectVisibleKeyboardFocus(
+    primaryNavigation.getByRole("link", { name: "Nastavení organizace" }),
+  );
+  await page.keyboard.press("Tab");
+  await expectVisibleKeyboardFocus(
+    page.getByRole("combobox", { name: "Organizace" }),
   );
   await page.keyboard.press("Tab");
   await expectVisibleKeyboardFocus(

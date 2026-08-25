@@ -85,6 +85,8 @@ describe("readVisibleEventSummaries", () => {
         },
       },
     ]);
-    await expect(readVisibleEventSummaries(userId, organizationId)).resolves.toEqual([]);
+    await expect(
+      readVisibleEventSummaries(userId, organizationId),
+    ).resolves.toEqual([]);
   });
 });

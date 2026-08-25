@@ -1097,9 +1097,7 @@ async def rename_shopping_list(
     error: ApplicationServiceError | None = None
     result: RenameShoppingListResult | None = None
     async with session_factory() as session, session.begin():
-        role = await _authorize_member_and_lock_organization(
-            session, context, organization_id
-        )
+        role = await _authorize_member_and_lock_organization(session, context, organization_id)
         await session.execute(
             text("SELECT pg_advisory_xact_lock(:key)"),
             {"key": _advisory_lock_key("mutation", mutation_id)},
@@ -1114,17 +1112,20 @@ async def rename_shopping_list(
                 raise ApplicationServiceError("idempotency_mismatch", retry_same_identity=False)
             if retained.outcome == "rejected":
                 error = _retained_error(retained)
-            elif (
+            elif retained.outcome in ("accepted", "partially_superseded") and (
                 retained.first_change_sequence is not None
                 and retained.last_change_sequence is not None
             ):
+                retained_outcome: Literal["accepted", "partially_superseded"] = (
+                    "accepted" if retained.outcome == "accepted" else "partially_superseded"
+                )
                 return RenameShoppingListResult(
                     command.mutation_id,
                     command.shopping_list_id,
                     retained.first_change_sequence,
                     retained.last_change_sequence,
                     True,
-                    retained.outcome,
+                    retained_outcome,
                 )
             else:
                 raise RuntimeError("Invalid retained shopping-list rename outcome")
@@ -1183,7 +1184,9 @@ async def rename_shopping_list(
                             when,
                             command.mutation_id,
                         )
-                outcome = "accepted" if wins else "partially_superseded"
+                outcome: Literal["accepted", "partially_superseded"] = (
+                    "accepted" if wins else "partially_superseded"
+                )
                 await session.flush()
                 first, last = await _reserve_change_range(
                     session, command.organization_id, command.mutation_id, 1
@@ -3451,6 +3454,7 @@ async def create_ad_hoc_shopping_item(
             ):
                 error = _error((FieldViolation("ad_hoc_shopping_item_id", "already_exists"),))
             if error is None:
+                assert shopping_list is not None
                 item = AdHocShoppingItem(
                     id=command.ad_hoc_shopping_item_id,
                     organization_id=command.organization_id,
@@ -3628,9 +3632,7 @@ async def set_ad_hoc_shopping_item_fulfilment(
         organization_id = (
             command.organization_id if isinstance(command.organization_id, UUID) else UUID(int=0)
         )
-        role = await _authorize_member_and_lock_organization(
-            session, context, organization_id
-        )
+        role = await _authorize_member_and_lock_organization(session, context, organization_id)
         mutation_id = command.mutation_id if isinstance(command.mutation_id, UUID) else UUID(int=0)
         await session.execute(
             text("SELECT pg_advisory_xact_lock(:key)"),
@@ -3753,7 +3755,7 @@ async def set_ad_hoc_shopping_item_fulfilment(
             first, last = await _reserve_change_range(
                 session, command.organization_id, command.mutation_id, 1
             )
-            outcome: Literal["accepted", "partially_superseded"] = (
+            fulfilment_outcome: Literal["accepted", "partially_superseded"] = (
                 "accepted" if wins else "partially_superseded"
             )
             session.add(
@@ -3773,7 +3775,7 @@ async def set_ad_hoc_shopping_item_fulfilment(
                     context,
                     role,
                     request_hash,
-                    outcome,
+                    fulfilment_outcome,
                     {"ad_hoc_shopping_item": record},
                     first,
                     last,
@@ -3786,7 +3788,7 @@ async def set_ad_hoc_shopping_item_fulfilment(
                 first,
                 last,
                 False,
-                outcome,
+                fulfilment_outcome,
             )
         if error is not None:
             session.add(

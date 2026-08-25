@@ -73,7 +73,11 @@ async function seed() {
       ...base,
       entityType: "recipe",
       entityId: ids.recipe,
-      fields: { id: ids.recipe, organization_id: ids.organization, current_version_id: ids.version },
+      fields: {
+        id: ids.recipe,
+        organization_id: ids.organization,
+        current_version_id: ids.version,
+      },
     },
     {
       ...base,
@@ -119,9 +123,19 @@ describe("offline recipe scheduling", () => {
     await seed();
     await localDb.canonicalRecords.update(
       [ids.user, ids.organization, "event_day", ids.day],
-      { fields: { id: ids.day, event_id: ids.event, calendar_date: "2026-08-10", note: null, is_visible: false } },
+      {
+        fields: {
+          id: ids.day,
+          event_id: ids.event,
+          calendar_date: "2026-08-10",
+          note: null,
+          is_visible: false,
+        },
+      },
     );
-    await expect(readEventPlanner(ids.user, ids.organization, ids.event)).resolves.toMatchObject({
+    await expect(
+      readEventPlanner(ids.user, ids.organization, ids.event),
+    ).resolves.toMatchObject({
       days: [],
       hiddenDays: [expect.objectContaining({ id: ids.day, visible: false })],
     });
@@ -192,19 +206,93 @@ describe("offline recipe scheduling", () => {
 
   it("queues an exact catalog update without changing the canonical pointer", async () => {
     await seed();
-    await localDb.canonicalRecords.put({ userId: ids.user, organizationId: ids.organization, recordSchemaVersion: 1, entityType: "scheduled_recipe", entityId: ids.scheduled, fields: { id: ids.scheduled, event_id: ids.event, recipe_id: ids.recipe, recipe_version_id: ids.version, event_day_id: ids.day, event_meal_role_id: ids.role, diner_count: 12, consumption_percentage: "100", selected_scale_amount: "12", position_key: "a" }, lifecycle: "active", fieldClocks: {}, immutable: false, updatedAt: "2026-08-07T12:00:00.000Z" });
+    await localDb.canonicalRecords.put({
+      userId: ids.user,
+      organizationId: ids.organization,
+      recordSchemaVersion: 1,
+      entityType: "scheduled_recipe",
+      entityId: ids.scheduled,
+      fields: {
+        id: ids.scheduled,
+        event_id: ids.event,
+        recipe_id: ids.recipe,
+        recipe_version_id: ids.version,
+        event_day_id: ids.day,
+        event_meal_role_id: ids.role,
+        diner_count: 12,
+        consumption_percentage: "100",
+        selected_scale_amount: "12",
+        position_key: "a",
+      },
+      lifecycle: "active",
+      fieldClocks: {},
+      immutable: false,
+      updatedAt: "2026-08-07T12:00:00.000Z",
+    });
     const target = "9d8b2b21-c378-4574-9e46-9338c81305ef";
-    await queueScheduledRecipeCatalogUpdate(ids.user, ids.organization, { scheduledRecipeId: ids.scheduled, eventId: ids.event, expectedRecipeVersionId: ids.version, targetRecipeVersionId: target, preserveOverrides: true });
-    await expect(localDb.outbox.toArray()).resolves.toEqual([expect.objectContaining({ commandType: "scheduled_recipe.catalog_update", payload: { scheduled_recipe_id: ids.scheduled, event_id: ids.event, expected_recipe_version_id: ids.version, target_recipe_version_id: target, preserve_overrides: true } })]);
-    await expect(localDb.canonicalRecords.get([ids.user, ids.organization, "scheduled_recipe", ids.scheduled])).resolves.toMatchObject({ fields: { recipe_version_id: ids.version } });
+    await queueScheduledRecipeCatalogUpdate(ids.user, ids.organization, {
+      scheduledRecipeId: ids.scheduled,
+      eventId: ids.event,
+      expectedRecipeVersionId: ids.version,
+      targetRecipeVersionId: target,
+      preserveOverrides: true,
+    });
+    await expect(localDb.outbox.toArray()).resolves.toEqual([
+      expect.objectContaining({
+        commandType: "scheduled_recipe.catalog_update",
+        payload: {
+          scheduled_recipe_id: ids.scheduled,
+          event_id: ids.event,
+          expected_recipe_version_id: ids.version,
+          target_recipe_version_id: target,
+          preserve_overrides: true,
+        },
+      }),
+    ]);
+    await expect(
+      localDb.canonicalRecords.get([
+        ids.user,
+        ids.organization,
+        "scheduled_recipe",
+        ids.scheduled,
+      ]),
+    ).resolves.toMatchObject({ fields: { recipe_version_id: ids.version } });
   });
 
   it("marks stale catalog replay failed instead of leaving it pending", async () => {
     await seed();
     const id = crypto.randomUUID();
-    await localDb.outbox.put({ id, userId: ids.user, organizationId: ids.organization, commandType: "scheduled_recipe.catalog_update", payload: { scheduled_recipe_id: ids.scheduled, event_id: ids.event, expected_recipe_version_id: ids.version, target_recipe_version_id: ids.version, preserve_overrides: true }, actionAt: "2026-08-07T12:00:00.000Z", createdAt: "2026-08-07T12:00:00.000Z", state: "pending" });
-    await replayScheduledRecipeCatalogUpdate(ids.user, ids.organization, { id, actionAt: "2026-08-07T12:00:00.000Z", payload: { scheduled_recipe_id: ids.scheduled, event_id: ids.event, expected_recipe_version_id: ids.version, target_recipe_version_id: ids.version, preserve_overrides: true } });
-    await expect(localDb.outbox.get(id)).resolves.toMatchObject({ state: "failed", failureReason: "stale_catalog_update_precondition" });
+    await localDb.outbox.put({
+      id,
+      userId: ids.user,
+      organizationId: ids.organization,
+      commandType: "scheduled_recipe.catalog_update",
+      payload: {
+        scheduled_recipe_id: ids.scheduled,
+        event_id: ids.event,
+        expected_recipe_version_id: ids.version,
+        target_recipe_version_id: ids.version,
+        preserve_overrides: true,
+      },
+      actionAt: "2026-08-07T12:00:00.000Z",
+      createdAt: "2026-08-07T12:00:00.000Z",
+      state: "pending",
+    });
+    await replayScheduledRecipeCatalogUpdate(ids.user, ids.organization, {
+      id,
+      actionAt: "2026-08-07T12:00:00.000Z",
+      payload: {
+        scheduled_recipe_id: ids.scheduled,
+        event_id: ids.event,
+        expected_recipe_version_id: ids.version,
+        target_recipe_version_id: ids.version,
+        preserve_overrides: true,
+      },
+    });
+    await expect(localDb.outbox.get(id)).resolves.toMatchObject({
+      state: "failed",
+      failureReason: "stale_catalog_update_precondition",
+    });
   });
 
   it("moves a stored scheduled recipe with one scoped overlay and outbox command", async () => {
@@ -245,6 +333,50 @@ describe("offline recipe scheduling", () => {
         scheduledRecipeId as string,
       ]),
     ).resolves.toMatchObject({ fields: { position_key: "z9" } });
+  });
+
+  it("queues relative placement without inventing an optimistic position key", async () => {
+    await seed();
+    await localDb.canonicalRecords.put({
+      userId: ids.user,
+      organizationId: ids.organization,
+      recordSchemaVersion: 1,
+      entityType: "scheduled_recipe",
+      entityId: ids.scheduled,
+      fields: {
+        id: ids.scheduled,
+        event_id: ids.event,
+        recipe_id: ids.recipe,
+        recipe_version_id: ids.version,
+        event_day_id: ids.day,
+        event_meal_role_id: ids.role,
+        position_key: "a",
+      },
+      lifecycle: "active",
+      fieldClocks: {},
+      immutable: false,
+      updatedAt: "2026-08-07T12:00:00.000Z",
+    });
+    await queueScheduledRecipeMove(ids.user, ids.organization, {
+      scheduledRecipeId: ids.scheduled,
+      eventId: ids.event,
+      eventDayId: ids.day,
+      eventMealRoleId: ids.role,
+      placement: "start",
+    });
+    await expect(localDb.outbox.toArray()).resolves.toEqual([
+      expect.objectContaining({
+        payload: expect.objectContaining({ placement: "start" }),
+      }),
+    ]);
+    await expect(
+      localDb.optimisticOverlays.get([
+        ids.user,
+        ids.organization,
+        "scheduled_recipe",
+        ids.scheduled,
+      ]),
+    ).resolves.toBeUndefined();
   });
 
   it("keeps a canonical archived event read-only despite a stale active overlay", async () => {
@@ -355,7 +487,11 @@ describe("offline recipe scheduling", () => {
       quantity: "2.5",
       includeInPortionWeight: true,
     });
-    const planner = await readEventPlanner(ids.user, ids.organization, ids.event);
+    const planner = await readEventPlanner(
+      ids.user,
+      ids.organization,
+      ids.event,
+    );
     expect(planner?.scheduled[0]?.localAddedIngredients).toEqual([
       expect.objectContaining({ name: "Paprika", quantity: "2.5" }),
     ]);

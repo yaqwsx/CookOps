@@ -1,6 +1,7 @@
 import type { CanonicalRecord } from "./local-db";
 import { readEventScopedRecords } from "./archive-cache";
 import { divide, money, multiply, type Fraction } from "./exact-decimal";
+import { timestampNanoseconds } from "./timestamp";
 
 const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const maxDecimalDigits = 38;
@@ -28,6 +29,12 @@ export type ShoppingRow = {
   partial: boolean;
   notRequired: boolean;
   contributions: ShoppingContribution[];
+  fulfilmentAttribution: FulfilmentAttribution | null;
+};
+
+export type FulfilmentAttribution = {
+  updatedAt: string;
+  updatedByUserId: string;
 };
 
 export type ShoppingContribution = {
@@ -46,6 +53,7 @@ export type ShoppingContribution = {
   ingredientNotes: string[];
   estimatedUnitPrice: string | null;
   expectedCost: string | null;
+  fulfilmentAttribution: FulfilmentAttribution | null;
 };
 
 export type AdHocShoppingItem = {
@@ -60,6 +68,7 @@ export type AdHocShoppingItem = {
   fulfilled: boolean;
   partial: boolean;
   retired: boolean;
+  fulfilmentAttribution: FulfilmentAttribution | null;
 };
 
 export type ShoppingInputOption = { id: string; name: string };
@@ -76,6 +85,19 @@ export type ShoppingListProjection = ShoppingListSummary & {
 function value(record: CanonicalRecord, key: string): string | undefined {
   const item = record.fields[key];
   return typeof item === "string" ? item : undefined;
+}
+
+export function fulfilmentAttribution(
+  record: CanonicalRecord,
+): FulfilmentAttribution | null {
+  const updatedAt = value(record, "fulfilment_updated_at");
+  const updatedByUserId = value(record, "fulfilment_updated_by_user_id");
+  return updatedAt &&
+    updatedByUserId &&
+    timestampNanoseconds(updatedAt) !== undefined &&
+    uuid.test(updatedByUserId)
+    ? { updatedAt, updatedByUserId }
+    : null;
 }
 
 export type Decimal = { value: bigint; scale: number };
@@ -130,7 +152,8 @@ function detailTexts(
     else if (Array.isArray(value))
       result.push(
         ...value.filter(
-          (item): item is string => typeof item === "string" && item.trim().length > 0,
+          (item): item is string =>
+            typeof item === "string" && item.trim().length > 0,
         ),
       );
   }
@@ -245,10 +268,7 @@ function priceDetails(
     fraction(targetUnit.factor),
   );
   const cost = converted
-    ? divide(
-        multiply(fraction(amount), converted),
-        fraction(pricedQuantity),
-      )
+    ? divide(multiply(fraction(amount), converted), fraction(pricedQuantity))
     : undefined;
   if (!cost) return undefined;
   return {
@@ -562,14 +582,13 @@ export async function readShoppingList(
             sectionName:
               sectionNames.get(value(item, "store_section_id") ?? "") ?? null,
             note: value(item, "note") ?? null,
-            fulfilled:
-              target.value > 0n &&
-              compare(credit, target) >= 0,
+            fulfilled: target.value > 0n && compare(credit, target) >= 0,
             partial:
               target.value > 0n &&
               compare(credit, add([])) > 0 &&
               compare(credit, target) < 0,
             retired: item.lifecycle === "retired",
+            fulfilmentAttribution: fulfilmentAttribution(item),
           },
         ];
       })
@@ -591,16 +610,15 @@ export async function readShoppingList(
           unitNames.has(value(row, "calculation_unit_id") ?? ""),
       )
       .map((row) => {
-        const rowContributions = contributions.filter(
-          (contribution) =>
-            validContribution(
-              contribution,
-              row.entityId,
-              value(row, "ingredient_id"),
-              shoppingListId,
-              organizationId,
-              eventId,
-            ),
+        const rowContributions = contributions.filter((contribution) =>
+          validContribution(
+            contribution,
+            row.entityId,
+            value(row, "ingredient_id"),
+            shoppingListId,
+            organizationId,
+            eventId,
+          ),
         );
         const validSnapshots = snapshots.filter((snapshot) =>
           rowContributions.some((contribution) =>
@@ -617,10 +635,7 @@ export async function readShoppingList(
         );
         const generated = add(
           validSnapshots
-            .filter(
-              (snapshot) =>
-                snapshot.fields.active_in_revision === true,
-            )
+            .filter((snapshot) => snapshot.fields.active_in_revision === true)
             .map((snapshot) => decimal(snapshot.fields.generated_quantity))
             .filter((amount): amount is Decimal => amount !== undefined),
         );
@@ -657,12 +672,14 @@ export async function readShoppingList(
           target: print(target),
           remaining: print(remaining),
           unit,
-          fulfilled: compare(target, add([])) > 0 && compare(remaining, add([])) === 0,
+          fulfilled:
+            compare(target, add([])) > 0 && compare(remaining, add([])) === 0,
           partial:
             compare(target, add([])) > 0 &&
             compare(remaining, add([])) > 0 &&
             compare(credit, add([])) > 0,
           notRequired: compare(target, add([])) === 0,
+          fulfilmentAttribution: fulfilmentAttribution(row),
           contributions: rowContributions.map((contribution) => {
             const snapshot = validSnapshots.find((item) =>
               validSnapshot(
@@ -697,12 +714,21 @@ export async function readShoppingList(
               fulfilled:
                 amount !== undefined &&
                 compare(amount, add([])) > 0 &&
-                compare(decimal(contribution.fields.fulfilment_credit) ?? add([]), amount) >= 0,
+                compare(
+                  decimal(contribution.fields.fulfilment_credit) ?? add([]),
+                  amount,
+                ) >= 0,
               partial:
                 amount !== undefined &&
                 compare(amount, add([])) > 0 &&
-                compare(decimal(contribution.fields.fulfilment_credit) ?? add([]), add([])) > 0 &&
-                compare(decimal(contribution.fields.fulfilment_credit) ?? add([]), amount) < 0,
+                compare(
+                  decimal(contribution.fields.fulfilment_credit) ?? add([]),
+                  add([]),
+                ) > 0 &&
+                compare(
+                  decimal(contribution.fields.fulfilment_credit) ?? add([]),
+                  amount,
+                ) < 0,
               retired:
                 contribution.lifecycle === "retired" ||
                 snapshot?.fields.active_in_revision !== true,
@@ -719,6 +745,7 @@ export async function readShoppingList(
               ),
               estimatedUnitPrice: price?.estimatedUnitPrice ?? null,
               expectedCost: price?.expectedCost ?? null,
+              fulfilmentAttribution: fulfilmentAttribution(contribution),
             };
           }),
         };

@@ -15,14 +15,18 @@
     "lint": "biome lint .",
     "typecheck": "tsc -b --pretty false",
     "test": "vitest run",
+    "generate:api": "openapi-typescript ../backend/openapi.json -o src/api/generated.ts --export-type --alphabetize",
+    "check:api": "npm run generate:api && git diff --exit-code -- src/api/generated.ts",
     "test:e2e": "npm run build && playwright test"
   },
   "dependencies": {
     "@milkdown/kit": "7.22.1",
     "@milkdown/plugin-listener": "7.22.1",
     "@milkdown/react": "7.22.1",
+    "@tanstack/react-router": "1.170.31",
     "dexie": "4.4.4",
     "i18next": "26.3.6",
+    "openapi-fetch": "0.17.0",
     "react": "19.2.8",
     "react-dom": "19.2.8",
     "react-i18next": "17.0.11",
@@ -39,6 +43,7 @@
     "@vitejs/plugin-react": "6.0.5",
     "fake-indexeddb": "6.2.5",
     "jsdom": "27.0.1",
+    "openapi-typescript": "6.7.6",
     "typescript": "7.0.2",
     "vite": "8.2.1",
     "vitest": "4.1.10"

@@ -162,13 +162,22 @@ async def set_event_dietary_exception_lifecycle(
                 raise ApplicationServiceError("idempotency_mismatch", retry_same_identity=False)
             if retained.outcome == "rejected":
                 error = (retained.outcome_payload or {}).get("error")
-                violations = tuple(
-                    FieldViolation(v["path"], v["code"])
-                    for v in (error or {}).get("field_violations", [])
-                    if isinstance(v, dict) and isinstance(v.get("path"), str) and isinstance(v.get("code"), str)
-                ) if isinstance(error, dict) else ()
-                code = error.get("code") if isinstance(error, dict) and isinstance(error.get("code"), str) else "validation_failed"
-                deferred = ApplicationServiceError(code, field_violations=violations, retry_same_identity=False)
+                error_payload = cast(dict[str, object], error) if isinstance(error, dict) else {}
+                retained_violations = tuple(
+                    FieldViolation(path, code)
+                    for value in cast(list[object], error_payload.get("field_violations", []))
+                    if isinstance(value, dict)
+                    for path, code in [(value.get("path"), value.get("code"))]
+                    if isinstance(path, str) and isinstance(code, str)
+                )
+                code: Literal["validation_failed", "client_time_too_far_ahead"] = (
+                    "client_time_too_far_ahead"
+                    if error_payload.get("code") == "client_time_too_far_ahead"
+                    else "validation_failed"
+                )
+                deferred = ApplicationServiceError(
+                    code, field_violations=retained_violations, retry_same_identity=False
+                )
             elif (
                 retained.first_change_sequence is not None
                 and retained.last_change_sequence is not None

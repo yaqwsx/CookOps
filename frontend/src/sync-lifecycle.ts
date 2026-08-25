@@ -45,7 +45,10 @@ function parseChangeHint(value: unknown, organizationIds: Set<string>) {
 }
 
 /** Dispatch pending work whenever an authenticated browser can reach the server. */
-export function useOutboxSynchronization(userId: string) {
+export function useOutboxSynchronization(
+  userId: string,
+  onUnauthenticated?: () => void,
+) {
   const active = useRef(true);
   const generation = useRef(0);
   const running = useRef(false);
@@ -120,8 +123,15 @@ export function useOutboxSynchronization(userId: string) {
               return;
           }
         }
-      } catch {
+      } catch (error) {
         if (!active.current || currentGeneration !== generation.current) return;
+        if (
+          error instanceof Error &&
+          (error as Error & { status?: number }).status === 401
+        ) {
+          onUnauthenticated?.();
+          return;
+        }
         scheduleRetry();
       } finally {
         running.current = false;
@@ -131,7 +141,7 @@ export function useOutboxSynchronization(userId: string) {
         }
       }
     },
-    [scheduleRetry, userId],
+    [onUnauthenticated, scheduleRetry, userId],
   );
 
   const synchronize = useCallback(async () => {

@@ -1,8 +1,15 @@
 import { liveQuery } from "dexie";
-import { useCallback, useEffect, useRef, useState } from "react";
+import {
+  useCallback,
+  useEffect,
+  useRef,
+  useState,
+  type MouseEvent,
+} from "react";
 import { useTranslation } from "react-i18next";
 
 import type { EventSummary } from "./api/events";
+import { EventRequestError, getEventPage } from "./api/events";
 import { EventAttendance } from "./event-attendance-form";
 import { EventCreate } from "./event-create-form";
 import { EventLifecycle } from "./event-lifecycle-form";
@@ -13,6 +20,11 @@ import {
   readVisibleEventSummaries,
 } from "./event-projections";
 import { pullOrganization, SyncRequestError } from "./sync-bootstrap";
+import {
+  cacheArchivedEventSummaries,
+  readHydratedArchivedEventIds,
+  readCachedArchivedEventSummaries,
+} from "./local-db";
 
 type EventOverviewState = "loading" | "ready" | "offline" | "error";
 
@@ -33,12 +45,14 @@ function EventCard({
   organizationId,
   userId,
   canManage,
+  canOpenOffline,
 }: {
   event: EventSummary;
   onOpen: (eventId: string) => void;
   organizationId: string;
   userId: string;
   canManage: boolean;
+  canOpenOffline: boolean;
 }) {
   const { i18n, t } = useTranslation();
   const dateRange =
@@ -57,10 +71,15 @@ function EventCard({
       </div>
       <button
         className="event-card__open"
+        disabled={
+          event.lifecycle === "archived" && !navigator.onLine && !canOpenOffline
+        }
         onClick={() => onOpen(event.id)}
         type="button"
       >
-        {t("eventsOverview.open")}
+        {event.lifecycle === "archived" && !navigator.onLine && !canOpenOffline
+          ? t("eventsOverview.archiveOpenOfflineUnavailable")
+          : t("eventsOverview.open")}
       </button>
       <dl className="event-card__details">
         <div>
@@ -121,11 +140,15 @@ function EventCard({
 
 export function EventOverview({
   onOpen = () => undefined,
+  onOpenRecipes,
+  onOpenIngredients,
   organizationId,
   userId,
   onUnauthenticated,
 }: {
   onOpen?: (eventId: string) => void;
+  onOpenRecipes?: (event: MouseEvent<HTMLAnchorElement>) => void;
+  onOpenIngredients?: (event: MouseEvent<HTMLAnchorElement>) => void;
   organizationId: string;
   userId: string;
   onUnauthenticated: () => void;
@@ -133,9 +156,62 @@ export function EventOverview({
   const { t } = useTranslation();
   const [state, setState] = useState<EventOverviewState>("loading");
   const [events, setEvents] = useState<EventSummary[]>([]);
+  const [archiveEvents, setArchiveEvents] = useState<EventSummary[]>([]);
+  const [archiveCursor, setArchiveCursor] = useState<string | null>(null);
+  const [archiveLoading, setArchiveLoading] = useState(false);
+  const [archiveError, setArchiveError] = useState(false);
   const [archiveQuery, setArchiveQuery] = useState("");
+  const [hydratedArchiveEventIds, setHydratedArchiveEventIds] = useState<
+    Set<string>
+  >(new Set());
   const [canCreate, setCanCreate] = useState(false);
   const generation = useRef(0);
+  const loadArchivePage = useCallback(
+    async (cursor?: string, expectedGeneration = generation.current) => {
+      if (expectedGeneration !== generation.current) return;
+      const currentGeneration = expectedGeneration;
+      if (!navigator.onLine) return;
+      setArchiveLoading(true);
+      setArchiveError(false);
+      try {
+        const page = await getEventPage(organizationId, cursor);
+        if (currentGeneration !== generation.current) return;
+        try {
+          await cacheArchivedEventSummaries(
+            userId,
+            organizationId,
+            page.events,
+          );
+          const hydrated = await readHydratedArchivedEventIds(
+            userId,
+            organizationId,
+            page.events,
+          );
+          setHydratedArchiveEventIds(
+            (current) => new Set([...current, ...hydrated]),
+          );
+        } catch {
+          // A cache failure must not hide an otherwise valid online page.
+        }
+        setArchiveEvents((current) => {
+          const merged = new Map(current.map((event) => [event.id, event]));
+          for (const event of page.events) merged.set(event.id, event);
+          return [...merged.values()];
+        });
+        setArchiveCursor(page.nextCursor);
+      } catch (error) {
+        if (currentGeneration !== generation.current) return;
+        if (error instanceof EventRequestError && error.status === 401) {
+          onUnauthenticated();
+          return;
+        }
+        setArchiveError(true);
+      } finally {
+        if (currentGeneration === generation.current) setArchiveLoading(false);
+      }
+    },
+    [onUnauthenticated, organizationId, userId],
+  );
   const synchronize = useCallback(async () => {
     const currentGeneration = generation.current;
     if (!navigator.onLine) {
@@ -144,6 +220,7 @@ export function EventOverview({
     }
     try {
       await pullOrganization(userId, organizationId);
+      await loadArchivePage(undefined, currentGeneration);
       if (currentGeneration === generation.current) setState("ready");
     } catch (error) {
       if (error instanceof SyncRequestError && error.status === 401) {
@@ -152,11 +229,16 @@ export function EventOverview({
       }
       if (currentGeneration === generation.current) setState("error");
     }
-  }, [onUnauthenticated, organizationId, userId]);
+  }, [loadArchivePage, onUnauthenticated, organizationId, userId]);
 
   useEffect(() => {
     let active = true;
     generation.current += 1;
+    const expectedGeneration = generation.current;
+    setArchiveEvents([]);
+    setHydratedArchiveEventIds(new Set());
+    setArchiveCursor(null);
+    setArchiveError(false);
     const subscription = liveQuery(async () => ({
       canCreate: await canCreateEvents(userId, organizationId),
       events: await readVisibleEventSummaries(userId, organizationId),
@@ -176,7 +258,23 @@ export function EventOverview({
     }
     window.addEventListener("online", synchronize);
     window.addEventListener("offline", offline);
-    void synchronize();
+    void (async () => {
+      try {
+        const cached = await readCachedArchivedEventSummaries(
+          userId,
+          organizationId,
+        );
+        if (!active || generation.current !== expectedGeneration) return;
+        setArchiveEvents(cached);
+        setHydratedArchiveEventIds(
+          await readHydratedArchivedEventIds(userId, organizationId, cached),
+        );
+      } catch {
+        if (active) setState("error");
+        return;
+      }
+      await synchronize();
+    })();
     return () => {
       active = false;
       generation.current += 1;
@@ -186,14 +284,44 @@ export function EventOverview({
     };
   }, [organizationId, synchronize, userId]);
 
-  const hasArchivedEvents = events.some((event) => event.lifecycle === "archived");
-  const normalizedArchiveQuery = archiveQuery.trim().normalize("NFC").toLocaleLowerCase();
-  const visibleEvents = events.filter((event) =>
-    event.lifecycle === "active" ||
-    !normalizedArchiveQuery ||
-    [event.name, event.id].some((value) =>
-      value.normalize("NFC").toLocaleLowerCase().includes(normalizedArchiveQuery),
-    ),
+  const localEventIds = new Set(events.map((event) => event.id));
+  const allEvents = [
+    ...events,
+    ...archiveEvents.filter((event) => !localEventIds.has(event.id)),
+  ];
+  const hasArchivedEvents = allEvents.some(
+    (event) => event.lifecycle === "archived",
+  );
+  const normalizedArchiveQuery = archiveQuery
+    .trim()
+    .normalize("NFC")
+    .toLocaleLowerCase();
+  const visibleEvents = allEvents.filter(
+    (event) =>
+      event.lifecycle === "active" ||
+      !normalizedArchiveQuery ||
+      [event.name, event.id].some((value) =>
+        value
+          .normalize("NFC")
+          .toLocaleLowerCase()
+          .includes(normalizedArchiveQuery),
+      ),
+  );
+  const catalogLinks = (
+    <p className="event-overview__catalog-links">
+      <a
+        href={`/organizations/${organizationId}/recipes`}
+        onClick={onOpenRecipes}
+      >
+        {t("shell.recipes")}
+      </a>
+      <a
+        href={`/organizations/${organizationId}/ingredients`}
+        onClick={onOpenIngredients}
+      >
+        {t("shell.ingredients")}
+      </a>
+    </p>
   );
 
   if (state === "loading" && events.length === 0) {
@@ -203,9 +331,10 @@ export function EventOverview({
       </p>
     );
   }
-  if (state === "error" && events.length === 0) {
+  if (state === "error" && events.length === 0 && archiveEvents.length === 0) {
     return (
       <div className="event-overview">
+        {catalogLinks}
         {canCreate ? (
           <EventCreate organizationId={organizationId} userId={userId} />
         ) : null}
@@ -218,9 +347,10 @@ export function EventOverview({
       </div>
     );
   }
-  if (state === "ready" && events.length === 0) {
+  if (state === "ready" && allEvents.length === 0) {
     return (
       <div className="event-overview">
+        {catalogLinks}
         {canCreate ? (
           <EventCreate organizationId={organizationId} userId={userId} />
         ) : null}
@@ -233,6 +363,7 @@ export function EventOverview({
       <p className="event-overview__scope" role="note">
         {t("eventsOverview.scope")}
       </p>
+      {catalogLinks}
       {canCreate ? (
         <EventCreate organizationId={organizationId} userId={userId} />
       ) : null}
@@ -253,13 +384,18 @@ export function EventOverview({
             value={archiveQuery}
           />
           {archiveQuery ? (
-            <button
-              onClick={() => setArchiveQuery("")}
-              type="button"
-            >
+            <button onClick={() => setArchiveQuery("")} type="button">
               {t("eventsOverview.clearArchiveSearch")}
             </button>
           ) : null}
+        </div>
+      ) : null}
+      {archiveError ? (
+        <div className="event-overview-error" role="alert">
+          <p>{t("eventsOverview.archiveError")}</p>
+          <button onClick={() => void loadArchivePage()} type="button">
+            {t("eventsOverview.retry")}
+          </button>
         </div>
       ) : null}
       <div className="event-list">
@@ -271,10 +407,24 @@ export function EventOverview({
             organizationId={organizationId}
             userId={userId}
             canManage={canCreate}
+            canOpenOffline={hydratedArchiveEventIds.has(event.id)}
           />
         ))}
       </div>
-      {hasArchivedEvents && visibleEvents.every((event) => event.lifecycle === "active") && normalizedArchiveQuery ? (
+      {archiveCursor ? (
+        <button
+          disabled={archiveLoading}
+          onClick={() => void loadArchivePage(archiveCursor)}
+          type="button"
+        >
+          {archiveLoading
+            ? t("eventsOverview.loading")
+            : t("eventsOverview.loadMore")}
+        </button>
+      ) : null}
+      {hasArchivedEvents &&
+      visibleEvents.every((event) => event.lifecycle === "active") &&
+      normalizedArchiveQuery ? (
         <p role="status">{t("eventsOverview.archiveSearchEmpty")}</p>
       ) : null}
       {state === "error" ? (

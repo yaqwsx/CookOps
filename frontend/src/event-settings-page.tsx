@@ -1,5 +1,5 @@
 import { liveQuery } from "dexie";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import type { EventSummary } from "./api/events";
 import { EventAttendance } from "./event-attendance-form";
@@ -7,27 +7,26 @@ import { EventLifecycle } from "./event-lifecycle-form";
 import { EventMetadata } from "./event-metadata-form";
 import { EventPriceRefreshControl } from "./event-price-refresh-control";
 import { EventDietaryExceptions } from "./event-dietary-exception-form";
+import { EventSectionNavigation } from "./event-section-navigation";
 import {
   canCreateEvents,
   readVisibleEventSummaries,
 } from "./event-projections";
+import { ensureArchivedEventCached } from "./archive-cache";
+import { pullOrganization, SyncRequestError } from "./sync-bootstrap";
 
 export function EventSettingsPage({
   eventId,
   organizationId,
   userId,
-  onOpenCosts,
-  onOpenPlanner,
-  onOpenReceipts,
-  onOpenShopping,
+  onUnauthenticated,
 }: {
   eventId: string;
   organizationId: string;
   userId: string;
-  onOpenCosts: () => void;
-  onOpenPlanner: () => void;
-  onOpenReceipts: () => void;
-  onOpenShopping: () => void;
+  onUnauthenticated?: () => void;
+  onOpenPlanner?: () => void;
+  onOpenCosts?: () => void;
 }) {
   const { t } = useTranslation();
   const identity = `${userId}:${organizationId}:${eventId}`;
@@ -37,6 +36,39 @@ export function EventSettingsPage({
     canManage?: boolean;
     error?: boolean;
   }>({ identity });
+  const generation = useRef(0);
+  useEffect(() => {
+    const current = ++generation.current;
+    const controller = new AbortController();
+    void (async () => {
+      if (!navigator.onLine) return;
+      try {
+        const initial = (
+          await readVisibleEventSummaries(userId, organizationId)
+        ).find((candidate) => candidate.id === eventId);
+        if (initial?.lifecycle === "active") return;
+        await pullOrganization(userId, organizationId);
+        if (current !== generation.current) return;
+        const event = (
+          await readVisibleEventSummaries(userId, organizationId)
+        ).find((candidate) => candidate.id === eventId);
+        if (event?.lifecycle !== "archived") return;
+        await ensureArchivedEventCached(
+          userId,
+          organizationId,
+          eventId,
+          fetch,
+          controller.signal,
+        );
+      } catch (error) {
+        if (controller.signal.aborted || current !== generation.current) return;
+        if (error instanceof SyncRequestError && error.status === 401)
+          return onUnauthenticated?.();
+        // Keep the cached projection available when refresh fails.
+      }
+    })();
+    return () => controller.abort();
+  }, [eventId, onUnauthenticated, organizationId, userId]);
   useEffect(() => {
     const effectIdentity = identity;
     const subscription = liveQuery(async () => ({
@@ -59,20 +91,11 @@ export function EventSettingsPage({
   if (!event) return <p role="alert">{t("eventSettings.unavailable")}</p>;
   return (
     <section aria-labelledby="event-settings-heading">
-      <nav aria-label={t("eventSettings.navigation")}>
-        <button onClick={onOpenPlanner} type="button">
-          {t("eventSettings.planner")}
-        </button>
-        <button onClick={onOpenCosts} type="button">
-          {t("eventSettings.costs")}
-        </button>
-        <button onClick={onOpenShopping} type="button">
-          {t("eventSettings.shopping")}
-        </button>
-        <button onClick={onOpenReceipts} type="button">
-          {t("eventSettings.receipts")}
-        </button>
-      </nav>
+      <EventSectionNavigation
+        current="settings"
+        eventId={eventId}
+        organizationId={organizationId}
+      />
       <h2 id="event-settings-heading">{t("eventSettings.heading")}</h2>
       <p>
         {t("eventSettings.lifecycle")}:{" "}
@@ -102,7 +125,11 @@ export function EventSettingsPage({
             organizationId={organizationId}
             userId={userId}
           />
-          <EventDietaryExceptions eventId={event.id} organizationId={organizationId} userId={userId} />
+          <EventDietaryExceptions
+            eventId={event.id}
+            organizationId={organizationId}
+            userId={userId}
+          />
           {canManage ? (
             <EventLifecycle
               eventId={event.id}

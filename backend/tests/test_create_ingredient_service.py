@@ -21,6 +21,10 @@ from cookops.application.ingredient_lifecycle import (
     SetIngredientLifecycleCommand,
     set_ingredient_lifecycle,
 )
+from cookops.application.ingredient_prices import (
+    PublishIngredientPriceEstimateCommand,
+    publish_ingredient_price_estimate,
+)
 from cookops.application.ingredient_versions import (
     PublishIngredientVersionCommand,
     publish_ingredient_version,
@@ -29,10 +33,6 @@ from cookops.application.ingredients import (
     CreateIngredientCommand,
     InitialPrice,
     create_ingredient,
-)
-from cookops.application.ingredient_prices import (
-    PublishIngredientPriceEstimateCommand,
-    publish_ingredient_price_estimate,
 )
 from cookops.application.organizations import ApplicationServiceError, ExecutionContext
 from cookops.persistence.models import (
@@ -204,12 +204,19 @@ def command(database: Database, **changes: object) -> CreateIngredientCommand:
     return CreateIngredientCommand(**values)  # type: ignore[arg-type]
 
 
-def price_command(database: Database, ingredient_id: UUID, **changes: object) -> PublishIngredientPriceEstimateCommand:
+def price_command(
+    database: Database, ingredient_id: UUID, **changes: object
+) -> PublishIngredientPriceEstimateCommand:
     values: dict[str, object] = {
-        "mutation_id": uuid4(), "ingredient_id": ingredient_id,
-        "ingredient_price_estimate_id": uuid4(), "organization_id": database.organization_id,
-        "amount": Decimal("12.50"), "priced_quantity": Decimal("1"),
-        "unit_id": database.kilogram_id, "currency": "CZK", "client_wall_time": datetime.now(UTC),
+        "mutation_id": uuid4(),
+        "ingredient_id": ingredient_id,
+        "ingredient_price_estimate_id": uuid4(),
+        "organization_id": database.organization_id,
+        "amount": Decimal("12.50"),
+        "priced_quantity": Decimal("1"),
+        "unit_id": database.kilogram_id,
+        "currency": "CZK",
+        "client_wall_time": datetime.now(UTC),
     }
     values.update(changes)
     return PublishIngredientPriceEstimateCommand(**values)  # type: ignore[arg-type]
@@ -221,14 +228,26 @@ def _price_seed(database: Database) -> tuple[UUID, CreateIngredientCommand]:
     return initial.ingredient_id, initial
 
 
-def test_publish_ingredient_price_estimate_accepts_replays_and_rejects_invalid_values(database: Database) -> None:
+def test_publish_ingredient_price_estimate_accepts_replays_and_rejects_invalid_values(
+    database: Database,
+) -> None:
     ingredient_id, _ = _price_seed(database)
     attempted = price_command(database, ingredient_id)
-    accepted = asyncio.run(publish_ingredient_price_estimate(database.sessions, context(database), attempted))
-    replay = asyncio.run(publish_ingredient_price_estimate(database.sessions, context(database), attempted))
+    accepted = asyncio.run(
+        publish_ingredient_price_estimate(database.sessions, context(database), attempted)
+    )
+    replay = asyncio.run(
+        publish_ingredient_price_estimate(database.sessions, context(database), attempted)
+    )
     assert accepted.replayed is False and replay.replayed is True
     assert accepted.ingredient_price_estimate_id == replay.ingredient_price_estimate_id
-    free = asyncio.run(publish_ingredient_price_estimate(database.sessions, context(database), price_command(database, ingredient_id, amount=Decimal("0"))))
+    free = asyncio.run(
+        publish_ingredient_price_estimate(
+            database.sessions,
+            context(database),
+            price_command(database, ingredient_id, amount=Decimal("0")),
+        )
+    )
     assert free.outcome == "accepted"
     lww_ingredient_id, _ = _price_seed(database)
     older = price_command(
@@ -241,26 +260,53 @@ def test_publish_ingredient_price_estimate_accepts_replays_and_rejects_invalid_v
         lww_ingredient_id,
         client_wall_time=datetime.now(UTC) + timedelta(seconds=2),
     )
-    second = asyncio.run(publish_ingredient_price_estimate(database.sessions, context(database), newer))
-    first = asyncio.run(publish_ingredient_price_estimate(database.sessions, context(database), older))
-    retry = asyncio.run(publish_ingredient_price_estimate(database.sessions, context(database), older))
+    second = asyncio.run(
+        publish_ingredient_price_estimate(database.sessions, context(database), newer)
+    )
+    first = asyncio.run(
+        publish_ingredient_price_estimate(database.sessions, context(database), older)
+    )
+    retry = asyncio.run(
+        publish_ingredient_price_estimate(database.sessions, context(database), older)
+    )
     assert first.outcome == "partially_superseded"
     assert second.outcome == "accepted"
     assert retry.outcome == "partially_superseded" and retry.replayed
     with database.sync.connect() as connection:
-        assert connection.scalar(select(func.count()).select_from(IngredientPriceEstimate).where(IngredientPriceEstimate.ingredient_id == ingredient_id)) == 2
-        assert connection.scalar(select(func.count()).select_from(IngredientPriceEstimate).where(IngredientPriceEstimate.ingredient_id == lww_ingredient_id)) == 2
+        assert (
+            connection.scalar(
+                select(func.count())
+                .select_from(IngredientPriceEstimate)
+                .where(IngredientPriceEstimate.ingredient_id == ingredient_id)
+            )
+            == 2
+        )
+        assert (
+            connection.scalar(
+                select(func.count())
+                .select_from(IngredientPriceEstimate)
+                .where(IngredientPriceEstimate.ingredient_id == lww_ingredient_id)
+            )
+            == 2
+        )
     invalid = price_command(database, ingredient_id, amount=Decimal("1e101"))
     with pytest.raises(ApplicationServiceError) as first_error:
-        asyncio.run(publish_ingredient_price_estimate(database.sessions, context(database), invalid))
+        asyncio.run(
+            publish_ingredient_price_estimate(database.sessions, context(database), invalid)
+        )
     with pytest.raises(ApplicationServiceError) as replay_error:
-        asyncio.run(publish_ingredient_price_estimate(database.sessions, context(database), invalid))
+        asyncio.run(
+            publish_ingredient_price_estimate(database.sessions, context(database), invalid)
+        )
     assert replay_error.value.code == first_error.value.code
     assert replay_error.value.field_violations == first_error.value.field_violations
     retired_id, _ = _price_seed(database)
     lifecycle = SetIngredientLifecycleCommand(
-        mutation_id=uuid4(), ingredient_id=retired_id, organization_id=database.organization_id,
-        operation="retire", client_wall_time=datetime.now(UTC),
+        mutation_id=uuid4(),
+        ingredient_id=retired_id,
+        organization_id=database.organization_id,
+        operation="retire",
+        client_wall_time=datetime.now(UTC),
     )
     asyncio.run(set_ingredient_lifecycle(database.sessions, context(database), lifecycle))
     stale = price_command(database, retired_id)
@@ -270,9 +316,21 @@ def test_publish_ingredient_price_estimate_accepts_replays_and_rejects_invalid_v
         asyncio.run(publish_ingredient_price_estimate(database.sessions, context(database), stale))
     assert stale_first.value.code == stale_replay.value.code == "stale_precondition"
     with pytest.raises(ApplicationServiceError, match="validation_failed"):
-        asyncio.run(publish_ingredient_price_estimate(database.sessions, context(database), price_command(database, ingredient_id, currency="EUR")))
+        asyncio.run(
+            publish_ingredient_price_estimate(
+                database.sessions,
+                context(database),
+                price_command(database, ingredient_id, currency="EUR"),
+            )
+        )
     with pytest.raises(ApplicationServiceError, match="validation_failed"):
-        asyncio.run(publish_ingredient_price_estimate(database.sessions, context(database), price_command(database, ingredient_id, unit_id=uuid4())))
+        asyncio.run(
+            publish_ingredient_price_estimate(
+                database.sessions,
+                context(database),
+                price_command(database, ingredient_id, unit_id=uuid4()),
+            )
+        )
 
 
 def _create_ingredient_in_process(
@@ -396,8 +454,8 @@ def test_member_retires_and_restores_ingredient_root_without_mutating_version(
             .scalars()
             .all()
         )
-        assert records[-2]["record"]["lifecycle"] == "retired"
-        assert records[-1]["record"]["lifecycle"] == "active"
+        assert cast(dict[str, str], records[-2]["record"])["lifecycle"] == "retired"
+        assert cast(dict[str, str], records[-1]["record"])["lifecycle"] == "active"
     assert first.replayed is False
     assert replay.replayed is True
     assert second.outcome == "accepted"

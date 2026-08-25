@@ -1,7 +1,14 @@
 import { useCallback, useEffect, useState, type FormEvent } from "react";
 import { useTranslation } from "react-i18next";
 
-import { changeSystemOrganizationLifecycle, createSystemOrganization, editSystemOrganization, getSystemOrganizations, SystemOrganizationRequestError, type SystemOrganization } from "./api/system-organizations";
+import {
+  changeSystemOrganizationLifecycle,
+  createSystemOrganization,
+  editSystemOrganization,
+  getSystemOrganizations,
+  SystemOrganizationRequestError,
+  type SystemOrganization,
+} from "./api/system-organizations";
 import { OrganizationMemberships } from "./organization-membership";
 
 export function SystemOrganizationCreate({
@@ -29,20 +36,35 @@ export function SystemOrganizationCreate({
   const [editCurrency, setEditCurrency] = useState("CZK");
   const [editError, setEditError] = useState<string | null>(null);
   const [pendingEdit, setPendingEdit] = useState(false);
-  const [selectedOrganizationId, setSelectedOrganizationId] = useState<string | null>(null);
-  const selectedOrganization = organizations.find(({ id }) => id === selectedOrganizationId);
+  const [selectedOrganizationId, setSelectedOrganizationId] = useState<
+    string | null
+  >(null);
+  const selectedOrganization = organizations.find(
+    ({ id }) => id === selectedOrganizationId,
+  );
 
   const refresh = useCallback(async () => {
     try {
       const next = await getSystemOrganizations();
       setOrganizations(next);
-      setSelectedOrganizationId((current) => current && next.some((organization) => organization.id === current && !organization.retired_at) ? current : null);
+      setSelectedOrganizationId((current) =>
+        current &&
+        next.some(
+          (organization) =>
+            organization.id === current && !organization.retired_at,
+        )
+          ? current
+          : null,
+      );
       setListError(false);
+    } catch {
+      setListError(true);
     }
-    catch { setListError(true); }
   }, []);
 
-  useEffect(() => { void refresh(); }, [refresh]);
+  useEffect(() => {
+    void refresh();
+  }, [refresh]);
 
   async function submit(event: FormEvent) {
     event.preventDefault();
@@ -71,7 +93,8 @@ export function SystemOrganizationCreate({
       await refresh();
     } catch (caught) {
       setError(
-        caught instanceof SystemOrganizationRequestError && caught.status === 403
+        caught instanceof SystemOrganizationRequestError &&
+          caught.status === 403
           ? t("systemOrganizations.forbidden")
           : t("systemOrganizations.error"),
       );
@@ -82,11 +105,27 @@ export function SystemOrganizationCreate({
 
   async function changeLifecycle(organization: SystemOrganization) {
     const operation = organization.retired_at ? "restore" : "retire";
-    if (operation === "retire" && !window.confirm(t("systemOrganizations.retireConfirm", { name: organization.name }))) return;
+    if (
+      operation === "retire" &&
+      !window.confirm(
+        t("systemOrganizations.retireConfirm", { name: organization.name }),
+      )
+    )
+      return;
     setPendingLifecycle(organization.id);
-    try { await changeSystemOrganizationLifecycle(userId, organization.id, operation); await refresh(); onCreated(); }
-    catch { setListError(true); }
-    finally { setPendingLifecycle(null); }
+    try {
+      await changeSystemOrganizationLifecycle(
+        userId,
+        organization.id,
+        operation,
+      );
+      await refresh();
+      onCreated();
+    } catch {
+      setListError(true);
+    } finally {
+      setPendingLifecycle(null);
+    }
   }
 
   function beginEdit(organization: SystemOrganization) {
@@ -128,27 +167,52 @@ export function SystemOrganizationCreate({
 
   return (
     <section aria-labelledby="system-organization-heading">
-      <h2 id="system-organization-heading">{t("systemOrganizations.heading")}</h2>
+      <h2 id="system-organization-heading">
+        {t("systemOrganizations.heading")}
+      </h2>
       <form onSubmit={(event) => void submit(event)}>
         <label>
           {t("systemOrganizations.name")}
-          <input maxLength={200} onChange={(event) => setName(event.target.value)} value={name} />
+          <input
+            maxLength={200}
+            onChange={(event) => setName(event.target.value)}
+            value={name}
+          />
         </label>
         <label>
           {t("systemOrganizations.description")}
-          <textarea maxLength={10000} onChange={(event) => setDescription(event.target.value)} value={description} />
+          <textarea
+            maxLength={10000}
+            onChange={(event) => setDescription(event.target.value)}
+            value={description}
+          />
         </label>
         <label>
           {t("systemOrganizations.currency")}
-          <input maxLength={3} onChange={(event) => setCurrency(event.target.value)} value={currency} />
+          <input
+            maxLength={3}
+            onChange={(event) => setCurrency(event.target.value)}
+            value={currency}
+          />
         </label>
-        <button disabled={pending} type="submit">{t("systemOrganizations.submit")}</button>
+        <button disabled={pending} type="submit">
+          {t("systemOrganizations.submit")}
+        </button>
         {error ? <p role="alert">{error}</p> : null}
         {saved ? <p role="status">{t("systemOrganizations.saved")}</p> : null}
       </form>
       <section aria-labelledby="system-organizations-list-heading">
-        <h2 id="system-organizations-list-heading">{t("systemOrganizations.listHeading")}</h2>
-        {listError ? <p role="alert">{t("systemOrganizations.error")} <button onClick={() => void refresh()} type="button">{t("authentication.retry")}</button></p> : null}
+        <h2 id="system-organizations-list-heading">
+          {t("systemOrganizations.listHeading")}
+        </h2>
+        {listError ? (
+          <p role="alert">
+            {t("systemOrganizations.error")}{" "}
+            <button onClick={() => void refresh()} type="button">
+              {t("authentication.retry")}
+            </button>
+          </p>
+        ) : null}
         <ul>
           {organizations.map((organization) => (
             <li key={organization.id}>
@@ -156,42 +220,94 @@ export function SystemOrganizationCreate({
                 <form onSubmit={(event) => void saveEdit(event)}>
                   <label>
                     {t("systemOrganizations.name")}
-                    <input aria-label={t("systemOrganizations.editName", { name: organization.name })} maxLength={200} onChange={(event) => setEditName(event.target.value)} value={editName} />
+                    <input
+                      aria-label={t("systemOrganizations.editName", {
+                        name: organization.name,
+                      })}
+                      maxLength={200}
+                      onChange={(event) => setEditName(event.target.value)}
+                      value={editName}
+                    />
                   </label>
                   <label>
                     {t("systemOrganizations.description")}
-                    <textarea maxLength={10000} onChange={(event) => setEditDescription(event.target.value)} value={editDescription} />
+                    <textarea
+                      maxLength={10000}
+                      onChange={(event) =>
+                        setEditDescription(event.target.value)
+                      }
+                      value={editDescription}
+                    />
                   </label>
                   <label>
                     {t("systemOrganizations.currency")}
-                    <input maxLength={3} onChange={(event) => setEditCurrency(event.target.value)} value={editCurrency} />
+                    <input
+                      maxLength={3}
+                      onChange={(event) => setEditCurrency(event.target.value)}
+                      value={editCurrency}
+                    />
                   </label>
-                  <button disabled={pendingEdit} type="submit">{t("systemOrganizations.saveEdit")}</button>
-                  <button disabled={pendingEdit} onClick={() => setEditingId(null)} type="button">{t("systemOrganizations.cancelEdit")}</button>
+                  <button disabled={pendingEdit} type="submit">
+                    {t("systemOrganizations.saveEdit")}
+                  </button>
+                  <button
+                    disabled={pendingEdit}
+                    onClick={() => setEditingId(null)}
+                    type="button"
+                  >
+                    {t("systemOrganizations.cancelEdit")}
+                  </button>
                   {editError ? <p role="alert">{editError}</p> : null}
                 </form>
               ) : null}
-              {editingId !== organization.id ? <>
-                {organization.name} — {organization.retired_at ? t("systemOrganizations.retired") : t("systemOrganizations.active")}
-                {!organization.retired_at ? <button
-                  aria-label={t("systemOrganizations.manageAdministratorsFor", { name: organization.name })}
-                  aria-pressed={selectedOrganizationId === organization.id}
-                  disabled={pendingEdit}
-                  onClick={() => setSelectedOrganizationId(organization.id)}
-                  type="button"
-                >
-                  {t("systemOrganizations.manageAdministrators")}
-                </button> : null}
-                <button aria-label={t("systemOrganizations.editName", { name: organization.name })} onClick={() => beginEdit(organization)} type="button">
-                  {t("systemOrganizations.edit")}
-                </button>
-              </> : null}
-              <button disabled={pendingLifecycle === organization.id || pendingEdit} onClick={() => void changeLifecycle(organization)} type="button">
+              {editingId !== organization.id ? (
+                <>
+                  {organization.name} —{" "}
+                  {organization.retired_at
+                    ? t("systemOrganizations.retired")
+                    : t("systemOrganizations.active")}
+                  {!organization.retired_at ? (
+                    <button
+                      aria-label={t(
+                        "systemOrganizations.manageAdministratorsFor",
+                        { name: organization.name },
+                      )}
+                      aria-pressed={selectedOrganizationId === organization.id}
+                      disabled={pendingEdit}
+                      onClick={() => setSelectedOrganizationId(organization.id)}
+                      type="button"
+                    >
+                      {t("systemOrganizations.manageAdministrators")}
+                    </button>
+                  ) : null}
+                  <button
+                    aria-label={t("systemOrganizations.editName", {
+                      name: organization.name,
+                    })}
+                    onClick={() => beginEdit(organization)}
+                    type="button"
+                  >
+                    {t("systemOrganizations.edit")}
+                  </button>
+                </>
+              ) : null}
+              <button
+                disabled={pendingLifecycle === organization.id || pendingEdit}
+                onClick={() => void changeLifecycle(organization)}
+                type="button"
+              >
                 <span aria-hidden="true">
-                  {organization.retired_at ? t("systemOrganizations.restore") : t("systemOrganizations.retire")}
+                  {organization.retired_at
+                    ? t("systemOrganizations.restore")
+                    : t("systemOrganizations.retire")}
                 </span>
                 <span className="sr-only">
-                  {t(organization.retired_at ? "systemOrganizations.restore" : "systemOrganizations.retire")} {organization.name}
+                  {t(
+                    organization.retired_at
+                      ? "systemOrganizations.restore"
+                      : "systemOrganizations.retire",
+                  )}{" "}
+                  {organization.name}
                 </span>
               </button>
             </li>

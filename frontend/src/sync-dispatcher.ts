@@ -131,8 +131,8 @@ function parsePushResponse(
     throw new Error("Invalid sync response.");
   const response = value as Partial<PushResponse>;
   if (
-    (typeof response.sync_schema_version !== "number" ||
-      response.sync_schema_version !== 1) ||
+    typeof response.sync_schema_version !== "number" ||
+    response.sync_schema_version !== 1 ||
     typeof response.server_time !== "string" ||
     typeof response.change_cursor !== "string" ||
     !Array.isArray(response.outcomes) ||
@@ -142,7 +142,10 @@ function parsePushResponse(
       typeof response.sync_schema_version === "number" &&
       response.sync_schema_version !== 1
     )
-      throw new UpgradeRequiredError("sync_schema_version", response.sync_schema_version);
+      throw new UpgradeRequiredError(
+        "sync_schema_version",
+        response.sync_schema_version,
+      );
     throw new Error("Invalid sync response.");
   }
   for (const [index, outcome] of response.outcomes.entries()) {
@@ -295,7 +298,9 @@ export async function dispatchOutbox(
     });
   } catch (error) {
     if (isUpgradeRequiredError(error)) {
-      await updateMetadata(userId, organizationId, { activity: "upgradeRequired" });
+      await updateMetadata(userId, organizationId, {
+        activity: "upgradeRequired",
+      });
       throw error;
     }
     await updateMetadata(userId, organizationId, { activity: "retrying" });

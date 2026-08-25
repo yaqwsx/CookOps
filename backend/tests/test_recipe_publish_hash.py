@@ -1,7 +1,8 @@
 from dataclasses import replace
 from datetime import UTC, datetime
 from decimal import Decimal
-from uuid import uuid4
+from typing import TypedDict, Unpack
+from uuid import UUID, uuid4
 
 from cookops.application.recipes import (
     PublishRecipeVersionCommand,
@@ -11,7 +12,12 @@ from cookops.application.recipes import (
 )
 
 
-def _command(**kwargs: object) -> PublishRecipeVersionCommand:
+class _CommandOverrides(TypedDict, total=False):
+    catalog_update: bool
+    expected_current_ingredient_versions: tuple[tuple[UUID, UUID], ...]
+
+
+def _command(**kwargs: Unpack[_CommandOverrides]) -> PublishRecipeVersionCommand:
     version_id = uuid4()
     return PublishRecipeVersionCommand(
         mutation_id=uuid4(),
@@ -27,9 +33,13 @@ def _command(**kwargs: object) -> PublishRecipeVersionCommand:
         recipe_tag_ids=(),
         ingredient_lines=(
             RecipeIngredientLineInput(
-                id=uuid4(), line_key=uuid4(), ingredient_version_id=version_id,
-                base_quantity=Decimal("1"), position_key="a",
-                scaling_behavior="fixed", include_in_portion_weight=False,
+                id=uuid4(),
+                line_key=uuid4(),
+                ingredient_version_id=version_id,
+                base_quantity=Decimal("1"),
+                position_key="a",
+                scaling_behavior="fixed",
+                include_in_portion_weight=False,
             ),
         ),
         **kwargs,
@@ -43,6 +53,7 @@ def test_recipe_publish_hash_legacy_and_guarded_canonicalization() -> None:
     )
     legacy, explicit = _prepare_command(legacy_command), _prepare_command(explicit_command)
     assert not legacy.violations and not explicit.violations
+
     def publish_hash(prepared: object, based_on_version_id: object) -> bytes:
         return _request_hash(
             prepared,  # type: ignore[arg-type]
@@ -84,7 +95,8 @@ def test_recipe_publish_hash_legacy_and_guarded_canonicalization() -> None:
         replace(
             base,
             expected_current_ingredient_versions=(
-                (ingredient_id, uuid4()), (other_ingredient, second)
+                (ingredient_id, uuid4()),
+                (other_ingredient, second),
             ),
         )
     )

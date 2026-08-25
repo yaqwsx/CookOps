@@ -1,9 +1,10 @@
 import { StrictMode } from "react";
 import { createRoot } from "react-dom/client";
+import { RouterProvider } from "@tanstack/react-router";
 import { registerSW } from "virtual:pwa-register";
 
-import { App } from "./App";
 import "./i18n";
+import { router } from "./router";
 
 void registerSW({ immediate: true });
 
@@ -15,6 +16,6 @@ if (!root) {
 
 createRoot(root).render(
   <StrictMode>
-    <App />
+    <RouterProvider router={router} />
   </StrictMode>,
 );

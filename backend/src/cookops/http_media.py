@@ -157,15 +157,12 @@ async def _require_read_access(
             SystemRoleAssignment.revoked_at.is_(None),
         )
     )
-    membership = (
-        system_admin
-        or await session.scalar(
-            select(OrganizationMembership.id).where(
-                OrganizationMembership.organization_id == organization_id,
-                OrganizationMembership.user_id == actor_user_id,
-                OrganizationMembership.state == "active",
-                OrganizationMembership.role.in_(("member", "organization_admin")),
-            )
+    membership = system_admin or await session.scalar(
+        select(OrganizationMembership.id).where(
+            OrganizationMembership.organization_id == organization_id,
+            OrganizationMembership.user_id == actor_user_id,
+            OrganizationMembership.state == "active",
+            OrganizationMembership.role.in_(("member", "organization_admin")),
         )
     )
     if membership is None:

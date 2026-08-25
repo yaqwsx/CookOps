@@ -8,7 +8,12 @@ export type ReceiptProjection = {
   receiptDate: string | null;
   note: string | null;
   retired: boolean;
-  attachments?: { id: string; mediaType: string; retired: boolean }[];
+  attachments?: {
+    id: string;
+    mediaType: string;
+    contentHash?: string;
+    retired: boolean;
+  }[];
 };
 
 const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -65,6 +70,9 @@ export async function readEventReceipts(
         .map((attachment) => ({
           id: attachment.entityId,
           mediaType: attachment.fields.media_type as string,
+          ...(typeof attachment.fields.content_hash === "string"
+            ? { contentHash: attachment.fields.content_hash }
+            : {}),
           retired: attachment.lifecycle === "retired",
         }));
       return {

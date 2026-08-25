@@ -17,6 +17,7 @@ from sqlalchemy.ext.asyncio import (
 from sqlalchemy.pool import NullPool
 
 from alembic import command as alembic_command
+from cookops.application.organization_update import OrganizationUpdateCommand, update_organization
 from cookops.application.organizations import (
     ApplicationServiceError,
     CreateOrganizationCommand,
@@ -32,7 +33,9 @@ from cookops.persistence.models import (
     DietaryTag,
     Mutation,
     Organization,
+    OrganizationChange,
     OrganizationMealRolePreset,
+    OrganizationMembership,
     SystemRoleAssignment,
     User,
 )
@@ -918,22 +921,22 @@ def test_edit_accepts_nfc_equivalent_retry_and_rejects_oversized_description(
         oauth_grant_id="mcp-grant",
     )
     with pytest.raises(ApplicationServiceError) as first_error:
-        asyncio.run(
-            edit_organization(service_database.sessions, invalid_context, oversized)
-        )
+        asyncio.run(edit_organization(service_database.sessions, invalid_context, oversized))
     with pytest.raises(ApplicationServiceError) as replay_error:
-        asyncio.run(
-            edit_organization(service_database.sessions, invalid_context, oversized)
-        )
+        asyncio.run(edit_organization(service_database.sessions, invalid_context, oversized))
     assert first_error.value.field_violations == replay_error.value.field_violations
     assert first_error.value.field_violations[0].path == "description"
     with service_database.sync_engine.connect() as connection:
-        assert connection.scalar(
-            select(ClientInstallation.id).where(ClientInstallation.id == fresh_installation_id)
-        ) is None
-        assert connection.scalar(
-            select(Mutation.id).where(Mutation.id == oversized.mutation_id)
-        ) is None
+        assert (
+            connection.scalar(
+                select(ClientInstallation.id).where(ClientInstallation.id == fresh_installation_id)
+            )
+            is None
+        )
+        assert (
+            connection.scalar(select(Mutation.id).where(Mutation.id == oversized.mutation_id))
+            is None
+        )
 
     with pytest.raises(ApplicationServiceError) as existing_error:
         asyncio.run(
@@ -980,3 +983,189 @@ def test_invalid_lifecycle_direct_commands_are_rejected_and_replayed(
             )
         )
     assert first.value.field_violations == replay.value.field_violations
+
+
+def test_scoped_organization_update_replays_and_preserves_newer_field_clock(
+    service_database: ServiceDatabase,
+) -> None:
+    organization_id = uuid4()
+    asyncio.run(
+        create_organization(
+            service_database.sessions,
+            context(service_database),
+            organization_command(organization_id=organization_id),
+        )
+    )
+    mutation_id = uuid4()
+    command = OrganizationUpdateCommand(
+        mutation_id,
+        organization_id,
+        "Updated",
+        "Description",
+        "EUR",
+        datetime(2026, 8, 22, tzinfo=UTC),
+    )
+    first = asyncio.run(
+        update_organization(service_database.sessions, context(service_database), command)
+    )
+    replay = asyncio.run(
+        update_organization(service_database.sessions, context(service_database), command)
+    )
+    assert first.replayed is False
+    assert replay.replayed is True
+    stale = OrganizationUpdateCommand(
+        uuid4(),
+        organization_id,
+        "Stale",
+        "Newer description",
+        "CZK",
+        datetime(2026, 8, 21, tzinfo=UTC),
+    )
+    result = asyncio.run(
+        update_organization(service_database.sessions, context(service_database), stale)
+    )
+    assert result.outcome == "partially_superseded"
+    replay_stale = asyncio.run(
+        update_organization(service_database.sessions, context(service_database), stale)
+    )
+    assert replay_stale.replayed is True
+    assert replay_stale.outcome == "partially_superseded"
+    with service_database.sync_engine.begin() as connection:
+        row = connection.execute(
+            select(Organization).where(Organization.id == organization_id)
+        ).one()
+        change = connection.execute(
+            select(OrganizationChange).where(
+                OrganizationChange.organization_id == organization_id,
+                OrganizationChange.mutation_id == stale.mutation_id,
+            )
+        ).one()
+    assert row.name == "Updated"
+    assert row.description == "Description"
+    clocks = change.payload["record"]["field_clocks"]
+    assert isinstance(clocks, dict)
+    assert clocks["name"]["winning_mutation_id"] == str(mutation_id)
+    assert clocks["description"]["winning_mutation_id"] == str(mutation_id)
+
+
+def test_scoped_organization_update_retains_future_time_rejection(
+    service_database: ServiceDatabase,
+) -> None:
+    organization_id = uuid4()
+    asyncio.run(
+        create_organization(
+            service_database.sessions,
+            context(service_database),
+            organization_command(organization_id=organization_id),
+        )
+    )
+    command = OrganizationUpdateCommand(
+        uuid4(),
+        organization_id,
+        "Future",
+        None,
+        "CZK",
+        datetime.now(UTC).replace(year=datetime.now(UTC).year + 2),
+    )
+    with pytest.raises(ApplicationServiceError) as first:
+        asyncio.run(
+            update_organization(service_database.sessions, context(service_database), command)
+        )
+    with pytest.raises(ApplicationServiceError) as replay:
+        asyncio.run(
+            update_organization(service_database.sessions, context(service_database), command)
+        )
+    assert first.value.code == replay.value.code == "client_time_too_far_ahead"
+
+
+@pytest.mark.parametrize("role", ["member", "organization_admin"])
+def test_scoped_organization_update_allows_active_target_members(
+    service_database: ServiceDatabase, role: str
+) -> None:
+    organization_id = uuid4()
+    member_id = uuid4()
+    installation_id = uuid4()
+    now = datetime.now(UTC)
+    asyncio.run(
+        create_organization(
+            service_database.sessions,
+            context(service_database),
+            organization_command(organization_id=organization_id),
+        )
+    )
+    with service_database.sync_engine.begin() as connection:
+        connection.execute(
+            insert(User).values(
+                id=member_id,
+                display_name="Scoped member",
+                verified_email=f"{role}@example.test",
+                normalized_email=f"{role}@example.test",
+            )
+        )
+        connection.execute(
+            insert(ClientInstallation).values(
+                id=installation_id, user_id=member_id, installation_kind="browser"
+            )
+        )
+        connection.execute(
+            insert(OrganizationMembership).values(
+                organization_id=organization_id,
+                user_id=member_id,
+                invited_email=f"{role}@example.test",
+                role=role,
+                state="active",
+                invited_by_user_id=service_database.actor_id,
+                claimed_at=now,
+            )
+        )
+    member_context = ExecutionContext(
+        actor_user_id=member_id,
+        client_installation_id=installation_id,
+    )
+    result = asyncio.run(
+        update_organization(
+            service_database.sessions,
+            member_context,
+            OrganizationUpdateCommand(uuid4(), organization_id, "Member update", None, "CZK", now),
+        )
+    )
+    assert result.outcome == "accepted"
+    with service_database.sync_engine.begin() as connection:
+        connection.execute(
+            update(OrganizationMembership)
+            .where(
+                OrganizationMembership.organization_id == organization_id,
+                OrganizationMembership.user_id == member_id,
+            )
+            .values(
+                state="removed",
+                removed_at=now,
+                removed_by_user_id=service_database.actor_id,
+            )
+        )
+    with pytest.raises(ApplicationServiceError, match="forbidden"):
+        asyncio.run(
+            update_organization(
+                service_database.sessions,
+                member_context,
+                OrganizationUpdateCommand(uuid4(), organization_id, "Removed", None, "CZK", now),
+            )
+        )
+    other_organization_id = uuid4()
+    asyncio.run(
+        create_organization(
+            service_database.sessions,
+            context(service_database),
+            organization_command(organization_id=other_organization_id),
+        )
+    )
+    with pytest.raises(ApplicationServiceError, match="forbidden"):
+        asyncio.run(
+            update_organization(
+                service_database.sessions,
+                member_context,
+                OrganizationUpdateCommand(
+                    uuid4(), other_organization_id, "Cross org", None, "CZK", now
+                ),
+            )
+        )
