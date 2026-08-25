@@ -42,6 +42,18 @@ Copy `.env.example` to `.env`, replace every placeholder, then run:
 docker compose --env-file deploy/.env -f deploy/compose.yaml up --build
 ```
 
+## Local manual demo
+
+For a disposable local stack with deterministic dummy identities, run:
+
+```sh
+deploy/demo.sh
+```
+
+Open the printed HTTPS URL, accept the temporary self-signed certificate, and
+select a persona. The script creates its own temporary configuration and
+Compose project, then removes both (including its database volume) on Ctrl-C.
+
 All published service ports bind to loopback; the host Apache virtual host remains
 the only public entry point. Apache forwards the OAuth protocol path to its
 loopback provider for browser interaction completion and forwards `/mcp` to the
