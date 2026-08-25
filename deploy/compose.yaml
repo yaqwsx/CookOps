@@ -22,6 +22,9 @@ services:
   web:
     build: ../frontend
     ports: ["127.0.0.1:${COOKOPS_WEB_PORT:-8080}:8080"]
+    environment:
+      COOKOPS_HUMAN_AUTH_PROVIDER: google
+      COOKOPS_GOOGLE_CLIENT_ID: ${COOKOPS_GOOGLE_CLIENT_ID:?set COOKOPS_GOOGLE_CLIENT_ID}
     healthcheck:
       test: ["CMD-SHELL", "wget -q -O - http://127.0.0.1:8080/health/live | grep -qx ok"]
       interval: 10s

@@ -6,6 +6,36 @@ docker build --quiet --tag cookops-api-image-test "$root/backend" >/dev/null
 docker build --quiet --tag cookops-web-image-test "$root/frontend" >/dev/null
 docker build --quiet --tag cookops-oauth-image-test "$root/oauth-server" >/dev/null
 docker run --rm --entrypoint=nginx cookops-web-image-test -t
+
+assert_runtime_config() (
+    provider=$1
+    expected=$2
+    client_id=${3-}
+    container_id=$(docker run --detach --publish 127.0.0.1::8080 \
+        --env "COOKOPS_HUMAN_AUTH_PROVIDER=$provider" \
+        --env "COOKOPS_GOOGLE_CLIENT_ID=$client_id" \
+        cookops-web-image-test)
+    cleanup() {
+        docker rm --force "$container_id" >/dev/null 2>&1 || true
+    }
+    trap cleanup EXIT HUP INT TERM
+    port=$(docker port "$container_id" 8080/tcp | sed -n 's/.*:\([0-9][0-9]*\)$/\1/p')
+    test -n "$port"
+    runtime_config=
+    for attempt in 1 2 3 4 5; do
+        runtime_config=$(curl --silent "http://127.0.0.1:$port/runtime-config.js" || true)
+        [ "$runtime_config" = "$expected" ] && break
+        sleep 1
+    done
+    test "$runtime_config" = "$expected"
+)
+
+assert_runtime_config dummy \
+    'window.COOKOPS_RUNTIME_CONFIG = { authentication: { provider: "dummy" } };'
+assert_runtime_config google \
+    'window.COOKOPS_RUNTIME_CONFIG = { authentication: { provider: "google", googleClientId: "example.apps.googleusercontent.com" } };' \
+    example.apps.googleusercontent.com
+
 docker run --rm --entrypoint=node cookops-oauth-image-test --version | grep -q '^v22\.'
 docker run --rm --entrypoint=pg_dump cookops-api-image-test --version | grep -Eq '^pg_dump \(PostgreSQL\) 18\.'
 docker run --rm --entrypoint=pg_restore cookops-api-image-test --version | grep -Eq '^pg_restore \(PostgreSQL\) 18\.'
