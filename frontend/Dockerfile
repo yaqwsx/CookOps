@@ -2,7 +2,8 @@ FROM node:22-bookworm-slim@sha256:d649c27dae7ba0137b3cef5dd75baa422c08dc3d9e3fc0
 
 WORKDIR /app
 COPY package.json package-lock.json ./
-RUN npm ci
+# Registry reads can transiently time out while building the demo image.
+RUN npm ci --fetch-retries=5 --fetch-retry-factor=2 --fetch-retry-mintimeout=20000 --fetch-retry-maxtimeout=120000 --fetch-timeout=600000
 COPY . ./
 RUN npm run build
 
