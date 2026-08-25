@@ -13,3 +13,11 @@ mitigation is available.
 Do not include real credentials, personal data, or production secrets in
 reports. For general bugs without security impact, use the normal issue
 tracker.
+
+## CI vulnerability exceptions
+
+CI scans locked Python/Node dependencies and the three production container
+images. A temporary Trivy exception must be added to
+`security/vulnerability-exceptions.yaml` with the CVE ID, a concrete
+`statement`, and an `expired_at` date. Expired or malformed exceptions fail CI;
+exceptions are not a substitute for upgrading a dependency.
